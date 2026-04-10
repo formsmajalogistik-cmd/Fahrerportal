@@ -1,0 +1,19 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AZURE_TENANT_ID": "3b4e5ad6-d72c-4acd-9afe-5fb7ccd98772",
+    "AZURE_CLIENT_ID": "5fc12c57-645e-4d15-9b5e-650164936d82",
+    "AZURE_CLIENT_SECRET": "<your-client-secret-here>",
+    "SHAREPOINT_HOSTNAME": "formsmajalogistik.sharepoint.com",
+    "SHAREPOINT_SITE_PATH": "/sites/Fahrerportal",
+    "JWT_SECRET": "<generate-a-random-secret-here>",
+    "JWT_EXPIRY": "8h"
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "*",
+    "CORSCredentials": false
+  }
+}

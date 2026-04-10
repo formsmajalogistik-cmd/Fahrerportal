@@ -11,9 +11,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@azure/msal-browser": "^5.6.3",
-    "@azure/msal-react": "^5.2.1",
-    "@microsoft/microsoft-graph-client": "^3.0.7",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0"

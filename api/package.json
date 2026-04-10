@@ -1,0 +1,24 @@
+{
+  "name": "fahrerportal-api",
+  "version": "1.0.0",
+  "description": "Azure Functions backend for Fahrerportal - SharePoint proxy",
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "start": "npm run build && func start",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.5.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "isomorphic-fetch": "^3.0.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0"
+  }
+}

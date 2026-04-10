@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useMsal } from '@azure/msal-react';
+import { useAuth } from '../context/AuthContext';
 import './Layout.css';
 
 interface LayoutProps {
@@ -9,25 +9,23 @@ interface LayoutProps {
 }
 
 export function Layout({ children }: LayoutProps) {
-  const { instance, accounts } = useMsal();
+  const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const user = accounts[0];
-
-  const handleLogout = async () => {
-    await instance.logoutPopup();
+  const handleLogout = () => {
+    logout();
     navigate('/');
   };
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: '📊' },
-    { path: '/fahrer', label: 'Fahrer', icon: '🚛' },
-    { path: '/formulare', label: 'Formulare', icon: '📋' },
-    { path: '/zuweisungen', label: 'Zuweisungen', icon: '📌' },
+    { path: '/formulare', label: 'Meine Formulare', icon: '📋' },
     { path: '/offen', label: 'Offene Formulare', icon: '📂' },
   ];
+
+  const displayName = user ? `${user.vorname} ${user.name}`.trim() : '';
 
   return (
     <div className="layout">
@@ -43,7 +41,7 @@ export function Layout({ children }: LayoutProps) {
         </div>
         {user && (
           <div className="header-right">
-            <span className="user-name">{user.name || user.username}</span>
+            <span className="user-name">{displayName}</span>
             <button className="btn-logout" onClick={handleLogout}>
               Abmelden
             </button>

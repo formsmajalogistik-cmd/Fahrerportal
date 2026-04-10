@@ -1,29 +1,82 @@
-import { useState } from 'react';
-import { useMsal } from '@azure/msal-react';
-import { InteractionStatus, BrowserAuthError } from '@azure/msal-browser';
-import { loginRequest } from '../auth/msalConfig';
+import { useState, useRef, useEffect } from 'react';
+import type { FormEvent, KeyboardEvent, ChangeEvent } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { login as apiLogin, ApiError } from '../services/api';
 import './LoginPage.css';
 
+const PIN_LENGTH = 4;
+
 export function LoginPage() {
-  const { instance, inProgress } = useMsal();
+  const { login } = useAuth();
+  const [benutzername, setBenutzername] = useState('');
+  const [pin, setPin] = useState<string[]>(() => Array(PIN_LENGTH).fill(''));
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pinRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  const busy = inProgress !== InteractionStatus.None;
+  useEffect(() => {
+    // Autofocus username on mount
+    const first = document.getElementById('benutzername-input');
+    first?.focus();
+  }, []);
 
-  const handleLogin = async () => {
+  const handlePinChange = (index: number, value: string) => {
+    // Only accept single digit
+    if (!/^\d?$/.test(value)) return;
+    const next = [...pin];
+    next[index] = value;
+    setPin(next);
+    if (value && index < PIN_LENGTH - 1) {
+      pinRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handlePinKeyDown = (index: number, e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !pin[index] && index > 0) {
+      pinRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handlePinPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, PIN_LENGTH);
+    if (!text) return;
+    const next = Array(PIN_LENGTH).fill('');
+    for (let i = 0; i < text.length; i++) next[i] = text[i];
+    setPin(next);
+    const focusIndex = Math.min(text.length, PIN_LENGTH - 1);
+    pinRefs.current[focusIndex]?.focus();
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
     if (busy) return;
+
+    const pinValue = pin.join('');
+    if (!benutzername.trim()) {
+      setError('Bitte Benutzername eingeben');
+      return;
+    }
+    if (pinValue.length !== PIN_LENGTH) {
+      setError(`Bitte ${PIN_LENGTH}-stelligen PIN eingeben`);
+      return;
+    }
+
+    setBusy(true);
     setError(null);
     try {
-      // loginPopup is more reliable on GitHub Pages than loginRedirect
-      // (redirect flow has issues with SPA routing + BASE_URL path).
-      await instance.loginPopup(loginRequest);
+      const response = await apiLogin(benutzername.trim(), pinValue);
+      login(response.token, response.user);
     } catch (err) {
-      if (err instanceof BrowserAuthError && err.errorCode === 'user_cancelled') {
-        return; // User closed popup, no error message needed
+      if (err instanceof ApiError && err.status === 401) {
+        setError('Benutzername oder PIN falsch');
+      } else {
+        setError(err instanceof Error ? err.message : 'Anmeldung fehlgeschlagen');
       }
-      const msg = err instanceof Error ? err.message : 'Anmeldung fehlgeschlagen';
-      console.error('Login fehlgeschlagen:', err);
-      setError(msg);
+      setPin(Array(PIN_LENGTH).fill(''));
+      pinRefs.current[0]?.focus();
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -34,23 +87,54 @@ export function LoginPage() {
           <h1 className="login-title">Maja Logistik</h1>
           <p className="login-subtitle">Fahrerportal</p>
         </div>
-        <div className="login-body">
-          <p className="login-info">
-            Melden Sie sich mit Ihrem Microsoft-Konto an, um auf das Fahrerportal zuzugreifen.
-          </p>
-          <button className="btn-microsoft" onClick={handleLogin} disabled={busy}>
-            <svg viewBox="0 0 21 21" width="21" height="21">
-              <rect x="1" y="1" width="9" height="9" fill="#f25022" />
-              <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
-              <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
-              <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
-            </svg>
-            {busy ? 'Anmeldung läuft…' : 'Mit Microsoft anmelden'}
-          </button>
+        <form className="login-body" onSubmit={handleSubmit}>
+          <p className="login-info">Anmeldung mit Benutzername und PIN</p>
+
+          <div className="form-group">
+            <label htmlFor="benutzername-input" className="form-label">
+              Benutzername
+            </label>
+            <input
+              id="benutzername-input"
+              type="text"
+              className="form-input"
+              value={benutzername}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setBenutzername(e.target.value)}
+              autoComplete="username"
+              disabled={busy}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">PIN</label>
+            <div className="pin-group" onPaste={handlePinPaste}>
+              {pin.map((digit, i) => (
+                <input
+                  key={i}
+                  ref={(el) => { pinRefs.current[i] = el; }}
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={1}
+                  className="pin-input"
+                  value={digit}
+                  onChange={(e) => handlePinChange(i, e.target.value)}
+                  onKeyDown={(e) => handlePinKeyDown(i, e)}
+                  disabled={busy}
+                  aria-label={`PIN Ziffer ${i + 1}`}
+                />
+              ))}
+            </div>
+          </div>
+
           {error && <p className="login-error">{error}</p>}
-        </div>
+
+          <button type="submit" className="btn-login" disabled={busy}>
+            {busy ? 'Anmeldung läuft…' : 'Anmelden'}
+          </button>
+        </form>
         <div className="login-footer">
-          <p>Gesichert durch Microsoft 365</p>
+          <p>© Maja Logistik Fahrerportal</p>
         </div>
       </div>
     </div>
