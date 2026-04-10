@@ -64,10 +64,25 @@
   font-weight: 500;
 }
 
-.btn-microsoft:hover {
+.btn-microsoft:hover:not(:disabled) {
   border-color: #1a237e;
   background: #f5f5ff;
   box-shadow: 0 2px 8px rgba(26, 35, 126, 0.15);
+}
+
+.btn-microsoft:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.login-error {
+  margin: 1rem 0 0;
+  padding: 0.75rem;
+  background: #ffebee;
+  color: #c62828;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  text-align: left;
 }
 
 .login-footer {
