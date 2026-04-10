@@ -4,9 +4,12 @@
   <meta charset="UTF-8" />
   <script>
     // SPA redirect for GitHub Pages
-    // Stores the attempted URL and redirects to index.html
+    // Stores the attempted URL and redirects to base path index.html
     sessionStorage.redirect = location.href;
-    location.replace(location.pathname.split('/').slice(0, 2).join('/') + '/');
+    // Keep the first path segment (repo name) and redirect to its root
+    var segments = location.pathname.split('/').filter(Boolean);
+    var basePath = segments.length > 0 ? '/' + segments[0] + '/' : '/';
+    location.replace(basePath);
   </script>
 </head>
 <body></body>

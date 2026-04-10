@@ -8,8 +8,8 @@ export const msalConfig: Configuration = {
   auth: {
     clientId: CLIENT_ID,
     authority: `https://login.microsoftonline.com/${TENANT_ID}`,
-    redirectUri: window.location.origin + '/Fahrerportal/',
-    postLogoutRedirectUri: window.location.origin + '/Fahrerportal/',
+    redirectUri: window.location.origin + import.meta.env.BASE_URL,
+    postLogoutRedirectUri: window.location.origin + import.meta.env.BASE_URL,
   },
   cache: {
     cacheLocation: 'localStorage',
