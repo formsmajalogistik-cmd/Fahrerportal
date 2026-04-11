@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getFormulareForFahrer } from './_lib/sharepoint.js';
 import { extractBearerToken, verifySessionToken } from './_lib/auth.js';
-import { applyCors, sendJson, sendError } from './_lib/http.js';
+import { handlePreflight, sendJson, sendError } from './_lib/http.js';
 
 /**
  * GET /api/formulare
@@ -15,15 +15,11 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  applyCors(res);
-
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
+  if (handlePreflight(req, res)) return;
 
   if (req.method !== 'GET') {
-    sendError(res, 405, 'Method Not Allowed');
+    res.setHeader('Allow', 'GET, OPTIONS');
+    sendError(res, 405, `Method ${req.method} Not Allowed`);
     return;
   }
 

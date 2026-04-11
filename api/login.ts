@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { findFahrerByBenutzername } from './_lib/sharepoint.js';
 import { signSessionToken, comparePin } from './_lib/auth.js';
-import { applyCors, sendJson, sendError } from './_lib/http.js';
+import { handlePreflight, sendJson, sendError } from './_lib/http.js';
 
 /**
  * POST /api/login
@@ -16,20 +16,29 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  applyCors(res);
-
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
+  // Always answer preflight FIRST so the browser can send the actual request
+  if (handlePreflight(req, res)) return;
 
   if (req.method !== 'POST') {
-    sendError(res, 405, 'Method Not Allowed');
+    res.setHeader('Allow', 'POST, OPTIONS');
+    sendError(res, 405, `Method ${req.method} Not Allowed`);
     return;
   }
 
-  // Vercel auto-parses JSON bodies when Content-Type is application/json
-  const body = (req.body || {}) as { benutzername?: string; pin?: string };
+  // Vercel auto-parses JSON bodies when Content-Type is application/json,
+  // but we also accept a raw string body just in case.
+  let body: { benutzername?: string; pin?: string } = {};
+  if (typeof req.body === 'string') {
+    try {
+      body = JSON.parse(req.body);
+    } catch {
+      sendError(res, 400, 'Ungültiger JSON-Body');
+      return;
+    }
+  } else if (req.body && typeof req.body === 'object') {
+    body = req.body as { benutzername?: string; pin?: string };
+  }
+
   const benutzername = body.benutzername?.trim();
   const pin = body.pin?.trim();
 
