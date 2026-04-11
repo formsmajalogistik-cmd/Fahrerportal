@@ -4,17 +4,18 @@ import { config } from './config.js';
 /**
  * SharePoint access layer for the Fahrerportal.
  *
- * Lists (verified via /api/debug-fields):
- *   Fahrer          - Title=Familienname, Fahrername=Vorname,
- *                     Benutzername0=Login-Username, Benutzername=PIN(!),
- *                     Aktiv=boolean
- *                     (Display- und Internal-Names weichen ab,
- *                      siehe Kommentar bei mapFahrer)
- *   Formulare       - Formularname, Art (Wiederkehrend|Einmalig),
- *                     FilloutURL, Aktiv (interne Namen noch nicht verifiziert)
- *   Fahrerzuweisung - Benutzername, FormularName (interne Namen noch nicht verifiziert)
+ * All three lists were verified via /api/debug-fields. The internal column
+ * names (what Graph returns in item.fields) deviate from the SharePoint
+ * display names in multiple places because columns were renamed after
+ * creation. See the comments above each mapXxx() function for the exact
+ * intern→display mapping.
  *
- * Joining is by Benutzername and FormularName (not by IDs).
+ * Lists:
+ *   Fahrer          - Title, Fahrername, Benutzername0, Benutzername, Aktiv
+ *   Formulare       - Title, Art, FilloutURL (Hyperlink), Aktiv
+ *   Fahrerzuweisung - Title (=Benutzername), Formularname
+ *
+ * Joining is by Benutzername (string) and form name (string), not by IDs.
  */
 
 // ─── Site ID caching ────────────────────────────────────────────────
@@ -121,9 +122,41 @@ export interface FormularRecord {
   aktiv: boolean;
 }
 
+/**
+ * Extract the URL string from a SharePoint Hyperlink/URL column.
+ * These columns come back from Graph as an object `{ Url, Description }`
+ * (not as a plain string), so calling String() directly would produce
+ * "[object Object]".
+ */
+function extractUrl(raw: unknown): string {
+  if (!raw) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'object') {
+    const obj = raw as { Url?: unknown; Description?: unknown };
+    if (typeof obj.Url === 'string' && obj.Url) return obj.Url.trim();
+    if (typeof obj.Description === 'string' && obj.Description) {
+      return obj.Description.trim();
+    }
+  }
+  return '';
+}
+
+/**
+ * Formulare list (verified via /api/debug-fields):
+ *
+ *   internal name  display name    contains
+ *   ─────────────  ──────────────  ──────────────────────────────────
+ *   Title          "Titel"         Formularname (!), KEIN separates Feld
+ *   Art            "Art"           Choice: Wiederkehrend|Einmalig
+ *   FilloutURL     "Fillout URL"   Hyperlink-Objekt { Url, Description }
+ *   Aktiv          "Aktiv"         Boolean
+ *
+ * Es gibt keine separate Formularname-Spalte - SharePoint-Admin hat den
+ * Namen direkt in die Title-Spalte geschrieben.
+ */
 function mapFormular(item: SPItem): FormularRecord {
   const f = item.fields;
-  // Try common variations for the "aktiv" flag (bool, yes/no, string)
+  // Defensive Aktiv detection - booleans can come back as bool/number/string
   const aktivRaw = f.Aktiv;
   const aktiv =
     aktivRaw === true ||
@@ -134,9 +167,9 @@ function mapFormular(item: SPItem): FormularRecord {
 
   return {
     id: item.id,
-    formularname: String(f.Formularname || f.Title || '').trim(),
+    formularname: String(f.Title || '').trim(),
     art: String(f.Art || '').trim(),
-    filloutUrl: String(f.FilloutURL || '').trim(),
+    filloutUrl: extractUrl(f.FilloutURL),
     aktiv,
   };
 }
@@ -144,8 +177,17 @@ function mapFormular(item: SPItem): FormularRecord {
 /**
  * Fetch all active forms assigned to a specific driver.
  *
- * 1. Load Fahrerzuweisung, filter by Benutzername → set of FormularName strings
- * 2. Load Formulare, filter by (Aktiv == true) AND (Formularname in set)
+ * Fahrerzuweisung list (verified via /api/debug-fields):
+ *
+ *   internal name  display name    contains
+ *   ─────────────  ──────────────  ──────────────────────────────
+ *   Title          "Titel"         Benutzername des Fahrers
+ *                                  (LinkTitle zeigt "Benutzername"
+ *                                  als Display, ist aber readonly-Spiegel)
+ *   Formularname   "Formularname"  Name des zugewiesenen Formulars
+ *
+ * 1. Load Fahrerzuweisung, filter by Title (=Benutzername) → set of Formularname strings
+ * 2. Load Formulare, filter by (Aktiv == true) AND (Title in set)
  * 3. Return the matched active forms
  */
 export async function getFormulareForFahrer(
@@ -158,12 +200,14 @@ export async function getFormulareForFahrer(
 
   const benutzernameLower = benutzername.trim().toLowerCase();
 
-  // Collect form names assigned to this driver (case-insensitive match on user)
+  // Collect form names assigned to this driver (case-insensitive match on user).
+  // The "Benutzername" column of the Fahrerzuweisung list is internally named
+  // Title, and the form name is in `Formularname` (lowercase n).
   const assignedFormNames = new Set<string>();
   for (const item of zuweisungen) {
-    const zuBenutzername = String(item.fields.Benutzername || '').trim().toLowerCase();
+    const zuBenutzername = String(item.fields.Title || '').trim().toLowerCase();
     if (zuBenutzername === benutzernameLower) {
-      const formName = String(item.fields.FormularName || '').trim();
+      const formName = String(item.fields.Formularname || '').trim();
       if (formName) assignedFormNames.add(formName.toLowerCase());
     }
   }
