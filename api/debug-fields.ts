@@ -4,8 +4,8 @@ import { config } from './_lib/config.js';
 import { handlePreflight, sendJson, sendError } from './_lib/http.js';
 
 /**
- * GET /api/debug-fields
- * Header: X-Debug-Token: <JWT_SECRET>
+ * GET /api/debug-fields?token=<JWT_SECRET>
+ *   (alternativ: Header X-Debug-Token: <JWT_SECRET>)
  *
  * Diagnostic endpoint that reveals SharePoint internal field names for the
  * Fahrer list, plus a sample item with masked PIN. Use this when login
@@ -81,10 +81,21 @@ export default async function handler(
     return;
   }
 
-  // Gate behind a shared secret so this isn't an open data leak
-  const debugToken = req.headers['x-debug-token'];
+  // Gate behind a shared secret. Accept token via query param so it can
+  // be opened directly in a browser, or via header for tooling.
+  const queryToken =
+    typeof req.query.token === 'string' ? req.query.token : undefined;
+  const headerToken =
+    typeof req.headers['x-debug-token'] === 'string'
+      ? (req.headers['x-debug-token'] as string)
+      : undefined;
+  const debugToken = queryToken ?? headerToken;
   if (!debugToken || debugToken !== config.jwtSecret) {
-    sendError(res, 401, 'X-Debug-Token erforderlich (= JWT_SECRET)');
+    sendError(
+      res,
+      401,
+      'Debug-Token erforderlich: ?token=<JWT_SECRET> oder Header X-Debug-Token'
+    );
     return;
   }
 
