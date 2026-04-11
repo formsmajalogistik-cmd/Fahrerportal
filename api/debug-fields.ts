@@ -99,6 +99,13 @@ export default async function handler(
     return;
   }
 
+  // Optional ?list=ListName — defaults to Fahrer. Use this to inspect
+  // Formulare and Fahrerzuweisung after Fahrer login is fixed.
+  const listName =
+    typeof req.query.list === 'string' && req.query.list.trim()
+      ? req.query.list.trim()
+      : 'Fahrer';
+
   try {
     const client = getGraphClient();
 
@@ -108,7 +115,7 @@ export default async function handler(
     const siteId = site.id as string;
 
     // 1. List all SharePoint lists on the site (so we can confirm the
-    //    Fahrer list actually exists and uses that exact name).
+    //    requested list actually exists and uses that exact name).
     const listsResponse = await client.api(`/sites/${siteId}/lists`).get();
     const lists: SpListSummary[] = (listsResponse.value || []).map((l: SpListSummary) => ({
       id: l.id,
@@ -117,9 +124,9 @@ export default async function handler(
       webUrl: l.webUrl,
     }));
 
-    // 2. Fetch column metadata for the Fahrer list. The "name" property
+    // 2. Fetch column metadata for the requested list. The "name" property
     //    here is the INTERNAL name used as the key inside item.fields.
-    let fahrerColumns: Array<{
+    let columns: Array<{
       name?: string;
       displayName?: string;
       type: string;
@@ -131,10 +138,10 @@ export default async function handler(
     let columnsError: string | null = null;
     try {
       const columnsResponse = await client
-        .api(`/sites/${siteId}/lists/Fahrer/columns`)
+        .api(`/sites/${siteId}/lists/${listName}/columns`)
         .get();
       const rawColumns: SpRawColumn[] = columnsResponse.value || [];
-      fahrerColumns = rawColumns.map((c) => ({
+      columns = rawColumns.map((c) => ({
         name: c.name,
         displayName: c.displayName,
         type: detectType(c),
@@ -148,8 +155,7 @@ export default async function handler(
     }
 
     // 3. Fetch one sample item with all fields, so we can see the actual
-    //    keys returned by Graph (these are what `item.fields.Benutzername`
-    //    needs to match in mapFahrer()).
+    //    keys returned by Graph.
     let sample: {
       id?: string;
       fieldKeys?: string[];
@@ -158,7 +164,7 @@ export default async function handler(
     let itemsError: string | null = null;
     try {
       const itemsResponse = await client
-        .api(`/sites/${siteId}/lists/Fahrer/items`)
+        .api(`/sites/${siteId}/lists/${listName}/items`)
         .expand('fields')
         .top(1)
         .get();
@@ -177,17 +183,16 @@ export default async function handler(
 
     sendJson(res, 200, {
       siteId,
+      listName,
       listsOnSite: lists,
-      fahrer: {
-        columns: fahrerColumns,
-        columnsError,
-        sample,
-        itemsError,
-      },
+      columns,
+      columnsError,
+      sample,
+      itemsError,
       hint:
-        'Look at fahrer.sample.fieldKeys and fahrer.columns[].name. Whatever ' +
-        "the actual internal names are, mapFahrer() in api/_lib/sharepoint.ts " +
-        'must read those exact keys from item.fields.',
+        `Look at sample.fieldKeys and columns[].name. The internal "name" ` +
+        `is what mapXxx() in api/_lib/sharepoint.ts must read from item.fields. ` +
+        `To inspect another list, append ?list=ListName (e.g. ?list=Formulare).`,
     });
   } catch (err) {
     console.error('debug-fields error:', err);

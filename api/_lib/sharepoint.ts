@@ -4,10 +4,15 @@ import { config } from './config.js';
 /**
  * SharePoint access layer for the Fahrerportal.
  *
- * Lists:
- *   Fahrer          - Title (Name), Vorname, Benutzername, PIN
- *   Formulare       - Formularname, Art (Wiederkehrend|Einmalig), FilloutURL, Aktiv
- *   Fahrerzuweisung - Benutzername, FormularName
+ * Lists (verified via /api/debug-fields):
+ *   Fahrer          - Title=Familienname, Fahrername=Vorname,
+ *                     Benutzername0=Login-Username, Benutzername=PIN(!),
+ *                     Aktiv=boolean
+ *                     (Display- und Internal-Names weichen ab,
+ *                      siehe Kommentar bei mapFahrer)
+ *   Formulare       - Formularname, Art (Wiederkehrend|Einmalig),
+ *                     FilloutURL, Aktiv (interne Namen noch nicht verifiziert)
+ *   Fahrerzuweisung - Benutzername, FormularName (interne Namen noch nicht verifiziert)
  *
  * Joining is by Benutzername and FormularName (not by IDs).
  */
@@ -53,18 +58,38 @@ export interface FahrerRecord {
   id: number;
   benutzername: string;
   pin: string;
-  name: string;      // Title in SharePoint
+  name: string;      // Familienname (intern: Title)
   vorname: string;
+  aktiv: boolean;
 }
 
+/**
+ * IMPORTANT: The SharePoint internal column names in the Fahrer list do NOT
+ * match the display names. Columns were renamed after creation, which is
+ * irreversible at the internal-name level. Verified via /api/debug-fields:
+ *
+ *   internal name    display name    contains
+ *   ───────────────  ──────────────  ────────────────────────────────────
+ *   Title            "Titel"         Familienname
+ *   Fahrername       "Vorname"       Vorname
+ *   Benutzername0    "Benutzername"  Login-Username (added after rename → "0" suffix)
+ *   Benutzername     "PIN"           4-stelliger PIN (originally created as
+ *                                    "Benutzername", later renamed to "PIN";
+ *                                    internal name stuck)
+ *   Aktiv            "Aktiv"         nur aktive Fahrer dürfen sich anmelden
+ *
+ * If the SharePoint list is ever rebuilt, give the columns clean names from
+ * the start so this mapping can be simplified.
+ */
 function mapFahrer(item: SPItem): FahrerRecord {
   const f = item.fields;
   return {
     id: item.id,
-    benutzername: String(f.Benutzername || '').trim(),
-    pin: String(f.PIN || '').trim(),
     name: String(f.Title || '').trim(),
-    vorname: String(f.Vorname || '').trim(),
+    vorname: String(f.Fahrername || '').trim(),
+    benutzername: String(f.Benutzername0 || '').trim(),
+    pin: String(f.Benutzername || '').trim(),
+    aktiv: f.Aktiv === true,
   };
 }
 
@@ -73,7 +98,7 @@ function mapFahrer(item: SPItem): FahrerRecord {
  *
  * Does an in-memory filter instead of a server-side $filter to avoid
  * SharePoint indexing requirements. Fahrer lists are expected to be small
- * (< 999 drivers) so this is fine.
+ * (< 999 drivers) so this is fine. Inactive drivers are filtered out.
  */
 export async function findFahrerByBenutzername(
   benutzername: string
@@ -82,7 +107,7 @@ export async function findFahrerByBenutzername(
   const target = benutzername.trim().toLowerCase();
   const found = items
     .map(mapFahrer)
-    .find((f) => f.benutzername.toLowerCase() === target);
+    .find((f) => f.aktiv && f.benutzername.toLowerCase() === target);
   return found || null;
 }
 
