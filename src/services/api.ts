@@ -1,11 +1,11 @@
 import type { LoginResponse } from '../types/auth';
-import type { Formular, OffenesFormular } from '../types/sharepoint';
+import type { Formular } from '../types/sharepoint';
 
 /**
  * Base URL for the backend API.
- * In dev this points to the local Azure Functions host;
- * in production it's a relative "/api" path on the same origin
- * (rewrite/proxy handled by host).
+ * On Vercel the functions live under /api on the same origin,
+ * so the default relative base is fine. Override with VITE_API_BASE_URL
+ * during local development if needed.
  */
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || '/api';
@@ -59,11 +59,6 @@ export async function login(benutzername: string, pin: string): Promise<LoginRes
 /** GET /api/formulare — fetch forms assigned to the current driver */
 export async function fetchFormulare(token: string): Promise<Formular[]> {
   return request<Formular[]>('/formulare', { token });
-}
-
-/** GET /api/offene — fetch open forms for the current driver */
-export async function fetchOffeneFormulare(token: string): Promise<OffenesFormular[]> {
-  return request<OffenesFormular[]>('/offene', { token });
 }
 
 export { ApiError };

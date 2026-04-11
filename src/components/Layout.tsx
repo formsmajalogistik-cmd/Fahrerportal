@@ -22,7 +22,6 @@ export function Layout({ children }: LayoutProps) {
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: '📊' },
     { path: '/formulare', label: 'Meine Formulare', icon: '📋' },
-    { path: '/offen', label: 'Offene Formulare', icon: '📂' },
   ];
 
   const displayName = user ? `${user.vorname} ${user.name}`.trim() : '';

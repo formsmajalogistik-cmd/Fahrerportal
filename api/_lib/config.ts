@@ -1,7 +1,6 @@
 /**
- * Runtime configuration loaded from Azure Function App Settings.
- * In local dev these come from local.settings.json; in production
- * from Function App configuration in Azure Portal.
+ * Runtime configuration loaded from Vercel environment variables.
+ * Set these in the Vercel dashboard under Project Settings → Environment Variables.
  */
 
 function required(name: string): string {
@@ -17,7 +16,11 @@ export const config = {
   clientId: required('AZURE_CLIENT_ID'),
   clientSecret: required('AZURE_CLIENT_SECRET'),
   sharepointHostname: required('SHAREPOINT_HOSTNAME'),
-  sharepointSitePath: required('SHAREPOINT_SITE_PATH'),
+  // Normalize site path - accept with or without leading slash
+  sharepointSitePath: (() => {
+    const raw = required('SHAREPOINT_SITE_PATH');
+    return raw.startsWith('/') ? raw : '/' + raw;
+  })(),
   jwtSecret: required('JWT_SECRET'),
   jwtExpiry: process.env.JWT_EXPIRY || '8h',
 };

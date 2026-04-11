@@ -1,16 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { fetchFormulare, fetchOffeneFormulare } from '../services/api';
+import { fetchFormulare } from '../services/api';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
-import type { Formular, OffenesFormular } from '../types/sharepoint';
+import type { Formular } from '../types/sharepoint';
 import './DashboardPage.css';
 
 export function DashboardPage() {
   const { token, user } = useAuth();
   const [formulare, setFormulare] = useState<Formular[]>([]);
-  const [offene, setOffene] = useState<OffenesFormular[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -20,12 +19,7 @@ export function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [f, o] = await Promise.all([
-        fetchFormulare(token),
-        fetchOffeneFormulare(token),
-      ]);
-      setFormulare(f);
-      setOffene(o);
+      setFormulare(await fetchFormulare(token));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Fehler beim Laden');
     } finally {
@@ -41,17 +35,14 @@ export function DashboardPage() {
   if (loading) return <LoadingSpinner text="Dashboard wird geladen…" />;
   if (error) return <ErrorMessage message={error} onRetry={loadData} />;
 
-  const zugewiesen = formulare.filter((f) => f.status === 'Zugewiesen').length;
-  const inBearbeitung = formulare.filter((f) => f.status === 'In Bearbeitung').length;
-  const ueberfaellig = formulare.filter((f) => f.status === 'Überfällig').length;
-  const abgeschlossen = formulare.filter((f) => f.status === 'Abgeschlossen').length;
+  const gesamt = formulare.length;
+  const wiederkehrend = formulare.filter((f) => f.art === 'Wiederkehrend').length;
+  const einmalig = formulare.filter((f) => f.art === 'Einmalig').length;
 
   const cards = [
-    { label: 'Zugewiesen', value: zugewiesen, color: '#2196f3', path: '/formulare' },
-    { label: 'In Bearbeitung', value: inBearbeitung, color: '#ff9800', path: '/formulare' },
-    { label: 'Überfällig', value: ueberfaellig, color: '#f44336', path: '/formulare' },
-    { label: 'Abgeschlossen', value: abgeschlossen, color: '#4caf50', path: '/formulare' },
-    { label: 'Offene Formulare', value: offene.length, color: '#9c27b0', path: '/offen' },
+    { label: 'Formulare gesamt', value: gesamt, color: '#2196f3', path: '/formulare' },
+    { label: 'Wiederkehrend', value: wiederkehrend, color: '#4caf50', path: '/formulare' },
+    { label: 'Einmalig', value: einmalig, color: '#ff9800', path: '/formulare' },
   ];
 
   return (

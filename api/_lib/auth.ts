@@ -3,7 +3,7 @@ import { config } from './config.js';
 
 /**
  * JWT payload representing an authenticated driver session.
- * Issued by /api/login, verified by other endpoints.
+ * Issued by /api/login, verified by protected endpoints.
  */
 export interface SessionToken {
   sub: number;          // Fahrer list item ID
@@ -12,14 +12,12 @@ export interface SessionToken {
   vorname: string;
 }
 
-/** Create a signed JWT for the given driver */
 export function signSessionToken(payload: SessionToken): string {
   return jwt.sign(payload, config.jwtSecret, {
     expiresIn: config.jwtExpiry as jwt.SignOptions['expiresIn'],
   });
 }
 
-/** Verify a Bearer token and return the decoded session, or null if invalid */
 export function verifySessionToken(token: string): SessionToken | null {
   try {
     const decoded = jwt.verify(token, config.jwtSecret) as jwt.JwtPayload & SessionToken;
@@ -34,7 +32,6 @@ export function verifySessionToken(token: string): SessionToken | null {
   }
 }
 
-/** Extract Bearer token from an Authorization header */
 export function extractBearerToken(authHeader: string | null | undefined): string | null {
   if (!authHeader) return null;
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -45,8 +42,8 @@ export function extractBearerToken(authHeader: string | null | undefined): strin
  * Constant-time PIN comparison to prevent timing attacks.
  *
  * NOTE: In a real deployment, PINs should be hashed (bcrypt/argon2) and
- * never stored in plain text in SharePoint. For this prototype we compare
- * the plain PIN from SharePoint to the one supplied by the user.
+ * never stored in plain text in SharePoint. This prototype compares the
+ * plain PIN column directly.
  */
 export function comparePin(a: string, b: string): boolean {
   if (a.length !== b.length) return false;

@@ -33,32 +33,16 @@ export function FormularePage() {
 
   const filtered = formulare.filter(
     (f) =>
-      f.titel.toLowerCase().includes(search.toLowerCase()) ||
-      f.kategorie.toLowerCase().includes(search.toLowerCase())
+      f.formularname.toLowerCase().includes(search.toLowerCase()) ||
+      f.art.toLowerCase().includes(search.toLowerCase())
   );
 
-  const statusClass = (status: string) => {
-    switch (status) {
-      case 'Abgeschlossen': return 'badge badge-success';
-      case 'In Bearbeitung': return 'badge badge-info';
-      case 'Zugewiesen': return 'badge badge-warning';
-      case 'Überfällig': return 'badge badge-danger';
+  const artClass = (art: string) => {
+    switch (art) {
+      case 'Wiederkehrend': return 'badge badge-info';
+      case 'Einmalig': return 'badge badge-warning';
       default: return 'badge';
     }
-  };
-
-  const prioClass = (prio: string) => {
-    switch (prio) {
-      case 'Hoch': return 'badge badge-danger';
-      case 'Mittel': return 'badge badge-warning';
-      case 'Niedrig': return 'badge badge-muted';
-      default: return 'badge';
-    }
-  };
-
-  const formatDate = (d?: string) => {
-    if (!d) return '-';
-    try { return new Date(d).toLocaleDateString('de-DE'); } catch { return d; }
   };
 
   if (loading) return <LoadingSpinner text="Formulare werden geladen…" />;
@@ -85,31 +69,38 @@ export function FormularePage() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Titel</th>
-              <th>Kategorie</th>
-              <th>Fällig am</th>
-              <th>Priorität</th>
-              <th>Status</th>
+              <th>Formular</th>
+              <th>Art</th>
+              <th>Aktion</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5} className="empty-row">
+                <td colSpan={3} className="empty-row">
                   Keine Formulare gefunden
                 </td>
               </tr>
             ) : (
               filtered.map((f) => (
                 <tr key={f.id}>
-                  <td className="font-medium">{f.titel}</td>
-                  <td>{f.kategorie}</td>
-                  <td>{formatDate(f.faelligkeitsDatum)}</td>
+                  <td className="font-medium">{f.formularname}</td>
                   <td>
-                    <span className={prioClass(f.prioritaet)}>{f.prioritaet}</span>
+                    <span className={artClass(f.art)}>{f.art}</span>
                   </td>
                   <td>
-                    <span className={statusClass(f.status)}>{f.status}</span>
+                    {f.filloutUrl ? (
+                      <a
+                        className="btn-primary"
+                        href={f.filloutUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Öffnen
+                      </a>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
                   </td>
                 </tr>
               ))

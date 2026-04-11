@@ -6,16 +6,15 @@ import { config } from './config.js';
 /**
  * Microsoft Graph client authenticated via Client Credentials flow.
  *
- * This uses the application's own identity (not a user's) - the Azure AD
- * App Registration must have the `Sites.ReadWrite.All` APPLICATION permission
- * (not delegated) granted with admin consent.
- *
- * The drivers using the frontend have no Microsoft account involvement -
- * the backend acts as their proxy.
+ * Uses the application's own identity - the drivers never see Microsoft.
+ * The Azure AD App Registration must have `Sites.Read.All` (or higher)
+ * APPLICATION permission (not delegated) granted with admin consent.
  */
 
 const scopes = ['https://graph.microsoft.com/.default'];
 
+// Vercel serverless instances may be reused across invocations (warm start),
+// so caching the client at module level is a small perf win.
 let cachedClient: Client | null = null;
 
 export function getGraphClient(): Client {
