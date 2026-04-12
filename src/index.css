@@ -1,3 +1,18 @@
+/* ─── Maja Logistik Fahrerportal - Global Styles ────────────
+ *
+ * Color system (Maja Logistik brand):
+ *   --ml-primary     #1B3A5C   navy, used for text, headers, CTAs
+ *   --ml-accent      #2C5F8A   lighter navy, for links, hover, badges
+ *   --ml-bg          #E8F0F8   light blue app background
+ *   --ml-surface     #FFFFFF   cards, inputs, panels
+ *   --ml-border      #D7E1EC   subtle borders between panels
+ *   --ml-text        #1B3A5C   primary text (same as primary)
+ *   --ml-text-muted  #6B7E95   secondary / label text
+ *   --ml-success     #2E7D5B
+ *   --ml-warning     #B46B1F
+ *   --ml-danger      #B63B3B
+ * ─────────────────────────────────────────────────────────── */
+
 *,
 *::before,
 *::after {
@@ -5,11 +20,41 @@
 }
 
 :root {
-  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* Palette */
+  --ml-primary: #1B3A5C;
+  --ml-primary-hover: #16304d;
+  --ml-accent: #2C5F8A;
+  --ml-accent-hover: #234d70;
+  --ml-bg: #E8F0F8;
+  --ml-surface: #FFFFFF;
+  --ml-border: #D7E1EC;
+  --ml-text: #1B3A5C;
+  --ml-text-muted: #6B7E95;
+  --ml-text-subtle: #8FA1B6;
+
+  --ml-success-bg: #E3F2E8;
+  --ml-success: #2E7D5B;
+  --ml-warning-bg: #FBEEDC;
+  --ml-warning: #B46B1F;
+  --ml-danger-bg: #FBE4E4;
+  --ml-danger: #B63B3B;
+  --ml-info-bg: #DFEBF7;
+  --ml-info: #2C5F8A;
+
+  /* Layout */
+  --ml-radius: 10px;
+  --ml-radius-lg: 14px;
+  --ml-shadow-sm: 0 1px 3px rgba(27, 58, 92, 0.06);
+  --ml-shadow: 0 4px 14px rgba(27, 58, 92, 0.08);
+  --ml-shadow-lg: 0 10px 32px rgba(27, 58, 92, 0.14);
+  --ml-header-height: 64px;
+
+  /* Typography */
+  font-family: 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  color: #333;
-  background: #f0f2f5;
+  color: var(--ml-text);
+  background: var(--ml-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -17,6 +62,8 @@
 body {
   margin: 0;
   padding: 0;
+  background: var(--ml-bg);
+  color: var(--ml-text);
 }
 
 #root {
@@ -26,14 +73,18 @@ body {
 h1, h2, h3, h4, h5, h6 {
   margin: 0;
   font-weight: 600;
+  color: var(--ml-text);
+  letter-spacing: -0.01em;
 }
 
 a {
-  color: #1a237e;
+  color: var(--ml-accent);
   text-decoration: none;
+  transition: color 0.15s;
 }
 
 a:hover {
+  color: var(--ml-primary);
   text-decoration: underline;
 }
 
@@ -43,12 +94,99 @@ button {
 
 input, select, textarea {
   font-family: inherit;
+  color: var(--ml-text);
 }
 
-/* Scrollbar styling */
+/* ─── Section header with accent bar ────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.section-header::before {
+  content: '';
+  display: block;
+  width: 4px;
+  height: 1.4rem;
+  background: var(--ml-accent);
+  border-radius: 2px;
+}
+
+.section-header h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ml-primary);
+  margin: 0;
+}
+
+.section-header .section-sub {
+  font-size: 0.8rem;
+  color: var(--ml-text-muted);
+  margin-left: auto;
+}
+
+/* ─── Buttons ───────────────────────────────────────────── */
+.btn-primary {
+  background: var(--ml-primary);
+  color: #fff;
+  border: none;
+  padding: 0.55rem 1.1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.05s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  text-decoration: none;
+  font-family: inherit;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--ml-primary-hover);
+  text-decoration: none;
+  color: #fff;
+}
+
+.btn-primary:active {
+  transform: translateY(1px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ml-primary);
+  border: 1px solid var(--ml-border);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-ghost:hover {
+  background: var(--ml-bg);
+  border-color: var(--ml-accent);
+}
+
+.text-muted { color: var(--ml-text-muted); }
+
+/* ─── Scrollbar ─────────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -56,10 +194,10 @@ input, select, textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 3px;
+  background: #c4d2e2;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #999;
+  background: var(--ml-accent);
 }

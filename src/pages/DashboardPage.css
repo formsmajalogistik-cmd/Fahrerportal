@@ -2,63 +2,181 @@
   animation: fadeIn 0.3s ease;
 }
 
-.page-title {
-  margin: 0 0 0.25rem;
-  font-size: 1.5rem;
-  color: #1a237e;
+.dashboard-greeting {
+  margin-bottom: 1.5rem;
 }
 
-.page-subtitle {
-  margin: 0 0 1.5rem;
-  color: #666;
+.greeting-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.6rem;
+  color: var(--ml-primary);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.greeting-sub {
+  margin: 0;
+  color: var(--ml-text-muted);
   font-size: 0.9rem;
 }
 
+/* ─── Stats grid ─────────────────────────────────────────── */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
 }
 
 .stat-card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 1.5rem;
-  border: none;
-  border-top: 4px solid #ccc;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  background: var(--ml-surface);
+  border-radius: var(--ml-radius);
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--ml-border);
+  box-shadow: var(--ml-shadow-sm);
   cursor: pointer;
-  text-align: center;
-  transition: transform 0.15s, box-shadow 0.15s;
+  text-align: left;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
   width: 100%;
   font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: var(--ml-text);
 }
 
 .stat-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--ml-shadow);
+  border-color: var(--ml-accent);
+}
+
+.stat-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.stat-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .stat-value {
-  font-size: 2.5rem;
+  font-size: 1.8rem;
   font-weight: 700;
   line-height: 1;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
+  color: var(--ml-primary);
 }
 
 .stat-label {
-  font-size: 0.9rem;
-  color: #424242;
+  font-size: 0.8rem;
+  color: var(--ml-text-muted);
   font-weight: 500;
 }
 
-.stat-sub {
-  font-size: 0.75rem;
-  color: #999;
-  margin-top: 0.25rem;
+/* ─── Offene Formulare list ──────────────────────────────── */
+.empty-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--ml-surface);
+  border: 1px dashed var(--ml-border);
+  border-radius: var(--ml-radius);
+  padding: 1.5rem;
+  color: var(--ml-text-muted);
+}
+
+.empty-card svg {
+  color: var(--ml-success);
+  flex-shrink: 0;
+}
+
+.empty-title {
+  font-weight: 600;
+  color: var(--ml-primary);
+  font-size: 0.95rem;
+}
+
+.empty-sub {
+  font-size: 0.8rem;
+  color: var(--ml-text-muted);
+  margin-top: 0.15rem;
+}
+
+.offene-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.offene-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border);
+  border-left: 4px solid var(--ml-warning);
+  border-radius: var(--ml-radius);
+  padding: 0.85rem 1rem;
+  box-shadow: var(--ml-shadow-sm);
+  transition: box-shadow 0.15s, transform 0.1s;
+}
+
+.offene-item:hover {
+  box-shadow: var(--ml-shadow);
+  transform: translateY(-1px);
+}
+
+.offene-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.offene-name {
+  font-weight: 600;
+  color: var(--ml-primary);
+  font-size: 0.95rem;
+  margin-bottom: 0.2rem;
+}
+
+.offene-sub {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.78rem;
+  color: var(--ml-text-muted);
+  flex-wrap: wrap;
+}
+
+.offene-fahrzeug,
+.offene-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
 }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .offene-item {
+    flex-wrap: wrap;
+  }
+  .offene-item .btn-primary {
+    width: 100%;
+    justify-content: center;
+  }
 }

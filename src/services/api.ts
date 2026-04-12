@@ -1,5 +1,5 @@
 import type { LoginResponse } from '../types/auth';
-import type { Formular } from '../types/sharepoint';
+import type { Formular, OffenesFormular } from '../types/sharepoint';
 
 /**
  * Base URL for the backend API.
@@ -59,6 +59,42 @@ export async function login(benutzername: string, pin: string): Promise<LoginRes
 /** GET /api/formulare — fetch forms assigned to the current driver */
 export async function fetchFormulare(token: string): Promise<Formular[]> {
   return request<Formular[]>('/formulare', { token });
+}
+
+/** GET /api/offene — fetch open form instances of the current driver */
+export async function fetchOffeneFormulare(
+  token: string,
+  status: 'Offen' | 'Abgeschlossen' = 'Offen'
+): Promise<OffenesFormular[]> {
+  return request<OffenesFormular[]>(
+    `/offene?status=${encodeURIComponent(status)}`,
+    { token }
+  );
+}
+
+/** POST /api/offene — create a new open form entry when a driver starts filling one out */
+export async function createOffenesFormular(
+  token: string,
+  payload: { formularname: string; fahrzeug: string }
+): Promise<OffenesFormular> {
+  return request<OffenesFormular>('/offene', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** PATCH /api/offene?id=<id> — update status of an open form entry */
+export async function updateOffenesFormularStatus(
+  token: string,
+  id: number,
+  status: 'Offen' | 'Abgeschlossen'
+): Promise<OffenesFormular> {
+  return request<OffenesFormular>(`/offene?id=${encodeURIComponent(id)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
 }
 
 export { ApiError };

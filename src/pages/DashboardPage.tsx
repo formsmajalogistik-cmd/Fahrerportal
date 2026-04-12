@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { fetchFormulare } from '../services/api';
+import { fetchFormulare, fetchOffeneFormulare } from '../services/api';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
-import type { Formular } from '../types/sharepoint';
+import { Icon } from '../components/Icon';
+import type { Formular, OffenesFormular } from '../types/sharepoint';
 import './DashboardPage.css';
 
 export function DashboardPage() {
   const { token, user } = useAuth();
   const [formulare, setFormulare] = useState<Formular[]>([]);
+  const [offene, setOffene] = useState<OffenesFormular[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -19,7 +21,12 @@ export function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      setFormulare(await fetchFormulare(token));
+      const [forms, open] = await Promise.all([
+        fetchFormulare(token),
+        fetchOffeneFormulare(token, 'Offen'),
+      ]);
+      setFormulare(forms);
+      setOffene(open);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Fehler beim Laden');
     } finally {
@@ -40,30 +47,139 @@ export function DashboardPage() {
   const einmalig = formulare.filter((f) => f.art === 'Einmalig').length;
 
   const cards = [
-    { label: 'Formulare gesamt', value: gesamt, color: '#2196f3', path: '/formulare' },
-    { label: 'Wiederkehrend', value: wiederkehrend, color: '#4caf50', path: '/formulare' },
-    { label: 'Einmalig', value: einmalig, color: '#ff9800', path: '/formulare' },
+    {
+      label: 'Formulare gesamt',
+      value: gesamt,
+      letter: 'F',
+      color: 'var(--ml-primary)',
+      path: '/formulare',
+    },
+    {
+      label: 'Wiederkehrend',
+      value: wiederkehrend,
+      letter: 'W',
+      color: 'var(--ml-accent)',
+      path: '/formulare',
+    },
+    {
+      label: 'Einmalig',
+      value: einmalig,
+      letter: 'E',
+      color: 'var(--ml-accent)',
+      path: '/formulare',
+    },
+    {
+      label: 'Offen',
+      value: offene.length,
+      letter: 'O',
+      color: 'var(--ml-warning)',
+      path: '/dashboard',
+    },
   ];
+
+  const handleFortsetzen = (entry: OffenesFormular) => {
+    const form = formulare.find(
+      (f) => f.formularname.toLowerCase() === entry.formularname.toLowerCase()
+    );
+    if (!form || !form.filloutUrl) {
+      alert('Das zugehörige Formular ist nicht mehr aktiv oder wurde entfernt.');
+      return;
+    }
+    navigate('/formular', {
+      state: {
+        filloutUrl: form.filloutUrl,
+        formularname: form.formularname,
+        offenesId: entry.id,
+        fahrzeug: entry.fahrzeug,
+      },
+    });
+  };
+
+  const formatTimestamp = (iso: string): string => {
+    if (!iso) return '–';
+    try {
+      return new Date(iso).toLocaleString('de-DE', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+    } catch {
+      return iso;
+    }
+  };
 
   return (
     <div className="dashboard">
-      <h1 className="page-title">Willkommen{user ? `, ${user.vorname}` : ''}</h1>
-      <p className="page-subtitle">Übersicht deiner Aufgaben</p>
+      <div className="dashboard-greeting">
+        <h1 className="greeting-title">
+          Willkommen{user ? `, ${user.vorname}` : ''}
+        </h1>
+        <p className="greeting-sub">Übersicht deiner Aufgaben und offenen Formulare</p>
+      </div>
+
+      <div className="section-header">
+        <h2>Überblick</h2>
+      </div>
       <div className="stats-grid">
         {cards.map((card) => (
           <button
             key={card.label}
             className="stat-card"
             onClick={() => navigate(card.path)}
-            style={{ borderTopColor: card.color }}
           >
-            <div className="stat-value" style={{ color: card.color }}>
-              {card.value}
+            <div className="stat-icon" style={{ background: card.color }}>
+              {card.letter}
             </div>
-            <div className="stat-label">{card.label}</div>
+            <div className="stat-text">
+              <div className="stat-value">{card.value}</div>
+              <div className="stat-label">{card.label}</div>
+            </div>
           </button>
         ))}
       </div>
+
+      <div className="section-header" style={{ marginTop: '2rem' }}>
+        <h2>Offene Formulare</h2>
+        <span className="section-sub">{offene.length} offen</span>
+      </div>
+
+      {offene.length === 0 ? (
+        <div className="empty-card">
+          <Icon name="check" size={22} />
+          <div>
+            <div className="empty-title">Keine offenen Formulare</div>
+            <div className="empty-sub">
+              Starte ein Formular über „Meine Formulare" um es hier fortzusetzen.
+            </div>
+          </div>
+        </div>
+      ) : (
+        <ul className="offene-list">
+          {offene.map((entry) => (
+            <li key={entry.id} className="offene-item">
+              <div className="offene-meta">
+                <div className="offene-name">{entry.formularname}</div>
+                <div className="offene-sub">
+                  <span className="offene-fahrzeug">
+                    <Icon name="truck" size={14} />
+                    {entry.fahrzeug || 'Kein Fahrzeug'}
+                  </span>
+                  <span className="offene-time">
+                    <Icon name="clock" size={14} />
+                    {formatTimestamp(entry.begonnen)}
+                  </span>
+                </div>
+              </div>
+              <button
+                className="btn-primary"
+                onClick={() => handleFortsetzen(entry)}
+              >
+                <span>Fortsetzen</span>
+                <Icon name="arrow-right" size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

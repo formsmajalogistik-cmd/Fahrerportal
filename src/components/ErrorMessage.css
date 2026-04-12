@@ -3,16 +3,16 @@
   flex-direction: column;
   align-items: center;
   padding: 2rem;
-  background: #fff3f3;
-  border: 1px solid #ffcdd2;
-  border-radius: 8px;
+  background: var(--ml-danger-bg);
+  border: 1px solid rgba(182, 59, 59, 0.25);
+  border-radius: var(--ml-radius);
   margin: 1rem 0;
 }
 
 .error-icon {
   width: 48px;
   height: 48px;
-  background: #ef5350;
+  background: var(--ml-danger);
   color: #fff;
   border-radius: 50%;
   display: flex;
@@ -24,21 +24,24 @@
 }
 
 .error-text {
-  color: #c62828;
+  color: var(--ml-danger);
   margin: 0 0 1rem;
   text-align: center;
 }
 
 .btn-retry {
-  background: #1a237e;
+  background: var(--ml-primary);
   color: #fff;
   border: none;
-  padding: 0.5rem 1.25rem;
-  border-radius: 4px;
+  padding: 0.6rem 1.25rem;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  transition: background 0.15s;
 }
 
 .btn-retry:hover {
-  background: #283593;
+  background: var(--ml-primary-hover);
 }

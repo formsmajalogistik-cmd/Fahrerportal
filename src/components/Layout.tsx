@@ -2,10 +2,19 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Logo } from './Logo';
+import { Icon } from './Icon';
+import type { IconName } from './Icon';
 import './Layout.css';
 
 interface LayoutProps {
   children: ReactNode;
+}
+
+interface NavItem {
+  path: string;
+  label: string;
+  icon: IconName;
 }
 
 export function Layout({ children }: LayoutProps) {
@@ -19,9 +28,9 @@ export function Layout({ children }: LayoutProps) {
     navigate('/');
   };
 
-  const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: '📊' },
-    { path: '/formulare', label: 'Meine Formulare', icon: '📋' },
+  const navItems: NavItem[] = [
+    { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
+    { path: '/formulare', label: 'Meine Formulare', icon: 'document' },
   ];
 
   const displayName = user ? `${user.vorname} ${user.name}`.trim() : '';
@@ -30,19 +39,27 @@ export function Layout({ children }: LayoutProps) {
     <div className="layout">
       <header className="header">
         <div className="header-left">
-          <button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)}>
-            ☰
+          <button
+            className="menu-toggle"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Menü umschalten"
+          >
+            <Icon name="menu" size={22} />
           </button>
-          <Link to="/dashboard" className="logo">
-            <span className="logo-text">Maja Logistik</span>
-            <span className="logo-sub">Fahrerportal</span>
+          <Link to="/dashboard" className="logo-link">
+            <Logo variant="light" size={36} />
           </Link>
         </div>
         {user && (
           <div className="header-right">
             <span className="user-name">{displayName}</span>
-            <button className="btn-logout" onClick={handleLogout}>
-              Abmelden
+            <button
+              className="btn-logout"
+              onClick={handleLogout}
+              aria-label="Abmelden"
+            >
+              <Icon name="logout" size={16} />
+              <span>Abmelden</span>
             </button>
           </div>
         )}
@@ -51,18 +68,26 @@ export function Layout({ children }: LayoutProps) {
       <div className="main-wrapper">
         <nav className={`sidebar ${menuOpen ? 'open' : ''}`}>
           <ul className="nav-list">
-            {navItems.map((item) => (
-              <li key={item.path}>
-                <Link
-                  to={item.path}
-                  className={`nav-link ${location.pathname === item.path ? 'active' : ''}`}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  <span className="nav-icon">{item.icon}</span>
-                  <span className="nav-label">{item.label}</span>
-                </Link>
-              </li>
-            ))}
+            {navItems.map((item) => {
+              const isActive =
+                location.pathname === item.path ||
+                (item.path === '/formulare' &&
+                  location.pathname.startsWith('/formular'));
+              return (
+                <li key={item.path}>
+                  <Link
+                    to={item.path}
+                    className={`nav-link ${isActive ? 'active' : ''}`}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <span className="nav-icon">
+                      <Icon name={item.icon} size={18} />
+                    </span>
+                    <span className="nav-label">{item.label}</span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </nav>
 

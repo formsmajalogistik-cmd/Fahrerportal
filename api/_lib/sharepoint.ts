@@ -37,12 +37,21 @@ export interface SPItem {
   fields: Record<string, unknown>;
 }
 
+/**
+ * Encode a list name for use in a Graph URL segment. Some list names
+ * contain spaces (e.g. "Offene Formulare"), which must be percent-encoded
+ * or Graph returns a 400.
+ */
+function encodeList(listName: string): string {
+  return encodeURIComponent(listName);
+}
+
 async function getListItems(listName: string): Promise<SPItem[]> {
   const client = getGraphClient();
   const siteId = await getSiteId();
 
   const response = await client
-    .api(`/sites/${siteId}/lists/${listName}/items`)
+    .api(`/sites/${siteId}/lists/${encodeList(listName)}/items`)
     .expand('fields')
     .top(999)
     .get();
@@ -51,6 +60,36 @@ async function getListItems(listName: string): Promise<SPItem[]> {
     id: parseInt(item.id, 10),
     fields: item.fields ?? {},
   }));
+}
+
+async function createListItem(
+  listName: string,
+  fields: Record<string, unknown>
+): Promise<SPItem> {
+  const client = getGraphClient();
+  const siteId = await getSiteId();
+
+  const response = await client
+    .api(`/sites/${siteId}/lists/${encodeList(listName)}/items`)
+    .post({ fields });
+
+  return {
+    id: parseInt(response.id, 10),
+    fields: response.fields ?? fields,
+  };
+}
+
+async function updateListItemFields(
+  listName: string,
+  itemId: number,
+  fields: Record<string, unknown>
+): Promise<void> {
+  const client = getGraphClient();
+  const siteId = await getSiteId();
+
+  await client
+    .api(`/sites/${siteId}/lists/${encodeList(listName)}/items/${itemId}/fields`)
+    .patch(fields);
 }
 
 // ─── Fahrer (Drivers) ───────────────────────────────────────────────
@@ -218,4 +257,139 @@ export async function getFormulareForFahrer(
   return formulare
     .map(mapFormular)
     .filter((f) => f.aktiv && assignedFormNames.has(f.formularname.toLowerCase()));
+}
+
+// ─── Offene Formulare (open/in-progress form instances) ────────────
+
+export type OffenesFormularStatus = 'Offen' | 'Abgeschlossen' | string;
+
+export interface OffenesFormularRecord {
+  id: number;
+  benutzername: string;
+  formularname: string;
+  fahrzeug: string;
+  begonnen: string; // ISO timestamp
+  status: OffenesFormularStatus;
+}
+
+/**
+ * "Offene Formulare" list (name contains a space — URL-encoded by encodeList).
+ *
+ * Expected fields (best-guess — verify via /api/debug-fields?list=Offene%20Formulare
+ * after first deploy, then adjust these mappings if SharePoint returns different
+ * internal names):
+ *
+ *   internal name    contains
+ *   ───────────────  ────────────────────────────────────────
+ *   Title            Benutzername des Fahrers (default Title)
+ *   FormularName     Name des zugewiesenen Formulars
+ *   Fahrzeug         Fahrzeugkennzeichen / Nummer
+ *   Begonnen         DateTime, wann Fahrer das Formular gestartet hat
+ *   Status           Choice: Offen | Abgeschlossen
+ *
+ * If the SharePoint admin used different internal names (e.g. "Benutzername"
+ * as a separate column instead of re-using Title), the mapping below and the
+ * write-side field keys must be updated after checking debug-fields.
+ */
+const OFFENE_LIST = 'Offene Formulare';
+
+function mapOffenesFormular(item: SPItem): OffenesFormularRecord {
+  const f = item.fields;
+  // Read defensively: accept either a dedicated Benutzername column or Title.
+  const benutzername =
+    String((f.Benutzername as unknown) ?? '').trim() ||
+    String((f.Title as unknown) ?? '').trim();
+
+  const formularname =
+    String((f.FormularName as unknown) ?? '').trim() ||
+    String((f.Formularname as unknown) ?? '').trim();
+
+  const fahrzeug = String((f.Fahrzeug as unknown) ?? '').trim();
+  const begonnen = String((f.Begonnen as unknown) ?? '').trim();
+  const status = String((f.Status as unknown) ?? 'Offen').trim();
+
+  return {
+    id: item.id,
+    benutzername,
+    formularname,
+    fahrzeug,
+    begonnen,
+    status,
+  };
+}
+
+/**
+ * List all entries for a driver in the Offene Formulare list.
+ * Filters in-memory (no $filter) so we don't depend on column indexing.
+ * Pass statusFilter to restrict to e.g. only 'Offen' entries.
+ */
+export async function getOffeneFormulareForFahrer(
+  benutzername: string,
+  statusFilter?: OffenesFormularStatus
+): Promise<OffenesFormularRecord[]> {
+  const items = await getListItems(OFFENE_LIST);
+  const target = benutzername.trim().toLowerCase();
+
+  return items
+    .map(mapOffenesFormular)
+    .filter((e) => e.benutzername.toLowerCase() === target)
+    .filter((e) => (statusFilter ? e.status === statusFilter : true))
+    .sort((a, b) => (a.begonnen < b.begonnen ? 1 : -1));
+}
+
+export interface CreateOffenesFormularInput {
+  benutzername: string;
+  formularname: string;
+  fahrzeug: string;
+}
+
+/**
+ * Create a new "Offene Formulare" entry when a driver starts filling out
+ * a form. Status defaults to 'Offen' and Begonnen to the current ISO timestamp.
+ *
+ * We populate BOTH `Title` and `Benutzername` so that regardless of which
+ * internal column holds the driver name, the data is there. SharePoint
+ * silently ignores unknown field keys, so writing an extra one is safe.
+ */
+export async function createOffenesFormular(
+  input: CreateOffenesFormularInput
+): Promise<OffenesFormularRecord> {
+  const now = new Date().toISOString();
+  const fields: Record<string, unknown> = {
+    Title: input.benutzername,
+    Benutzername: input.benutzername,
+    FormularName: input.formularname,
+    Formularname: input.formularname,
+    Fahrzeug: input.fahrzeug,
+    Begonnen: now,
+    Status: 'Offen',
+  };
+
+  const created = await createListItem(OFFENE_LIST, fields);
+  return mapOffenesFormular(created);
+}
+
+/**
+ * Update the status of an "Offene Formulare" entry. The authorized caller
+ * must pass their own benutzername so we can verify ownership before
+ * mutating (drivers must not be able to close each other's entries).
+ */
+export async function updateOffenesFormularStatus(
+  itemId: number,
+  benutzername: string,
+  status: OffenesFormularStatus
+): Promise<OffenesFormularRecord | null> {
+  // Verify the entry belongs to the caller by scanning the list.
+  // This avoids having to trust a separate "ownership" field.
+  const items = await getListItems(OFFENE_LIST);
+  const existing = items.find((i) => i.id === itemId);
+  if (!existing) return null;
+
+  const mapped = mapOffenesFormular(existing);
+  if (mapped.benutzername.toLowerCase() !== benutzername.trim().toLowerCase()) {
+    return null;
+  }
+
+  await updateListItemFields(OFFENE_LIST, itemId, { Status: status });
+  return { ...mapped, status };
 }

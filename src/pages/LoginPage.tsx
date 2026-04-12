@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import type { FormEvent, KeyboardEvent, ChangeEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { login as apiLogin, ApiError } from '../services/api';
+import { Logo } from '../components/Logo';
 import './LoginPage.css';
 
 const PIN_LENGTH = 4;
@@ -84,8 +85,7 @@ export function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-header">
-          <h1 className="login-title">Maja Logistik</h1>
-          <p className="login-subtitle">Fahrerportal</p>
+          <Logo variant="light" size={56} />
         </div>
         <form className="login-body" onSubmit={handleSubmit}>
           <p className="login-info">Anmeldung mit Benutzername und PIN</p>
@@ -134,7 +134,7 @@ export function LoginPage() {
           </button>
         </form>
         <div className="login-footer">
-          <p>© Maja Logistik Fahrerportal</p>
+          <p>© Maja Logistik</p>
         </div>
       </div>
     </div>
