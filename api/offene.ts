@@ -67,6 +67,8 @@ export default async function handler(
     const body = parseBody(req.body);
     const formularname = typeof body.formularname === 'string' ? body.formularname.trim() : '';
     const fahrzeug = typeof body.fahrzeug === 'string' ? body.fahrzeug.trim() : '';
+    const filloutSubmissionId =
+      typeof body.filloutSubmissionId === 'string' ? body.filloutSubmissionId.trim() : '';
 
     if (!formularname) {
       sendError(res, 400, 'formularname ist erforderlich');
@@ -76,12 +78,17 @@ export default async function handler(
       sendError(res, 400, 'fahrzeug ist erforderlich');
       return;
     }
+    if (!filloutSubmissionId) {
+      sendError(res, 400, 'filloutSubmissionId ist erforderlich');
+      return;
+    }
 
     try {
       const created = await createOffenesFormular({
         benutzername: session.benutzername,
         formularname,
         fahrzeug,
+        filloutSubmissionId,
       });
       sendJson(res, 201, created);
     } catch (err) {
@@ -93,6 +100,7 @@ export default async function handler(
         benutzername: session.benutzername,
         formularname,
         fahrzeug,
+        filloutSubmissionId,
         begonnen: new Date().toISOString(),
         status: 'Offen',
         _fallback: true,

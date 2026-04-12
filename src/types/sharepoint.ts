@@ -21,4 +21,5 @@ export interface OffenesFormular {
   fahrzeug: string;
   begonnen: string; // ISO timestamp
   status: 'Offen' | 'Abgeschlossen' | string;
+  filloutSubmissionId: string;
 }

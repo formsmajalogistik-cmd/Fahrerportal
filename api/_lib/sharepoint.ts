@@ -270,6 +270,7 @@ export interface OffenesFormularRecord {
   fahrzeug: string;
   begonnen: string; // ISO timestamp
   status: OffenesFormularStatus;
+  filloutSubmissionId: string;
 }
 
 /**
@@ -301,6 +302,7 @@ function mapOffenesFormular(item: SPItem): OffenesFormularRecord {
     fahrzeug: String(f.Fahrzeug ?? '').trim(),
     begonnen: String(f.Begonnenam ?? '').trim(),
     status: String(f.Status ?? 'Offen').trim(),
+    filloutSubmissionId: String(f.FilloutSubmissionID ?? '').trim(),
   };
 }
 
@@ -327,6 +329,7 @@ export interface CreateOffenesFormularInput {
   benutzername: string;
   formularname: string;
   fahrzeug: string;
+  filloutSubmissionId: string;
 }
 
 /**
@@ -344,6 +347,7 @@ export async function createOffenesFormular(
     Fahrzeug: input.fahrzeug,
     Begonnenam: now,
     Status: 'Offen',
+    FilloutSubmissionID: input.filloutSubmissionId,
   };
 
   const created = await createListItem(OFFENE_LIST, fields);

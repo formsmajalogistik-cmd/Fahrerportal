@@ -75,7 +75,7 @@ export async function fetchOffeneFormulare(
 /** POST /api/offene — create a new open form entry when a driver starts filling one out */
 export async function createOffenesFormular(
   token: string,
-  payload: { formularname: string; fahrzeug: string }
+  payload: { formularname: string; fahrzeug: string; filloutSubmissionId: string }
 ): Promise<OffenesFormular> {
   return request<OffenesFormular>('/offene', {
     token,

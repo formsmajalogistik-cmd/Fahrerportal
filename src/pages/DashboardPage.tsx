@@ -96,9 +96,18 @@ export function DashboardPage() {
       alert('Das zugehörige Formular ist nicht mehr aktiv oder wurde entfernt.');
       return;
     }
+
+    // Reconstruct the Fillout URL with the stored submission ID so
+    // Fillout loads the exact session the driver started earlier.
+    let url = form.filloutUrl;
+    if (entry.filloutSubmissionId) {
+      const sep = url.includes('?') ? '&' : '?';
+      url = `${url}${sep}submission=${encodeURIComponent(entry.filloutSubmissionId)}`;
+    }
+
     navigate('/formular', {
       state: {
-        filloutUrl: form.filloutUrl,
+        filloutUrl: url,
         formularname: form.formularname,
         offenesId: entry.id,
         fahrzeug: entry.fahrzeug,
