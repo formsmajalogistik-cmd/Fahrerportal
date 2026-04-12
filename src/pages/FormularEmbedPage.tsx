@@ -47,18 +47,20 @@ export function FormularEmbedPage() {
   };
 
   const handleAbschliessen = async () => {
-    if (!token || !state.offenesId || closing) return;
+    if (!token || closing) return;
     setClosing(true);
     setCloseError(null);
-    try {
-      await updateOffenesFormularStatus(token, state.offenesId, 'Abgeschlossen');
-      navigate('/dashboard', { replace: true });
-    } catch (err) {
-      setCloseError(
-        err instanceof Error ? err.message : 'Abschluss konnte nicht gespeichert werden'
-      );
-      setClosing(false);
+
+    // Try to mark the entry as finished in SharePoint, but don't block
+    // the user if the list doesn't exist or the update fails.
+    if (state.offenesId && state.offenesId > 0) {
+      try {
+        await updateOffenesFormularStatus(token, state.offenesId, 'Abgeschlossen');
+      } catch (err) {
+        console.warn('Abschluss-Status konnte nicht gespeichert werden:', err);
+      }
     }
+    navigate('/dashboard', { replace: true });
   };
 
   return (
@@ -74,18 +76,14 @@ export function FormularEmbedPage() {
             <span className="embed-sub">Fahrzeug: {state.fahrzeug}</span>
           )}
         </div>
-        {state.offenesId ? (
-          <button
-            className="btn-primary"
-            onClick={handleAbschliessen}
-            disabled={closing}
-          >
-            <Icon name="check" size={16} />
-            <span>{closing ? 'Speichern…' : 'Abschließen'}</span>
-          </button>
-        ) : (
-          <div />
-        )}
+        <button
+          className="btn-primary"
+          onClick={handleAbschliessen}
+          disabled={closing}
+        >
+          <Icon name="check" size={16} />
+          <span>{closing ? 'Speichern…' : 'Abschließen'}</span>
+        </button>
       </div>
 
       {closeError && <p className="embed-error">{closeError}</p>}

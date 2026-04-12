@@ -21,12 +21,18 @@ export function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [forms, open] = await Promise.all([
-        fetchFormulare(token),
-        fetchOffeneFormulare(token, 'Offen'),
-      ]);
+      // Formulare are critical — if this fails, show an error.
+      const forms = await fetchFormulare(token);
       setFormulare(forms);
-      setOffene(open);
+
+      // Offene Formulare are optional — if the list doesn't exist or
+      // SharePoint returns an error, silently fall back to [].
+      try {
+        setOffene(await fetchOffeneFormulare(token, 'Offen'));
+      } catch {
+        console.warn('OffeneFormulare konnten nicht geladen werden');
+        setOffene([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Fehler beim Laden');
     } finally {
@@ -68,13 +74,18 @@ export function DashboardPage() {
       color: 'var(--ml-accent)',
       path: '/formulare',
     },
-    {
-      label: 'Offen',
-      value: offene.length,
-      letter: 'O',
-      color: 'var(--ml-warning)',
-      path: '/dashboard',
-    },
+    // Only show "Offen" card if there are actually open entries
+    ...(offene.length > 0
+      ? [
+          {
+            label: 'Offen',
+            value: offene.length,
+            letter: 'O',
+            color: 'var(--ml-warning)',
+            path: '/dashboard',
+          },
+        ]
+      : []),
   ];
 
   const handleFortsetzen = (entry: OffenesFormular) => {
@@ -137,48 +148,39 @@ export function DashboardPage() {
         ))}
       </div>
 
-      <div className="section-header" style={{ marginTop: '2rem' }}>
-        <h2>Offene Formulare</h2>
-        <span className="section-sub">{offene.length} offen</span>
-      </div>
-
-      {offene.length === 0 ? (
-        <div className="empty-card">
-          <Icon name="check" size={22} />
-          <div>
-            <div className="empty-title">Keine offenen Formulare</div>
-            <div className="empty-sub">
-              Starte ein Formular über „Meine Formulare" um es hier fortzusetzen.
-            </div>
+      {offene.length > 0 && (
+        <>
+          <div className="section-header" style={{ marginTop: '2rem' }}>
+            <h2>Offene Formulare</h2>
+            <span className="section-sub">{offene.length} offen</span>
           </div>
-        </div>
-      ) : (
-        <ul className="offene-list">
-          {offene.map((entry) => (
-            <li key={entry.id} className="offene-item">
-              <div className="offene-meta">
-                <div className="offene-name">{entry.formularname}</div>
-                <div className="offene-sub">
-                  <span className="offene-fahrzeug">
-                    <Icon name="truck" size={14} />
-                    {entry.fahrzeug || 'Kein Fahrzeug'}
-                  </span>
-                  <span className="offene-time">
-                    <Icon name="clock" size={14} />
-                    {formatTimestamp(entry.begonnen)}
-                  </span>
+          <ul className="offene-list">
+            {offene.map((entry) => (
+              <li key={entry.id} className="offene-item">
+                <div className="offene-meta">
+                  <div className="offene-name">{entry.formularname}</div>
+                  <div className="offene-sub">
+                    <span className="offene-fahrzeug">
+                      <Icon name="truck" size={14} />
+                      {entry.fahrzeug || 'Kein Fahrzeug'}
+                    </span>
+                    <span className="offene-time">
+                      <Icon name="clock" size={14} />
+                      {formatTimestamp(entry.begonnen)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <button
-                className="btn-primary"
-                onClick={() => handleFortsetzen(entry)}
-              >
-                <span>Fortsetzen</span>
-                <Icon name="arrow-right" size={14} />
-              </button>
-            </li>
-          ))}
-        </ul>
+                <button
+                  className="btn-primary"
+                  onClick={() => handleFortsetzen(entry)}
+                >
+                  <span>Fortsetzen</span>
+                  <Icon name="arrow-right" size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );

@@ -19,6 +19,10 @@ import { handlePreflight, sendJson, sendError } from './_lib/http.js';
  *
  * All methods require a valid Bearer session token; mutations only affect
  * entries owned by the authenticated driver (verified server-side).
+ *
+ * RESILIENCE: The "Offene Formulare" SharePoint list may not exist yet or
+ * its column names may be wrong. GET returns [] on error, POST returns a
+ * best-effort placeholder so the frontend can still open the Fillout form.
  */
 export default async function handler(
   req: VercelRequest,
@@ -38,58 +42,82 @@ export default async function handler(
     return;
   }
 
-  try {
-    if (req.method === 'GET') {
-      const statusParam =
-        typeof req.query.status === 'string' && req.query.status.trim()
-          ? req.query.status.trim()
-          : 'Offen';
+  // ── GET ─────────────────────────────────────────────────────────
+  if (req.method === 'GET') {
+    const statusParam =
+      typeof req.query.status === 'string' && req.query.status.trim()
+        ? req.query.status.trim()
+        : 'Offen';
+    try {
       const items = await getOffeneFormulareForFahrer(
         session.benutzername,
         statusParam
       );
       sendJson(res, 200, items);
+    } catch (err) {
+      // List doesn't exist or access denied — return empty array
+      console.warn('GET /api/offene: SharePoint-Zugriff fehlgeschlagen, gebe [] zurück:', err);
+      sendJson(res, 200, []);
+    }
+    return;
+  }
+
+  // ── POST ────────────────────────────────────────────────────────
+  if (req.method === 'POST') {
+    const body = parseBody(req.body);
+    const formularname = typeof body.formularname === 'string' ? body.formularname.trim() : '';
+    const fahrzeug = typeof body.fahrzeug === 'string' ? body.fahrzeug.trim() : '';
+
+    if (!formularname) {
+      sendError(res, 400, 'formularname ist erforderlich');
+      return;
+    }
+    if (!fahrzeug) {
+      sendError(res, 400, 'fahrzeug ist erforderlich');
       return;
     }
 
-    if (req.method === 'POST') {
-      const body = parseBody(req.body);
-      const formularname = typeof body.formularname === 'string' ? body.formularname.trim() : '';
-      const fahrzeug = typeof body.fahrzeug === 'string' ? body.fahrzeug.trim() : '';
-
-      if (!formularname) {
-        sendError(res, 400, 'formularname ist erforderlich');
-        return;
-      }
-      if (!fahrzeug) {
-        sendError(res, 400, 'fahrzeug ist erforderlich');
-        return;
-      }
-
+    try {
       const created = await createOffenesFormular({
         benutzername: session.benutzername,
         formularname,
         fahrzeug,
       });
       sendJson(res, 201, created);
+    } catch (err) {
+      // List doesn't exist or columns wrong — return a placeholder so the
+      // frontend can still navigate to the embed page.
+      console.warn('POST /api/offene: SharePoint-Zugriff fehlgeschlagen, gebe Platzhalter zurück:', err);
+      sendJson(res, 201, {
+        id: 0,
+        benutzername: session.benutzername,
+        formularname,
+        fahrzeug,
+        begonnen: new Date().toISOString(),
+        status: 'Offen',
+        _fallback: true,
+      });
+    }
+    return;
+  }
+
+  // ── PATCH ───────────────────────────────────────────────────────
+  if (req.method === 'PATCH') {
+    const idRaw = typeof req.query.id === 'string' ? req.query.id : '';
+    const id = parseInt(idRaw, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      sendError(res, 400, '?id=<number> ist erforderlich');
       return;
     }
 
-    if (req.method === 'PATCH') {
-      const idRaw = typeof req.query.id === 'string' ? req.query.id : '';
-      const id = parseInt(idRaw, 10);
-      if (!Number.isFinite(id) || id <= 0) {
-        sendError(res, 400, '?id=<number> ist erforderlich');
-        return;
-      }
+    const body = parseBody(req.body);
+    const status = typeof body.status === 'string' ? body.status.trim() : '';
+    if (!status) {
+      sendError(res, 400, 'status ist erforderlich');
+      return;
+    }
 
-      const body = parseBody(req.body);
-      const status = typeof body.status === 'string' ? body.status.trim() : '';
-      if (!status) {
-        sendError(res, 400, 'status ist erforderlich');
-        return;
-      }
-
+    try {
       const updated = await updateOffenesFormularStatus(
         id,
         session.benutzername,
@@ -100,15 +128,17 @@ export default async function handler(
         return;
       }
       sendJson(res, 200, updated);
-      return;
+    } catch (err) {
+      // Best-effort: if status update fails, still confirm so the user
+      // can leave the page.
+      console.warn('PATCH /api/offene: SharePoint-Zugriff fehlgeschlagen:', err);
+      sendJson(res, 200, { id, status, _fallback: true });
     }
-
-    res.setHeader('Allow', 'GET, POST, PATCH, OPTIONS');
-    sendError(res, 405, `Method ${req.method} Not Allowed`);
-  } catch (err) {
-    console.error('Offene error:', err);
-    sendError(res, 500, 'Fehler beim Zugriff auf Offene Formulare');
+    return;
   }
+
+  res.setHeader('Allow', 'GET, POST, PATCH, OPTIONS');
+  sendError(res, 405, `Method ${req.method} Not Allowed`);
 }
 
 function parseBody(raw: unknown): Record<string, unknown> {

@@ -76,25 +76,29 @@ export function FormularePage() {
     }
     setStartBusy(true);
     setStartError(null);
+
+    // Try to create an OffeneFormulare entry, but don't block the user
+    // if the SharePoint list isn't set up yet.
+    let offenesId: number | undefined;
     try {
       const offen = await createOffenesFormular(token, {
         formularname: starting.formularname,
         fahrzeug: trimmed,
       });
-      navigate('/formular', {
-        state: {
-          filloutUrl: starting.filloutUrl,
-          formularname: starting.formularname,
-          offenesId: offen.id,
-          fahrzeug: trimmed,
-        },
-      });
-    } catch (err) {
-      setStartError(
-        err instanceof Error ? err.message : 'Formular konnte nicht gestartet werden'
-      );
-      setStartBusy(false);
+      offenesId = offen.id || undefined;
+    } catch {
+      // SharePoint list may not exist — continue without tracking entry
+      console.warn('OffeneFormulare konnte nicht erstellt werden, öffne Formular trotzdem');
     }
+
+    navigate('/formular', {
+      state: {
+        filloutUrl: starting.filloutUrl,
+        formularname: starting.formularname,
+        offenesId,
+        fahrzeug: trimmed,
+      },
+    });
   };
 
   if (loading) return <LoadingSpinner text="Formulare werden geladen…" />;

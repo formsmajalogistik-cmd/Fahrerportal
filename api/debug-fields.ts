@@ -138,7 +138,7 @@ export default async function handler(
     let columnsError: string | null = null;
     try {
       const columnsResponse = await client
-        .api(`/sites/${siteId}/lists/${listName}/columns`)
+        .api(`/sites/${siteId}/lists/${encodeURIComponent(listName)}/columns`)
         .get();
       const rawColumns: SpRawColumn[] = columnsResponse.value || [];
       columns = rawColumns.map((c) => ({
@@ -164,7 +164,7 @@ export default async function handler(
     let itemsError: string | null = null;
     try {
       const itemsResponse = await client
-        .api(`/sites/${siteId}/lists/${listName}/items`)
+        .api(`/sites/${siteId}/lists/${encodeURIComponent(listName)}/items`)
         .expand('fields')
         .top(1)
         .get();
