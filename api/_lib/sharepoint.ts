@@ -275,46 +275,32 @@ export interface OffenesFormularRecord {
 /**
  * "Offene Formulare" list (name contains a space — URL-encoded by encodeList).
  *
- * Expected fields (best-guess — verify via /api/debug-fields?list=Offene%20Formulare
- * after first deploy, then adjust these mappings if SharePoint returns different
- * internal names):
+ * VERIFIED via /api/debug-fields?list=Offene%20Formulare:
  *
- *   internal name    contains
- *   ───────────────  ────────────────────────────────────────
- *   Title            Benutzername des Fahrers (default Title)
- *   FormularName     Name des zugewiesenen Formulars
- *   Fahrzeug         Fahrzeugkennzeichen / Nummer
- *   Begonnen         DateTime, wann Fahrer das Formular gestartet hat
- *   Status           Choice: Offen | Abgeschlossen
+ *   internal name        display name           contains
+ *   ──────────────────   ──────────────────────  ──────────────────────────
+ *   Title                "Titel"                 Benutzername des Fahrers
+ *   FormularName         "Formularname"          Name des zugewiesenen Formulars
+ *   Fahrzeug             "Kennzeichen"           Fahrzeugkennzeichen
+ *   Begonnenam           "Begonnen am"           DateTime (NOT "Begonnen"!)
+ *   FilloutSubmissionID  "FilloutSubmissionID"   Fillout-Submission-ID
+ *   Status               "Status"                Choice: Offen | Abgeschlossen
  *
- * If the SharePoint admin used different internal names (e.g. "Benutzername"
- * as a separate column instead of re-using Title), the mapping below and the
- * write-side field keys must be updated after checking debug-fields.
+ * Note: There is NO separate "Benutzername" column — `Title` holds the
+ * driver username. `LinkTitle` is a read-only mirror showing "Benutzername"
+ * as display name.
  */
 const OFFENE_LIST = 'Offene Formulare';
 
 function mapOffenesFormular(item: SPItem): OffenesFormularRecord {
   const f = item.fields;
-  // Read defensively: accept either a dedicated Benutzername column or Title.
-  const benutzername =
-    String((f.Benutzername as unknown) ?? '').trim() ||
-    String((f.Title as unknown) ?? '').trim();
-
-  const formularname =
-    String((f.FormularName as unknown) ?? '').trim() ||
-    String((f.Formularname as unknown) ?? '').trim();
-
-  const fahrzeug = String((f.Fahrzeug as unknown) ?? '').trim();
-  const begonnen = String((f.Begonnen as unknown) ?? '').trim();
-  const status = String((f.Status as unknown) ?? 'Offen').trim();
-
   return {
     id: item.id,
-    benutzername,
-    formularname,
-    fahrzeug,
-    begonnen,
-    status,
+    benutzername: String(f.Title ?? '').trim(),
+    formularname: String(f.FormularName ?? '').trim(),
+    fahrzeug: String(f.Fahrzeug ?? '').trim(),
+    begonnen: String(f.Begonnenam ?? '').trim(),
+    status: String(f.Status ?? 'Offen').trim(),
   };
 }
 
@@ -345,11 +331,8 @@ export interface CreateOffenesFormularInput {
 
 /**
  * Create a new "Offene Formulare" entry when a driver starts filling out
- * a form. Status defaults to 'Offen' and Begonnen to the current ISO timestamp.
- *
- * We populate BOTH `Title` and `Benutzername` so that regardless of which
- * internal column holds the driver name, the data is there. SharePoint
- * silently ignores unknown field keys, so writing an extra one is safe.
+ * a form. Status defaults to 'Offen' and Begonnenam to the current ISO
+ * timestamp.
  */
 export async function createOffenesFormular(
   input: CreateOffenesFormularInput
@@ -357,11 +340,9 @@ export async function createOffenesFormular(
   const now = new Date().toISOString();
   const fields: Record<string, unknown> = {
     Title: input.benutzername,
-    Benutzername: input.benutzername,
     FormularName: input.formularname,
-    Formularname: input.formularname,
     Fahrzeug: input.fahrzeug,
-    Begonnen: now,
+    Begonnenam: now,
     Status: 'Offen',
   };
 
