@@ -85,7 +85,7 @@ export function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-header">
-          <Logo variant="light" size={56} />
+          <Logo variant="light" size={80} showText={false} />
         </div>
         <form className="login-body" onSubmit={handleSubmit}>
           <p className="login-info">Anmeldung mit Benutzername und PIN</p>
