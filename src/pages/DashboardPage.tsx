@@ -97,12 +97,20 @@ export function DashboardPage() {
       return;
     }
 
-    // Reconstruct the Fillout URL with the stored submission ID so
-    // Fillout loads the exact session the driver started earlier.
-    let url = form.filloutUrl;
-    if (entry.filloutSubmissionId) {
-      const sep = url.includes('?') ? '&' : '?';
-      url = `${url}${sep}submission=${encodeURIComponent(entry.filloutSubmissionId)}`;
+    // Build the Fillout URL. Always append the stored submission ID so
+    // Fillout restores the exact session the driver started earlier.
+    const submissionId = entry.filloutSubmissionId;
+    const baseUrl = form.filloutUrl;
+    let url: string;
+
+    if (submissionId) {
+      // Strip any existing submission param from the base URL (safety)
+      const urlObj = new URL(baseUrl, window.location.origin);
+      urlObj.searchParams.delete('submission');
+      urlObj.searchParams.set('submission', submissionId);
+      url = urlObj.toString();
+    } else {
+      url = baseUrl;
     }
 
     navigate('/formular', {
