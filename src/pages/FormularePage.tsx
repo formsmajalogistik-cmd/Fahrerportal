@@ -78,13 +78,13 @@ export function FormularePage() {
     setStartError(null);
 
     // Generate a unique submission ID for this form session.
-    // Fillout uses ?submission=<ID> for Save & Continue.
+    // Fillout uses ?id=<ID> to resume a saved session.
     const submissionId = crypto.randomUUID();
 
-    // Build the Fillout URL with the submission parameter
+    // Build the Fillout URL with the id parameter
     const baseUrl = starting.filloutUrl;
     const separator = baseUrl.includes('?') ? '&' : '?';
-    const filloutUrlWithSubmission = `${baseUrl}${separator}submission=${encodeURIComponent(submissionId)}`;
+    const filloutUrlWithSubmission = `${baseUrl}${separator}id=${encodeURIComponent(submissionId)}`;
 
     // Try to create an OffeneFormulare entry, but don't block the user
     // if the SharePoint list isn't set up yet.
