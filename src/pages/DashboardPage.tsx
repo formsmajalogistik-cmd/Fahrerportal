@@ -88,38 +88,22 @@ export function DashboardPage() {
       : []),
   ];
 
-  const handleFortsetzen = (entry: OffenesFormular) => {
+  const getFortsetzenUrl = (entry: OffenesFormular): string | null => {
     const form = formulare.find(
       (f) => f.formularname.toLowerCase() === entry.formularname.toLowerCase()
     );
-    if (!form || !form.filloutUrl) {
-      alert('Das zugehörige Formular ist nicht mehr aktiv oder wurde entfernt.');
-      return;
-    }
+    if (!form || !form.filloutUrl) return null;
 
-    // Build the Fillout URL with ?id=<submissionId> so Fillout
-    // restores the exact session the driver started earlier.
     const submissionId = entry.filloutSubmissionId;
     const baseUrl = form.filloutUrl;
-    let url: string;
 
     if (submissionId) {
       const urlObj = new URL(baseUrl, window.location.origin);
       urlObj.searchParams.delete('id');
       urlObj.searchParams.set('id', submissionId);
-      url = urlObj.toString();
-    } else {
-      url = baseUrl;
+      return urlObj.toString();
     }
-
-    navigate('/formular', {
-      state: {
-        filloutUrl: url,
-        formularname: form.formularname,
-        offenesId: entry.id,
-        fahrzeug: entry.fahrzeug,
-      },
-    });
+    return baseUrl;
   };
 
   const formatTimestamp = (iso: string): string => {
@@ -186,13 +170,28 @@ export function DashboardPage() {
                     </span>
                   </div>
                 </div>
-                <button
-                  className="btn-primary"
-                  onClick={() => handleFortsetzen(entry)}
-                >
-                  <span>Fortsetzen</span>
-                  <Icon name="arrow-right" size={14} />
-                </button>
+                {/* TEST: URL als Link statt Embed — nach Test wieder auf Embed-Navigation umstellen */}
+                {(() => {
+                  const url = getFortsetzenUrl(entry);
+                  if (!url) return <span className="text-muted">Kein Formular</span>;
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', alignItems: 'flex-end' }}>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-primary"
+                        style={{ textDecoration: 'none' }}
+                      >
+                        <span>Fortsetzen</span>
+                        <Icon name="arrow-right" size={14} />
+                      </a>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--ml-text-muted)', maxWidth: '260px', overflowWrap: 'anywhere', textAlign: 'right' }}>
+                        {url}
+                      </span>
+                    </div>
+                  );
+                })()}
               </li>
             ))}
           </ul>
