@@ -1,0 +1,68 @@
+{
+  "name": "Maja Fahrzeugprotokoll",
+  "version": 1,
+  "beschreibung": "Standard-Fahrzeugprotokoll für Übergabe/Rücknahme",
+  "pdf_template": "maja-fahrzeugprotokoll.pdf",
+  "schema_json": {
+    "sections": [
+      {
+        "id": "fahrzeug",
+        "title": "Fahrzeugdaten",
+        "fields": [
+          { "id": "fahrzeugtyp",   "type": "text",        "label": "Fahrzeugtyp", "required": true },
+          { "id": "kennzeichen",   "type": "text",        "label": "Kennzeichen", "required": true },
+          { "id": "fahrgestellnr", "type": "text",        "label": "Fahrgestellnummer" },
+          { "id": "km_stand",      "type": "number",      "label": "Kilometerstand", "required": true },
+          { "id": "datum",         "type": "date",        "label": "Datum", "required": true },
+          { "id": "zustand",       "type": "select",      "label": "Zustand",
+            "options": ["neuwertig", "gut", "gebraucht", "beschädigt"] }
+        ]
+      },
+      {
+        "id": "ausstattung",
+        "title": "Ausstattung",
+        "fields": [
+          { "id": "zubehoer", "type": "checkboxes", "label": "Zubehör",
+            "options": ["Ersatzrad", "Warndreieck", "Verbandskasten", "Ladegerät"] },
+          { "id": "bemerkung", "type": "textarea", "label": "Bemerkung" }
+        ]
+      },
+      {
+        "id": "fotos",
+        "title": "Fotos",
+        "fields": [
+          { "id": "foto_front", "type": "photo", "label": "Foto Front", "required": true },
+          { "id": "foto_heck",  "type": "photo", "label": "Foto Heck",  "required": true }
+        ]
+      },
+      {
+        "id": "schaeden",
+        "title": "Schäden",
+        "fields": [
+          { "id": "schadensskizze", "type": "damage_diagram", "label": "Schadensskizze",
+            "vehicleImage": "vehicle-outline.svg" }
+        ]
+      },
+      {
+        "id": "unterschrift",
+        "title": "Unterschrift",
+        "fields": [
+          { "id": "signatur_fahrer", "type": "signature", "label": "Unterschrift Fahrer", "required": true }
+        ]
+      }
+    ]
+  },
+  "field_mapping": {
+    "fahrzeugtyp":   { "page": 1, "x": 120, "y": 680 },
+    "kennzeichen":   { "page": 1, "x": 120, "y": 650 },
+    "fahrgestellnr": { "page": 1, "x": 120, "y": 620 },
+    "km_stand":      { "page": 1, "x": 120, "y": 590 },
+    "datum":         { "page": 1, "x": 400, "y": 680 },
+    "zustand":       { "page": 1, "x": 400, "y": 650 },
+    "zubehoer":      { "page": 1, "x": 120, "y": 500 },
+    "bemerkung":     { "page": 1, "x": 120, "y": 440 },
+    "foto_front":    { "page": 2, "x":  50, "y": 500, "width": 240, "height": 180 },
+    "foto_heck":     { "page": 2, "x": 310, "y": 500, "width": 240, "height": 180 },
+    "signatur_fahrer": { "page": 3, "x": 120, "y": 150, "width": 200, "height": 80 }
+  }
+}

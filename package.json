@@ -2,32 +2,39 @@
   "name": "fahrerportal",
   "private": true,
   "version": "1.0.0",
-  "description": "Fahrerportal PWA - Maja Logistik (SharePoint-Integration)",
+  "description": "Maja-Logistik Fahrerportal — Supabase + Vite + React",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@azure/msal-browser": "^5.6.3",
-    "@azure/msal-react": "^5.2.1",
-    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@supabase/supabase-js": "^2.45.4",
+    "browser-image-compression": "^2.0.2",
+    "clsx": "^2.1.1",
+    "pdf-lib": "^1.17.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.0"
+    "react-router-dom": "^7.14.0",
+    "react-signature-canvas": "^1.0.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-signature-canvas": "^1.0.7",
     "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.20",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4"

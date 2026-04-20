@@ -1,111 +1,77 @@
-import { useState, useEffect } from 'react';
-import { getOffeneFormulare } from '../services/sharepointService';
-import { LoadingSpinner } from '../components/LoadingSpinner';
-import { ErrorMessage } from '../components/ErrorMessage';
-import type { OffenesFormular } from '../types/sharepoint';
-import './TablePage.css';
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../auth/AuthContext';
+import { Spinner } from '../components/Spinner';
+import type { AusgefuelltesFormular, FormularTemplate } from '../types/db';
+
+interface DraftRow extends AusgefuelltesFormular {
+  template?: Pick<FormularTemplate, 'name'> | null;
+}
 
 export function OffeneFormularePage() {
-  const [formulare, setFormulare] = useState<OffenesFormular[]>([]);
+  const { session } = useAuth();
+  const [rows, setRows] = useState<DraftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setFormulare(await getOffeneFormulare());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fehler beim Laden der offenen Formulare');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (!session) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data: fahrerRow } = await supabase
+        .from('fahrer')
+        .select('id')
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+      if (!fahrerRow) {
+        if (!cancelled) { setRows([]); setLoading(false); }
+        return;
+      }
+      const { data, error: err } = await supabase
+        .from('ausgefuellte_formulare')
+        .select('*, template:template_id (name)')
+        .eq('fahrer_id', fahrerRow.id)
+        .eq('status', 'draft')
+        .order('updated_at', { ascending: false });
+      if (cancelled) return;
+      if (err) setError(err.message);
+      else setRows((data as unknown as DraftRow[]) ?? []);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
 
-  const filtered = formulare.filter(
-    (f) =>
-      f.formularTitel.toLowerCase().includes(search.toLowerCase()) ||
-      f.fahrerName.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const statusClass = (status: string) => {
-    switch (status) {
-      case 'Genehmigt': return 'badge badge-success';
-      case 'In Prüfung': return 'badge badge-info';
-      case 'Offen': return 'badge badge-warning';
-      case 'Abgelehnt': return 'badge badge-danger';
-      default: return 'badge';
-    }
-  };
-
-  const formatDate = (d?: string) => {
-    if (!d) return '-';
-    try {
-      return new Date(d).toLocaleDateString('de-DE');
-    } catch {
-      return d;
-    }
-  };
-
-  if (loading) return <LoadingSpinner text="Offene Formulare werden geladen..." />;
-  if (error) return <ErrorMessage message={error} onRetry={loadData} />;
+  if (loading) return <Spinner label="Begonnene Formulare werden geladen …" />;
+  if (error) {
+    return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
+  }
 
   return (
-    <div className="table-page">
-      <div className="page-header">
-        <h1 className="page-title">Offene Formulare</h1>
-        <span className="record-count">{formulare.length} Einträge</span>
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold text-maja-navy">Begonnene Formulare</h1>
+        <p className="text-sm text-maja-muted">
+          Entwürfe, die du noch nicht eingereicht hast.
+        </p>
       </div>
-
-      <div className="toolbar">
-        <input
-          type="search"
-          className="search-input"
-          placeholder="Offene Formulare suchen..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
-
-      <div className="table-wrapper">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Formular</th>
-              <th>Fahrer</th>
-              <th>Eingereicht am</th>
-              <th>Status</th>
-              <th>Kommentar</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="empty-row">
-                  Keine offenen Formulare gefunden
-                </td>
-              </tr>
-            ) : (
-              filtered.map((f) => (
-                <tr key={f.id}>
-                  <td className="font-medium">{f.formularTitel}</td>
-                  <td>{f.fahrerName}</td>
-                  <td>{formatDate(f.eingereichtAm)}</td>
-                  <td>
-                    <span className={statusClass(f.status)}>{f.status}</span>
-                  </td>
-                  <td className="comment-cell">{f.kommentar || '-'}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {rows.length === 0 ? (
+        <div className="card p-6 text-sm text-maja-muted">Keine offenen Entwürfe.</div>
+      ) : (
+        <ul className="space-y-2">
+          {rows.map((r) => (
+            <li key={r.id} className="card flex items-center justify-between p-4">
+              <div>
+                <div className="font-medium text-maja-navy">{r.template?.name ?? 'Formular'}</div>
+                <div className="text-xs text-maja-muted">
+                  Zuletzt bearbeitet: {new Date(r.updated_at).toLocaleString('de-DE')}
+                </div>
+              </div>
+              <button className="btn-secondary" disabled>Fortsetzen</button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

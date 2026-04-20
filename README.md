@@ -1,73 +1,79 @@
-# React + TypeScript + Vite
+# Maja-Logistik Fahrerportal
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Fahrer-PWA des Maja-Logistik Business-Portals. Läuft auf **React + Vite** mit
+**Supabase** als Backend (Auth, PostgreSQL, Storage) und **Tailwind CSS** für das
+Maja-Logistik Branding.
 
-Currently, two official plugins are available:
+Dieses Repo ist das **Fahrer-Frontend**. Das Admin-Dashboard liegt im separaten
+Repo `maja-logistik-dashboard` und verwendet dieselbe Supabase-Instanz.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Tech-Stack
 
-## React Compiler
+- React 19 + Vite + TypeScript
+- Supabase JS Client (`@supabase/supabase-js`)
+- Tailwind CSS — Farben: Navy `#1B3A5C`, Accent `#2C5F8A`, Hellblau `#E8F0F8`, Font: DM Sans
+- `pdf-lib` für PDF-Ausgabe, `browser-image-compression` für Foto-Kompression,
+  `react-signature-canvas` für Unterschriften
+- Deployment: Vercel
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Umgebungsvariablen
 
-## Expanding the ESLint configuration
+Kopiere `.env.example` nach `.env` und befülle:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key>
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+In Vercel als *Project Environment Variables* hinterlegen — nicht committen.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Supabase einrichten
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Die Migrations im Verzeichnis `supabase/migrations/` definieren das komplette
+Datenmodell. Ausführung in Supabase-Projekt:
+
+```
+supabase db push            # oder manuell im SQL-Editor der Reihe nach einspielen
+```
+
+Migrations-Reihenfolge:
+
+1. `20260420000001_init_schema.sql` — Tabellen, Enums, Trigger, `is_admin()` Helper
+2. `20260420000002_rls_policies.sql` — Row Level Security Policies
+3. `20260420000003_storage_buckets.sql` — Storage-Buckets + Policies
+
+Danach manuell einen Admin-User anlegen (via Supabase Auth UI) und die
+`app_users.role` dieses Users per SQL auf `admin` setzen.
+
+## Datenmodell (Übersicht)
+
+| Tabelle | Zweck |
+|---|---|
+| `app_users` | 1:1 zu `auth.users`, enthält Rolle (`admin`/`fahrer`) und Profil |
+| `auftraggeber` | Kunden, denen Formular-Templates zugeordnet sind |
+| `fahrer` | Fahrer-Stammdaten, verknüpft mit `app_users` |
+| `formular_templates` | JSON-Templates inkl. `schema_json` und `field_mapping` für die PDF |
+| `formular_zuweisungen` | Welches Template ist welchem Fahrer zugeordnet |
+| `ausgefuellte_formulare` | Erfasste Protokoll-Daten (draft / submitted) |
+| `fotos` | Foto-Uploads, referenziert Formular und Feld-ID |
+
+RLS-Kernregel: Fahrer sehen nur eigene Daten; Admins sehen alles (via
+`public.is_admin()`).
+
+## Form-Engine (geplant, Phase 2)
+
+Unterstützte Feldtypen im `schema_json`:
+`text`, `number`, `date`, `select`, `checkboxes`, `textarea`, `photo`,
+`signature`, `damage_diagram`.
+
+Ein Beispiel-Template liegt unter `supabase/seed/example_template.json`.
+
+## Scripts
+
+```
+npm run dev         # Vite Dev-Server
+npm run build       # TypeScript Build + Vite Build
+npm run preview     # Gebauten Build servieren
+npm run typecheck   # Nur TypeScript prüfen
+npm run lint        # ESLint
 ```

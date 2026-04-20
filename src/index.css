@@ -1,65 +1,40 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
-  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
-  color: #333;
-  background: #f0f2f5;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color: theme('colors.maja.ink');
+  background: theme('colors.maja.light');
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  margin: 0;
-  padding: 0;
-}
+html, body, #root { min-height: 100%; }
+body { margin: 0; }
 
-#root {
-  min-height: 100vh;
-}
-
-h1, h2, h3, h4, h5, h6 {
-  margin: 0;
-  font-weight: 600;
-}
-
-a {
-  color: #1a237e;
-  text-decoration: none;
-}
-
-a:hover {
-  text-decoration: underline;
-}
-
-button {
-  font-family: inherit;
-}
-
-input, select, textarea {
-  font-family: inherit;
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #999;
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-maja-navy px-4 py-2.5
+           font-medium text-white transition hover:bg-maja-accent focus:outline-none
+           focus:ring-2 focus:ring-maja-accent focus:ring-offset-2 disabled:opacity-50
+           disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-maja-navy/20
+           bg-white px-4 py-2.5 font-medium text-maja-navy transition hover:bg-maja-light
+           focus:outline-none focus:ring-2 focus:ring-maja-accent focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-maja-navy/20 bg-white px-3 py-2.5
+           text-maja-ink placeholder-maja-muted/70 shadow-sm transition
+           focus:border-maja-accent focus:outline-none focus:ring-2 focus:ring-maja-accent/30;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-maja-ink;
+  }
+  .card {
+    @apply rounded-xl bg-white shadow-card;
+  }
 }
