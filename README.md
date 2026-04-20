@@ -1,11 +1,12 @@
-# Maja-Logistik Fahrerportal
+# Maja-Logistik Business-Portal
 
-Fahrer-PWA des Maja-Logistik Business-Portals. Läuft auf **React + Vite** mit
-**Supabase** als Backend (Auth, PostgreSQL, Storage) und **Tailwind CSS** für das
-Maja-Logistik Branding.
+Einziges Frontend des Maja-Logistik Business-Portals — enthält **sowohl
+Fahrer-Interface als auch Admin-Dashboard** in derselben React-App. Die
+Oberfläche wechselt rollenbasiert: `role='fahrer'` → Fahrer-Ansicht,
+`role='admin'` → Admin-Ansicht.
 
-Dieses Repo ist das **Fahrer-Frontend**. Das Admin-Dashboard liegt im separaten
-Repo `maja-logistik-dashboard` und verwendet dieselbe Supabase-Instanz.
+Läuft auf **React + Vite + TypeScript**, Backend: **Supabase** (Auth,
+PostgreSQL, Storage). Styling via **Tailwind CSS** mit Maja-Logistik Branding.
 
 ## Tech-Stack
 
@@ -18,32 +19,53 @@ Repo `maja-logistik-dashboard` und verwendet dieselbe Supabase-Instanz.
 
 ## Umgebungsvariablen
 
-Kopiere `.env.example` nach `.env` und befülle:
+Die App braucht zwei Env-Vars:
 
 ```
-VITE_SUPABASE_URL=https://<project>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon key>
+VITE_SUPABASE_URL=https://peimsvatvdavfkrhlnmz.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key aus Supabase Project Settings → API>
 ```
 
-In Vercel als *Project Environment Variables* hinterlegen — nicht committen.
+### Lokal
+
+`.env.example` nach `.env` kopieren und befüllen. `.env` ist gitignored.
+
+### Vercel
+
+Im Vercel-Projekt unter **Settings → Environment Variables** beide Keys für
+alle drei Environments (`Production`, `Preview`, `Development`) setzen.
+Nach dem Setzen einmal redeployen.
+
+Der Anon-Key ist ein öffentlicher Client-Key und darf im Browser liegen — die
+Sicherheit steckt in den **RLS-Policies** (`supabase/migrations/20260420000002_rls_policies.sql`).
 
 ## Supabase einrichten
 
 Die Migrations im Verzeichnis `supabase/migrations/` definieren das komplette
-Datenmodell. Ausführung in Supabase-Projekt:
-
-```
-supabase db push            # oder manuell im SQL-Editor der Reihe nach einspielen
-```
-
-Migrations-Reihenfolge:
+Datenmodell:
 
 1. `20260420000001_init_schema.sql` — Tabellen, Enums, Trigger, `is_admin()` Helper
 2. `20260420000002_rls_policies.sql` — Row Level Security Policies
 3. `20260420000003_storage_buckets.sql` — Storage-Buckets + Policies
 
-Danach manuell einen Admin-User anlegen (via Supabase Auth UI) und die
-`app_users.role` dieses Users per SQL auf `admin` setzen.
+Ausführung über Supabase CLI (`supabase db push`) oder manuell im SQL-Editor in
+dieser Reihenfolge.
+
+Danach einen Admin-User über die Supabase Auth-UI anlegen und die Rolle setzen:
+
+```sql
+update public.app_users set role = 'admin' where email = 'admin@example.com';
+```
+
+## Rollen
+
+| Rolle    | Was die Person sieht                                                     |
+|----------|--------------------------------------------------------------------------|
+| `fahrer` | Eigene zugewiesene Formulare, eigene Drafts, Protokolle ausfüllen        |
+| `admin`  | Übersicht, Fahrer, Auftraggeber, Templates, Zuweisungen, alle Eingänge   |
+
+Beim Login schickt der `AuthContext` einen Lookup in `app_users` und routet auf
+Basis der Rolle in die passende Shell.
 
 ## Datenmodell (Übersicht)
 
@@ -67,6 +89,23 @@ Unterstützte Feldtypen im `schema_json`:
 `signature`, `damage_diagram`.
 
 Ein Beispiel-Template liegt unter `supabase/seed/example_template.json`.
+
+## Projektstruktur
+
+```
+src/
+  auth/             AuthContext (Session, Profil, signIn/signOut/Passwort)
+  components/       Brand, Spinner, AppShell (Fahrer), AdminShell (Admin)
+  lib/              Supabase-Client
+  pages/            LoginPage, PasswordReset/New, FahrerDashboard, OffeneFormularePage,
+                    AdminDashboard
+  pages/admin/      FahrerListPage, AuftraggeberListPage, TemplatesListPage,
+                    ZuweisungenPage, EingaengePage
+  types/            Database-Typen (Zod-los, minimal)
+supabase/
+  migrations/       SQL-Migrations (Schema, RLS, Storage)
+  seed/             Beispiel-Templates
+```
 
 ## Scripts
 
