@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { displayName } from '../lib/names';
 import { MajaLogo } from './Brand';
 
 interface NavItem { to: string; label: string }
@@ -22,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-3">
             {profile && (
               <div className="hidden text-right text-xs sm:block">
-                <div className="font-medium text-maja-ink">{profile.full_name ?? profile.email}</div>
+                <div className="font-medium text-maja-ink">{displayName(profile)}</div>
                 <div className="text-maja-muted">{profile.role === 'admin' ? 'Admin' : 'Fahrer'}</div>
               </div>
             )}

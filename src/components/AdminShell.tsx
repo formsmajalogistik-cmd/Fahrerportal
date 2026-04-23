@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { displayName } from '../lib/names';
 import { MajaLogo } from './Brand';
 
 interface NavItem { to: string; label: string }
@@ -53,7 +54,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               {profile && (
                 <div className="hidden text-right text-xs sm:block">
                   <div className="font-medium text-maja-ink">
-                    {profile.full_name ?? profile.email}
+                    {displayName(profile)}
                   </div>
                   <div className="text-maja-muted">Admin</div>
                 </div>

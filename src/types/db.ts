@@ -1,4 +1,5 @@
-// Minimaler Typ-Schim für Supabase-Client. Kann später per `supabase gen types` ersetzt werden.
+// Minimaler Typ-Schim für Supabase-Client (kann später per `supabase gen types`
+// überschrieben werden).
 
 export type UserRole = 'admin' | 'fahrer';
 export type FormularStatus = 'draft' | 'submitted';
@@ -6,34 +7,21 @@ export type FormularStatus = 'draft' | 'submitted';
 export interface AppUser {
   id: string;
   email: string;
-  full_name: string | null;
   role: UserRole;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  vorname: string | null;
+  nachname: string | null;
 }
 
 export interface Auftraggeber {
   id: string;
   name: string;
-  kuerzel: string | null;
   kontakt: string | null;
-  notizen: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface Fahrer {
   id: string;
-  user_id: string | null;
-  vorname: string;
-  nachname: string;
-  personalnummer: string | null;
-  telefon: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  user_id: string;
+  aktiv: boolean;
 }
 
 export type FieldType =
@@ -67,7 +55,6 @@ export interface FieldMappingEntry {
   width?: number;
   height?: number;
   fontSize?: number;
-  align?: 'left' | 'center' | 'right';
 }
 
 export type FieldMapping = Record<string, FieldMappingEntry>;
@@ -75,51 +62,41 @@ export type FieldMapping = Record<string, FieldMappingEntry>;
 export interface FormularTemplate {
   id: string;
   name: string;
-  version: number;
   auftraggeber_id: string | null;
-  beschreibung: string | null;
-  schema_json: FormSchema;
-  field_mapping: FieldMapping;
+  schema: FormSchema;
   pdf_template: string | null;
-  is_active: boolean;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
+  field_mapping: FieldMapping;
 }
 
 export interface FormularZuweisung {
   id: string;
   fahrer_id: string;
   template_id: string;
-  gueltig_ab: string | null;
-  gueltig_bis: string | null;
-  is_active: boolean;
-  created_at: string;
 }
 
 export interface AusgefuelltesFormular {
   id: string;
-  template_id: string;
   fahrer_id: string;
+  template_id: string;
+  daten: Record<string, unknown>;
   status: FormularStatus;
-  data_json: Record<string, unknown>;
-  pdf_path: string | null;
-  submitted_at: string | null;
   created_at: string;
-  updated_at: string;
 }
 
-export interface Foto {
-  id: string;
-  formular_id: string;
-  field_id: string;
+// Foto-Werte im daten-JSON: { storage_path, mime_type?, size_bytes? }
+export interface PhotoValue {
   storage_path: string;
-  mime_type: string | null;
-  size_bytes: number | null;
-  created_at: string;
+  mime_type?: string;
+  size_bytes?: number;
 }
 
-// Supabase Database-Schim
+// Damage-Diagram-Werte: Liste von Markern (x/y in Prozent des Referenzbilds)
+export interface DamageMarker {
+  x: number;
+  y: number;
+  note?: string;
+}
+
 type Row<T> = { Row: T; Insert: Partial<T>; Update: Partial<T> };
 
 export interface Database {
@@ -131,7 +108,6 @@ export interface Database {
       formular_templates: Row<FormularTemplate>;
       formular_zuweisungen: Row<FormularZuweisung>;
       ausgefuellte_formulare: Row<AusgefuelltesFormular>;
-      fotos: Row<Foto>;
     };
     Views: Record<string, never>;
     Functions: { is_admin: { Args: Record<string, never>; Returns: boolean } };

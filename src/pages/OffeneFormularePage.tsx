@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
@@ -33,7 +34,7 @@ export function OffeneFormularePage() {
         .select('*, template:template_id (name)')
         .eq('fahrer_id', fahrerRow.id)
         .eq('status', 'draft')
-        .order('updated_at', { ascending: false });
+        .order('created_at', { ascending: false });
       if (cancelled) return;
       if (err) setError(err.message);
       else setRows((data as unknown as DraftRow[]) ?? []);
@@ -64,10 +65,10 @@ export function OffeneFormularePage() {
               <div>
                 <div className="font-medium text-maja-navy">{r.template?.name ?? 'Formular'}</div>
                 <div className="text-xs text-maja-muted">
-                  Zuletzt bearbeitet: {new Date(r.updated_at).toLocaleString('de-DE')}
+                  Begonnen: {new Date(r.created_at).toLocaleString('de-DE')}
                 </div>
               </div>
-              <button className="btn-secondary" disabled>Fortsetzen</button>
+              <Link to={`/formular/${r.id}`} className="btn-secondary">Fortsetzen</Link>
             </li>
           ))}
         </ul>

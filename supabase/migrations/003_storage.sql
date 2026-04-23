@@ -1,8 +1,9 @@
 -- ============================================================
--- Storage Buckets + Policies
---   pdf-templates  : Admin-only PDF-Vorlagen (private)
---   formular-fotos : von Fahrern hochgeladene Fotos (private)
---   formular-pdfs  : generierte Ausgabe-PDFs (private)
+-- Maja-Logistik Business-Portal — 003: Storage Buckets
+-- ------------------------------------------------------------
+--   pdf-templates   Admin legt PDF-Vorlagen ab, alle Authentifizierten lesen
+--   formular-fotos  Fahrer speichern Fotos unter <user_id>/...
+--   formular-pdfs   Generierte Ausgabe-PDFs unter <user_id>/...
 -- ============================================================
 
 insert into storage.buckets (id, name, public)
@@ -17,15 +18,15 @@ insert into storage.buckets (id, name, public)
   values ('formular-pdfs', 'formular-pdfs', false)
   on conflict (id) do nothing;
 
--- pdf-templates: nur Admin
-drop policy if exists pdf_templates_admin_all on storage.objects;
-create policy pdf_templates_admin_all on storage.objects
+-- pdf-templates: Admin schreibt, alle Angemeldeten lesen
+drop policy if exists pdf_templates_admin_write on storage.objects;
+create policy pdf_templates_admin_write on storage.objects
   for all to authenticated
   using (bucket_id = 'pdf-templates' and public.is_admin())
   with check (bucket_id = 'pdf-templates' and public.is_admin());
 
-drop policy if exists pdf_templates_auth_read on storage.objects;
-create policy pdf_templates_auth_read on storage.objects
+drop policy if exists pdf_templates_read on storage.objects;
+create policy pdf_templates_read on storage.objects
   for select to authenticated
   using (bucket_id = 'pdf-templates');
 
@@ -48,24 +49,20 @@ create policy fotos_user_rw on storage.objects
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- formular-pdfs: Admin schreibt, Fahrer liest eigene
+-- formular-pdfs: Admin alles, Fahrer liest/schreibt eigene
 drop policy if exists pdfs_admin_all on storage.objects;
 create policy pdfs_admin_all on storage.objects
   for all to authenticated
   using (bucket_id = 'formular-pdfs' and public.is_admin())
   with check (bucket_id = 'formular-pdfs' and public.is_admin());
 
-drop policy if exists pdfs_user_read on storage.objects;
-create policy pdfs_user_read on storage.objects
-  for select to authenticated
+drop policy if exists pdfs_user_rw on storage.objects;
+create policy pdfs_user_rw on storage.objects
+  for all to authenticated
   using (
     bucket_id = 'formular-pdfs'
     and (storage.foldername(name))[1] = auth.uid()::text
-  );
-
-drop policy if exists pdfs_user_insert on storage.objects;
-create policy pdfs_user_insert on storage.objects
-  for insert to authenticated
+  )
   with check (
     bucket_id = 'formular-pdfs'
     and (storage.foldername(name))[1] = auth.uid()::text

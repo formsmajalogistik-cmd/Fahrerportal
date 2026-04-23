@@ -17,8 +17,8 @@ export function AdminDashboard() {
     let cancelled = false;
     (async () => {
       const [fahrer, templates, offen, submitted] = await Promise.all([
-        supabase.from('fahrer').select('id', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('formular_templates').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('fahrer').select('id', { count: 'exact', head: true }).eq('aktiv', true),
+        supabase.from('formular_templates').select('id', { count: 'exact', head: true }),
         supabase.from('ausgefuellte_formulare').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
         supabase.from('ausgefuellte_formulare').select('id', { count: 'exact', head: true }).eq('status', 'submitted'),
       ]);
@@ -42,7 +42,7 @@ export function AdminDashboard() {
 
   const tiles = [
     { label: 'Aktive Fahrer',         value: stats.fahrer },
-    { label: 'Aktive Templates',      value: stats.templates },
+    { label: 'Templates',             value: stats.templates },
     { label: 'Offene Entwürfe',       value: stats.offen },
     { label: 'Eingereichte Protokolle', value: stats.submitted },
   ];

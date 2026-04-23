@@ -34,52 +34,45 @@ export function TemplatesListPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-maja-navy">Formular-Templates</h1>
-          <p className="text-sm text-maja-muted">
-            JSON-basierte Templates inkl. PDF-Mapping.
-          </p>
-        </div>
-        <button className="btn-primary" disabled>Neues Template</button>
+      <div>
+        <h1 className="text-2xl font-semibold text-maja-navy">Formular-Templates</h1>
+        <p className="text-sm text-maja-muted">
+          JSON-basierte Templates inkl. PDF-Mapping — direkt in Supabase pflegen
+          (Tabelle <code className="rounded bg-maja-light px-1">formular_templates</code>).
+        </p>
       </div>
 
       {rows.length === 0 ? (
         <div className="card p-6 text-sm text-maja-muted">
-          Noch keine Templates angelegt. Lege sie in Supabase (Tabelle
-          <code className="mx-1 rounded bg-maja-light px-1 py-0.5">formular_templates</code>)
-          an — ein Beispiel liegt im Fahrerportal-Repo unter
+          Noch keine Templates angelegt. Ein Beispiel-Template liegt unter
           <code className="mx-1 rounded bg-maja-light px-1 py-0.5">supabase/seed/example_template.json</code>.
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((t) => (
-            <li key={t.id} className="card p-5">
-              <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
-                {t.auftraggeber?.name ?? 'Maja-Logistik'}
-              </div>
-              <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
-              <div className="mt-1 text-xs text-maja-muted">Version {t.version}</div>
-              {t.beschreibung && (
-                <p className="mt-2 text-sm text-maja-muted">{t.beschreibung}</p>
-              )}
-              <div className="mt-3 flex items-center gap-2">
-                <span className={
-                  'inline-flex rounded-full px-2 py-0.5 text-xs font-medium ' +
-                  (t.is_active
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-gray-200 text-gray-600')
-                }>
-                  {t.is_active ? 'aktiv' : 'inaktiv'}
-                </span>
+          {rows.map((t) => {
+            const sectionCount = t.schema?.sections?.length ?? 0;
+            const fieldCount = (t.schema?.sections ?? []).reduce(
+              (acc, s) => acc + (s.fields?.length ?? 0), 0,
+            );
+            return (
+              <li key={t.id} className="card p-5">
+                <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
+                  {t.auftraggeber?.name ?? 'Maja-Logistik'}
+                </div>
+                <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
+                <div className="mt-2 text-xs text-maja-muted">
+                  {sectionCount} Sektionen · {fieldCount} Felder
+                </div>
                 {t.pdf_template && (
-                  <span className="inline-flex rounded-full bg-maja-light px-2 py-0.5 text-xs text-maja-navy">
-                    PDF: {t.pdf_template}
-                  </span>
+                  <div className="mt-3">
+                    <span className="inline-flex rounded-full bg-maja-light px-2 py-0.5 text-xs text-maja-navy">
+                      PDF: {t.pdf_template}
+                    </span>
+                  </div>
                 )}
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
-import type { AusgefuelltesFormular, Fahrer, FormularTemplate } from '../../types/db';
+import type { AppUser, AusgefuelltesFormular, FormularTemplate } from '../../types/db';
 
 interface Row extends AusgefuelltesFormular {
-  fahrer?: Pick<Fahrer, 'vorname' | 'nachname'> | null;
+  fahrer?: { user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null } | null;
   template?: Pick<FormularTemplate, 'name'> | null;
 }
 
@@ -18,8 +19,10 @@ export function EingaengePage() {
     (async () => {
       const { data, error: err } = await supabase
         .from('ausgefuellte_formulare')
-        .select('*, fahrer:fahrer_id (vorname, nachname), template:template_id (name)')
-        .order('updated_at', { ascending: false })
+        .select(
+          '*, fahrer:fahrer_id (user:user_id (email, vorname, nachname)), template:template_id (name)',
+        )
+        .order('created_at', { ascending: false })
         .limit(50);
       if (cancelled) return;
       if (err) setError(err.message);
@@ -49,7 +52,7 @@ export function EingaengePage() {
               <th className="px-4 py-3 font-semibold">Template</th>
               <th className="px-4 py-3 font-semibold">Fahrer</th>
               <th className="px-4 py-3 font-semibold">Status</th>
-              <th className="px-4 py-3 font-semibold">Zuletzt aktualisiert</th>
+              <th className="px-4 py-3 font-semibold">Erstellt</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-maja-navy/10">
@@ -61,7 +64,7 @@ export function EingaengePage() {
               <tr key={r.id} className="hover:bg-maja-light/50">
                 <td className="px-4 py-3 font-medium text-maja-ink">{r.template?.name ?? '—'}</td>
                 <td className="px-4 py-3 text-maja-muted">
-                  {r.fahrer ? `${r.fahrer.vorname} ${r.fahrer.nachname}` : '—'}
+                  {displayName(r.fahrer?.user ?? null)}
                 </td>
                 <td className="px-4 py-3">
                   <span className={
@@ -74,7 +77,7 @@ export function EingaengePage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-maja-muted">
-                  {new Date(r.updated_at).toLocaleString('de-DE')}
+                  {new Date(r.created_at).toLocaleString('de-DE')}
                 </td>
               </tr>
             ))}

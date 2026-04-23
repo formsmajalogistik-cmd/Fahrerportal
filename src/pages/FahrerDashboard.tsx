@@ -1,58 +1,63 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
-import type { FormularTemplate, Fahrer, Auftraggeber } from '../types/db';
+import type { Auftraggeber, Fahrer, FormularTemplate } from '../types/db';
 
 interface TemplateRow extends FormularTemplate {
-  auftraggeber?: Pick<Auftraggeber, 'name' | 'kuerzel'> | null;
+  auftraggeber?: Pick<Auftraggeber, 'name'> | null;
 }
 
 export function FahrerDashboard() {
   const { session } = useAuth();
+  const navigate = useNavigate();
   const [fahrer, setFahrer] = useState<Fahrer | null>(null);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!session) return;
-    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
-    (async () => {
-      setLoading(true);
-      setError(null);
+    const { data: fahrerRow, error: fahrerErr } = await supabase
+      .from('fahrer')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    if (fahrerErr) { setError(fahrerErr.message); setLoading(false); return; }
 
-      const { data: fahrerRow, error: fahrerErr } = await supabase
-        .from('fahrer')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .maybeSingle();
-      if (fahrerErr) {
-        if (!cancelled) { setError(fahrerErr.message); setLoading(false); }
-        return;
-      }
-
-      const { data: tpls, error: tplErr } = await supabase
-        .from('formular_templates')
-        .select('*, auftraggeber:auftraggeber_id (name, kuerzel)')
-        .eq('is_active', true)
-        .order('name');
-      if (cancelled) return;
-      if (tplErr) {
-        setError(tplErr.message);
-      } else {
-        setFahrer(fahrerRow);
-        setTemplates((tpls as unknown as TemplateRow[]) ?? []);
-      }
-      setLoading(false);
-    })();
-
-    return () => { cancelled = true; };
+    // RLS liefert uns ohnehin nur zugewiesene Templates
+    const { data: tpls, error: tplErr } = await supabase
+      .from('formular_templates')
+      .select('*, auftraggeber:auftraggeber_id (name)')
+      .order('name');
+    if (tplErr) setError(tplErr.message);
+    else setTemplates((tpls as unknown as TemplateRow[]) ?? []);
+    setFahrer(fahrerRow);
+    setLoading(false);
   }, [session]);
 
+  useEffect(() => { void load(); }, [load]);
+
+  async function startNew(template: TemplateRow) {
+    if (!fahrer) return;
+    setStarting(template.id);
+    const { data, error: err } = await supabase
+      .from('ausgefuellte_formulare')
+      .insert({ fahrer_id: fahrer.id, template_id: template.id, daten: {} })
+      .select('id')
+      .single();
+    setStarting(null);
+    if (err || !data) { setError(err?.message ?? 'Anlegen fehlgeschlagen'); return; }
+    navigate(`/formular/${data.id}`);
+  }
+
   if (loading) return <Spinner label="Formulare werden geladen …" />;
-  if (error)  return <ErrorBox message={error} />;
+  if (error)  return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
 
   if (!fahrer) {
     return (
@@ -87,26 +92,22 @@ export function FahrerDashboard() {
                 {t.auftraggeber?.name ?? 'Maja-Logistik'}
               </div>
               <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
-              {t.beschreibung && (
-                <p className="mt-1 text-sm text-maja-muted">{t.beschreibung}</p>
-              )}
+              <div className="mt-1 text-xs text-maja-muted">
+                {(t.schema?.sections ?? []).length} Sektionen
+              </div>
               <div className="mt-4">
-                <button className="btn-primary w-full" disabled title="Formular-Engine folgt in Phase 2">
-                  Protokoll starten
+                <button
+                  className="btn-primary w-full"
+                  onClick={() => startNew(t)}
+                  disabled={starting === t.id}
+                >
+                  {starting === t.id ? 'Wird angelegt …' : 'Protokoll starten'}
                 </button>
               </div>
             </li>
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-function ErrorBox({ message }: { message: string }) {
-  return (
-    <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
-      {message}
     </div>
   );
 }
