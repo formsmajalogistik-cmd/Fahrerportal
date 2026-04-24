@@ -13,6 +13,7 @@ import { AdminDashboard } from './pages/AdminDashboard';
 import { FahrerListPage } from './pages/admin/FahrerListPage';
 import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
 import { TemplatesListPage } from './pages/admin/TemplatesListPage';
+import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { ZuweisungenPage } from './pages/admin/ZuweisungenPage';
 import { EingaengePage } from './pages/admin/EingaengePage';
 
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="/fahrer" element={<FahrerListPage />} />
           <Route path="/auftraggeber" element={<AuftraggeberListPage />} />
           <Route path="/templates" element={<TemplatesListPage />} />
+          <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/zuweisungen" element={<ZuweisungenPage />} />
           <Route path="/eingaenge" element={<EingaengePage />} />
           <Route path="/formular/:id" element={<FormularPage />} />

@@ -52,16 +52,31 @@ export type Database = {
           id: string;
           name: string;
           kontakt: string | null;
+          strasse: string | null;
+          plz: string | null;
+          ort: string | null;
+          email1: string | null;
+          email2: string | null;
         };
         Insert: {
           id?: string;
           name: string;
           kontakt?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          email1?: string | null;
+          email2?: string | null;
         };
         Update: {
           id?: string;
           name?: string;
           kontakt?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          email1?: string | null;
+          email2?: string | null;
         };
         Relationships: [];
       };

@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { AuftraggeberEditDialog } from './AuftraggeberEditDialog';
 import type { Auftraggeber } from '../../types/db';
 
 export function AuftraggeberListPage() {
   const [rows, setRows] = useState<Auftraggeber[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState('');
-  const [kontakt, setKontakt] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<Auftraggeber | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<Auftraggeber | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -23,15 +23,11 @@ export function AuftraggeberListPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setSaving(true);
+  async function handleDelete(ag: Auftraggeber) {
     const { error: err } = await supabase
-      .from('auftraggeber')
-      .insert({ name, kontakt: kontakt || null });
-    setSaving(false);
-    if (err) { setError(err.message); return; }
-    setName(''); setKontakt(''); setShowForm(false);
+      .from('auftraggeber').delete().eq('id', ag.id);
+    if (err) throw err;
+    setDeleting(null);
     void load();
   }
 
@@ -47,55 +43,86 @@ export function AuftraggeberListPage() {
           <h1 className="text-2xl font-semibold text-maja-navy">Auftraggeber</h1>
           <p className="text-sm text-maja-muted">Kunden verwalten.</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Abbrechen' : 'Neuen Auftraggeber anlegen'}
+        <button className="btn-primary" onClick={() => setEditing('new')}>
+          Neuen Auftraggeber anlegen
         </button>
       </div>
-
-      {showForm && (
-        <form onSubmit={handleCreate} className="card space-y-3 p-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="ag-name" className="label">Name</label>
-              <input id="ag-name" className="input" required
-                     value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="ag-kontakt" className="label">Kontakt</label>
-              <input id="ag-kontakt" className="input"
-                     value={kontakt} onChange={(e) => setKontakt(e.target.value)} />
-            </div>
-          </div>
-          <div className="flex justify-end">
-            <button className="btn-primary" disabled={saving}>
-              {saving ? 'Speichern …' : 'Anlegen'}
-            </button>
-          </div>
-        </form>
-      )}
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-maja-light text-left text-maja-navy">
             <tr>
               <th className="px-4 py-3 font-semibold">Name</th>
+              <th className="px-4 py-3 font-semibold">Adresse</th>
               <th className="px-4 py-3 font-semibold">Kontakt</th>
+              <th className="px-4 py-3 font-semibold">E-Mails</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-maja-navy/10">
             {rows.length === 0 ? (
-              <tr><td colSpan={2} className="px-4 py-6 text-center text-maja-muted">
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-maja-muted">
                 Noch keine Auftraggeber angelegt.
               </td></tr>
             ) : rows.map((a) => (
-              <tr key={a.id} className="hover:bg-maja-light/50">
+              <tr key={a.id} className="hover:bg-maja-light/50 align-top">
                 <td className="px-4 py-3 font-medium text-maja-ink">{a.name}</td>
+                <td className="px-4 py-3 text-maja-muted">
+                  {a.strasse || a.plz || a.ort ? (
+                    <>
+                      {a.strasse && <div>{a.strasse}</div>}
+                      {(a.plz || a.ort) && (
+                        <div>{[a.plz, a.ort].filter(Boolean).join(' ')}</div>
+                      )}
+                    </>
+                  ) : '—'}
+                </td>
                 <td className="px-4 py-3 text-maja-muted">{a.kontakt ?? '—'}</td>
+                <td className="px-4 py-3 text-maja-muted">
+                  {a.email1 && <div>{a.email1}</div>}
+                  {a.email2 && <div>{a.email2}</div>}
+                  {!a.email1 && !a.email2 && '—'}
+                </td>
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  <button
+                    className="text-sm font-medium text-maja-accent hover:underline"
+                    onClick={() => setEditing(a)}
+                  >Bearbeiten</button>
+                  <button
+                    className="ml-3 text-sm font-medium text-red-600 hover:underline"
+                    onClick={() => setDeleting(a)}
+                  >Löschen</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {editing && (
+        <AuftraggeberEditDialog
+          initial={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); void load(); }}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmDialog
+          title="Auftraggeber löschen?"
+          message={
+            <>
+              Soll „<strong>{deleting.name}</strong>" wirklich gelöscht werden?
+              Zugeordnete Templates verlieren die Verknüpfung, vorhandene
+              Protokolle bleiben erhalten.
+            </>
+          }
+          confirmLabel="Löschen"
+          destructive
+          onConfirm={() => handleDelete(deleting)}
+          onClose={() => setDeleting(null)}
+        />
+      )}
     </div>
   );
 }

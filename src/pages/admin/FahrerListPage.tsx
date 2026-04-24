@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { FahrerEditDialog } from './FahrerEditDialog';
 import type { AppUser, Fahrer } from '../../types/db';
 
@@ -14,6 +15,7 @@ export function FahrerListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Row | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<Row | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -28,6 +30,13 @@ export function FahrerListPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function handleDelete(f: Row) {
+    const { error: err } = await supabase.from('fahrer').delete().eq('id', f.id);
+    if (err) throw err;
+    setDeleting(null);
+    void load();
+  }
 
   if (loading) return <Spinner label="Fahrer werden geladen …" />;
   if (error) {
@@ -64,7 +73,7 @@ export function FahrerListPage() {
             ) : rows.map((f) => (
               <tr key={f.id} className="hover:bg-maja-light/50">
                 <td className="px-4 py-3 font-medium text-maja-ink">
-                  {displayName(f.user ? { ...f.user, email: f.user.email } : null)}
+                  {displayName(f.user ?? null)}
                 </td>
                 <td className="px-4 py-3 text-maja-muted">{f.user?.email ?? '—'}</td>
                 <td className="px-4 py-3">
@@ -77,13 +86,15 @@ export function FahrerListPage() {
                     {f.aktiv ? 'aktiv' : 'inaktiv'}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-4 py-3 text-right whitespace-nowrap">
                   <button
                     className="text-sm font-medium text-maja-accent hover:underline"
                     onClick={() => setEditing(f)}
-                  >
-                    Bearbeiten
-                  </button>
+                  >Bearbeiten</button>
+                  <button
+                    className="ml-3 text-sm font-medium text-red-600 hover:underline"
+                    onClick={() => setDeleting(f)}
+                  >Löschen</button>
                 </td>
               </tr>
             ))}
@@ -96,6 +107,24 @@ export function FahrerListPage() {
           initial={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void load(); }}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmDialog
+          title="Fahrer löschen?"
+          message={
+            <>
+              Soll das Fahrer-Profil von
+              „<strong>{displayName(deleting.user ?? null)}</strong>" gelöscht werden?
+              Das zugehörige Benutzerkonto in Supabase Auth bleibt bestehen.
+              Bereits abgegebene Protokolle dieses Fahrers werden nicht gelöscht.
+            </>
+          }
+          confirmLabel="Löschen"
+          destructive
+          onConfirm={() => handleDelete(deleting)}
+          onClose={() => setDeleting(null)}
         />
       )}
     </div>
