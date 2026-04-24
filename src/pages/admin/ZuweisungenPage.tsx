@@ -2,20 +2,24 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
-import type { AppUser, Fahrer, FormularTemplate, FormularZuweisung } from '../../types/db';
+import type { AppUser, Fahrer, FormularZuweisung } from '../../types/db';
 
 interface FahrerRow extends Fahrer {
   user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
 }
+interface TemplateOption {
+  id: string;
+  name: string;
+}
 interface ZuweisungRow extends FormularZuweisung {
   fahrer?: FahrerRow | null;
-  template?: Pick<FormularTemplate, 'name'> | null;
+  template?: TemplateOption | null;
 }
 
 export function ZuweisungenPage() {
   const [rows, setRows] = useState<ZuweisungRow[]>([]);
   const [fahrer, setFahrer] = useState<FahrerRow[]>([]);
-  const [templates, setTemplates] = useState<FormularTemplate[]>([]);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [fahrerId, setFahrerId] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -35,7 +39,7 @@ export function ZuweisungenPage() {
         .from('fahrer')
         .select('*, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true),
-      supabase.from('formular_templates').select('*').order('name'),
+      supabase.from('formular_templates').select('id, name').order('name'),
     ]);
     if (zErr) setError(zErr.message);
     else setRows((z as unknown as ZuweisungRow[]) ?? []);

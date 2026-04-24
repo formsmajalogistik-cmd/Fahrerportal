@@ -1,28 +1,19 @@
-// Minimaler Typ-Schim für Supabase-Client (kann später per `supabase gen types`
-// überschrieben werden).
+// Domain-Typen für das Frontend — dünne Wrapper über das Supabase-Row-Schema.
+// Das eigentliche Database-Schema liegt in ./supabase.ts.
 
-export type UserRole = 'admin' | 'fahrer';
-export type FormularStatus = 'draft' | 'submitted';
+import type { Database } from './supabase';
 
-export interface AppUser {
-  id: string;
-  email: string;
-  role: UserRole;
-  vorname: string | null;
-  nachname: string | null;
-}
+export type UserRole = Database['public']['Enums']['user_role'];
+export type FormularStatus = Database['public']['Enums']['formular_status'];
 
-export interface Auftraggeber {
-  id: string;
-  name: string;
-  kontakt: string | null;
-}
+export type AppUser = Database['public']['Tables']['app_users']['Row'];
+export type Auftraggeber = Database['public']['Tables']['auftraggeber']['Row'];
+export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
+export type FormularZuweisung =
+  Database['public']['Tables']['formular_zuweisungen']['Row'];
 
-export interface Fahrer {
-  id: string;
-  user_id: string;
-  aktiv: boolean;
-}
+// ---- Templates: schema & field_mapping sind in der DB jsonb.
+// Wir casten im Frontend auf spezifische Strukturen.
 
 export type FieldType =
   | 'text' | 'number' | 'date' | 'select' | 'checkboxes'
@@ -59,29 +50,16 @@ export interface FieldMappingEntry {
 
 export type FieldMapping = Record<string, FieldMappingEntry>;
 
-export interface FormularTemplate {
-  id: string;
-  name: string;
-  auftraggeber_id: string | null;
+type TemplateRow = Database['public']['Tables']['formular_templates']['Row'];
+export type FormularTemplate = Omit<TemplateRow, 'schema' | 'field_mapping'> & {
   schema: FormSchema;
-  pdf_template: string | null;
   field_mapping: FieldMapping;
-}
+};
 
-export interface FormularZuweisung {
-  id: string;
-  fahrer_id: string;
-  template_id: string;
-}
-
-export interface AusgefuelltesFormular {
-  id: string;
-  fahrer_id: string;
-  template_id: string;
+type AfRow = Database['public']['Tables']['ausgefuellte_formulare']['Row'];
+export type AusgefuelltesFormular = Omit<AfRow, 'daten'> & {
   daten: Record<string, unknown>;
-  status: FormularStatus;
-  created_at: string;
-}
+};
 
 // Foto-Werte im daten-JSON: { storage_path, mime_type?, size_bytes? }
 export interface PhotoValue {
@@ -90,27 +68,9 @@ export interface PhotoValue {
   size_bytes?: number;
 }
 
-// Damage-Diagram-Werte: Liste von Markern (x/y in Prozent des Referenzbilds)
+// Damage-Diagram-Werte: Liste von Markern (x/y in Prozent)
 export interface DamageMarker {
   x: number;
   y: number;
   note?: string;
-}
-
-type Row<T> = { Row: T; Insert: Partial<T>; Update: Partial<T> };
-
-export interface Database {
-  public: {
-    Tables: {
-      app_users: Row<AppUser>;
-      auftraggeber: Row<Auftraggeber>;
-      fahrer: Row<Fahrer>;
-      formular_templates: Row<FormularTemplate>;
-      formular_zuweisungen: Row<FormularZuweisung>;
-      ausgefuellte_formulare: Row<AusgefuelltesFormular>;
-    };
-    Views: Record<string, never>;
-    Functions: { is_admin: { Args: Record<string, never>; Returns: boolean } };
-    Enums: { user_role: UserRole; formular_status: FormularStatus };
-  };
 }

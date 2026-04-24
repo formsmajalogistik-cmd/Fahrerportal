@@ -6,6 +6,7 @@ import { Spinner } from '../components/Spinner';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { validateForm } from '../lib/validateForm';
 import type { AusgefuelltesFormular, FormularTemplate } from '../types/db';
+import type { Json } from '../types/supabase';
 
 export function FormularPage() {
   const { id } = useParams();
@@ -47,9 +48,9 @@ export function FormularPage() {
         setLoading(false);
         return;
       }
-      setFormular(af);
+      setFormular(af as unknown as AusgefuelltesFormular);
       setTemplate(tpl as unknown as FormularTemplate);
-      setData((af.daten as Record<string, unknown>) ?? {});
+      setData((af.daten as unknown as Record<string, unknown>) ?? {});
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -67,7 +68,7 @@ export function FormularPage() {
     setStatusMsg(null);
     const { error: err } = await supabase
       .from('ausgefuellte_formulare')
-      .update({ daten: data })
+      .update({ daten: data as Json })
       .eq('id', formular.id);
     setSaving('idle');
     if (err) { setError(err.message); return; }
@@ -85,7 +86,7 @@ export function FormularPage() {
     setError(null);
     const { error: err } = await supabase
       .from('ausgefuellte_formulare')
-      .update({ daten: data, status: 'submitted' })
+      .update({ daten: data as Json, status: 'submitted' })
       .eq('id', formular.id);
     setSaving('idle');
     if (err) { setError(err.message); return; }
