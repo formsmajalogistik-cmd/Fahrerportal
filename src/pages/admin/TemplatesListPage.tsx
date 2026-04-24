@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
+import { TemplateNewDialog } from './TemplateNewDialog';
 import type { Auftraggeber, FormularTemplate } from '../../types/db';
 
 interface Row extends FormularTemplate {
@@ -11,21 +12,21 @@ export function TemplatesListPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showDialog, setShowDialog] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data, error: err } = await supabase
-        .from('formular_templates')
-        .select('*, auftraggeber:auftraggeber_id (name)')
-        .order('name');
-      if (cancelled) return;
-      if (err) setError(err.message);
-      else setRows((data as unknown as Row[]) ?? []);
-      setLoading(false);
-    })();
-    return () => { cancelled = true; };
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const { data, error: err } = await supabase
+      .from('formular_templates')
+      .select('*, auftraggeber:auftraggeber_id (name)')
+      .order('name');
+    if (err) setError(err.message);
+    else setRows((data as unknown as Row[]) ?? []);
+    setLoading(false);
   }, []);
+
+  useEffect(() => { void load(); }, [load]);
 
   if (loading) return <Spinner label="Templates werden geladen …" />;
   if (error) {
@@ -34,18 +35,25 @@ export function TemplatesListPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold text-maja-navy">Formular-Templates</h1>
-        <p className="text-sm text-maja-muted">
-          JSON-basierte Templates inkl. PDF-Mapping — direkt in Supabase pflegen
-          (Tabelle <code className="rounded bg-maja-light px-1">formular_templates</code>).
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-maja-navy">Formular-Templates</h1>
+          <p className="text-sm text-maja-muted">
+            JSON-basierte Templates inkl. PDF-Mapping. Weitere Templates lassen
+            sich direkt in Supabase anlegen
+            (Tabelle <code className="rounded bg-maja-light px-1">formular_templates</code>).
+          </p>
+        </div>
+        <button className="btn-primary" onClick={() => setShowDialog(true)}>
+          Fahrzeugprotokoll anlegen
+        </button>
       </div>
 
       {rows.length === 0 ? (
         <div className="card p-6 text-sm text-maja-muted">
-          Noch keine Templates angelegt. Ein Beispiel-Template liegt unter
-          <code className="mx-1 rounded bg-maja-light px-1 py-0.5">supabase/seed/example_template.json</code>.
+          Noch keine Templates angelegt. Du kannst oben das Maja-Logistik
+          Standard-Fahrzeugprotokoll anlegen oder ein eigenes Template in
+          Supabase einfügen (Beispiel: <code className="rounded bg-maja-light px-1 py-0.5">supabase/seed/fahrzeugprotokoll.sql</code>).
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -74,6 +82,13 @@ export function TemplatesListPage() {
             );
           })}
         </ul>
+      )}
+
+      {showDialog && (
+        <TemplateNewDialog
+          onClose={() => setShowDialog(false)}
+          onCreated={() => { setShowDialog(false); void load(); }}
+        />
       )}
     </div>
   );
