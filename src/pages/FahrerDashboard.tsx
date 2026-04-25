@@ -10,7 +10,7 @@ interface TemplateRow extends FormularTemplate {
 }
 
 export function FahrerDashboard() {
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const navigate = useNavigate();
   const [fahrer, setFahrer] = useState<Fahrer | null>(null);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -60,12 +60,16 @@ export function FahrerDashboard() {
   if (error)  return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
 
   if (!fahrer) {
+    const isAdmin = profile?.role === 'admin';
     return (
       <div className="card p-6">
-        <h2 className="mb-2 text-lg font-semibold text-maja-navy">Kein Fahrer-Profil zugeordnet</h2>
+        <h2 className="mb-2 text-lg font-semibold text-maja-navy">
+          Kein Form-Filler-Profil zugeordnet
+        </h2>
         <p className="text-sm text-maja-muted">
-          Dein Account ist angemeldet, aber es ist noch kein Fahrer-Profil verknüpft.
-          Bitte wende dich an die Administration.
+          {isAdmin
+            ? 'Damit auch Admins Formulare ausfüllen können, brauchst du ein eigenes Profil. Lege es unter „Fahrer" an und ordne dort dein Admin-Konto zu — anschließend erscheinen hier deine Zuweisungen.'
+            : 'Dein Account ist angemeldet, aber es ist noch kein Profil verknüpft. Bitte wende dich an die Administration.'}
         </p>
       </div>
     );

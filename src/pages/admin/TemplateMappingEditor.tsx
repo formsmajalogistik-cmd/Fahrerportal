@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildPreviewPdf } from '../../lib/pdfPreview';
 import { fetchPdfBytes, getPdfSignedUrl, uploadPdfTemplate } from '../../lib/pdfStorage';
 import { PdfMappingCanvas } from '../../components/forms/PdfMappingCanvas';
-import type { FieldMapping, FieldMappingEntry, FormField, FormSchema } from '../../types/db';
+import {
+  fieldsById,
+  isBoxEntry, isFieldMappedOnPage, isOptionsEntry, isTextEntry,
+  makeDefaultEntry, modeFor, OPTION_DEFAULT_SIZE,
+  PHOTO_DEFAULT_HEIGHT, PHOTO_DEFAULT_WIDTH, removeOption, setOptionPosition,
+  TEXT_DEFAULT_FONT,
+} from '../../lib/fieldMapping';
+import type {
+  BoxEntry, FieldMapping, FormField, FormSchema, OptionPosition, TextEntry,
+} from '../../types/db';
 
 interface Props {
   templateId: string;
@@ -13,8 +22,10 @@ interface Props {
   onPdfTemplateChange: (path: string) => void;
 }
 
-const PHOTO_DEFAULT_WIDTH = 200;
-const PHOTO_DEFAULT_HEIGHT = 150;
+interface Selection {
+  fieldId: string;
+  optionName?: string;
+}
 
 export function TemplateMappingEditor({
   templateId, schema, mapping, pdfTemplate,
@@ -25,17 +36,18 @@ export function TemplateMappingEditor({
   const [pageCount, setPageCount] = useState(1);
   const [uploading, setUploading] = useState(false);
   const [pending, setPending] = useState<{ x: number; y: number; page: number } | null>(null);
-  const [selectedField, setSelectedField] = useState<string | null>(null);
+  const [pickerStep, setPickerStep] = useState<{ field: FormField } | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyPreview, setBusyPreview] = useState(false);
 
-  const fields = useMemo(() => {
-    const out: FormField[] = [];
-    for (const s of schema.sections ?? []) for (const f of s.fields ?? []) out.push(f);
-    return out;
-  }, [schema]);
-
-  const fieldsById = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
+  const fieldMap = useMemo(() => fieldsById(schema), [schema]);
+  const fields = useMemo(() => Array.from(fieldMap.values()), [fieldMap]);
+  const fieldLabels = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const f of fields) m[f.id] = f.label;
+    return m;
+  }, [fields]);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,8 +71,7 @@ export function TemplateMappingEditor({
     try {
       const path = await uploadPdfTemplate(file, templateId);
       onPdfTemplateChange(path);
-      const buf = await file.arrayBuffer();
-      setPdfBytes(buf);
+      setPdfBytes(await file.arrayBuffer());
       setPage(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');
@@ -69,31 +80,77 @@ export function TemplateMappingEditor({
     }
   }
 
-  function assignField(fieldId: string) {
+  // Stufe 1: Klick aufs PDF → Feld wählen
+  function onCanvasClick(c: { x: number; y: number; page: number }) {
+    setPending(c);
+    setPickerStep(null);
+  }
+
+  // Stufe 2a: text/box-Feld direkt platzieren
+  function placeSimpleField(field: FormField) {
     if (!pending) return;
-    const field = fieldsById.get(fieldId);
-    const isPhoto = field?.type === 'photo';
-    const entry: FieldMappingEntry = {
-      page: pending.page,
-      x: Math.round(pending.x),
-      y: Math.round(pending.y),
-      ...(isPhoto ? { width: PHOTO_DEFAULT_WIDTH, height: PHOTO_DEFAULT_HEIGHT } : {}),
-    };
-    onMappingChange({ ...mapping, [fieldId]: entry });
+    const entry = makeDefaultEntry(field, {
+      x: Math.round(pending.x), y: Math.round(pending.y), page: pending.page,
+    });
+    onMappingChange({ ...mapping, [field.id]: entry });
+    setSelected({ fieldId: field.id });
     setPending(null);
-    setSelectedField(fieldId);
+    setPickerStep(null);
   }
 
-  function updateEntry(fieldId: string, patch: Partial<FieldMappingEntry>) {
-    const current = mapping[fieldId];
-    if (!current) return;
-    onMappingChange({ ...mapping, [fieldId]: { ...current, ...patch } });
+  // Stufe 2b: options-Feld → Option wählen
+  function placeOption(field: FormField, optionName: string) {
+    if (!pending) return;
+    const pos: OptionPosition = {
+      page: pending.page, x: Math.round(pending.x), y: Math.round(pending.y),
+    };
+    onMappingChange(setOptionPosition(mapping, field, optionName, pos));
+    setSelected({ fieldId: field.id, optionName });
+    setPending(null);
+    setPickerStep(null);
   }
 
-  function removeEntry(fieldId: string) {
-    const { [fieldId]: _remove, ...rest } = mapping;
+  function pickField(field: FormField) {
+    if (modeFor(field.type) === 'options') {
+      setPickerStep({ field });
+    } else {
+      placeSimpleField(field);
+    }
+  }
+
+  function removeFieldEntry(fieldId: string) {
+    const { [fieldId]: _gone, ...rest } = mapping;
+    void _gone;
     onMappingChange(rest);
-    if (selectedField === fieldId) setSelectedField(null);
+    if (selected?.fieldId === fieldId) setSelected(null);
+  }
+
+  function updateTextEntry(fieldId: string, patch: Partial<TextEntry>) {
+    const cur = mapping[fieldId];
+    if (!isTextEntry(cur)) return;
+    onMappingChange({ ...mapping, [fieldId]: { ...cur, ...patch } });
+  }
+
+  function updateBoxEntry(fieldId: string, patch: Partial<BoxEntry>) {
+    const cur = mapping[fieldId];
+    if (!isBoxEntry(cur)) return;
+    onMappingChange({ ...mapping, [fieldId]: { ...cur, ...patch } });
+  }
+
+  function updateOptionPosition(
+    fieldId: string, optionName: string, patch: Partial<OptionPosition>,
+  ) {
+    const cur = mapping[fieldId];
+    if (!isOptionsEntry(cur)) return;
+    const existing = cur.options[optionName];
+    if (!existing) return;
+    onMappingChange({
+      ...mapping,
+      [fieldId]: {
+        ...cur,
+        options: { ...cur.options, [optionName]: { ...existing, ...patch } },
+      },
+    });
   }
 
   async function openPreview() {
@@ -165,7 +222,7 @@ export function TemplateMappingEditor({
       </div>
 
       {pdfBytes && (
-        <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
           <div className="card p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="text-sm text-maja-muted">
@@ -182,7 +239,8 @@ export function TemplateMappingEditor({
                 von {pageCount}
               </div>
               <p className="text-xs text-maja-muted">
-                Klick ins PDF, um ein Feld zu positionieren. Klick auf einen Marker zum Auswählen.
+                Klick ins PDF → Feld auswählen. Bei Mehrfachauswahl-Feldern
+                jede Option einzeln.
               </p>
             </div>
             <PdfMappingCanvas
@@ -190,86 +248,78 @@ export function TemplateMappingEditor({
               page={page}
               onPageCount={onPageCount}
               mapping={mapping}
-              onClick={(c) => setPending(c)}
-              onMarkerClick={(id) => setSelectedField(id)}
-              selectedFieldId={selectedField}
+              fieldLabels={fieldLabels}
+              selected={selected}
+              onClick={onCanvasClick}
+              onMarkerClick={(sel) => {
+                setSelected(sel);
+                const e = mapping[sel.fieldId];
+                if (isTextEntry(e) || isBoxEntry(e)) setPage(e.page);
+                else if (isOptionsEntry(e) && sel.optionName) {
+                  const p = e.options[sel.optionName];
+                  if (p) setPage(p.page);
+                }
+              }}
             />
           </div>
 
           <aside className="space-y-4">
-            <div className="card p-4">
-              <h3 className="mb-2 text-sm font-semibold text-maja-navy">Gemappte Felder</h3>
-              {Object.keys(mapping).length === 0 ? (
-                <p className="text-xs text-maja-muted">Noch keine Zuordnungen.</p>
-              ) : (
-                <ul className="space-y-1 text-sm">
-                  {Object.entries(mapping).map(([fid, entry]) => {
-                    const field = fieldsById.get(fid);
-                    return (
-                      <li key={fid}
-                          className={
-                            'rounded-md px-2 py-1 cursor-pointer ' +
-                            (selectedField === fid ? 'bg-maja-accent/20' : 'hover:bg-maja-light')
-                          }
-                          onClick={() => { setSelectedField(fid); setPage(entry.page); }}>
-                        <div className="flex items-center justify-between">
-                          <span className="truncate">
-                            <span className="font-medium text-maja-ink">
-                              {field?.label ?? fid}
-                            </span>
-                            {' '}
-                            <span className="text-xs text-maja-muted">
-                              (S. {entry.page})
-                            </span>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); removeEntry(fid); }}
-                            className="text-xs font-medium text-red-600 hover:underline"
-                          >×</button>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+            <FieldsSidebar
+              fields={fields}
+              mapping={mapping}
+              page={page}
+              selected={selected}
+              onSelectField={(fid) => setSelected({ fieldId: fid })}
+              onSelectOption={(fid, opt) => setSelected({ fieldId: fid, optionName: opt })}
+              onRemoveField={removeFieldEntry}
+              onRemoveOption={(fid, opt) => {
+                onMappingChange(removeOption(mapping, fid, opt));
+                if (selected?.fieldId === fid && selected?.optionName === opt) {
+                  setSelected(null);
+                }
+              }}
+              onJumpToPage={setPage}
+            />
 
-            {selectedField && mapping[selectedField] && (
-              <EntryDetails
-                fieldId={selectedField}
-                field={fieldsById.get(selectedField) ?? null}
-                entry={mapping[selectedField]}
-                onChange={(patch) => updateEntry(selectedField, patch)}
-                onRemove={() => removeEntry(selectedField)}
+            {selected && (
+              <DetailPanel
+                selection={selected}
+                mapping={mapping}
+                fieldMap={fieldMap}
+                onUpdateText={updateTextEntry}
+                onUpdateBox={updateBoxEntry}
+                onUpdateOption={updateOptionPosition}
               />
             )}
           </aside>
         </div>
       )}
 
-      {pending && (
+      {/* Stufe 1: Feld-Picker (alle Felder) */}
+      {pending && !pickerStep && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-maja-ink/40 px-4">
           <div className="card w-full max-w-md p-6">
-            <h2 className="mb-1 text-lg font-semibold text-maja-navy">
-              Feld positionieren
-            </h2>
+            <h2 className="mb-1 text-lg font-semibold text-maja-navy">Feld wählen</h2>
             <p className="mb-4 text-xs text-maja-muted">
               Position: Seite {pending.page}, x={Math.round(pending.x)} pt,
               y={Math.round(pending.y)} pt.
-              Welches Feld soll hier platziert werden?
             </p>
             <div className="max-h-72 space-y-1 overflow-auto">
               {fields.length === 0 && (
                 <p className="text-sm text-maja-muted">Es gibt noch keine Felder.</p>
               )}
               {fields.map((f) => {
-                const already = !!mapping[f.id];
+                const m = modeFor(f.type);
+                const e = mapping[f.id];
+                const tag =
+                  m === 'options'
+                    ? `${Object.keys(isOptionsEntry(e) ? e.options : {}).length}/${(f.options ?? []).length} Optionen gemappt`
+                    : e ? 'bereits gemappt' : '';
                 return (
                   <button
                     key={f.id}
                     type="button"
-                    onClick={() => assignField(f.id)}
+                    onClick={() => pickField(f)}
                     className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
                   >
                     <span>
@@ -277,7 +327,7 @@ export function TemplateMappingEditor({
                       {' '}
                       <span className="text-xs text-maja-muted">({f.type})</span>
                     </span>
-                    {already && <span className="text-xs text-amber-700">bereits gemappt</span>}
+                    {tag && <span className="text-xs text-amber-700">{tag}</span>}
                   </button>
                 );
               })}
@@ -290,50 +340,261 @@ export function TemplateMappingEditor({
           </div>
         </div>
       )}
+
+      {/* Stufe 2: Options-Picker */}
+      {pending && pickerStep && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-maja-ink/40 px-4">
+          <div className="card w-full max-w-md p-6">
+            <h2 className="mb-1 text-lg font-semibold text-maja-navy">
+              Option für „{pickerStep.field.label}"
+            </h2>
+            <p className="mb-4 text-xs text-maja-muted">
+              Welche Option soll an dieser Stelle ein Häkchen bekommen?
+            </p>
+            <div className="max-h-72 space-y-1 overflow-auto">
+              {(pickerStep.field.options ?? []).length === 0 && (
+                <p className="text-sm text-maja-muted">
+                  Dieses Feld hat noch keine Optionen. Pflege sie zuerst im Tab „Struktur".
+                </p>
+              )}
+              {(pickerStep.field.options ?? []).map((opt) => {
+                const e = mapping[pickerStep.field.id];
+                const already = isOptionsEntry(e) && !!e.options[opt];
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => placeOption(pickerStep.field, opt)}
+                    className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
+                  >
+                    <span className="font-medium text-maja-ink">{opt}</span>
+                    {already && <span className="text-xs text-amber-700">bereits gemappt</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex justify-between">
+              <button type="button"
+                      onClick={() => setPickerStep(null)}
+                      className="text-sm font-medium text-maja-accent hover:underline">
+                ← Anderes Feld
+              </button>
+              <button type="button" onClick={() => { setPending(null); setPickerStep(null); }}
+                      className="btn-secondary">
+                Abbrechen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function EntryDetails({
-  fieldId, field, entry, onChange, onRemove,
-}: {
-  fieldId: string;
-  field: FormField | null;
-  entry: FieldMappingEntry;
-  onChange: (patch: Partial<FieldMappingEntry>) => void;
-  onRemove: () => void;
-}) {
-  const isPhoto = field?.type === 'photo';
+// ---------- Sidebar: alle Felder mit Mapping-Status ----------
 
+function FieldsSidebar({
+  fields, mapping, page, selected,
+  onSelectField, onSelectOption,
+  onRemoveField, onRemoveOption, onJumpToPage,
+}: {
+  fields: FormField[];
+  mapping: FieldMapping;
+  page: number;
+  selected: Selection | null;
+  onSelectField: (fieldId: string) => void;
+  onSelectOption: (fieldId: string, optionName: string) => void;
+  onRemoveField: (fieldId: string) => void;
+  onRemoveOption: (fieldId: string, optionName: string) => void;
+  onJumpToPage: (page: number) => void;
+}) {
   return (
     <div className="card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-maja-navy">
-          {field?.label ?? fieldId}
-        </h3>
-        <button type="button" onClick={onRemove}
-                className="text-xs font-medium text-red-600 hover:underline">
-          entfernen
-        </button>
-      </div>
+      <h3 className="mb-2 text-sm font-semibold text-maja-navy">Felder &amp; Mapping</h3>
+      {fields.length === 0 && (
+        <p className="text-xs text-maja-muted">Noch keine Felder definiert.</p>
+      )}
+      <ul className="space-y-1 text-sm">
+        {fields.map((f) => {
+          const e = mapping[f.id];
+          const onPage = isFieldMappedOnPage(e, page);
+          return (
+            <li key={f.id} className="rounded-md border border-maja-navy/10 bg-white">
+              <div
+                className={
+                  'flex items-center justify-between px-2 py-1.5 cursor-pointer ' +
+                  (selected?.fieldId === f.id && !selected?.optionName
+                    ? 'bg-maja-accent/10 rounded-md'
+                    : 'hover:bg-maja-light/60 rounded-md')
+                }
+                onClick={() => onSelectField(f.id)}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-maja-ink">{f.label}</div>
+                  <div className="text-xs text-maja-muted">
+                    {f.type}
+                    {isTextEntry(e) && (
+                      <> · S.{e.page} · ({Math.round(e.x)}, {Math.round(e.y)})</>
+                    )}
+                    {isBoxEntry(e) && (
+                      <> · S.{e.page} · {Math.round(e.width)}×{Math.round(e.height)} pt</>
+                    )}
+                    {isOptionsEntry(e) && (
+                      <> · {Object.keys(e.options).length}/{(f.options ?? []).length} Optionen</>
+                    )}
+                    {!e && <> · noch nicht gemappt</>}
+                  </div>
+                </div>
+                <div className="ml-2 flex items-center gap-2">
+                  {(isTextEntry(e) || isBoxEntry(e)) && e.page !== page && (
+                    <button
+                      type="button"
+                      title="zur Seite springen"
+                      onClick={(ev) => { ev.stopPropagation(); onJumpToPage(e.page); }}
+                      className="text-xs text-maja-accent hover:underline"
+                    >S.{e.page}</button>
+                  )}
+                  {e && (
+                    <button
+                      type="button"
+                      title="Mapping entfernen"
+                      onClick={(ev) => { ev.stopPropagation(); onRemoveField(f.id); }}
+                      className="text-xs font-medium text-red-600 hover:underline"
+                    >×</button>
+                  )}
+                  {!onPage && e && (isTextEntry(e) || isBoxEntry(e)) && (
+                    <span className="text-xs text-maja-muted" title="anders Seite">·</span>
+                  )}
+                </div>
+              </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <NumberCell label="Seite" value={entry.page} onChange={(v) => onChange({ page: v })} min={1} />
-        <NumberCell label="Schriftgröße" value={entry.fontSize ?? 10}
-                    onChange={(v) => onChange({ fontSize: v })} min={4} />
-        <NumberCell label="X (pt)" value={entry.x} onChange={(v) => onChange({ x: v })} />
-        <NumberCell label="Y (pt)" value={entry.y} onChange={(v) => onChange({ y: v })} />
-        {isPhoto && (
-          <>
-            <NumberCell label="Breite (pt)" value={entry.width ?? PHOTO_DEFAULT_WIDTH}
-                        onChange={(v) => onChange({ width: v })} min={10} />
-            <NumberCell label="Höhe (pt)" value={entry.height ?? PHOTO_DEFAULT_HEIGHT}
-                        onChange={(v) => onChange({ height: v })} min={10} />
-          </>
-        )}
-      </div>
+              {isOptionsEntry(e) && (
+                <ul className="ml-2 border-l border-maja-navy/10 pl-3 py-1">
+                  {(f.options ?? []).map((opt) => {
+                    const p = e.options[opt];
+                    const isSel = selected?.fieldId === f.id && selected?.optionName === opt;
+                    return (
+                      <li key={opt}
+                          className={
+                            'flex items-center justify-between rounded px-2 py-1 cursor-pointer ' +
+                            (isSel ? 'bg-maja-accent/10' : 'hover:bg-maja-light/60')
+                          }
+                          onClick={() => p && onSelectOption(f.id, opt)}>
+                        <span className="truncate text-xs">
+                          {opt}
+                          {p ? <span className="ml-1 text-maja-muted">S.{p.page} · ({Math.round(p.x)}, {Math.round(p.y)})</span>
+                             : <span className="ml-1 text-amber-700">— offen</span>}
+                        </span>
+                        {p && (
+                          <div className="flex items-center gap-2">
+                            {p.page !== page && (
+                              <button
+                                type="button"
+                                onClick={(ev) => { ev.stopPropagation(); onJumpToPage(p.page); }}
+                                className="text-xs text-maja-accent hover:underline"
+                              >S.{p.page}</button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(ev) => { ev.stopPropagation(); onRemoveOption(f.id, opt); }}
+                              className="text-xs font-medium text-red-600 hover:underline"
+                            >×</button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
+}
+
+// ---------- Detail-Panel ----------
+
+function DetailPanel({
+  selection, mapping, fieldMap,
+  onUpdateText, onUpdateBox, onUpdateOption,
+}: {
+  selection: Selection;
+  mapping: FieldMapping;
+  fieldMap: Map<string, FormField>;
+  onUpdateText: (fieldId: string, patch: Partial<TextEntry>) => void;
+  onUpdateBox: (fieldId: string, patch: Partial<BoxEntry>) => void;
+  onUpdateOption: (
+    fieldId: string, optionName: string, patch: Partial<OptionPosition>,
+  ) => void;
+}) {
+  const field = fieldMap.get(selection.fieldId);
+  const entry = mapping[selection.fieldId];
+  if (!field || !entry) return null;
+
+  if (isTextEntry(entry)) {
+    return (
+      <div className="card p-4">
+        <h3 className="mb-3 text-sm font-semibold text-maja-navy">{field.label}</h3>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <NumberCell label="Seite"  value={entry.page} min={1}
+                      onChange={(v) => onUpdateText(selection.fieldId, { page: v })} />
+          <NumberCell label="Schriftgröße" value={entry.fontSize ?? TEXT_DEFAULT_FONT} min={4}
+                      onChange={(v) => onUpdateText(selection.fieldId, { fontSize: v })} />
+          <NumberCell label="X (pt)" value={entry.x}
+                      onChange={(v) => onUpdateText(selection.fieldId, { x: v })} />
+          <NumberCell label="Y (pt)" value={entry.y}
+                      onChange={(v) => onUpdateText(selection.fieldId, { y: v })} />
+        </div>
+      </div>
+    );
+  }
+
+  if (isBoxEntry(entry)) {
+    return (
+      <div className="card p-4">
+        <h3 className="mb-3 text-sm font-semibold text-maja-navy">{field.label}</h3>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <NumberCell label="Seite"  value={entry.page} min={1}
+                      onChange={(v) => onUpdateBox(selection.fieldId, { page: v })} />
+          <NumberCell label="X (pt)" value={entry.x}
+                      onChange={(v) => onUpdateBox(selection.fieldId, { x: v })} />
+          <NumberCell label="Y (pt)" value={entry.y}
+                      onChange={(v) => onUpdateBox(selection.fieldId, { y: v })} />
+          <div />
+          <NumberCell label="Breite (pt)" value={entry.width ?? PHOTO_DEFAULT_WIDTH} min={10}
+                      onChange={(v) => onUpdateBox(selection.fieldId, { width: v })} />
+          <NumberCell label="Höhe (pt)" value={entry.height ?? PHOTO_DEFAULT_HEIGHT} min={10}
+                      onChange={(v) => onUpdateBox(selection.fieldId, { height: v })} />
+        </div>
+      </div>
+    );
+  }
+
+  // options
+  if (isOptionsEntry(entry) && selection.optionName) {
+    const opt = entry.options[selection.optionName];
+    if (!opt) return null;
+    return (
+      <div className="card p-4">
+        <h3 className="mb-1 text-sm font-semibold text-maja-navy">{field.label}</h3>
+        <p className="mb-3 text-xs text-maja-muted">Option: {selection.optionName}</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <NumberCell label="Seite"  value={opt.page} min={1}
+                      onChange={(v) => onUpdateOption(selection.fieldId, selection.optionName!, { page: v })} />
+          <NumberCell label="Häkchen-Größe" value={opt.size ?? OPTION_DEFAULT_SIZE} min={4}
+                      onChange={(v) => onUpdateOption(selection.fieldId, selection.optionName!, { size: v })} />
+          <NumberCell label="X (pt)" value={opt.x}
+                      onChange={(v) => onUpdateOption(selection.fieldId, selection.optionName!, { x: v })} />
+          <NumberCell label="Y (pt)" value={opt.y}
+                      onChange={(v) => onUpdateOption(selection.fieldId, selection.optionName!, { y: v })} />
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function NumberCell({

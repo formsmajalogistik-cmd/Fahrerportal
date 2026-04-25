@@ -44,6 +44,8 @@ export default function App() {
       <AdminShell>
         <Routes>
           <Route path="/" element={<AdminDashboard />} />
+          <Route path="/meine-formulare" element={<FahrerDashboard />} />
+          <Route path="/meine-drafts" element={<OffeneFormularePage />} />
           <Route path="/fahrer" element={<FahrerListPage />} />
           <Route path="/auftraggeber" element={<AuftraggeberListPage />} />
           <Route path="/templates" element={<TemplatesListPage />} />

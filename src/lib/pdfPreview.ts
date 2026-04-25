@@ -1,9 +1,14 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { isBoxEntry, isOptionsEntry, isTextEntry, OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT } from './fieldMapping';
 import type { FieldMapping, FormSchema } from '../types/db';
 
+const ACCENT = rgb(0.17, 0.37, 0.54); // Maja-Accent
+const LIGHT  = rgb(0.91, 0.94, 0.97);
+
 /**
- * Erzeugt eine Preview-PDF auf Basis der PDF-Vorlage. Jedes gemappte Feld
- * wird mit seinem Label (und einer Bounding-Box bei Foto-Feldern) gezeichnet.
+ * Erzeugt eine Vorschau-PDF auf Basis der PDF-Vorlage. Jedes gemappte Feld
+ * wird mit seinem Label gezeichnet. Bei Mehrfach-/Auswahlfeldern wird pro
+ * Option ein Häkchen plus Optionsname gezeichnet.
  */
 export async function buildPreviewPdf(
   templateBytes: ArrayBuffer,
@@ -21,40 +26,64 @@ export async function buildPreviewPdf(
   }
 
   const pages = pdf.getPages();
+
   for (const [fieldId, entry] of Object.entries(mapping)) {
-    const pageIdx = Math.max(0, Math.min(entry.page - 1, pages.length - 1));
-    const page = pages[pageIdx];
     const meta = fieldById.get(fieldId);
     const label = meta?.label ?? fieldId;
-    const fontSize = entry.fontSize ?? 10;
 
-    if (entry.width && entry.height) {
-      // Bounding-Box zeichnen (z.B. für Foto-Felder)
+    if (isTextEntry(entry)) {
+      const page = pages[Math.max(0, Math.min(entry.page - 1, pages.length - 1))];
+      page.drawText(`[${label}]`, {
+        x: entry.x, y: entry.y,
+        size: entry.fontSize ?? TEXT_DEFAULT_FONT,
+        font, color: ACCENT,
+      });
+      continue;
+    }
+
+    if (isBoxEntry(entry)) {
+      const page = pages[Math.max(0, Math.min(entry.page - 1, pages.length - 1))];
       page.drawRectangle({
         x: entry.x,
         y: entry.y - entry.height,
         width: entry.width,
         height: entry.height,
-        borderColor: rgb(0.17, 0.37, 0.54),
+        borderColor: ACCENT,
         borderWidth: 1,
-        color: rgb(0.91, 0.94, 0.97),
+        color: LIGHT,
         opacity: 0.5,
       });
       page.drawText(label, {
         x: entry.x + 4,
         y: entry.y - 12,
-        size: fontSize,
-        font,
-        color: rgb(0.17, 0.37, 0.54),
+        size: 10, font, color: ACCENT,
       });
-    } else {
-      page.drawText(`[${label}]`, {
-        x: entry.x,
-        y: entry.y,
-        size: fontSize,
-        font,
-        color: rgb(0.17, 0.37, 0.54),
-      });
+      continue;
+    }
+
+    if (isOptionsEntry(entry)) {
+      for (const [optName, pos] of Object.entries(entry.options)) {
+        const page = pages[Math.max(0, Math.min(pos.page - 1, pages.length - 1))];
+        const size = pos.size ?? OPTION_DEFAULT_SIZE;
+        // Häkchen als ✓ in einer Box
+        page.drawRectangle({
+          x: pos.x, y: pos.y,
+          width: size, height: size,
+          borderColor: ACCENT, borderWidth: 0.7,
+          color: LIGHT, opacity: 0.8,
+        });
+        page.drawText('X', {
+          x: pos.x + size * 0.2,
+          y: pos.y + size * 0.2,
+          size: size * 0.8,
+          font, color: ACCENT,
+        });
+        page.drawText(optName, {
+          x: pos.x + size + 3,
+          y: pos.y + 1,
+          size: 8, font, color: ACCENT,
+        });
+      }
     }
   }
 

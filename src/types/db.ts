@@ -39,14 +39,57 @@ export interface FormSchema {
   sections: FormSection[];
 }
 
-export interface FieldMappingEntry {
+// ---- Field-Mapping (PDF-Positionen)
+//
+// Drei Mapping-Modi je nach Feldtyp:
+//
+//   text   — text/number/date/textarea: ein Punkt + optional Schriftgröße
+//   box    — photo/signature/damage_diagram: ein Punkt + Bounding-Box
+//   options — checkboxes/select: pro Option ein Punkt (für Häkchen)
+//
+// Beispiel:
+//   {
+//     "fahrzeugtyp": { "type": "text", "page": 1, "x": 120, "y": 680 },
+//     "foto_front":  { "type": "photo", "page": 2, "x": 50, "y": 500, "width": 240, "height": 180 },
+//     "zubehoer":    {
+//       "type": "checkboxes",
+//       "options": {
+//         "Fahrzeugschein": { "page": 1, "x": 50, "y": 400 },
+//         "Tire Fit":       { "page": 1, "x": 200, "y": 400 }
+//       }
+//     }
+//   }
+
+export interface OptionPosition {
   page: number;
   x: number;
   y: number;
-  width?: number;
-  height?: number;
-  fontSize?: number;
+  size?: number; // Häkchen-Größe in PDF-Punkten (Default 12)
 }
+
+export type TextEntry = {
+  type: 'text' | 'number' | 'date' | 'textarea';
+  page: number;
+  x: number;
+  y: number;
+  fontSize?: number;
+};
+
+export type BoxEntry = {
+  type: 'photo' | 'signature' | 'damage_diagram';
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type OptionsEntry = {
+  type: 'checkboxes' | 'select';
+  options: Record<string, OptionPosition>;
+};
+
+export type FieldMappingEntry = TextEntry | BoxEntry | OptionsEntry;
 
 export type FieldMapping = Record<string, FieldMappingEntry>;
 

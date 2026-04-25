@@ -21,13 +21,12 @@ export function FahrerEditDialog({ initial, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!isNew) return;
     (async () => {
-      // Zeige nur app_users, die noch keinen Fahrer-Eintrag haben
+      // Alle app_users (Admin + Fahrer), die noch keinen Fahrer-Eintrag haben.
       const { data: existing } = await supabase.from('fahrer').select('user_id');
       const taken = new Set((existing ?? []).map((r) => r.user_id));
       const { data: users } = await supabase
         .from('app_users')
         .select('*')
-        .eq('role', 'fahrer')
         .order('email');
       setCandidates((users ?? []).filter((u) => !taken.has(u.id)));
     })();
@@ -77,7 +76,7 @@ export function FahrerEditDialog({ initial, onClose, onSaved }: Props) {
         </h2>
         <p className="mb-4 text-xs text-maja-muted">
           {isNew
-            ? 'Der Benutzer muss sich zuerst einmalig über „Passwort vergessen" einen Zugang setzen oder direkt in Supabase Auth angelegt werden.'
+            ? 'Wähle einen Benutzer (Admin oder Fahrer), der Formulare ausfüllen können soll. Das Konto muss vorher in Supabase Auth angelegt sein.'
             : 'Name wird im Benutzerprofil gespeichert.'}
         </p>
 
