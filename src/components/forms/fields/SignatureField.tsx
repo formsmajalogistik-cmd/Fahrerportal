@@ -14,20 +14,39 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
   const existing = typeof value === 'string' ? value : '';
 
   useEffect(() => {
-    if (existing && ref.current && ref.current.isEmpty()) {
-      ref.current.fromDataURL(existing);
+    // fromDataURL kann werfen, wenn die DataURL kaputt ist oder das Canvas
+    // noch nicht ready ist — fangen wir das ab, statt die App zu killen.
+    try {
+      if (existing && ref.current && ref.current.isEmpty()) {
+        ref.current.fromDataURL(existing);
+      }
+    } catch (err) {
+      console.warn('[SignatureField] fromDataURL fehlgeschlagen', err);
     }
   }, [existing]);
 
   function handleEnd() {
-    const canvas = ref.current;
-    if (!canvas) return;
-    onChange(canvas.isEmpty() ? null : canvas.toDataURL('image/png'));
+    try {
+      const canvas = ref.current;
+      if (!canvas) return;
+      onChange(canvas.isEmpty() ? null : canvas.toDataURL('image/png'));
+    } catch (err) {
+      console.warn('[SignatureField] handleEnd fehlgeschlagen', err);
+    }
   }
 
   function clear() {
-    ref.current?.clear();
-    onChange(null);
+    try {
+      ref.current?.clear();
+      onChange(null);
+    } catch (err) {
+      console.warn('[SignatureField] clear fehlgeschlagen', err);
+    }
+  }
+
+  // ref-callback explizit mit void-return (React 19 ref-cleanup-Strenge)
+  function setRef(c: SignatureCanvas | null): void {
+    ref.current = c;
   }
 
   return (
@@ -37,14 +56,13 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
       </label>
       <div className="overflow-hidden rounded-lg border border-maja-navy/20 bg-white">
         <SignatureCanvas
-          ref={(c) => { ref.current = c; }}
+          ref={setRef}
           onEnd={handleEnd}
           penColor="#0F2439"
           canvasProps={{
             className: 'w-full touch-none',
             style: { width: '100%', height: 160, display: 'block' },
           }}
-          clearOnResize={false}
         />
       </div>
       {!disabled && (

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { validateForm } from '../lib/validateForm';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
@@ -223,14 +224,39 @@ export function FormularPage() {
     <div className="space-y-6">
       {header}
 
-      <FormRenderer
-        schema={template.schema}
-        data={data}
-        onChange={handleChange}
-        disabled={readonly}
-        userId={userId}
-        formularId={formular.id}
-      />
+      <ErrorBoundary
+        resetKey={formular.id}
+        fallback={({ error, reset }) => (
+          <div role="alert" className="card space-y-3 p-6">
+            <h2 className="text-lg font-semibold text-red-700">
+              Fehler beim Rendern des Formulars
+            </h2>
+            <p className="text-sm text-maja-ink">
+              Ein unerwarteter Fehler ist im Formular-Renderer aufgetreten. Die App
+              läuft weiter — du kannst zurück zur Übersicht oder erneut versuchen.
+            </p>
+            <pre className="overflow-auto rounded bg-red-50 p-3 text-xs text-red-900">
+              {error.message}
+            </pre>
+            <p className="text-xs text-maja-muted">
+              Details und Stack stehen in der Browser-Konsole.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={reset} className="btn-secondary">Erneut versuchen</button>
+              <button onClick={() => navigate('/')} className="btn-primary">Zurück</button>
+            </div>
+          </div>
+        )}
+      >
+        <FormRenderer
+          schema={template.schema}
+          data={data}
+          onChange={handleChange}
+          disabled={readonly}
+          userId={userId}
+          formularId={formular.id}
+        />
+      </ErrorBoundary>
 
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">

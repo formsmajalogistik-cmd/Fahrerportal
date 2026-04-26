@@ -70,25 +70,16 @@ export async function buildPreviewPdf(
     }
 
     if (isOptionsEntry(entry)) {
-      for (const [optName, pos] of Object.entries(entry.options)) {
+      // Bewusst KEIN Optionsname — der Text steht bereits im Original-PDF.
+      // Es wird ausschließlich ein Häkchen/X an der definierten Position gesetzt.
+      for (const [, pos] of Object.entries(entry.options)) {
         const page = pages[Math.max(0, Math.min(pos.page - 1, pages.length - 1))];
         const size = pos.size ?? OPTION_DEFAULT_SIZE;
-        page.drawRectangle({
-          x: pos.x, y: pos.y,
-          width: size, height: size,
-          borderColor: ACCENT, borderWidth: 0.7,
-          color: LIGHT, opacity: 0.8,
-        });
         page.drawText('X', {
-          x: pos.x + size * 0.2,
-          y: pos.y + size * 0.2,
-          size: size * 0.8,
+          x: pos.x,
+          y: pos.y,
+          size,
           font, color: ACCENT,
-        });
-        page.drawText(optName, {
-          x: pos.x + size + 3,
-          y: pos.y + 1,
-          size: 8, font, color: ACCENT,
         });
       }
       continue;

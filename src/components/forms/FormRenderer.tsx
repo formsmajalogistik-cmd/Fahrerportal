@@ -1,4 +1,5 @@
 import type { FormField, FormSchema } from '../../types/db';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { TextField } from './fields/TextField';
 import { NumberField } from './fields/NumberField';
 import { DateField } from './fields/DateField';
@@ -26,17 +27,38 @@ export function FormRenderer({ schema, data, onChange, disabled, userId, formula
         <section key={section.id} className="card p-6">
           <h2 className="mb-4 text-lg font-semibold text-maja-navy">{section.title}</h2>
           <div className="space-y-5">
-            {(section.fields ?? []).map((field) => (
-              <FieldSwitch
-                key={field.id}
-                field={field}
-                value={data[field.id]}
-                onChange={(v) => onChange(field.id, v)}
-                disabled={disabled}
-                userId={userId}
-                formularId={formularId}
-              />
-            ))}
+            {(section.fields ?? []).map((field) => {
+              if (!field || typeof field !== 'object' || !field.id || !field.type) {
+                console.warn('[FormRenderer] Ungültiges Feld übersprungen:', field);
+                return null;
+              }
+              return (
+                <ErrorBoundary
+                  key={field.id}
+                  fallback={({ error, reset }) => (
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                      <div className="font-medium">
+                        Feld „{field.label}" konnte nicht gerendert werden
+                      </div>
+                      <div className="mt-1 text-xs">{error.message}</div>
+                      <button onClick={reset}
+                              className="mt-2 text-xs font-medium text-maja-accent hover:underline">
+                        Erneut versuchen
+                      </button>
+                    </div>
+                  )}
+                >
+                  <FieldSwitch
+                    field={field}
+                    value={data[field.id]}
+                    onChange={(v) => onChange(field.id, v)}
+                    disabled={disabled}
+                    userId={userId}
+                    formularId={formularId}
+                  />
+                </ErrorBoundary>
+              );
+            })}
           </div>
         </section>
       ))}

@@ -46,3 +46,24 @@ export async function getPhotoUrl(storagePath: string): Promise<string | null> {
   if (error) { console.warn('Signed URL fehlgeschlagen', error); return null; }
   return data?.signedUrl ?? null;
 }
+
+/**
+ * Löscht alle Fotos eines ausgefüllten Formulars im Bucket formular-fotos.
+ * Pfad-Konvention: <user_id>/<formular_id>/<feld>.jpg
+ */
+export async function deleteFormularPhotos(
+  userId: string,
+  formularId: string,
+): Promise<void> {
+  const prefix = `${userId}/${formularId}`;
+  const { data: list, error } = await supabase.storage
+    .from('formular-fotos')
+    .list(prefix);
+  if (error) { console.warn('Foto-Liste fehlgeschlagen', error); return; }
+  if (!list || list.length === 0) return;
+  const paths = list.map((f) => `${prefix}/${f.name}`);
+  const { error: rmErr } = await supabase.storage
+    .from('formular-fotos')
+    .remove(paths);
+  if (rmErr) console.warn('Foto-Löschen fehlgeschlagen', rmErr);
+}
