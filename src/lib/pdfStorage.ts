@@ -2,8 +2,15 @@ import { supabase } from './supabase';
 
 const BUCKET = 'pdf-templates';
 
-export async function uploadPdfTemplate(file: File, templateId: string): Promise<string> {
-  const path = `${templateId}/${sanitize(file.name)}`;
+/** Upload einer PDF-Vorlage. Die PDF wird unter
+ *  <templateId>/<pdfId>__<filename> gespeichert.
+ */
+export async function uploadPdfTemplate(
+  file: File,
+  templateId: string,
+  pdfId: string,
+): Promise<string> {
+  const path = `${templateId}/${sanitize(pdfId)}__${sanitize(file.name)}`;
   const { error } = await supabase.storage
     .from(BUCKET)
     .upload(path, file, { contentType: 'application/pdf', upsert: true });
@@ -23,6 +30,10 @@ export async function fetchPdfBytes(path: string): Promise<ArrayBuffer | null> {
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
   if (error || !data) return null;
   return await data.arrayBuffer();
+}
+
+export async function deletePdfFromStorage(path: string): Promise<void> {
+  await supabase.storage.from(BUCKET).remove([path]).catch(() => {});
 }
 
 function sanitize(name: string): string {

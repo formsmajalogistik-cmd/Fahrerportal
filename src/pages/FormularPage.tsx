@@ -5,8 +5,23 @@ import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { validateForm } from '../lib/validateForm';
-import type { AusgefuelltesFormular, FormularTemplate } from '../types/db';
+import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
+
+/**
+ * Normalisiert das schema-JSON aus der DB. Akzeptiert Object oder String, gibt
+ * immer ein Schema mit (mindestens leerem) sections-Array zurück.
+ */
+function parseSchema(raw: unknown): FormSchema {
+  let value: unknown = raw;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { value = null; }
+  }
+  if (value && typeof value === 'object' && Array.isArray((value as { sections?: unknown }).sections)) {
+    return value as FormSchema;
+  }
+  return { sections: [] };
+}
 
 export function FormularPage() {
   const { id } = useParams();
@@ -22,34 +37,73 @@ export function FormularPage() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id) {
+      setError('Keine Formular-ID in der URL.');
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const { data: af, error: err } = await supabase
+      setError(null);
+
+      const { data: af, error: afErr } = await supabase
         .from('ausgefuellte_formulare')
         .select('*')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
-      if (err || !af) {
-        setError(err?.message ?? 'Formular nicht gefunden');
+      if (afErr) {
+        console.error('FormularPage: Fehler beim Laden des Formulars', afErr);
+        setError(`Formular konnte nicht geladen werden: ${afErr.message}`);
         setLoading(false);
         return;
       }
+      if (!af) {
+        setError('Formular nicht gefunden oder du hast keinen Zugriff darauf.');
+        setLoading(false);
+        return;
+      }
+
       const { data: tpl, error: tplErr } = await supabase
         .from('formular_templates')
         .select('*')
         .eq('id', af.template_id)
         .maybeSingle();
       if (cancelled) return;
-      if (tplErr || !tpl) {
-        setError(tplErr?.message ?? 'Template nicht gefunden');
+      if (tplErr) {
+        console.error('FormularPage: Fehler beim Laden des Templates', tplErr);
+        setError(`Template konnte nicht geladen werden: ${tplErr.message}`);
         setLoading(false);
         return;
       }
+      if (!tpl) {
+        setError(
+          'Das verknüpfte Template wurde nicht gefunden. Es wurde möglicherweise gelöscht ' +
+          'oder du hast keine Zuweisung. Bitte wende dich an die Administration.',
+        );
+        setLoading(false);
+        return;
+      }
+
+      const schema = parseSchema(tpl.schema);
+      const normalizedTpl = {
+        ...tpl,
+        schema,
+      } as unknown as FormularTemplate;
+
+      // Debug-Ausgabe (im Browser sichtbar) — hilft beim Diagnostizieren leerer Templates.
+      console.log('[FormularPage] Formular geladen:', af);
+      console.log('[FormularPage] Template geladen:', normalizedTpl);
+      console.log(
+        '[FormularPage] Schema-Sections:',
+        schema.sections.length,
+        'Felder gesamt:',
+        schema.sections.reduce((acc, s) => acc + (s.fields?.length ?? 0), 0),
+      );
+
       setFormular(af as unknown as AusgefuelltesFormular);
-      setTemplate(tpl as unknown as FormularTemplate);
+      setTemplate(normalizedTpl);
       setData((af.daten as unknown as Record<string, unknown>) ?? {});
       setLoading(false);
     })();
@@ -96,29 +150,78 @@ export function FormularPage() {
 
   const userId = session?.user.id ?? '';
   const title = useMemo(() => template?.name ?? 'Formular', [template]);
+  const sectionCount = template?.schema.sections.length ?? 0;
 
-  if (loading) return <Spinner label="Formular wird geladen …" />;
-  if (error && !formular) {
+  // Header mit Zurück-Button — IMMER sichtbar, unabhängig vom Lade-/Fehler-Zustand.
+  const header = (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 className="text-2xl font-semibold text-maja-navy">{title}</h1>
+        {formular && (
+          <p className="text-sm text-maja-muted">
+            Status: {readonly ? 'eingereicht' : 'Entwurf'} · Erstellt am{' '}
+            {new Date(formular.created_at).toLocaleString('de-DE')}
+          </p>
+        )}
+      </div>
+      <button onClick={() => navigate('/')} className="btn-secondary">← Zurück</button>
+    </div>
+  );
+
+  if (loading) {
     return (
-      <div className="space-y-4">
-        <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>
-        <button onClick={() => navigate('/')} className="btn-secondary">Zurück</button>
+      <div className="space-y-6">
+        {header}
+        <Spinner label="Formular wird geladen …" />
       </div>
     );
   }
-  if (!formular || !template) return null;
+
+  if (error && (!formular || !template)) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <div role="alert" className="card space-y-3 p-6">
+          <h2 className="text-lg font-semibold text-red-700">Formular konnte nicht geöffnet werden</h2>
+          <p className="text-sm text-maja-ink">{error}</p>
+          <p className="text-xs text-maja-muted">
+            Diagnose-Hinweise stehen in der Browser-Konsole (Rechtsklick → Untersuchen → Console).
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!formular || !template) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <div role="alert" className="card p-6 text-sm text-maja-muted">
+          Unerwarteter Zustand — weder Formular noch Template geladen, aber kein Fehler gemeldet.
+          Bitte erneut laden.
+        </div>
+      </div>
+    );
+  }
+
+  if (sectionCount === 0) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <div className="card space-y-2 p-6">
+          <h2 className="text-lg font-semibold text-maja-navy">Leeres Template</h2>
+          <p className="text-sm text-maja-muted">
+            Dieses Template enthält noch keine Sektionen oder Felder. Bitte den Admin
+            bitten, das Template unter „Templates → Bearbeiten" mit Inhalt zu füllen.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-maja-navy">{title}</h1>
-          <p className="text-sm text-maja-muted">
-            Status: {readonly ? 'eingereicht' : 'Entwurf'} · Erstellt am {new Date(formular.created_at).toLocaleString('de-DE')}
-          </p>
-        </div>
-        <button onClick={() => navigate('/')} className="btn-secondary">Zurück</button>
-      </div>
+      {header}
 
       <FormRenderer
         schema={template.schema}

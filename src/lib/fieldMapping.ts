@@ -1,14 +1,17 @@
 import type {
-  BoxEntry, FieldMapping, FieldMappingEntry, FieldType, FormField, FormSchema,
-  OptionPosition, OptionsEntry, TextEntry,
+  BoxEntry, DynamicPhotosEntry, FieldMapping, FieldMappingEntry, FieldType,
+  FormField, FormSchema, OptionPosition, OptionsEntry, TextEntry,
 } from '../types/db';
 
 export const PHOTO_DEFAULT_WIDTH  = 200;
 export const PHOTO_DEFAULT_HEIGHT = 150;
 export const OPTION_DEFAULT_SIZE  = 12;
 export const TEXT_DEFAULT_FONT    = 10;
+export const DYNAMIC_DEFAULT_COLUMNS = 2;
+export const DYNAMIC_DEFAULT_PER_PAGE = 4;
+export const DYNAMIC_DEFAULT_GAP = 12;
 
-export type MappingMode = 'text' | 'box' | 'options';
+export type MappingMode = 'text' | 'box' | 'options' | 'dynamic';
 
 export function modeFor(type: FieldType): MappingMode {
   switch (type) {
@@ -24,6 +27,8 @@ export function modeFor(type: FieldType): MappingMode {
     case 'checkboxes':
     case 'select':
       return 'options';
+    case 'dynamic_photos':
+      return 'dynamic';
   }
 }
 
@@ -36,8 +41,11 @@ export function isBoxEntry(e: FieldMappingEntry | undefined): e is BoxEntry {
 export function isOptionsEntry(e: FieldMappingEntry | undefined): e is OptionsEntry {
   return !!e && (e.type === 'checkboxes' || e.type === 'select');
 }
+export function isDynamicEntry(e: FieldMappingEntry | undefined): e is DynamicPhotosEntry {
+  return !!e && e.type === 'dynamic_photos';
+}
 
-/** Erstellt einen leeren Default-Eintrag passend zum Feldtyp. */
+/** Erstellt einen Default-Eintrag passend zum Feldtyp. */
 export function makeDefaultEntry(
   field: FormField,
   pos: { x: number; y: number; page: number },
@@ -54,6 +62,17 @@ export function makeDefaultEntry(
       type: field.type as BoxEntry['type'],
       page: pos.page, x: pos.x, y: pos.y,
       width: PHOTO_DEFAULT_WIDTH, height: PHOTO_DEFAULT_HEIGHT,
+    };
+  }
+  if (mode === 'dynamic') {
+    return {
+      type: 'dynamic_photos',
+      page: pos.page, x: pos.x, y: pos.y,
+      width: PHOTO_DEFAULT_WIDTH, height: PHOTO_DEFAULT_HEIGHT,
+      columns: DYNAMIC_DEFAULT_COLUMNS,
+      perPage: DYNAMIC_DEFAULT_PER_PAGE,
+      rowGap: DYNAMIC_DEFAULT_GAP,
+      colGap: DYNAMIC_DEFAULT_GAP,
     };
   }
   // options-mode startet leer; einzelne Optionen werden via setOptionPosition gesetzt
@@ -115,4 +134,36 @@ export function fieldsById(schema: FormSchema): Map<string, FormField> {
     for (const f of s.fields ?? []) m.set(f.id, f);
   }
   return m;
+}
+
+/**
+ * Gibt für ein DynamicPhotos-Mapping die Slot-Positionen für N Fotos zurück.
+ * Wenn N > perPage → weitere "virtuelle Seiten" mit Page-Offset.
+ *
+ * Slot-Positionen werden als PDF-Punkte zurückgegeben (x = links, y = oberer Rand).
+ * Wenn eine neue Seite begonnen wird, ist `pageOffset` > 0 und die aufrufende
+ * Stelle muss eine Kopie der Startseite einfügen.
+ */
+export function computeDynamicSlots(
+  entry: DynamicPhotosEntry,
+  count: number,
+): Array<{ x: number; y: number; width: number; height: number; pageOffset: number }> {
+  const cols = Math.max(1, entry.columns | 0);
+  const perPage = Math.max(1, entry.perPage | 0);
+  const rowsPerPage = Math.max(1, Math.ceil(perPage / cols));
+  const rowGap = entry.rowGap ?? DYNAMIC_DEFAULT_GAP;
+  const colGap = entry.colGap ?? DYNAMIC_DEFAULT_GAP;
+
+  const slots: Array<{ x: number; y: number; width: number; height: number; pageOffset: number }> = [];
+  for (let i = 0; i < count; i += 1) {
+    const pageOffset = Math.floor(i / perPage);
+    const idxOnPage = i % perPage;
+    const row = Math.floor(idxOnPage / cols);
+    const col = idxOnPage % cols;
+    if (row >= rowsPerPage) continue; // Sicherheits-Cap
+    const x = entry.x + col * (entry.width + colGap);
+    const y = entry.y - row * (entry.height + rowGap);
+    slots.push({ x, y, width: entry.width, height: entry.height, pageOffset });
+  }
+  return slots;
 }

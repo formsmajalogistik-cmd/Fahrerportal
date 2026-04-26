@@ -12,12 +12,13 @@ export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
 export type FormularZuweisung =
   Database['public']['Tables']['formular_zuweisungen']['Row'];
 
-// ---- Templates: schema & field_mapping sind in der DB jsonb.
+// ---- Templates: schema und pdfs sind in der DB jsonb.
 // Wir casten im Frontend auf spezifische Strukturen.
 
 export type FieldType =
   | 'text' | 'number' | 'date' | 'select' | 'checkboxes'
-  | 'textarea' | 'photo' | 'signature' | 'damage_diagram';
+  | 'textarea' | 'photo' | 'signature' | 'damage_diagram'
+  | 'dynamic_photos';
 
 export interface FormField {
   id: string;
@@ -39,26 +40,12 @@ export interface FormSchema {
   sections: FormSection[];
 }
 
-// ---- Field-Mapping (PDF-Positionen)
+// ---- Field-Mapping (PDF-Positionen) — discriminated union nach `type`.
 //
-// Drei Mapping-Modi je nach Feldtyp:
-//
-//   text   — text/number/date/textarea: ein Punkt + optional Schriftgröße
-//   box    — photo/signature/damage_diagram: ein Punkt + Bounding-Box
-//   options — checkboxes/select: pro Option ein Punkt (für Häkchen)
-//
-// Beispiel:
-//   {
-//     "fahrzeugtyp": { "type": "text", "page": 1, "x": 120, "y": 680 },
-//     "foto_front":  { "type": "photo", "page": 2, "x": 50, "y": 500, "width": 240, "height": 180 },
-//     "zubehoer":    {
-//       "type": "checkboxes",
-//       "options": {
-//         "Fahrzeugschein": { "page": 1, "x": 50, "y": 400 },
-//         "Tire Fit":       { "page": 1, "x": 200, "y": 400 }
-//       }
-//     }
-//   }
+// text/number/date/textarea  → ein Punkt + optional Schriftgröße
+// photo/signature/damage_diagram → ein Punkt + Bounding-Box
+// checkboxes/select → pro Option ein Punkt (für Häkchen)
+// dynamic_photos → ein Slot-Layout (Startposition + Grid + Anzahl pro Seite)
 
 export interface OptionPosition {
   page: number;
@@ -89,14 +76,37 @@ export type OptionsEntry = {
   options: Record<string, OptionPosition>;
 };
 
-export type FieldMappingEntry = TextEntry | BoxEntry | OptionsEntry;
+export type DynamicPhotosEntry = {
+  type: 'dynamic_photos';
+  page: number;        // Startseite
+  x: number;           // x des ersten Slots (links unten)
+  y: number;           // y des oberen Rands des ersten Slots
+  width: number;       // Slot-Breite
+  height: number;      // Slot-Höhe
+  columns: number;     // Anzahl Slots pro Reihe
+  perPage: number;     // Maximale Slots pro Seite
+  rowGap?: number;     // Vertikaler Abstand zwischen Reihen (Default 12)
+  colGap?: number;     // Horizontaler Abstand zwischen Spalten (Default 12)
+};
+
+export type FieldMappingEntry =
+  | TextEntry | BoxEntry | OptionsEntry | DynamicPhotosEntry;
 
 export type FieldMapping = Record<string, FieldMappingEntry>;
 
-type TemplateRow = Database['public']['Tables']['formular_templates']['Row'];
-export type FormularTemplate = Omit<TemplateRow, 'schema' | 'field_mapping'> & {
-  schema: FormSchema;
+// ---- Mehrere PDFs pro Template -----------------------------
+
+export interface TemplatePdf {
+  id: string;        // stable, z.B. "protokoll", "fotos", "belege"
+  name: string;      // user-facing Name
+  path: string | null; // Storage-Pfad in Bucket pdf-templates (oder null)
   field_mapping: FieldMapping;
+}
+
+type TemplateRow = Database['public']['Tables']['formular_templates']['Row'];
+export type FormularTemplate = Omit<TemplateRow, 'schema' | 'pdfs'> & {
+  schema: FormSchema;
+  pdfs: TemplatePdf[];
 };
 
 type AfRow = Database['public']['Tables']['ausgefuellte_formulare']['Row'];

@@ -11,6 +11,7 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'photo',          label: 'Foto' },
   { value: 'signature',      label: 'Unterschrift' },
   { value: 'damage_diagram', label: 'Schadensdiagramm' },
+  { value: 'dynamic_photos', label: 'Foto-Sammlung (dynamisch)' },
 ];
 
 interface Props {

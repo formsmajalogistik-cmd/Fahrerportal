@@ -46,7 +46,7 @@ export function TemplatesListPage() {
       .insert({
         name: 'Neues Template',
         schema: { sections: [] },
-        field_mapping: {},
+        pdfs: [],
       })
       .select('id')
       .single();
@@ -99,11 +99,17 @@ export function TemplatesListPage() {
                 <div className="mt-2 text-xs text-maja-muted">
                   {sectionCount} Sektionen · {fieldCount} Felder
                 </div>
-                {t.pdf_template && (
-                  <div className="mt-3">
-                    <span className="inline-flex rounded-full bg-maja-light px-2 py-0.5 text-xs text-maja-navy">
-                      PDF: {t.pdf_template}
-                    </span>
+                {(t.pdfs ?? []).length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {(t.pdfs ?? []).map((p) => (
+                      <span
+                        key={p.id}
+                        className="inline-flex rounded-full bg-maja-light px-2 py-0.5 text-xs text-maja-navy"
+                        title={p.path ?? 'noch keine Datei hochgeladen'}
+                      >
+                        {p.name}{p.path == null && ' (leer)'}
+                      </span>
+                    ))}
                   </div>
                 )}
                 <div className="mt-4 flex justify-between gap-2 pt-2 border-t border-maja-navy/10">

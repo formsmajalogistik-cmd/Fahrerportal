@@ -12,8 +12,8 @@ insert into public.auftraggeber (name, kontakt)
   values ('Maja-Logistik', 'dispo@maja-logistik.de')
   on conflict do nothing;
 
--- Template anlegen
-insert into public.formular_templates (name, auftraggeber_id, schema, pdf_template, field_mapping)
+-- Template anlegen (PDF-Vorlagen können später im Template-Editor hochgeladen werden)
+insert into public.formular_templates (name, auftraggeber_id, schema, pdfs)
 values (
   'Fahrzeugprotokoll',
   (select id from public.auftraggeber where name = 'Maja-Logistik' limit 1),
@@ -124,6 +124,5 @@ values (
       }
     ]
   }$$::jsonb,
-  null,
-  '{}'::jsonb
+  '[]'::jsonb
 );

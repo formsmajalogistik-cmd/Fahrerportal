@@ -5,15 +5,32 @@ import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { TemplateStructureEditor } from './TemplateStructureEditor';
 import { TemplateMappingEditor } from './TemplateMappingEditor';
+import { deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
-  Auftraggeber,
-  FieldMapping,
-  FormSchema,
-  FormularTemplate,
+  Auftraggeber, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
 } from '../../types/db';
 import type { Json } from '../../types/supabase';
 
 type Tab = 'struktur' | 'mapping';
+
+const MAX_PDFS = 3;
+
+function slugify(s: string): string {
+  return s.toLowerCase()
+    .replace(/[äöüß]/g, (c) => ({ ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' }[c] ?? c))
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '') || 'pdf';
+}
+
+function uniquePdfId(base: string, existing: TemplatePdf[]): string {
+  let id = slugify(base);
+  let i = 1;
+  while (existing.some((p) => p.id === id)) {
+    i += 1;
+    id = `${slugify(base)}_${i}`;
+  }
+  return id;
+}
 
 export function TemplateEditorPage() {
   const { id } = useParams();
@@ -24,8 +41,8 @@ export function TemplateEditorPage() {
   const [name, setName] = useState('');
   const [auftraggeberId, setAuftraggeberId] = useState<string>('');
   const [schema, setSchema] = useState<FormSchema>({ sections: [] });
-  const [mapping, setMapping] = useState<FieldMapping>({});
-  const [pdfTemplate, setPdfTemplate] = useState<string | null>(null);
+  const [pdfs, setPdfs] = useState<TemplatePdf[]>([]);
+  const [activePdfId, setActivePdfId] = useState<string | null>(null);
 
   const [tab, setTab] = useState<Tab>('struktur');
   const [loading, setLoading] = useState(true);
@@ -33,6 +50,7 @@ export function TemplateEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDeletePdf, setConfirmDeletePdf] = useState<TemplatePdf | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -56,19 +74,28 @@ export function TemplateEditorPage() {
         ? (t.schema as FormSchema)
         : { sections: [] },
     );
-    setMapping((t.field_mapping as FieldMapping) ?? {});
-    setPdfTemplate(t.pdf_template);
+    const loadedPdfs = Array.isArray(t.pdfs) ? (t.pdfs as TemplatePdf[]) : [];
+    setPdfs(loadedPdfs);
+    setActivePdfId((cur) => cur ?? loadedPdfs[0]?.id ?? null);
     setAuftraggeber(ag ?? []);
     setLoading(false);
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const { fieldCount, sectionCount } = useMemo(() => {
+  const { fieldCount, sectionCount, mappingCount } = useMemo(() => {
     const sections = schema.sections ?? [];
     const fc = sections.reduce((acc, s) => acc + (s.fields?.length ?? 0), 0);
-    return { sectionCount: sections.length, fieldCount: fc };
-  }, [schema]);
+    const mc = pdfs.reduce(
+      (acc, p) => acc + Object.keys(p.field_mapping ?? {}).length, 0,
+    );
+    return { sectionCount: sections.length, fieldCount: fc, mappingCount: mc };
+  }, [schema, pdfs]);
+
+  const activePdf = useMemo(
+    () => pdfs.find((p) => p.id === activePdfId) ?? null,
+    [pdfs, activePdfId],
+  );
 
   async function save() {
     if (!template) return;
@@ -81,8 +108,7 @@ export function TemplateEditorPage() {
         name: name.trim() || 'Unbenanntes Template',
         auftraggeber_id: auftraggeberId || null,
         schema: schema as unknown as Json,
-        field_mapping: mapping as unknown as Json,
-        pdf_template: pdfTemplate,
+        pdfs: pdfs as unknown as Json,
       })
       .eq('id', template.id);
     setSaving(false);
@@ -96,6 +122,45 @@ export function TemplateEditorPage() {
       .from('formular_templates').delete().eq('id', template.id);
     if (err) throw err;
     navigate('/templates');
+  }
+
+  function addPdf() {
+    if (pdfs.length >= MAX_PDFS) return;
+    const baseName = pdfs.length === 0
+      ? 'Protokoll'
+      : pdfs.length === 1 ? 'Fotodokumentation'
+      : 'Belege';
+    const newPdf: TemplatePdf = {
+      id: uniquePdfId(baseName, pdfs),
+      name: baseName,
+      path: null,
+      field_mapping: {},
+    };
+    setPdfs([...pdfs, newPdf]);
+    setActivePdfId(newPdf.id);
+    setTab('mapping');
+  }
+
+  function renamePdf(pdfId: string, newName: string) {
+    setPdfs(pdfs.map((p) => (p.id === pdfId ? { ...p, name: newName } : p)));
+  }
+
+  async function deletePdf(pdf: TemplatePdf) {
+    if (pdf.path) await deletePdfFromStorage(pdf.path);
+    const next = pdfs.filter((p) => p.id !== pdf.id);
+    setPdfs(next);
+    if (activePdfId === pdf.id) {
+      setActivePdfId(next[0]?.id ?? null);
+    }
+    setConfirmDeletePdf(null);
+  }
+
+  function updatePdfMapping(pdfId: string, mapping: FieldMapping) {
+    setPdfs(pdfs.map((p) => (p.id === pdfId ? { ...p, field_mapping: mapping } : p)));
+  }
+
+  function updatePdfPath(pdfId: string, path: string) {
+    setPdfs(pdfs.map((p) => (p.id === pdfId ? { ...p, path } : p)));
   }
 
   if (loading) return <Spinner label="Template wird geladen …" />;
@@ -119,7 +184,7 @@ export function TemplateEditorPage() {
           </button>
           <h1 className="mt-1 text-2xl font-semibold text-maja-navy">Template bearbeiten</h1>
           <p className="text-sm text-maja-muted">
-            {sectionCount} Sektionen · {fieldCount} Felder · {Object.keys(mapping).length} PDF-Mappings
+            {sectionCount} Sektionen · {fieldCount} Felder · {pdfs.length} PDF{pdfs.length === 1 ? '' : 's'} · {mappingCount} PDF-Mappings
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -167,14 +232,34 @@ export function TemplateEditorPage() {
       )}
 
       {tab === 'mapping' && (
-        <TemplateMappingEditor
-          templateId={template.id}
-          schema={schema}
-          mapping={mapping}
-          pdfTemplate={pdfTemplate}
-          onMappingChange={setMapping}
-          onPdfTemplateChange={setPdfTemplate}
-        />
+        <div className="space-y-4">
+          <PdfTabs
+            pdfs={pdfs}
+            activeId={activePdfId}
+            onSelect={setActivePdfId}
+            onRename={renamePdf}
+            onDelete={(pdf) => setConfirmDeletePdf(pdf)}
+            onAdd={addPdf}
+            canAdd={pdfs.length < MAX_PDFS}
+          />
+          {activePdf ? (
+            <TemplateMappingEditor
+              templateId={template.id}
+              pdfId={activePdf.id}
+              pdfName={activePdf.name}
+              schema={schema}
+              mapping={activePdf.field_mapping}
+              pdfPath={activePdf.path}
+              onMappingChange={(m) => updatePdfMapping(activePdf.id, m)}
+              onPdfPathChange={(p) => updatePdfPath(activePdf.id, p)}
+            />
+          ) : (
+            <div className="card p-6 text-sm text-maja-muted">
+              Noch keine PDF angelegt. Klicke oben auf „+ PDF hinzufügen", um eine
+              Vorlage hochzuladen und Felder zu positionieren.
+            </div>
+          )}
+        </div>
       )}
 
       {(error || statusMsg) && (
@@ -207,6 +292,86 @@ export function TemplateEditorPage() {
           onConfirm={handleDelete}
           onClose={() => setConfirmDelete(false)}
         />
+      )}
+
+      {confirmDeletePdf && (
+        <ConfirmDialog
+          title="PDF-Vorlage entfernen?"
+          message={
+            <>
+              Soll die PDF „<strong>{confirmDeletePdf.name}</strong>" inklusive
+              ihres Field-Mappings entfernt werden? Die hochgeladene Datei wird
+              aus dem Storage gelöscht.
+            </>
+          }
+          confirmLabel="Entfernen"
+          destructive
+          onConfirm={() => deletePdf(confirmDeletePdf)}
+          onClose={() => setConfirmDeletePdf(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PdfTabs({
+  pdfs, activeId, onSelect, onRename, onDelete, onAdd, canAdd,
+}: {
+  pdfs: TemplatePdf[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (pdf: TemplatePdf) => void;
+  onAdd: () => void;
+  canAdd: boolean;
+}) {
+  const active = pdfs.find((p) => p.id === activeId) ?? null;
+  return (
+    <div className="card p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {pdfs.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onSelect(p.id)}
+            className={
+              'rounded-lg px-3 py-1.5 text-sm font-medium transition ' +
+              (p.id === activeId
+                ? 'bg-maja-navy text-white'
+                : 'bg-maja-light text-maja-navy hover:bg-maja-light/70')
+            }
+          >
+            {p.name}
+            {p.path == null && <span className="ml-1 text-xs opacity-70">(leer)</span>}
+          </button>
+        ))}
+        {canAdd && (
+          <button type="button" onClick={onAdd} className="btn-secondary px-3 py-1.5 text-sm">
+            + PDF hinzufügen
+          </button>
+        )}
+      </div>
+      {active && (
+        <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-maja-navy/10 pt-3">
+          <div className="flex-1 min-w-[200px]">
+            <label className="label">PDF-Name</label>
+            <input
+              className="input"
+              value={active.name}
+              onChange={(e) => onRename(active.id, e.target.value)}
+            />
+          </div>
+          <div className="text-xs text-maja-muted">
+            ID: <code className="rounded bg-maja-light px-1">{active.id}</code>
+          </div>
+          <button
+            type="button"
+            onClick={() => onDelete(active)}
+            className="text-sm font-medium text-red-600 hover:underline"
+          >
+            PDF entfernen
+          </button>
+        </div>
       )}
     </div>
   );

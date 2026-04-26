@@ -111,24 +111,21 @@ export type Database = {
           name: string;
           auftraggeber_id: string | null;
           schema: Json;
-          pdf_template: string | null;
-          field_mapping: Json;
+          pdfs: Json;
         };
         Insert: {
           id?: string;
           name: string;
           auftraggeber_id?: string | null;
           schema: Json;
-          pdf_template?: string | null;
-          field_mapping?: Json;
+          pdfs?: Json;
         };
         Update: {
           id?: string;
           name?: string;
           auftraggeber_id?: string | null;
           schema?: Json;
-          pdf_template?: string | null;
-          field_mapping?: Json;
+          pdfs?: Json;
         };
         Relationships: [
           {

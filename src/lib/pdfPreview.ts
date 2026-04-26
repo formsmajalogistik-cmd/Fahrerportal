@@ -1,5 +1,9 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { isBoxEntry, isOptionsEntry, isTextEntry, OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT } from './fieldMapping';
+import {
+  computeDynamicSlots,
+  isBoxEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
+  OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT,
+} from './fieldMapping';
 import type { FieldMapping, FormSchema } from '../types/db';
 
 const ACCENT = rgb(0.17, 0.37, 0.54); // Maja-Accent
@@ -7,8 +11,12 @@ const LIGHT  = rgb(0.91, 0.94, 0.97);
 
 /**
  * Erzeugt eine Vorschau-PDF auf Basis der PDF-Vorlage. Jedes gemappte Feld
- * wird mit seinem Label gezeichnet. Bei Mehrfach-/Auswahlfeldern wird pro
- * Option ein Häkchen plus Optionsname gezeichnet.
+ * wird mit seinem Label gezeichnet:
+ *   - Textfelder: "[Label]" an der Position
+ *   - Box-Felder (Foto/Signatur/Schadensskizze): Rechteck mit Label
+ *   - Mehrfachauswahl-Felder: Häkchen + Optionsname pro gemappter Option
+ *   - dynamic_photos: alle Slots der Startseite werden als nummerierte
+ *     Rechtecke gezeichnet
  */
 export async function buildPreviewPdf(
   templateBytes: ArrayBuffer,
@@ -65,7 +73,6 @@ export async function buildPreviewPdf(
       for (const [optName, pos] of Object.entries(entry.options)) {
         const page = pages[Math.max(0, Math.min(pos.page - 1, pages.length - 1))];
         const size = pos.size ?? OPTION_DEFAULT_SIZE;
-        // Häkchen als ✓ in einer Box
         page.drawRectangle({
           x: pos.x, y: pos.y,
           width: size, height: size,
@@ -84,6 +91,31 @@ export async function buildPreviewPdf(
           size: 8, font, color: ACCENT,
         });
       }
+      continue;
+    }
+
+    if (isDynamicEntry(entry)) {
+      const page = pages[Math.max(0, Math.min(entry.page - 1, pages.length - 1))];
+      const slots = computeDynamicSlots(entry, entry.perPage);
+      for (const [i, s] of slots.entries()) {
+        if (s.pageOffset !== 0) continue;
+        page.drawRectangle({
+          x: s.x,
+          y: s.y - s.height,
+          width: s.width,
+          height: s.height,
+          borderColor: ACCENT,
+          borderWidth: 1,
+          color: LIGHT,
+          opacity: 0.5,
+        });
+        page.drawText(`${label} #${i + 1}`, {
+          x: s.x + 4,
+          y: s.y - 12,
+          size: 10, font, color: ACCENT,
+        });
+      }
+      continue;
     }
   }
 

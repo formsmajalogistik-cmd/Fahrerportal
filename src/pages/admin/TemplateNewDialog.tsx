@@ -35,8 +35,7 @@ export function TemplateNewDialog({ onClose, onCreated }: Props) {
       name: name.trim() || FAHRZEUGPROTOKOLL_DEFAULT_NAME,
       auftraggeber_id: auftraggeberId || null,
       schema: fahrzeugprotokollSchema as unknown as Json,
-      pdf_template: null,
-      field_mapping: {} as Json,
+      pdfs: [] as unknown as Json,
     });
     setSaving(false);
     if (err) { setError(err.message); return; }

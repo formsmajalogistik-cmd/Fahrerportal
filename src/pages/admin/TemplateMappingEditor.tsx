@@ -4,22 +4,31 @@ import { fetchPdfBytes, getPdfSignedUrl, uploadPdfTemplate } from '../../lib/pdf
 import { PdfMappingCanvas } from '../../components/forms/PdfMappingCanvas';
 import {
   fieldsById,
-  isBoxEntry, isFieldMappedOnPage, isOptionsEntry, isTextEntry,
+  isBoxEntry, isDynamicEntry, isFieldMappedOnPage, isOptionsEntry, isTextEntry,
   makeDefaultEntry, modeFor, OPTION_DEFAULT_SIZE,
   PHOTO_DEFAULT_HEIGHT, PHOTO_DEFAULT_WIDTH, removeOption, setOptionPosition,
   TEXT_DEFAULT_FONT,
 } from '../../lib/fieldMapping';
 import type {
-  BoxEntry, FieldMapping, FormField, FormSchema, OptionPosition, TextEntry,
+  BoxEntry, DynamicPhotosEntry, FieldMapping, FormField, FormSchema,
+  OptionPosition, TextEntry,
 } from '../../types/db';
 
 interface Props {
+  /** Template-ID für den Storage-Pfad (Bucket-Subordner). */
   templateId: string;
+  /** Stable PDF-ID innerhalb des Templates (z.B. "protokoll", "fotos"). */
+  pdfId: string;
+  /** Anzeigename der aktiven PDF (für Texte im Editor). */
+  pdfName: string;
+  /** Schema des Templates (für Feldliste & Picker). */
   schema: FormSchema;
+  /** Aktuelles Mapping dieser einen PDF. */
   mapping: FieldMapping;
-  pdfTemplate: string | null;
+  /** Storage-Pfad der aktiven PDF (oder null = noch nichts hochgeladen). */
+  pdfPath: string | null;
   onMappingChange: (next: FieldMapping) => void;
-  onPdfTemplateChange: (path: string) => void;
+  onPdfPathChange: (path: string) => void;
 }
 
 interface Selection {
@@ -28,8 +37,8 @@ interface Selection {
 }
 
 export function TemplateMappingEditor({
-  templateId, schema, mapping, pdfTemplate,
-  onMappingChange, onPdfTemplateChange,
+  templateId, pdfId, pdfName, schema, mapping, pdfPath,
+  onMappingChange, onPdfPathChange,
 }: Props) {
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
   const [page, setPage] = useState(1);
@@ -51,13 +60,21 @@ export function TemplateMappingEditor({
 
   useEffect(() => {
     let cancelled = false;
-    if (!pdfTemplate) { setPdfBytes(null); return; }
+    if (!pdfPath) { setPdfBytes(null); return; }
     (async () => {
-      const bytes = await fetchPdfBytes(pdfTemplate);
+      const bytes = await fetchPdfBytes(pdfPath);
       if (!cancelled) setPdfBytes(bytes);
     })();
     return () => { cancelled = true; };
-  }, [pdfTemplate]);
+  }, [pdfPath]);
+
+  // Wenn die aktive PDF wechselt, Auswahl & Seite resetten.
+  useEffect(() => {
+    setSelected(null);
+    setPending(null);
+    setPickerStep(null);
+    setPage(1);
+  }, [pdfId]);
 
   const onPageCount = useCallback((n: number) => { setPageCount(n); }, []);
 
@@ -69,8 +86,8 @@ export function TemplateMappingEditor({
     }
     setUploading(true);
     try {
-      const path = await uploadPdfTemplate(file, templateId);
-      onPdfTemplateChange(path);
+      const path = await uploadPdfTemplate(file, templateId, pdfId);
+      onPdfPathChange(path);
       setPdfBytes(await file.arrayBuffer());
       setPage(1);
     } catch (err) {
@@ -153,6 +170,12 @@ export function TemplateMappingEditor({
     });
   }
 
+  function updateDynamicEntry(fieldId: string, patch: Partial<DynamicPhotosEntry>) {
+    const cur = mapping[fieldId];
+    if (!isDynamicEntry(cur)) return;
+    onMappingChange({ ...mapping, [fieldId]: { ...cur, ...patch } });
+  }
+
   async function openPreview() {
     if (!pdfBytes) return;
     setBusyPreview(true);
@@ -168,8 +191,8 @@ export function TemplateMappingEditor({
   }
 
   async function openOriginal() {
-    if (!pdfTemplate) return;
-    const url = await getPdfSignedUrl(pdfTemplate);
+    if (!pdfPath) return;
+    const url = await getPdfSignedUrl(pdfPath);
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
   }
 
@@ -178,10 +201,12 @@ export function TemplateMappingEditor({
       <div className="card p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-maja-navy">PDF-Vorlage</h3>
+            <h3 className="text-sm font-semibold text-maja-navy">
+              {pdfName || 'PDF-Vorlage'}
+            </h3>
             <p className="text-xs text-maja-muted">
-              {pdfTemplate
-                ? <>aktuell: <code className="rounded bg-maja-light px-1">{pdfTemplate}</code></>
+              {pdfPath
+                ? <>aktuell: <code className="rounded bg-maja-light px-1">{pdfPath}</code></>
                 : 'Noch keine PDF-Vorlage hochgeladen.'}
             </p>
           </div>
@@ -197,9 +222,9 @@ export function TemplateMappingEditor({
                   e.target.value = '';
                 }}
               />
-              {uploading ? 'Wird hochgeladen …' : pdfTemplate ? 'PDF ersetzen' : 'PDF hochladen'}
+              {uploading ? 'Wird hochgeladen …' : pdfPath ? 'PDF ersetzen' : 'PDF hochladen'}
             </label>
-            {pdfTemplate && (
+            {pdfPath && (
               <button type="button" onClick={openOriginal} className="btn-secondary">
                 Original öffnen
               </button>
@@ -254,8 +279,9 @@ export function TemplateMappingEditor({
               onMarkerClick={(sel) => {
                 setSelected(sel);
                 const e = mapping[sel.fieldId];
-                if (isTextEntry(e) || isBoxEntry(e)) setPage(e.page);
-                else if (isOptionsEntry(e) && sel.optionName) {
+                if (isTextEntry(e) || isBoxEntry(e) || isDynamicEntry(e)) {
+                  setPage(e.page);
+                } else if (isOptionsEntry(e) && sel.optionName) {
                   const p = e.options[sel.optionName];
                   if (p) setPage(p.page);
                 }
@@ -263,7 +289,7 @@ export function TemplateMappingEditor({
             />
           </div>
 
-          <aside className="space-y-4">
+          <aside className="lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-auto space-y-4">
             <FieldsSidebar
               fields={fields}
               mapping={mapping}
@@ -289,6 +315,7 @@ export function TemplateMappingEditor({
                 onUpdateText={updateTextEntry}
                 onUpdateBox={updateBoxEntry}
                 onUpdateOption={updateOptionPosition}
+                onUpdateDynamic={updateDynamicEntry}
               />
             )}
           </aside>
@@ -442,11 +469,14 @@ function FieldsSidebar({
                     {isOptionsEntry(e) && (
                       <> · {Object.keys(e.options).length}/{(f.options ?? []).length} Optionen</>
                     )}
+                    {isDynamicEntry(e) && (
+                      <> · S.{e.page} · {e.perPage} Slots/Seite ({e.columns} Spalten)</>
+                    )}
                     {!e && <> · noch nicht gemappt</>}
                   </div>
                 </div>
                 <div className="ml-2 flex items-center gap-2">
-                  {(isTextEntry(e) || isBoxEntry(e)) && e.page !== page && (
+                  {(isTextEntry(e) || isBoxEntry(e) || isDynamicEntry(e)) && e.page !== page && (
                     <button
                       type="button"
                       title="zur Seite springen"
@@ -518,7 +548,7 @@ function FieldsSidebar({
 
 function DetailPanel({
   selection, mapping, fieldMap,
-  onUpdateText, onUpdateBox, onUpdateOption,
+  onUpdateText, onUpdateBox, onUpdateOption, onUpdateDynamic,
 }: {
   selection: Selection;
   mapping: FieldMapping;
@@ -528,6 +558,7 @@ function DetailPanel({
   onUpdateOption: (
     fieldId: string, optionName: string, patch: Partial<OptionPosition>,
   ) => void;
+  onUpdateDynamic: (fieldId: string, patch: Partial<DynamicPhotosEntry>) => void;
 }) {
   const field = fieldMap.get(selection.fieldId);
   const entry = mapping[selection.fieldId];
@@ -589,6 +620,39 @@ function DetailPanel({
                       onChange={(v) => onUpdateOption(selection.fieldId, selection.optionName!, { x: v })} />
           <NumberCell label="Y (pt)" value={opt.y}
                       onChange={(v) => onUpdateOption(selection.fieldId, selection.optionName!, { y: v })} />
+        </div>
+      </div>
+    );
+  }
+
+  if (isDynamicEntry(entry)) {
+    return (
+      <div className="card p-4">
+        <h3 className="mb-1 text-sm font-semibold text-maja-navy">{field.label}</h3>
+        <p className="mb-3 text-xs text-maja-muted">
+          Dynamische Foto-Slots. Bei mehr Fotos als „Slots pro Seite" wird
+          beim PDF-Export automatisch eine neue Seite eingefügt.
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <NumberCell label="Seite"  value={entry.page} min={1}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { page: v })} />
+          <div />
+          <NumberCell label="X (pt)" value={entry.x}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { x: v })} />
+          <NumberCell label="Y (pt)" value={entry.y}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { y: v })} />
+          <NumberCell label="Slot-Breite (pt)" value={entry.width} min={10}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { width: v })} />
+          <NumberCell label="Slot-Höhe (pt)" value={entry.height} min={10}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { height: v })} />
+          <NumberCell label="Spalten" value={entry.columns} min={1}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { columns: v })} />
+          <NumberCell label="Slots pro Seite" value={entry.perPage} min={1}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { perPage: v })} />
+          <NumberCell label="Spalten-Abstand" value={entry.colGap ?? 12}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { colGap: v })} />
+          <NumberCell label="Reihen-Abstand" value={entry.rowGap ?? 12}
+                      onChange={(v) => onUpdateDynamic(selection.fieldId, { rowGap: v })} />
         </div>
       </div>
     );

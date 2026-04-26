@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { pdfjsLib } from '../../lib/pdfjs';
 import {
-  isBoxEntry, isOptionsEntry, isTextEntry, OPTION_DEFAULT_SIZE,
+  computeDynamicSlots,
+  isBoxEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
+  OPTION_DEFAULT_SIZE,
 } from '../../lib/fieldMapping';
 import type { FieldMapping } from '../../types/db';
 
@@ -152,6 +154,28 @@ export function PdfMappingCanvas({
                   />
                 );
               });
+          }
+          if (isDynamicEntry(entry) && entry.page === page) {
+            const isSel = selected?.fieldId === fieldId && !selected?.optionName;
+            const slots = computeDynamicSlots(entry, entry.perPage);
+            return slots
+              .filter((s) => s.pageOffset === 0)
+              .map((s, i) => (
+                <BoxMarker
+                  key={`${fieldId}::slot${i}`}
+                  pageSize={pageSize}
+                  x={s.x}
+                  y={s.y}
+                  width={s.width}
+                  height={s.height}
+                  label={`${label} #${i + 1}`}
+                  selected={isSel}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMarkerClick?.({ fieldId });
+                  }}
+                />
+              ));
           }
           return [];
         })}
