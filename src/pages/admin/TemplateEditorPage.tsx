@@ -228,7 +228,7 @@ export function TemplateEditorPage() {
       </div>
 
       {tab === 'struktur' && (
-        <TemplateStructureEditor schema={schema} onChange={setSchema} />
+        <TemplateStructureEditor templateId={template.id} schema={schema} onChange={setSchema} />
       )}
 
       {tab === 'mapping' && (

@@ -4,7 +4,8 @@ import {
   isBoxEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
   OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT,
 } from './fieldMapping';
-import type { FieldMapping, FormSchema } from '../types/db';
+import { fetchDamageDiagramBytes } from './damageDiagramStorage';
+import type { FieldMapping, FormField, FormSchema } from '../types/db';
 
 const ACCENT = rgb(0.17, 0.37, 0.54); // Maja-Accent
 const LIGHT  = rgb(0.91, 0.94, 0.97);
@@ -26,10 +27,10 @@ export async function buildPreviewPdf(
   const pdf = await PDFDocument.load(templateBytes);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
 
-  const fieldById = new Map<string, { label: string; type: string }>();
+  const fieldById = new Map<string, FormField>();
   for (const s of schema.sections ?? []) {
     for (const f of s.fields ?? []) {
-      fieldById.set(f.id, { label: f.label, type: f.type });
+      fieldById.set(f.id, f);
     }
   }
 
@@ -51,6 +52,31 @@ export async function buildPreviewPdf(
 
     if (isBoxEntry(entry)) {
       const page = pages[Math.max(0, Math.min(entry.page - 1, pages.length - 1))];
+
+      // Schadendiagramm mit hochgeladenem Fahrzeugbild → Bild einbetten
+      const meta = fieldById.get(fieldId);
+      if (entry.type === 'damage_diagram' && meta?.vehicleImage) {
+        try {
+          const bytes = await fetchDamageDiagramBytes(meta.vehicleImage);
+          if (bytes) {
+            const lower = meta.vehicleImage.toLowerCase();
+            const img = lower.endsWith('.png')
+              ? await pdf.embedPng(bytes)
+              : await pdf.embedJpg(bytes);
+            page.drawImage(img, {
+              x: entry.x,
+              y: entry.y - entry.height,
+              width: entry.width,
+              height: entry.height,
+            });
+            continue;
+          }
+        } catch (err) {
+          console.warn('[pdfPreview] Schadendiagramm-Bild konnte nicht eingebettet werden', err);
+          // Fall-through auf Platzhalter-Box
+        }
+      }
+
       page.drawRectangle({
         x: entry.x,
         y: entry.y - entry.height,

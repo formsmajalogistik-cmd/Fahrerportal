@@ -1,4 +1,5 @@
-import { useRef, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { getDamageDiagramSignedUrl } from '../../../lib/damageDiagramStorage';
 import type { DamageMarker, FormField } from '../../../types/db';
 
 interface Props {
@@ -15,6 +16,20 @@ function asMarkers(v: unknown): DamageMarker[] {
 export function DamageDiagramField({ field, value, onChange, disabled }: Props) {
   const markers = asMarkers(value);
   const boxRef = useRef<HTMLDivElement>(null);
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [imgError, setImgError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setImgError(null);
+    if (!field.vehicleImage) { setImgUrl(null); return; }
+    getDamageDiagramSignedUrl(field.vehicleImage).then((u) => {
+      if (cancelled) return;
+      if (u) setImgUrl(u);
+      else setImgError('Schadendiagramm konnte nicht geladen werden.');
+    });
+    return () => { cancelled = true; };
+  }, [field.vehicleImage]);
 
   function handleClick(e: MouseEvent<HTMLDivElement>) {
     if (disabled) return;
@@ -37,42 +52,57 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
         {field.label}{field.required && <span className="text-red-600"> *</span>}
       </label>
       <p className="mb-2 text-xs text-maja-muted">
-        Klicke auf die Skizze, um Schäden zu markieren. Erneut klicken, um einen Marker zu entfernen.
+        Tippe auf das Bild, um Schäden zu markieren — jede Markierung erhält eine
+        eigene Nummer. Tippe auf eine Markierung, um sie zu entfernen.
       </p>
-      <div
-        ref={boxRef}
-        onClick={handleClick}
-        className="relative aspect-[2/1] w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-white"
-      >
-        <VehicleOutline />
-        {markers.map((m, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={(e) => { e.stopPropagation(); removeMarker(i); }}
-            className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-600/90 text-xs font-semibold text-white ring-2 ring-white"
-            style={{ left: `${m.x}%`, top: `${m.y}%`, width: 24, height: 24 }}
-            aria-label={`Marker ${i + 1} entfernen`}
-          >
-            {i + 1}
-          </button>
-        ))}
-      </div>
+
+      {!field.vehicleImage && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Für dieses Feld ist im Template noch kein Fahrzeugbild hinterlegt.
+          Der Admin kann es im Template-Editor hochladen.
+        </div>
+      )}
+      {imgError && (
+        <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+          {imgError}
+        </div>
+      )}
+
+      {field.vehicleImage && (
+        <div
+          ref={boxRef}
+          onClick={handleClick}
+          className="relative w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-maja-light"
+          style={{ minHeight: 180 }}
+        >
+          {imgUrl ? (
+            <img
+              src={imgUrl}
+              alt={field.label}
+              className="block w-full select-none"
+              style={{ pointerEvents: 'none' }}
+            />
+          ) : (
+            <div className="flex aspect-[2/1] w-full items-center justify-center text-xs text-maja-muted">
+              Bild wird geladen …
+            </div>
+          )}
+          {markers.map((m, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); removeMarker(i); }}
+              className="absolute flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-red-600/95 text-xs font-bold text-white shadow ring-2 ring-white"
+              style={{ left: `${m.x}%`, top: `${m.y}%` }}
+              aria-label={`Markierung ${i + 1} entfernen`}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
+
       <p className="mt-2 text-xs text-maja-muted">{markers.length} Markierung(en)</p>
     </div>
-  );
-}
-
-function VehicleOutline() {
-  return (
-    <svg viewBox="0 0 400 200" className="h-full w-full" preserveAspectRatio="none">
-      <g fill="none" stroke="#1B3A5C" strokeWidth="2">
-        <path d="M40 140 L60 90 L140 70 L280 70 L340 95 L360 140 L40 140 Z" />
-        <circle cx="110" cy="145" r="18" />
-        <circle cx="300" cy="145" r="18" />
-        <path d="M150 70 L170 100 L230 100 L250 70" />
-        <path d="M170 100 L190 85 L210 85 L230 100" />
-      </g>
-    </svg>
   );
 }

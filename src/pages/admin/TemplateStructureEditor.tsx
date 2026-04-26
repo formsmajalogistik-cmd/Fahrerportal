@@ -1,4 +1,7 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  getDamageDiagramSignedUrl, uploadDamageDiagramImage,
+} from '../../lib/damageDiagramStorage';
 import type { FieldType, FormField, FormSchema, FormSection } from '../../types/db';
 
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
@@ -15,11 +18,12 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
 ];
 
 interface Props {
+  templateId: string;
   schema: FormSchema;
   onChange: (next: FormSchema) => void;
 }
 
-export function TemplateStructureEditor({ schema, onChange }: Props) {
+export function TemplateStructureEditor({ templateId, schema, onChange }: Props) {
   const sections = schema.sections ?? [];
 
   function updateSections(next: FormSection[]) {
@@ -122,6 +126,7 @@ export function TemplateStructureEditor({ schema, onChange }: Props) {
               section.fields.map((field, fIdx) => (
                 <FieldEditor
                   key={fIdx}
+                  templateId={templateId}
                   field={field}
                   onChange={(patch) => updateField(sIdx, fIdx, patch)}
                   onRemove={() => removeField(sIdx, fIdx)}
@@ -148,8 +153,9 @@ export function TemplateStructureEditor({ schema, onChange }: Props) {
 }
 
 function FieldEditor({
-  field, onChange, onRemove, onMoveUp, onMoveDown,
+  templateId, field, onChange, onRemove, onMoveUp, onMoveDown,
 }: {
+  templateId: string;
   field: FormField;
   onChange: (patch: Partial<FormField>) => void;
   onRemove: () => void;
@@ -157,6 +163,7 @@ function FieldEditor({
   onMoveDown: () => void;
 }) {
   const needsOptions = field.type === 'select' || field.type === 'checkboxes';
+  const isDamageDiagram = field.type === 'damage_diagram';
   const optionsText = useMemo(() => (field.options ?? []).join('\n'), [field.options]);
 
   return (
@@ -226,6 +233,95 @@ function FieldEditor({
           </div>
         )}
       </div>
+
+      {isDamageDiagram && (
+        <DamageImageUpload
+          templateId={templateId}
+          field={field}
+          onChange={(path) => onChange({ vehicleImage: path })}
+        />
+      )}
+    </div>
+  );
+}
+
+function DamageImageUpload({
+  templateId, field, onChange,
+}: {
+  templateId: string;
+  field: FormField;
+  onChange: (path: string | undefined) => void;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const path = field.vehicleImage;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) { setPreviewUrl(null); return; }
+    getDamageDiagramSignedUrl(path).then((u) => { if (!cancelled) setPreviewUrl(u); });
+    return () => { cancelled = true; };
+  }, [path]);
+
+  async function handleUpload(file: File) {
+    setError(null);
+    if (!file.type.startsWith('image/')) {
+      setError('Nur Bilddateien (PNG, JPG) werden akzeptiert.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const newPath = await uploadDamageDiagramImage(file, templateId, field.id);
+      onChange(newPath);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-dashed border-maja-navy/30 bg-white p-3">
+      <div className="text-xs font-semibold text-maja-navy">Fahrzeugbild für Schadendiagramm</div>
+      <p className="mb-2 text-xs text-maja-muted">
+        Lade eine Skizze oder ein Foto des Fahrzeugs hoch. Beim Ausfüllen kann
+        der Fahrer auf das Bild tippen, um Schäden zu markieren.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex h-24 w-40 items-center justify-center overflow-hidden rounded-md border border-maja-navy/15 bg-maja-light">
+          {previewUrl ? (
+            <img src={previewUrl} alt="Schadendiagramm" className="h-full w-full object-contain" />
+          ) : (
+            <span className="text-xs text-maja-muted">kein Bild</span>
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="btn-secondary cursor-pointer">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleUpload(f);
+                e.target.value = '';
+              }}
+            />
+            {uploading ? 'Hochladen …' : path ? 'Bild ersetzen' : 'Bild hochladen'}
+          </label>
+          {path && (
+            <button
+              type="button"
+              className="text-xs font-medium text-red-600 hover:underline"
+              onClick={() => onChange(undefined)}
+            >
+              Bild entfernen
+            </button>
+          )}
+        </div>
+      </div>
+      {error && <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}
     </div>
   );
 }
