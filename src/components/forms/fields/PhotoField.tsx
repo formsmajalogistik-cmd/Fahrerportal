@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getPhotoUrl, uploadPhoto } from '../../../lib/photo';
+import { compressImage, downloadFile, getPhotoUrl, uploadPhoto } from '../../../lib/photo';
+import { useAuth } from '../../../auth/AuthContext';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
@@ -17,34 +18,61 @@ function asPhoto(v: unknown): PhotoValue | null {
 }
 
 export function PhotoField({ field, value, userId, formularId, onChange, disabled }: Props) {
+  const { profile } = useAuth();
   const current = asPhoto(value);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  // Local-Preview (objectURL) zeigt das Foto sofort an, noch während im
+  // Hintergrund komprimiert + hochgeladen wird.
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     if (current?.storage_path) {
-      getPhotoUrl(current.storage_path).then((u) => { if (!cancelled) setPreviewUrl(u); });
+      getPhotoUrl(current.storage_path).then((u) => { if (!cancelled) setSignedUrl(u); });
     } else {
-      setPreviewUrl(null);
+      setSignedUrl(null);
     }
     return () => { cancelled = true; };
   }, [current?.storage_path]);
 
-  async function handleFile(file: File) {
+  // ObjectURL nach Wechsel wieder freigeben
+  useEffect(() => {
+    return () => {
+      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    };
+  }, [localPreviewUrl]);
+
+  async function handleFile(file: File, fromCamera: boolean) {
     setError(null);
+    // Sofortige lokale Vorschau aus dem Original — der User sieht sein Foto,
+    // bevor Komprimierung und Upload abgeschlossen sind.
+    const localUrl = URL.createObjectURL(file);
+    setLocalPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return localUrl; });
+
     setUploading(true);
     try {
-      const path = await uploadPhoto(file, userId, formularId, field.id);
-      onChange({ storage_path: path, mime_type: 'image/jpeg', size_bytes: file.size });
+      const compressed = await compressImage(file);
+      // Wenn der Nutzer in seinem Profil aktiviert hat, dass Aufnahmen auch
+      // in der Galerie landen sollen, triggern wir nach dem Komprimieren
+      // einen Browser-Download (Galerie-Bilder kommen über die Downloads).
+      if (fromCamera && profile?.save_to_gallery) {
+        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+        downloadFile(compressed, `${field.id}_${ts}.jpg`);
+      }
+      const path = await uploadPhoto(compressed, userId, formularId, field.id);
+      onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');
     } finally {
       setUploading(false);
     }
   }
+
+  const previewUrl = localPreviewUrl ?? signedUrl;
 
   return (
     <div>
@@ -61,30 +89,52 @@ export function PhotoField({ field, value, userId, formularId, onChange, disable
         </div>
         <div className="flex flex-col gap-2">
           <input
-            ref={inputRef}
+            ref={cameraRef}
             type="file"
             accept="image/*"
             capture="environment"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) void handleFile(f);
+              if (f) void handleFile(f, true);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={galleryRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleFile(f, false);
               e.target.value = '';
             }}
           />
           <button
             type="button"
-            className="btn-secondary"
-            onClick={() => inputRef.current?.click()}
+            className="btn-primary"
+            onClick={() => cameraRef.current?.click()}
             disabled={disabled || uploading}
           >
-            {uploading ? 'Hochladen …' : current ? 'Ersetzen' : 'Foto aufnehmen'}
+            {uploading ? 'Hochladen …' : 'Foto aufnehmen'}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => galleryRef.current?.click()}
+            disabled={disabled || uploading}
+          >
+            Aus Galerie wählen
           </button>
           {current && !disabled && (
             <button
               type="button"
               className="text-sm font-medium text-red-600 hover:underline"
-              onClick={() => onChange(null)}
+              onClick={() => {
+                if (localPreviewUrl) { URL.revokeObjectURL(localPreviewUrl); setLocalPreviewUrl(null); }
+                onChange(null);
+              }}
             >
               Entfernen
             </button>

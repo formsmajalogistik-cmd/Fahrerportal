@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { getPhotoUrl, uploadPhoto } from '../../../lib/photo';
+import { compressImage, downloadFile, getPhotoUrl, uploadPhoto } from '../../../lib/photo';
+import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../auth/AuthContext';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
@@ -21,21 +23,28 @@ function asArray(v: unknown): PhotoValue[] {
 export function DynamicPhotosField({
   field, value, userId, formularId, onChange, disabled,
 }: Props) {
+  const { profile } = useAuth();
   const items = asArray(value);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
 
-  async function addPhoto(file: File) {
+  async function addPhoto(file: File, fromCamera: boolean) {
     setError(null);
     setUploading(true);
     try {
+      const compressed = await compressImage(file);
+      if (fromCamera && profile?.save_to_gallery) {
+        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+        downloadFile(compressed, `${field.id}_${items.length + 1}_${ts}.jpg`);
+      }
       const slot = `${field.id}_${Date.now()}_${items.length}`;
-      const path = await uploadPhoto(file, userId, formularId, slot);
+      const path = await uploadPhoto(compressed, userId, formularId, slot);
       const next: PhotoValue = {
         storage_path: path,
-        mime_type: 'image/jpeg',
-        size_bytes: file.size,
+        mime_type: compressed.type,
+        size_bytes: compressed.size,
       };
       onChange([...items, next]);
     } catch (err) {
@@ -45,8 +54,12 @@ export function DynamicPhotosField({
     }
   }
 
-  function removeAt(idx: number) {
+  async function removeAt(idx: number) {
+    const removed = items[idx];
     onChange(items.filter((_, i) => i !== idx));
+    if (removed?.storage_path) {
+      await supabase.storage.from('formular-fotos').remove([removed.storage_path]).catch(() => {});
+    }
   }
 
   return (
@@ -55,7 +68,7 @@ export function DynamicPhotosField({
         {field.label}{field.required && <span className="text-red-600"> *</span>}
       </label>
       <p className="mb-2 text-xs text-maja-muted">
-        Klicke auf „Foto hinzufügen", um beliebig viele Fotos zu erfassen.
+        Klicke auf einen der Buttons, um beliebig viele Fotos zu erfassen.
         Die Fotos werden im PDF der Reihe nach in die vorgesehenen Platzhalter
         eingesetzt.
       </p>
@@ -67,7 +80,7 @@ export function DynamicPhotosField({
               <DynamicPhotoTile
                 photo={p}
                 index={i}
-                onRemove={() => removeAt(i)}
+                onRemove={() => void removeAt(i)}
                 disabled={disabled}
               />
             </li>
@@ -76,25 +89,46 @@ export function DynamicPhotosField({
       )}
 
       <input
-        ref={inputRef}
+        ref={cameraRef}
         type="file"
         accept="image/*"
         capture="environment"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) void addPhoto(f);
+          if (f) void addPhoto(f, true);
           e.target.value = '';
         }}
       />
-      <button
-        type="button"
-        className="btn-secondary"
-        onClick={() => inputRef.current?.click()}
-        disabled={disabled || uploading}
-      >
-        {uploading ? 'Hochladen …' : '+ Foto hinzufügen'}
-      </button>
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void addPhoto(f, false);
+          e.target.value = '';
+        }}
+      />
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => cameraRef.current?.click()}
+          disabled={disabled || uploading}
+        >
+          {uploading ? 'Hochladen …' : '+ Foto aufnehmen'}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => galleryRef.current?.click()}
+          disabled={disabled || uploading}
+        >
+          Aus Galerie wählen
+        </button>
+      </div>
 
       {error && (
         <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>

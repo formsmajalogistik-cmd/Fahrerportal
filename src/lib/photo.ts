@@ -39,6 +39,29 @@ export async function uploadPhoto(
   return path;
 }
 
+/**
+ * Triggert einen Browser-Download der angegebenen Datei. Wird genutzt, wenn
+ * der User in den Profil-Einstellungen die Option „Auch in Galerie speichern"
+ * aktiviert hat.
+ */
+export function downloadFile(file: Blob, filename: string): void {
+  try {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
+  } catch (err) {
+    console.warn('[downloadFile] fehlgeschlagen', err);
+  }
+}
+
 export async function getPhotoUrl(storagePath: string): Promise<string | null> {
   const { data, error } = await supabase.storage
     .from('formular-fotos')

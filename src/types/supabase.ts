@@ -23,6 +23,7 @@ export type Database = {
           role: UserRole;
           vorname: string | null;
           nachname: string | null;
+          save_to_gallery: boolean;
         };
         Insert: {
           id: string;
@@ -30,6 +31,7 @@ export type Database = {
           role?: UserRole;
           vorname?: string | null;
           nachname?: string | null;
+          save_to_gallery?: boolean;
         };
         Update: {
           id?: string;
@@ -37,6 +39,7 @@ export type Database = {
           role?: UserRole;
           vorname?: string | null;
           nachname?: string | null;
+          save_to_gallery?: boolean;
         };
         Relationships: [
           {

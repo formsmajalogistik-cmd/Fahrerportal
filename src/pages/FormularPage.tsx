@@ -105,7 +105,24 @@ export function FormularPage() {
 
       setFormular(af as unknown as AusgefuelltesFormular);
       setTemplate(normalizedTpl);
-      setData((af.daten as unknown as Record<string, unknown>) ?? {});
+
+      // Wenn der Browser nach Foto-Aufnahme die Seite neu lädt (mobile Tab-Recycling),
+      // sind unsere lokalen Eingaben noch nicht in der DB. sessionStorage rettet sie.
+      const localKey = `formular-draft-${af.id}`;
+      let nextData = (af.daten as unknown as Record<string, unknown>) ?? {};
+      try {
+        const cached = sessionStorage.getItem(localKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && typeof parsed === 'object') {
+            nextData = { ...nextData, ...parsed };
+            console.log('[FormularPage] sessionStorage-Snapshot wiederhergestellt');
+          }
+        }
+      } catch (err) {
+        console.warn('[FormularPage] sessionStorage-Lesen fehlgeschlagen', err);
+      }
+      setData(nextData);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -114,8 +131,23 @@ export function FormularPage() {
   const readonly = formular?.status === 'submitted';
 
   const handleChange = useCallback((fieldId: string, value: unknown) => {
-    setData((prev) => ({ ...prev, [fieldId]: value }));
-  }, []);
+    setData((prev) => {
+      const next = { ...prev, [fieldId]: value };
+      // Sofort lokal persistieren, damit ein Reload (z.B. nach Foto-Aufnahme)
+      // den eingegebenen Stand nicht verliert.
+      if (id) {
+        try {
+          sessionStorage.setItem(`formular-draft-${id}`, JSON.stringify(next));
+        } catch {/* QuotaExceeded etc. ignorieren */}
+      }
+      return next;
+    });
+  }, [id]);
+
+  function clearLocalDraft() {
+    if (!id) return;
+    try { sessionStorage.removeItem(`formular-draft-${id}`); } catch {/* ignore */}
+  }
 
   async function saveDraft() {
     if (!formular) return;
@@ -127,6 +159,7 @@ export function FormularPage() {
       .eq('id', formular.id);
     setSaving('idle');
     if (err) { setError(err.message); return; }
+    clearLocalDraft();
     setStatusMsg('Entwurf gespeichert.');
   }
 
@@ -145,6 +178,7 @@ export function FormularPage() {
       .eq('id', formular.id);
     setSaving('idle');
     if (err) { setError(err.message); return; }
+    clearLocalDraft();
     setStatusMsg('Protokoll eingereicht.');
     setFormular({ ...formular, daten: data, status: 'submitted' });
   }

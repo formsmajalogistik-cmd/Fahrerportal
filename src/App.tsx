@@ -9,6 +9,7 @@ import { PasswordNewPage } from './pages/PasswordNewPage';
 import { FahrerDashboard } from './pages/FahrerDashboard';
 import { OffeneFormularePage } from './pages/OffeneFormularePage';
 import { FormularPage } from './pages/FormularPage';
+import { ProfilPage } from './pages/ProfilPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { FahrerListPage } from './pages/admin/FahrerListPage';
 import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="/zuweisungen" element={<ZuweisungenPage />} />
           <Route path="/eingaenge" element={<EingaengePage />} />
           <Route path="/formular/:id" element={<FormularPage />} />
+          <Route path="/profil" element={<ProfilPage />} />
           <Route path="/passwort-neu" element={<PasswordNewPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -66,6 +68,7 @@ export default function App() {
         <Route path="/" element={<FahrerDashboard />} />
         <Route path="/offen" element={<OffeneFormularePage />} />
         <Route path="/formular/:id" element={<FormularPage />} />
+        <Route path="/profil" element={<ProfilPage />} />
         <Route path="/passwort-neu" element={<PasswordNewPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
