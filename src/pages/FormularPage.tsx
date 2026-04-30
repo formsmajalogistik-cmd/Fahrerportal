@@ -6,6 +6,7 @@ import { Spinner } from '../components/Spinner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { validateForm } from '../lib/validateForm';
+import { generateAndUploadFormPdfs } from '../lib/pdfGenerate';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
 
@@ -179,8 +180,24 @@ export function FormularPage() {
     setSaving('idle');
     if (err) { setError(err.message); return; }
     clearLocalDraft();
-    setStatusMsg('Protokoll eingereicht.');
-    setFormular({ ...formular, daten: data, status: 'submitted' });
+    const submitted = { ...formular, daten: data, status: 'submitted' as const };
+    setFormular(submitted);
+    setStatusMsg('Protokoll eingereicht. PDFs werden erzeugt …');
+
+    // PDFs nach Submit generieren — läuft async, blockiert die UI nicht.
+    if (session) {
+      try {
+        const paths = await generateAndUploadFormPdfs(template, submitted, session.user.id);
+        setStatusMsg(
+          paths.length > 0
+            ? `Protokoll eingereicht. ${paths.length} PDF${paths.length === 1 ? '' : 's'} erzeugt.`
+            : 'Protokoll eingereicht. (Keine PDF-Vorlagen am Template hinterlegt.)',
+        );
+      } catch (err) {
+        console.warn('[FormularPage] PDF-Erzeugung fehlgeschlagen', err);
+        setStatusMsg('Protokoll eingereicht. PDF-Erzeugung schlug fehl — siehe Konsole.');
+      }
+    }
   }
 
   const userId = session?.user.id ?? '';

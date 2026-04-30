@@ -1,5 +1,6 @@
 import type {
-  BoxEntry, DynamicPhotosEntry, FieldMapping, FieldMappingEntry, FieldType,
+  BoxEntry, CheckboxesWithTextEntry, DynamicPhotosEntry,
+  FieldMapping, FieldMappingEntry, FieldType,
   FormField, FormSchema, OptionPosition, OptionsEntry, TextEntry,
 } from '../types/db';
 
@@ -11,7 +12,7 @@ export const DYNAMIC_DEFAULT_COLUMNS = 2;
 export const DYNAMIC_DEFAULT_PER_PAGE = 4;
 export const DYNAMIC_DEFAULT_GAP = 12;
 
-export type MappingMode = 'text' | 'box' | 'options' | 'dynamic';
+export type MappingMode = 'text' | 'box' | 'options' | 'dynamic' | 'options_text';
 
 export function modeFor(type: FieldType): MappingMode {
   switch (type) {
@@ -29,6 +30,8 @@ export function modeFor(type: FieldType): MappingMode {
       return 'options';
     case 'dynamic_photos':
       return 'dynamic';
+    case 'checkboxes_with_text':
+      return 'options_text';
   }
 }
 
@@ -43,6 +46,9 @@ export function isOptionsEntry(e: FieldMappingEntry | undefined): e is OptionsEn
 }
 export function isDynamicEntry(e: FieldMappingEntry | undefined): e is DynamicPhotosEntry {
   return !!e && e.type === 'dynamic_photos';
+}
+export function isCheckboxesWithTextEntry(e: FieldMappingEntry | undefined): e is CheckboxesWithTextEntry {
+  return !!e && e.type === 'checkboxes_with_text';
 }
 
 /** Erstellt einen Default-Eintrag passend zum Feldtyp. */
@@ -75,6 +81,9 @@ export function makeDefaultEntry(
       colGap: DYNAMIC_DEFAULT_GAP,
     };
   }
+  if (mode === 'options_text') {
+    return { type: 'checkboxes_with_text', options: {} };
+  }
   // options-mode startet leer; einzelne Optionen werden via setOptionPosition gesetzt
   return { type: field.type as OptionsEntry['type'], options: {} };
 }
@@ -104,15 +113,56 @@ export function removeOption(
   mapping: FieldMapping, fieldId: string, optionName: string,
 ): FieldMapping {
   const e = mapping[fieldId];
-  if (!isOptionsEntry(e)) return mapping;
-  const { [optionName]: _drop, ...rest } = e.options;
-  void _drop;
-  if (Object.keys(rest).length === 0) {
-    const { [fieldId]: _gone, ...without } = mapping;
-    void _gone;
-    return without;
+  if (isOptionsEntry(e)) {
+    const { [optionName]: _drop, ...rest } = e.options;
+    void _drop;
+    if (Object.keys(rest).length === 0) {
+      const { [fieldId]: _gone, ...without } = mapping;
+      void _gone;
+      return without;
+    }
+    return { ...mapping, [fieldId]: { ...e, options: rest } };
   }
-  return { ...mapping, [fieldId]: { ...e, options: rest } };
+  if (isCheckboxesWithTextEntry(e)) {
+    const { [optionName]: _drop, ...rest } = e.options;
+    void _drop;
+    if (Object.keys(rest).length === 0) {
+      const { [fieldId]: _gone, ...without } = mapping;
+      void _gone;
+      return without;
+    }
+    return { ...mapping, [fieldId]: { ...e, options: rest } };
+  }
+  return mapping;
+}
+
+/**
+ * Setzt eine der beiden Positionen (Häkchen oder Text) bei einem
+ * checkboxes_with_text-Feld.
+ */
+export function setOptionPart(
+  mapping: FieldMapping,
+  fieldId: string,
+  optionName: string,
+  part: 'checkbox' | 'text',
+  pos: { page: number; x: number; y: number; size?: number; fontSize?: number },
+): FieldMapping {
+  const existing = mapping[fieldId];
+  const base: CheckboxesWithTextEntry = isCheckboxesWithTextEntry(existing)
+    ? existing
+    : { type: 'checkboxes_with_text', options: {} };
+  const opt = base.options[optionName] ?? {
+    checkbox: { page: pos.page, x: 0, y: 0 },
+    text:     { page: pos.page, x: 0, y: 0 },
+  };
+  const next: CheckboxesWithTextEntry = {
+    ...base,
+    options: {
+      ...base.options,
+      [optionName]: { ...opt, [part]: { ...pos } },
+    },
+  };
+  return { ...mapping, [fieldId]: next };
 }
 
 /** Prüft, ob ein Feld auf einer bestimmten PDF-Seite gemappt ist. */
@@ -123,6 +173,9 @@ export function isFieldMappedOnPage(
   if (!entry) return false;
   if (isOptionsEntry(entry)) {
     return Object.values(entry.options).some((o) => o.page === page);
+  }
+  if (isCheckboxesWithTextEntry(entry)) {
+    return Object.values(entry.options).some((o) => o.checkbox.page === page || o.text.page === page);
   }
   return entry.page === page;
 }

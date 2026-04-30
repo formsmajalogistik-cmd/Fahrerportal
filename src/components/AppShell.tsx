@@ -9,6 +9,7 @@ interface NavItem { to: string; label: string }
 const fahrerNav: NavItem[] = [
   { to: '/', label: 'Meine Formulare' },
   { to: '/offen', label: 'Begonnen' },
+  { to: '/eingaenge', label: 'Eingänge' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

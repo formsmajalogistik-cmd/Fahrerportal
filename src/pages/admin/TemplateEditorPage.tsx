@@ -5,7 +5,7 @@ import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { TemplateStructureEditor } from './TemplateStructureEditor';
 import { TemplateMappingEditor } from './TemplateMappingEditor';
-import { deletePdfFromStorage } from '../../lib/pdfStorage';
+import { copyPdfInStorage, deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
   Auftraggeber, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
 } from '../../types/db';
@@ -124,6 +124,55 @@ export function TemplateEditorPage() {
     navigate('/templates');
   }
 
+  const [duplicating, setDuplicating] = useState(false);
+
+  async function handleDuplicate() {
+    if (!template || duplicating) return;
+    setDuplicating(true);
+    setError(null);
+    setStatusMsg(null);
+    try {
+      // Schritt 1: leeres Duplikat anlegen, um die neue ID zu bekommen.
+      const { data: created, error: insErr } = await supabase
+        .from('formular_templates')
+        .insert({
+          name: `${name.trim() || 'Unbenanntes Template'} (Kopie)`,
+          auftraggeber_id: auftraggeberId || null,
+          schema: schema as unknown as Json,
+          pdfs: [] as unknown as Json,
+        })
+        .select('id')
+        .single();
+      if (insErr || !created) throw insErr ?? new Error('Anlegen fehlgeschlagen');
+
+      // Schritt 2: PDF-Dateien im Storage kopieren, neue Pfade einsammeln.
+      const newPdfs: TemplatePdf[] = [];
+      for (const p of pdfs) {
+        let newPath: string | null = null;
+        if (p.path) newPath = await copyPdfInStorage(p.path, created.id, p.id);
+        newPdfs.push({
+          id: p.id,
+          name: p.name,
+          path: newPath,
+          field_mapping: p.field_mapping ?? {},
+        });
+      }
+
+      // Schritt 3: pdfs[] auf das Duplikat setzen.
+      const { error: updErr } = await supabase
+        .from('formular_templates')
+        .update({ pdfs: newPdfs as unknown as Json })
+        .eq('id', created.id);
+      if (updErr) throw updErr;
+
+      navigate(`/templates/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Duplizieren fehlgeschlagen');
+    } finally {
+      setDuplicating(false);
+    }
+  }
+
   function addPdf() {
     if (pdfs.length >= MAX_PDFS) return;
     const baseName = pdfs.length === 0
@@ -191,6 +240,9 @@ export function TemplateEditorPage() {
           <button onClick={() => setConfirmDelete(true)}
                   className="text-sm font-medium text-red-600 hover:underline">
             Template löschen
+          </button>
+          <button onClick={handleDuplicate} className="btn-secondary" disabled={duplicating}>
+            {duplicating ? 'Dupliziere …' : 'Duplizieren'}
           </button>
           <button onClick={save} className="btn-primary" disabled={saving}>
             {saving ? 'Speichern …' : 'Speichern'}

@@ -16,7 +16,7 @@ import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
 import { TemplatesListPage } from './pages/admin/TemplatesListPage';
 import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { ZuweisungenPage } from './pages/admin/ZuweisungenPage';
-import { EingaengePage } from './pages/admin/EingaengePage';
+import { EingaengePage } from './pages/admin/EingaengePage'; // wird auch in Fahrer-Routen genutzt
 
 export default function App() {
   const { status, profile } = useAuth();
@@ -67,6 +67,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<FahrerDashboard />} />
         <Route path="/offen" element={<OffeneFormularePage />} />
+        <Route path="/eingaenge" element={<EingaengePage />} />
         <Route path="/formular/:id" element={<FormularPage />} />
         <Route path="/profil" element={<ProfilPage />} />
         <Route path="/passwort-neu" element={<PasswordNewPage />} />

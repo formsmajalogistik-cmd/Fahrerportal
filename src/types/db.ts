@@ -18,7 +18,7 @@ export type FormularZuweisung =
 export type FieldType =
   | 'text' | 'number' | 'date' | 'select' | 'checkboxes'
   | 'textarea' | 'photo' | 'signature' | 'damage_diagram'
-  | 'dynamic_photos';
+  | 'dynamic_photos' | 'checkboxes_with_text';
 
 export interface FormField {
   id: string;
@@ -89,8 +89,18 @@ export type DynamicPhotosEntry = {
   colGap?: number;     // Horizontaler Abstand zwischen Spalten (Default 12)
 };
 
+// Mehrfachauswahl-Optionen mit zugehörigem Freitext: pro Option zwei Positionen
+// — eine fürs Häkchen, eine für den eingegebenen Text.
+export type CheckboxesWithTextEntry = {
+  type: 'checkboxes_with_text';
+  options: Record<string, {
+    checkbox: { page: number; x: number; y: number; size?: number };
+    text:     { page: number; x: number; y: number; fontSize?: number };
+  }>;
+};
+
 export type FieldMappingEntry =
-  | TextEntry | BoxEntry | OptionsEntry | DynamicPhotosEntry;
+  | TextEntry | BoxEntry | OptionsEntry | DynamicPhotosEntry | CheckboxesWithTextEntry;
 
 export type FieldMapping = Record<string, FieldMappingEntry>;
 

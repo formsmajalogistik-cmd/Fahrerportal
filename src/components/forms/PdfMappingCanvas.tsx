@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from
 import { pdfjsLib } from '../../lib/pdfjs';
 import {
   computeDynamicSlots,
-  isBoxEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
+  isBoxEntry, isCheckboxesWithTextEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
   OPTION_DEFAULT_SIZE,
 } from '../../lib/fieldMapping';
 import type { FieldMapping } from '../../types/db';
@@ -10,6 +10,8 @@ import type { FieldMapping } from '../../types/db';
 interface MarkerSelection {
   fieldId: string;
   optionName?: string;
+  /** Bei checkboxes_with_text: 'checkbox' oder 'text'. */
+  part?: 'checkbox' | 'text';
 }
 
 interface Props {
@@ -154,6 +156,51 @@ export function PdfMappingCanvas({
                   />
                 );
               });
+          }
+          if (isCheckboxesWithTextEntry(entry)) {
+            const out: React.ReactElement[] = [];
+            for (const [opt, parts] of Object.entries(entry.options)) {
+              if (parts.checkbox.page === page) {
+                const isSel = selected?.fieldId === fieldId
+                  && selected?.optionName === opt
+                  && selected?.part === 'checkbox';
+                out.push(
+                  <CheckMarker
+                    key={`${fieldId}::${opt}::cb`}
+                    pageSize={pageSize}
+                    x={parts.checkbox.x}
+                    y={parts.checkbox.y}
+                    size={parts.checkbox.size ?? OPTION_DEFAULT_SIZE}
+                    label={`${label} → ${opt} (Häkchen)`}
+                    selected={isSel}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMarkerClick?.({ fieldId, optionName: opt, part: 'checkbox' });
+                    }}
+                  />,
+                );
+              }
+              if (parts.text.page === page) {
+                const isSel = selected?.fieldId === fieldId
+                  && selected?.optionName === opt
+                  && selected?.part === 'text';
+                out.push(
+                  <PointMarker
+                    key={`${fieldId}::${opt}::txt`}
+                    pageSize={pageSize}
+                    x={parts.text.x}
+                    y={parts.text.y}
+                    label={`Aa: ${opt}`}
+                    selected={isSel}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMarkerClick?.({ fieldId, optionName: opt, part: 'text' });
+                    }}
+                  />,
+                );
+              }
+            }
+            return out;
           }
           if (isDynamicEntry(entry) && entry.page === page) {
             const isSel = selected?.fieldId === fieldId && !selected?.optionName;

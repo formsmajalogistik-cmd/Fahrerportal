@@ -5,6 +5,7 @@ import { NumberField } from './fields/NumberField';
 import { DateField } from './fields/DateField';
 import { SelectField } from './fields/SelectField';
 import { CheckboxesField } from './fields/CheckboxesField';
+import { CheckboxesWithTextField } from './fields/CheckboxesWithTextField';
 import { TextareaField } from './fields/TextareaField';
 import { PhotoField } from './fields/PhotoField';
 import { SignatureField } from './fields/SignatureField';
@@ -87,6 +88,8 @@ function FieldSwitch({ field, value, onChange, disabled, userId, formularId }: F
       return <SelectField field={field} value={value} onChange={onChange} disabled={disabled} />;
     case 'checkboxes':
       return <CheckboxesField field={field} value={value} onChange={onChange} disabled={disabled} />;
+    case 'checkboxes_with_text':
+      return <CheckboxesWithTextField field={field} value={value} onChange={onChange} disabled={disabled} />;
     case 'textarea':
       return <TextareaField field={field} value={value} onChange={onChange} disabled={disabled} />;
     case 'photo':

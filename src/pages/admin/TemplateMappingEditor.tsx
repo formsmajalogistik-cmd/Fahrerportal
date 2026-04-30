@@ -4,9 +4,11 @@ import { fetchPdfBytes, getPdfSignedUrl, uploadPdfTemplate } from '../../lib/pdf
 import { PdfMappingCanvas } from '../../components/forms/PdfMappingCanvas';
 import {
   fieldsById,
-  isBoxEntry, isDynamicEntry, isFieldMappedOnPage, isOptionsEntry, isTextEntry,
+  isBoxEntry, isCheckboxesWithTextEntry, isDynamicEntry, isFieldMappedOnPage,
+  isOptionsEntry, isTextEntry,
   makeDefaultEntry, modeFor, OPTION_DEFAULT_SIZE,
-  PHOTO_DEFAULT_HEIGHT, PHOTO_DEFAULT_WIDTH, removeOption, setOptionPosition,
+  PHOTO_DEFAULT_HEIGHT, PHOTO_DEFAULT_WIDTH, removeOption,
+  setOptionPart, setOptionPosition,
   TEXT_DEFAULT_FONT,
 } from '../../lib/fieldMapping';
 import type {
@@ -34,6 +36,7 @@ interface Props {
 interface Selection {
   fieldId: string;
   optionName?: string;
+  part?: 'checkbox' | 'text';
 }
 
 export function TemplateMappingEditor({
@@ -127,8 +130,21 @@ export function TemplateMappingEditor({
     setPickerStep(null);
   }
 
+  // Stufe 2c: checkboxes_with_text — pro Option zwei Slots (Häkchen + Text)
+  function placeOptionPart(field: FormField, optionName: string, part: 'checkbox' | 'text') {
+    if (!pending) return;
+    const pos = {
+      page: pending.page, x: Math.round(pending.x), y: Math.round(pending.y),
+    };
+    onMappingChange(setOptionPart(mapping, field.id, optionName, part, pos));
+    setSelected({ fieldId: field.id, optionName, part });
+    setPending(null);
+    setPickerStep(null);
+  }
+
   function pickField(field: FormField) {
-    if (modeFor(field.type) === 'options') {
+    const m = modeFor(field.type);
+    if (m === 'options' || m === 'options_text') {
       setPickerStep({ field });
     } else {
       placeSimpleField(field);
@@ -174,6 +190,21 @@ export function TemplateMappingEditor({
     const cur = mapping[fieldId];
     if (!isDynamicEntry(cur)) return;
     onMappingChange({ ...mapping, [fieldId]: { ...cur, ...patch } });
+  }
+
+  function updateOptionPart(
+    fieldId: string, optionName: string, part: 'checkbox' | 'text',
+    patch: Partial<{ page: number; x: number; y: number; size: number; fontSize: number }>,
+  ) {
+    const cur = mapping[fieldId];
+    if (!isCheckboxesWithTextEntry(cur)) return;
+    const opt = cur.options[optionName];
+    if (!opt) return;
+    const updated = { ...opt, [part]: { ...opt[part], ...patch } };
+    onMappingChange({
+      ...mapping,
+      [fieldId]: { ...cur, options: { ...cur.options, [optionName]: updated } },
+    });
   }
 
   async function openPreview() {
@@ -284,6 +315,9 @@ export function TemplateMappingEditor({
                 } else if (isOptionsEntry(e) && sel.optionName) {
                   const p = e.options[sel.optionName];
                   if (p) setPage(p.page);
+                } else if (isCheckboxesWithTextEntry(e) && sel.optionName && sel.part) {
+                  const p = e.options[sel.optionName];
+                  if (p) setPage(p[sel.part].page);
                 }
               }}
             />
@@ -316,6 +350,7 @@ export function TemplateMappingEditor({
                 onUpdateBox={updateBoxEntry}
                 onUpdateOption={updateOptionPosition}
                 onUpdateDynamic={updateDynamicEntry}
+                onUpdateOptionPart={updateOptionPart}
               />
             )}
           </aside>
@@ -376,7 +411,9 @@ export function TemplateMappingEditor({
               Option für „{pickerStep.field.label}"
             </h2>
             <p className="mb-4 text-xs text-maja-muted">
-              Welche Option soll an dieser Stelle ein Häkchen bekommen?
+              {pickerStep.field.type === 'checkboxes_with_text'
+                ? 'Wähle pro Option, ob hier das Häkchen oder der Freitext platziert werden soll.'
+                : 'Welche Option soll an dieser Stelle ein Häkchen bekommen?'}
             </p>
             <div className="max-h-72 space-y-1 overflow-auto">
               {(pickerStep.field.options ?? []).length === 0 && (
@@ -384,7 +421,33 @@ export function TemplateMappingEditor({
                   Dieses Feld hat noch keine Optionen. Pflege sie zuerst im Tab „Struktur".
                 </p>
               )}
-              {(pickerStep.field.options ?? []).map((opt) => {
+              {pickerStep.field.type === 'checkboxes_with_text'
+                ? (pickerStep.field.options ?? []).map((opt) => {
+                    const e = mapping[pickerStep.field.id];
+                    const ce = isCheckboxesWithTextEntry(e) ? e.options[opt] : undefined;
+                    return (
+                      <div key={opt} className="rounded-lg border border-maja-navy/15 bg-white p-2">
+                        <div className="mb-1 px-1 text-sm font-medium text-maja-ink">{opt}</div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => placeOptionPart(pickerStep.field, opt, 'checkbox')}
+                            className="flex-1 rounded-md border border-maja-navy/15 px-2 py-1 text-xs hover:bg-maja-light"
+                          >
+                            ☐ Häkchen{ce?.checkbox && <span className="ml-1 text-amber-700">✓</span>}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => placeOptionPart(pickerStep.field, opt, 'text')}
+                            className="flex-1 rounded-md border border-maja-navy/15 px-2 py-1 text-xs hover:bg-maja-light"
+                          >
+                            Aa Text{ce?.text && <span className="ml-1 text-amber-700">✓</span>}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                : (pickerStep.field.options ?? []).map((opt) => {
                 const e = mapping[pickerStep.field.id];
                 const already = isOptionsEntry(e) && !!e.options[opt];
                 return (
@@ -548,7 +611,7 @@ function FieldsSidebar({
 
 function DetailPanel({
   selection, mapping, fieldMap,
-  onUpdateText, onUpdateBox, onUpdateOption, onUpdateDynamic,
+  onUpdateText, onUpdateBox, onUpdateOption, onUpdateDynamic, onUpdateOptionPart,
 }: {
   selection: Selection;
   mapping: FieldMapping;
@@ -559,6 +622,10 @@ function DetailPanel({
     fieldId: string, optionName: string, patch: Partial<OptionPosition>,
   ) => void;
   onUpdateDynamic: (fieldId: string, patch: Partial<DynamicPhotosEntry>) => void;
+  onUpdateOptionPart: (
+    fieldId: string, optionName: string, part: 'checkbox' | 'text',
+    patch: Partial<{ page: number; x: number; y: number; size: number; fontSize: number }>,
+  ) => void;
 }) {
   const field = fieldMap.get(selection.fieldId);
   const entry = mapping[selection.fieldId];
@@ -653,6 +720,51 @@ function DetailPanel({
                       onChange={(v) => onUpdateDynamic(selection.fieldId, { colGap: v })} />
           <NumberCell label="Reihen-Abstand" value={entry.rowGap ?? 12}
                       onChange={(v) => onUpdateDynamic(selection.fieldId, { rowGap: v })} />
+        </div>
+      </div>
+    );
+  }
+
+  if (isCheckboxesWithTextEntry(entry) && selection.optionName && selection.part) {
+    const opt = entry.options[selection.optionName];
+    if (!opt) return null;
+    if (selection.part === 'checkbox') {
+      const cb = opt.checkbox;
+      return (
+        <div className="card p-4">
+          <h3 className="mb-1 text-sm font-semibold text-maja-navy">{field.label}</h3>
+          <p className="mb-3 text-xs text-maja-muted">
+            Häkchen für: {selection.optionName}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <NumberCell label="Seite" value={cb.page} min={1}
+                        onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'checkbox', { page: v })} />
+            <NumberCell label="Größe" value={cb.size ?? OPTION_DEFAULT_SIZE} min={4}
+                        onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'checkbox', { size: v })} />
+            <NumberCell label="X (pt)" value={cb.x}
+                        onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'checkbox', { x: v })} />
+            <NumberCell label="Y (pt)" value={cb.y}
+                        onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'checkbox', { y: v })} />
+          </div>
+        </div>
+      );
+    }
+    const tx = opt.text;
+    return (
+      <div className="card p-4">
+        <h3 className="mb-1 text-sm font-semibold text-maja-navy">{field.label}</h3>
+        <p className="mb-3 text-xs text-maja-muted">
+          Freitext für: {selection.optionName}
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <NumberCell label="Seite" value={tx.page} min={1}
+                      onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'text', { page: v })} />
+          <NumberCell label="Schriftgröße" value={tx.fontSize ?? TEXT_DEFAULT_FONT} min={4}
+                      onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'text', { fontSize: v })} />
+          <NumberCell label="X (pt)" value={tx.x}
+                      onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'text', { x: v })} />
+          <NumberCell label="Y (pt)" value={tx.y}
+                      onChange={(v) => onUpdateOptionPart(selection.fieldId, selection.optionName!, 'text', { y: v })} />
         </div>
       </div>
     );

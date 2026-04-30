@@ -15,6 +15,7 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'signature',      label: 'Unterschrift' },
   { value: 'damage_diagram', label: 'Schadensdiagramm' },
   { value: 'dynamic_photos', label: 'Foto-Sammlung (dynamisch)' },
+  { value: 'checkboxes_with_text', label: 'Mehrfachauswahl mit Textfeld' },
 ];
 
 interface Props {
@@ -89,7 +90,9 @@ export function TemplateStructureEditor({ templateId, schema, onChange }: Props)
       )}
 
       {sections.map((section, sIdx) => (
-        <section key={section.id} className="card space-y-3 p-5">
+        // Stabiler Index-Key — sonst remountet React die Section bei jeder
+        // Buchstabe in der ID, das Eingabefeld verliert Focus.
+        <section key={sIdx} className="card space-y-3 p-5">
           <header className="flex flex-wrap items-end gap-2">
             <div className="flex-1 min-w-[200px]">
               <label className="label">Sektions-Titel</label>
@@ -162,7 +165,7 @@ function FieldEditor({
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
-  const needsOptions = field.type === 'select' || field.type === 'checkboxes';
+  const needsOptions = field.type === 'select' || field.type === 'checkboxes' || field.type === 'checkboxes_with_text';
   const isDamageDiagram = field.type === 'damage_diagram';
   const optionsText = useMemo(() => (field.options ?? []).join('\n'), [field.options]);
 

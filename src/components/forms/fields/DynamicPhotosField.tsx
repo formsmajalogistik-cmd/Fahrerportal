@@ -20,11 +20,14 @@ function asArray(v: unknown): PhotoValue[] {
   );
 }
 
+const MAX_DYNAMIC_PHOTOS = 8;
+
 export function DynamicPhotosField({
   field, value, userId, formularId, onChange, disabled,
 }: Props) {
   const { profile } = useAuth();
   const items = asArray(value);
+  const limitReached = items.length >= MAX_DYNAMIC_PHOTOS;
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -32,6 +35,10 @@ export function DynamicPhotosField({
 
   async function addPhoto(file: File, fromCamera: boolean) {
     setError(null);
+    if (items.length >= MAX_DYNAMIC_PHOTOS) {
+      setError(`Maximum von ${MAX_DYNAMIC_PHOTOS} Fotos bereits erreicht.`);
+      return;
+    }
     setUploading(true);
     try {
       const compressed = await compressImage(file);
@@ -111,24 +118,34 @@ export function DynamicPhotosField({
           e.target.value = '';
         }}
       />
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={() => cameraRef.current?.click()}
-          disabled={disabled || uploading}
-        >
-          {uploading ? 'Hochladen …' : '+ Foto aufnehmen'}
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => galleryRef.current?.click()}
-          disabled={disabled || uploading}
-        >
-          Aus Galerie wählen
-        </button>
-      </div>
+      {limitReached ? (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Maximum von {MAX_DYNAMIC_PHOTOS} Fotos erreicht. Entferne ein Foto,
+          um ein weiteres hinzuzufügen.
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => cameraRef.current?.click()}
+            disabled={disabled || uploading}
+          >
+            {uploading ? 'Hochladen …' : '+ Foto aufnehmen'}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => galleryRef.current?.click()}
+            disabled={disabled || uploading}
+          >
+            Aus Galerie wählen
+          </button>
+          <span className="text-xs text-maja-muted">
+            {items.length} / {MAX_DYNAMIC_PHOTOS}
+          </span>
+        </div>
+      )}
 
       {error && (
         <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>
