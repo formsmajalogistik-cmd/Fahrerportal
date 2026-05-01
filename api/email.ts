@@ -7,8 +7,8 @@
 //   }
 // Lädt jede angegebene Anlage aus OneDrive und versendet die Mail über /sendMail.
 
-import { downloadFile, sendMail } from '../server-lib/graph';
-import { getAuthedUser, HttpError } from '../server-lib/auth';
+import { downloadFile, sendMail } from '../server-lib/graph.js';
+import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 
 interface Req {
   method?: string;

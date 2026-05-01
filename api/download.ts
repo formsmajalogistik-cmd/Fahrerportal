@@ -3,8 +3,8 @@
 // Auth: Supabase-Bearer-Token (im Header Authorization, sonst per ?token= als Fallback,
 // damit man die URL z.B. in einem <a target="_blank"> verwenden könnte).
 
-import { downloadFile } from '../server-lib/graph';
-import { getAuthedUser, HttpError } from '../server-lib/auth';
+import { downloadFile } from '../server-lib/graph.js';
+import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 
 interface Req {
   method?: string;

@@ -6,8 +6,8 @@
 //
 // Auth: Supabase-Bearer-Token. Pfad ist relativ zur OneDrive-Wurzel.
 
-import { uploadFile } from '../server-lib/graph';
-import { getAuthedUser, HttpError } from '../server-lib/auth';
+import { uploadFile } from '../server-lib/graph.js';
+import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 
 interface UploadBody {
   path: string;

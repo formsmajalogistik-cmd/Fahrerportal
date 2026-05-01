@@ -1,8 +1,8 @@
 // GET /api/files?folder=<onedrive-folder-path>
 // Listet die Items im Ordner.
 
-import { listChildren } from '../server-lib/graph';
-import { getAuthedUser, HttpError } from '../server-lib/auth';
+import { listChildren } from '../server-lib/graph.js';
+import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 
 interface Req {
   method?: string;
