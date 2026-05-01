@@ -4,7 +4,7 @@ import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
 import { useAuth } from '../../auth/AuthContext';
 import {
-  expectedPdfPath, generateAndUploadFormPdfs, getPdfDownloadUrl,
+  downloadFormPdf, expectedPdfPath, generateAndUploadFormPdfs, resolveFilename,
 } from '../../lib/pdfGenerate';
 import type {
   AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
@@ -122,6 +122,7 @@ export function EingaengePage() {
                       pdfs={r.template?.pdfs ?? []}
                       userId={r.fahrer.user_id}
                       formularId={r.id}
+                      data={(r.daten as Record<string, unknown>) ?? {}}
                     />
                   ) : (
                     <span className="text-xs text-maja-muted">—</span>
@@ -146,41 +147,51 @@ export function EingaengePage() {
 }
 
 function PdfDownloads({
-  pdfs, userId, formularId,
-}: { pdfs: TemplatePdf[]; userId: string; formularId: string }) {
+  pdfs, userId, formularId, data,
+}: {
+  pdfs: TemplatePdf[];
+  userId: string;
+  formularId: string;
+  data: Record<string, unknown>;
+}) {
   if (!pdfs || pdfs.length === 0) {
     return <span className="text-xs text-maja-muted">keine Vorlagen</span>;
   }
   return (
     <div className="flex flex-wrap gap-2">
-      {pdfs.map((p) => (
-        <PdfDownloadButton
-          key={p.id}
-          name={p.name}
-          path={expectedPdfPath(p, userId, formularId)}
-        />
-      ))}
+      {pdfs.map((p) => {
+        const filename = resolveFilename(p.filename_pattern, data, p.id);
+        return (
+          <PdfDownloadButton
+            key={p.id}
+            label={p.name}
+            filename={filename}
+            path={expectedPdfPath(p, userId, formularId)}
+          />
+        );
+      })}
     </div>
   );
 }
 
-function PdfDownloadButton({ name, path }: { name: string; path: string }) {
+function PdfDownloadButton({
+  label, filename, path,
+}: { label: string; filename: string; path: string }) {
   const [busy, setBusy] = useState(false);
   async function open() {
     setBusy(true);
-    const url = await getPdfDownloadUrl(path);
+    const ok = await downloadFormPdf(path, filename);
     setBusy(false);
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    else alert('PDF noch nicht generiert. Beim Einreichen werden die PDFs automatisch erzeugt.');
+    if (!ok) alert('PDF noch nicht generiert. Beim Einreichen werden die PDFs automatisch erzeugt.');
   }
   return (
     <button
       onClick={open}
       disabled={busy}
       className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-1 text-xs text-maja-navy hover:bg-maja-accent/20"
-      title={path}
+      title={`${filename} (${path})`}
     >
-      {busy ? '…' : '⬇'} {name}
+      {busy ? '…' : '⬇'} {label}
     </button>
   );
 }

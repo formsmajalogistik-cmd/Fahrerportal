@@ -212,6 +212,16 @@ export function TemplateEditorPage() {
     setPdfs(pdfs.map((p) => (p.id === pdfId ? { ...p, path } : p)));
   }
 
+  function updatePdfPattern(pdfId: string, pattern: string) {
+    setPdfs(pdfs.map((p) => (p.id === pdfId ? { ...p, filename_pattern: pattern || null } : p)));
+  }
+
+  const allFieldIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const s of schema.sections ?? []) for (const f of s.fields ?? []) ids.push(f.id);
+    return ids;
+  }, [schema]);
+
   if (loading) return <Spinner label="Template wird geladen …" />;
   if (error && !template) {
     return (
@@ -292,6 +302,8 @@ export function TemplateEditorPage() {
             onRename={renamePdf}
             onDelete={(pdf) => setConfirmDeletePdf(pdf)}
             onAdd={addPdf}
+            onPatternChange={updatePdfPattern}
+            fieldIds={allFieldIds}
             canAdd={pdfs.length < MAX_PDFS}
           />
           {activePdf ? (
@@ -367,7 +379,7 @@ export function TemplateEditorPage() {
 }
 
 function PdfTabs({
-  pdfs, activeId, onSelect, onRename, onDelete, onAdd, canAdd,
+  pdfs, activeId, onSelect, onRename, onDelete, onAdd, onPatternChange, fieldIds, canAdd,
 }: {
   pdfs: TemplatePdf[];
   activeId: string | null;
@@ -375,6 +387,8 @@ function PdfTabs({
   onRename: (id: string, name: string) => void;
   onDelete: (pdf: TemplatePdf) => void;
   onAdd: () => void;
+  onPatternChange: (id: string, pattern: string) => void;
+  fieldIds: string[];
   canAdd: boolean;
 }) {
   const active = pdfs.find((p) => p.id === activeId) ?? null;
@@ -423,7 +437,62 @@ function PdfTabs({
           >
             PDF entfernen
           </button>
+
+          <FilenamePatternRow
+            value={active.filename_pattern ?? ''}
+            onChange={(v) => onPatternChange(active.id, v)}
+            fallback={active.id}
+            fieldIds={fieldIds}
+          />
         </div>
+      )}
+    </div>
+  );
+}
+
+function FilenamePatternRow({
+  value, onChange, fallback, fieldIds,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  fallback: string;
+  fieldIds: string[];
+}) {
+  return (
+    <div className="mt-3 w-full border-t border-maja-navy/10 pt-3">
+      <label className="label">Dateiname-Muster (optional)</label>
+      <input
+        className="input"
+        placeholder={`z.B. ${fallback}_{kennzeichen}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <p className="mt-1 text-xs text-maja-muted">
+        Platzhalter <code className="rounded bg-maja-light px-1">{'{feld_id}'}</code> werden
+        beim Generieren durch die Werte aus dem Formular ersetzt. Sonderzeichen
+        (z.B. Leerzeichen im Kennzeichen) werden automatisch durch „_" ersetzt.
+        Beispiel: <code className="rounded bg-maja-light px-1">Protokoll_{'{kennzeichen}'}</code>
+        {' '}→ <code>Protokoll_HB-ML_421.pdf</code>.
+      </p>
+      {fieldIds.length > 0 && (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer text-maja-accent hover:underline">
+            Verfügbare Platzhalter ({fieldIds.length}) anzeigen
+          </summary>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {fieldIds.map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onChange((value || '') + `{${id}}`)}
+                title="In Pattern einfügen"
+                className="rounded-full bg-maja-light px-2 py-0.5 text-[11px] text-maja-navy hover:bg-maja-accent/20"
+              >
+                {`{${id}}`}
+              </button>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

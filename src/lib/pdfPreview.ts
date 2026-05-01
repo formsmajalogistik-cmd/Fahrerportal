@@ -42,10 +42,13 @@ export async function buildPreviewPdf(
 
     if (isTextEntry(entry)) {
       const page = pages[Math.max(0, Math.min(entry.page - 1, pages.length - 1))];
-      page.drawText(`[${label}]`, {
-        x: entry.x, y: entry.y,
-        size: entry.fontSize ?? TEXT_DEFAULT_FONT,
-        font, color: ACCENT,
+      const fontSize = entry.fontSize ?? TEXT_DEFAULT_FONT;
+      const placeholder = `[${label}]`;
+      // X = rechter Rand, Text wird rechtsbündig gezeichnet (siehe fillPdf)
+      const textWidth = font.widthOfTextAtSize(placeholder, fontSize);
+      page.drawText(placeholder, {
+        x: entry.x - textWidth, y: entry.y,
+        size: fontSize, font, color: ACCENT,
       });
       continue;
     }

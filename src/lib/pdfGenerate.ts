@@ -126,6 +126,42 @@ async function embedImage(pdf: PDFDocument, bytes: ArrayBuffer | Uint8Array, hin
 }
 
 /**
+ * Berechnet Zeichenmaße so, dass ein Bild OHNE Verzerrung in eine Box passt.
+ * Querformat-Bilder (Breite > Höhe) füllen die volle Boxbreite aus.
+ * Hochformat-Bilder (Höhe > Breite) nutzen die volle Boxhöhe als Anker;
+ * die resultierende Breite ist kleiner und das Bild wird linksbündig
+ * platziert (rechts bleibt Platz frei).
+ */
+function aspectFit(
+  imgWidth: number, imgHeight: number,
+  boxX: number, boxY: number, boxWidth: number, boxHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  if (imgWidth <= 0 || imgHeight <= 0) {
+    return { x: boxX, y: boxY - boxHeight, width: boxWidth, height: boxHeight };
+  }
+  const isPortrait = imgHeight > imgWidth;
+  let drawWidth = boxWidth;
+  let drawHeight = boxHeight;
+  if (isPortrait) {
+    drawHeight = boxHeight;
+    drawWidth = boxHeight * (imgWidth / imgHeight);
+    if (drawWidth > boxWidth) {
+      // Bild ist zu schmal-hoch um trotzdem in die Box zu passen — auf Boxbreite reduzieren.
+      drawWidth = boxWidth;
+      drawHeight = boxWidth * (imgHeight / imgWidth);
+    }
+  }
+  // PDF-Koordinaten: y ist der OBERE Rand → unteren Rand berechnen.
+  // Linksbündig (boxX), top-aligned an boxY.
+  return {
+    x: boxX,
+    y: boxY - drawHeight,
+    width: drawWidth,
+    height: drawHeight,
+  };
+}
+
+/**
  * Füllt eine PDF-Vorlage mit den Daten aus dem Formular und gibt die Bytes zurück.
  */
 export async function fillPdf(
@@ -156,9 +192,12 @@ export async function fillPdf(
     if (isTextEntry(entry)) {
       const text = asString(value);
       if (!text) continue;
+      const fontSize = entry.fontSize ?? TEXT_DEFAULT_FONT;
+      // X-Position ist der RECHTE Rand → Text rechtsbündig zeichnen.
+      const textWidth = font.widthOfTextAtSize(text, fontSize);
       page(entry.page).drawText(text, {
-        x: entry.x, y: entry.y,
-        size: entry.fontSize ?? TEXT_DEFAULT_FONT,
+        x: entry.x - textWidth, y: entry.y,
+        size: fontSize,
         font, color: INK,
       });
       continue;
@@ -197,8 +236,10 @@ export async function fillPdf(
         page(cb.page).drawText('X', { x: cb.x, y: cb.y, size: sz, font, color: INK });
         if (e.text.trim()) {
           const tx = map.text;
+          const tFontSize = tx.fontSize ?? TEXT_DEFAULT_FONT;
+          const tWidth = font.widthOfTextAtSize(e.text, tFontSize);
           page(tx.page).drawText(e.text, {
-            x: tx.x, y: tx.y, size: tx.fontSize ?? TEXT_DEFAULT_FONT,
+            x: tx.x - tWidth, y: tx.y, size: tFontSize,
             font, color: INK,
           });
         }
@@ -234,10 +275,9 @@ export async function fillPdf(
         if (!bytes) continue;
         try {
           const img = await embedImage(pdf, bytes, photo.storage_path);
-          page(entry.page).drawImage(img, {
-            x: entry.x, y: entry.y - entry.height,
-            width: entry.width, height: entry.height,
-          });
+          const fit = aspectFit(img.width, img.height,
+            entry.x, entry.y, entry.width, entry.height);
+          page(entry.page).drawImage(img, fit);
         } catch (err) {
           console.warn(`[fillPdf] photo ${fieldId} embed failed`, err);
         }
@@ -250,10 +290,9 @@ export async function fillPdf(
         if (!sig) continue;
         try {
           const img = await pdf.embedPng(sig);
-          page(entry.page).drawImage(img, {
-            x: entry.x, y: entry.y - entry.height,
-            width: entry.width, height: entry.height,
-          });
+          const fit = aspectFit(img.width, img.height,
+            entry.x, entry.y, entry.width, entry.height);
+          page(entry.page).drawImage(img, fit);
         } catch (err) {
           console.warn(`[fillPdf] signature ${fieldId} embed failed`, err);
         }
@@ -285,10 +324,9 @@ export async function fillPdf(
         if (!bytes) continue;
         try {
           const img = await embedImage(pdf, bytes, photo.storage_path);
-          targetPages[slot.pageOffset].drawImage(img, {
-            x: slot.x, y: slot.y - slot.height,
-            width: slot.width, height: slot.height,
-          });
+          const fit = aspectFit(img.width, img.height,
+            slot.x, slot.y, slot.width, slot.height);
+          targetPages[slot.pageOffset].drawImage(img, fit);
         } catch (err) {
           console.warn(`[fillPdf] dynamic photo ${i} embed failed`, err);
         }
@@ -352,4 +390,70 @@ export async function getPdfDownloadUrl(path: string): Promise<string | null> {
     .createSignedUrl(path, 60 * 60);
   if (error) return null;
   return data?.signedUrl ?? null;
+}
+
+/**
+ * Macht aus einer Zeichenkette einen Datei-System-tauglichen Namen:
+ * Slashes/Doppelpunkte/Sterne/etc. raus, mehrfache Whitespaces zu „_".
+ */
+export function sanitizeFilename(s: string): string {
+  return s
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .trim();
+}
+
+/**
+ * Löst ein Filename-Pattern auf. `{feld_id}` wird durch den Wert aus
+ * `data` ersetzt; unbekannte oder leere Felder fallen weg. Das Ergebnis
+ * wird sanitized und mit `.pdf` versehen.
+ */
+export function resolveFilename(
+  pattern: string | null | undefined,
+  data: Record<string, unknown>,
+  fallback: string,
+): string {
+  const base = (() => {
+    if (!pattern || !pattern.trim()) return fallback;
+    const replaced = pattern.replace(/\{([a-zA-Z0-9_]+)\}/g, (_m, key) => {
+      const v = data[key];
+      if (typeof v === 'string') return sanitizeFilename(v);
+      if (typeof v === 'number') return String(v);
+      if (typeof v === 'boolean') return v ? 'ja' : 'nein';
+      return '';
+    });
+    const cleaned = sanitizeFilename(replaced);
+    return cleaned || fallback;
+  })();
+  return base.toLowerCase().endsWith('.pdf') ? base : `${base}.pdf`;
+}
+
+/**
+ * Lädt die generierte PDF und triggert einen Browser-Download mit dem
+ * gewünschten Dateinamen. Workaround für die Tatsache, dass das
+ * `download`-Attribut bei Cross-Origin-Signed-URLs ignoriert wird.
+ */
+export async function downloadFormPdf(
+  storagePath: string,
+  filename: string,
+): Promise<boolean> {
+  const { data, error } = await supabase.storage
+    .from(OUTPUT_BUCKET)
+    .download(storagePath);
+  if (error || !data) return false;
+  const url = URL.createObjectURL(data);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  return true;
 }

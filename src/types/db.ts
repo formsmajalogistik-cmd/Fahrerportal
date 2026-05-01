@@ -119,6 +119,13 @@ export interface TemplatePdf {
   name: string;      // user-facing Name
   path: string | null; // Storage-Pfad in Bucket pdf-templates (oder null)
   field_mapping: FieldMapping;
+  /**
+   * Optional: Muster für den Download-Dateinamen.
+   * Platzhalter `{feld_id}` werden durch die jeweiligen Werte aus dem
+   * ausgefüllten Formular ersetzt. Beispiel: `Protokoll_{kennzeichen}`.
+   * Sonderzeichen werden beim Auflösen durch Unterstriche ersetzt.
+   */
+  filename_pattern?: string | null;
 }
 
 type TemplateRow = Database['public']['Tables']['formular_templates']['Row'];
