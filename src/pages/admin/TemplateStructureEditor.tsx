@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   getDamageDiagramSignedUrl, uploadDamageDiagramImage,
 } from '../../lib/damageDiagramStorage';
-import type { FieldType, FormField, FormSchema, FormSection } from '../../types/db';
+import { makePageId } from '../../lib/formPages';
+import type {
+  FieldType, FormField, FormPage, FormSchema, FormSection,
+} from '../../types/db';
 
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'text',           label: 'Text' },
@@ -26,9 +29,71 @@ interface Props {
 
 export function TemplateStructureEditor({ templateId, schema, onChange }: Props) {
   const sections = schema.sections ?? [];
+  const pages = schema.pages ?? [];
 
   function updateSections(next: FormSection[]) {
     onChange({ ...schema, sections: next });
+  }
+
+  function updatePages(next: FormPage[]) {
+    onChange({ ...schema, pages: next });
+  }
+
+  function addPage() {
+    const id = makePageId(`Seite ${pages.length + 1}`, pages.map((p) => p.id));
+    updatePages([...pages, { id, title: `Seite ${pages.length + 1}`, sectionIds: [] }]);
+  }
+
+  function updatePage(idx: number, patch: Partial<FormPage>) {
+    updatePages(pages.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  }
+
+  function removePage(idx: number) {
+    if (!confirm('Seite löschen? Sections bleiben erhalten und werden auf die erste Seite verschoben.')) return;
+    const removed = pages[idx];
+    const remaining = pages.filter((_, i) => i !== idx);
+    if (remaining.length === 0) {
+      updatePages([]);
+      return;
+    }
+    // Zuordnung an erste verbleibende Seite verschieben
+    remaining[0] = {
+      ...remaining[0],
+      sectionIds: [...remaining[0].sectionIds, ...(removed.sectionIds ?? [])],
+    };
+    updatePages(remaining);
+  }
+
+  function movePage(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= pages.length) return;
+    const next = [...pages];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    updatePages(next);
+  }
+
+  /**
+   * Ordnet eine Section einer Seite zu (oder nimmt sie aus allen Seiten,
+   * wenn pageId leer ist). Sections, die keiner Seite zugeordnet sind,
+   * landen automatisch auf der letzten Seite (siehe lib/formPages.ts).
+   */
+  function setSectionPage(sectionId: string, pageId: string) {
+    if (pages.length === 0) return;
+    const next = pages.map((p) => ({
+      ...p,
+      sectionIds: p.sectionIds.filter((sid) => sid !== sectionId),
+    }));
+    if (pageId) {
+      const idx = next.findIndex((p) => p.id === pageId);
+      if (idx >= 0) next[idx] = { ...next[idx], sectionIds: [...next[idx].sectionIds, sectionId] };
+    }
+    updatePages(next);
+  }
+
+  function pageOfSection(sectionId: string): string {
+    for (const p of pages) if (p.sectionIds.includes(sectionId)) return p.id;
+    // Implizite letzte Seite (siehe effectivePages-Heuristik)
+    return pages[pages.length - 1]?.id ?? '';
   }
 
   function addSection() {
@@ -83,6 +148,60 @@ export function TemplateStructureEditor({ templateId, schema, onChange }: Props)
 
   return (
     <div className="space-y-4">
+      <div className="card p-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-maja-navy">Seiten</h3>
+            <p className="text-xs text-maja-muted">
+              Optional. Wenn keine Seiten definiert sind, sieht der Fahrer alle
+              Sektionen am Stück. Mit Seiten kann das Formular in Tabs aufgeteilt werden.
+            </p>
+          </div>
+          <button type="button" className="btn-secondary" onClick={addPage}>
+            + Seite hinzufügen
+          </button>
+        </div>
+        {pages.length === 0 ? (
+          <p className="text-xs text-maja-muted">Noch keine Seiten — Formular wird einseitig dargestellt.</p>
+        ) : (
+          <ul className="space-y-2">
+            {pages.map((p, pIdx) => (
+              <li key={pIdx} className="flex flex-wrap items-end gap-2 rounded-lg border border-maja-navy/15 bg-white p-3">
+                <div className="flex-1 min-w-[180px]">
+                  <label className="label">Seitentitel</label>
+                  <input
+                    className="input"
+                    value={p.title}
+                    onChange={(e) => updatePage(pIdx, { title: e.target.value })}
+                  />
+                </div>
+                <div className="w-40">
+                  <label className="label">ID</label>
+                  <input
+                    className="input font-mono text-xs"
+                    value={p.id}
+                    onChange={(e) => updatePage(pIdx, { id: e.target.value.trim() })}
+                  />
+                </div>
+                <div className="text-xs text-maja-muted">
+                  {p.sectionIds.length} Section{p.sectionIds.length === 1 ? '' : 's'}
+                </div>
+                <div className="ml-auto flex gap-1">
+                  <button type="button" onClick={() => movePage(pIdx, -1)}
+                          className="btn-secondary px-2 py-1 text-xs">↑</button>
+                  <button type="button" onClick={() => movePage(pIdx, 1)}
+                          className="btn-secondary px-2 py-1 text-xs">↓</button>
+                  <button type="button" onClick={() => removePage(pIdx)}
+                          className="text-xs font-medium text-red-600 hover:underline">
+                    entfernen
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {sections.length === 0 && (
         <div className="card p-4 text-sm text-maja-muted">
           Noch keine Sektionen. Lege unten eine an.
@@ -110,6 +229,20 @@ export function TemplateStructureEditor({ templateId, schema, onChange }: Props)
                 onChange={(e) => updateSection(sIdx, { id: e.target.value.trim() })}
               />
             </div>
+            {pages.length > 0 && (
+              <div className="w-44">
+                <label className="label">Seite</label>
+                <select
+                  className="input"
+                  value={pageOfSection(section.id)}
+                  onChange={(e) => setSectionPage(section.id, e.target.value)}
+                >
+                  {pages.map((p) => (
+                    <option key={p.id} value={p.id}>{p.title}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="flex gap-1">
               <button type="button" onClick={() => moveSection(sIdx, -1)}
                       className="btn-secondary px-2 py-2" title="Nach oben">↑</button>

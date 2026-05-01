@@ -36,8 +36,16 @@ export interface FormSection {
   fields: FormField[];
 }
 
+export interface FormPage {
+  id: string;
+  title: string;
+  sectionIds: string[];
+}
+
 export interface FormSchema {
   sections: FormSection[];
+  /** Optional: Seiten-Aufteilung. Wenn leer/fehlend, sind alle Sections auf einer Seite. */
+  pages?: FormPage[];
 }
 
 // ---- Field-Mapping (PDF-Positionen) — discriminated union nach `type`.

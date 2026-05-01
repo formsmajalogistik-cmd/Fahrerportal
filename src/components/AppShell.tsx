@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { displayName } from '../lib/names';
+import { displayName, initials } from '../lib/names';
 import { MajaLogo } from './Brand';
 
 interface NavItem { to: string; label: string }
@@ -25,11 +25,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             {profile && (
               <Link
                 to="/profil"
-                className="hidden rounded-md px-2 py-1 text-right text-xs hover:bg-maja-light sm:block"
+                className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-maja-light"
                 title="Profil und Einstellungen"
+                aria-label="Profil"
               >
-                <div className="font-medium text-maja-ink">{displayName(profile)}</div>
-                <div className="text-maja-muted">{profile.role === 'admin' ? 'Admin' : 'Fahrer'}</div>
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-maja-navy text-xs font-semibold text-white">
+                  {initials(profile)}
+                </span>
+                <span className="hidden text-right text-xs sm:block">
+                  <span className="block font-medium text-maja-ink">{displayName(profile)}</span>
+                  <span className="block text-maja-muted">
+                    {profile.role === 'admin' ? 'Admin' : 'Fahrer'}
+                  </span>
+                </span>
               </Link>
             )}
             <button onClick={signOut} className="btn-secondary px-3 py-1.5 text-sm">

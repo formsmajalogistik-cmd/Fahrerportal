@@ -1,4 +1,4 @@
-import type { FormField, FormSchema } from '../../types/db';
+import type { FormField, FormSchema, FormSection } from '../../types/db';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { TextField } from './fields/TextField';
 import { NumberField } from './fields/NumberField';
@@ -19,12 +19,15 @@ interface Props {
   disabled?: boolean;
   userId: string;
   formularId: string;
+  /** Optional: nur diese Sections rendern (für Seitenfilterung). */
+  sections?: FormSection[];
 }
 
-export function FormRenderer({ schema, data, onChange, disabled, userId, formularId }: Props) {
+export function FormRenderer({ schema, data, onChange, disabled, userId, formularId, sections }: Props) {
+  const visible = sections ?? schema.sections ?? [];
   return (
     <div className="space-y-6">
-      {(schema.sections ?? []).map((section) => (
+      {visible.map((section) => (
         <section key={section.id} className="card p-6">
           <h2 className="mb-4 text-lg font-semibold text-maja-navy">{section.title}</h2>
           <div className="space-y-5">

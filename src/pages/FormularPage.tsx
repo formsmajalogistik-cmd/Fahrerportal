@@ -5,7 +5,8 @@ import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { FormRenderer } from '../components/forms/FormRenderer';
-import { validateForm } from '../lib/validateForm';
+import { pageCompletion, validateForm } from '../lib/validateForm';
+import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { generateAndUploadFormPdfs } from '../lib/pdfGenerate';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
@@ -204,6 +205,23 @@ export function FormularPage() {
   const title = useMemo(() => template?.name ?? 'Formular', [template]);
   const sectionCount = template?.schema.sections.length ?? 0;
 
+  const pages = useMemo(
+    () => (template ? effectivePages(template.schema) : []),
+    [template],
+  );
+  const [currentPageId, setCurrentPageId] = useState<string | null>(null);
+  // Beim ersten Laden / Wechsel des Templates die erste Seite aktiv setzen
+  useEffect(() => {
+    if (!currentPageId && pages.length > 0) setCurrentPageId(pages[0].id);
+  }, [pages, currentPageId]);
+  const currentPage = pages.find((p) => p.id === currentPageId) ?? pages[0] ?? null;
+  const visibleSections = useMemo(
+    () => (template && currentPage ? sectionsForPage(template.schema, currentPage) : []),
+    [template, currentPage],
+  );
+  const currentPageIdx = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : 0;
+  const hasMultiplePages = pages.length > 1;
+
   // Header mit Zurück-Button — IMMER sichtbar, unabhängig vom Lade-/Fehler-Zustand.
   const header = (
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -275,8 +293,42 @@ export function FormularPage() {
     <div className="space-y-6">
       {header}
 
+      {hasMultiplePages && (
+        <div className="sticky top-0 z-10 -mx-4 border-b border-maja-navy/10 bg-white/95 px-4 py-2 backdrop-blur">
+          <nav className="flex gap-1 overflow-x-auto">
+            {pages.map((p) => {
+              const status = pageCompletion(
+                p, template.schema.sections ?? [], data,
+              );
+              const active = p.id === currentPage?.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setCurrentPageId(p.id)}
+                  className={
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ' +
+                    (active
+                      ? 'bg-maja-navy text-white'
+                      : 'bg-maja-light text-maja-navy hover:bg-maja-light/70')
+                  }
+                  aria-current={active ? 'page' : undefined}
+                >
+                  {status === 'complete' ? (
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white" aria-label="vollständig">✓</span>
+                  ) : status === 'started' ? (
+                    <span className="h-2 w-2 rounded-full bg-amber-400" aria-label="angefangen" />
+                  ) : null}
+                  {p.title}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      )}
+
       <ErrorBoundary
-        resetKey={formular.id}
+        resetKey={`${formular.id}::${currentPage?.id ?? ''}`}
         fallback={({ error, reset }) => (
           <div role="alert" className="card space-y-3 p-6">
             <h2 className="text-lg font-semibold text-red-700">
@@ -301,6 +353,7 @@ export function FormularPage() {
       >
         <FormRenderer
           schema={template.schema}
+          sections={visibleSections}
           data={data}
           onChange={handleChange}
           disabled={readonly}
@@ -308,6 +361,39 @@ export function FormularPage() {
           formularId={formular.id}
         />
       </ErrorBoundary>
+
+      {hasMultiplePages && (
+        <div className="flex flex-wrap justify-between gap-2 border-t border-maja-navy/10 pt-3">
+          <button
+            type="button"
+            onClick={() => {
+              const prev = pages[currentPageIdx - 1];
+              if (prev) {
+                setCurrentPageId(prev.id);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }
+            }}
+            className="btn-secondary"
+            disabled={currentPageIdx <= 0}
+          >
+            ← Vorherige Seite
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = pages[currentPageIdx + 1];
+              if (next) {
+                setCurrentPageId(next.id);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }
+            }}
+            className="btn-secondary"
+            disabled={currentPageIdx >= pages.length - 1}
+          >
+            Nächste Seite →
+          </button>
+        </div>
+      )}
 
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
