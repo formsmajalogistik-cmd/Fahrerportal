@@ -47,6 +47,7 @@ export function TemplatesListPage() {
         name: 'Neues Template',
         schema: { sections: [] },
         pdfs: [],
+        email_config: null,
       })
       .select('id')
       .single();

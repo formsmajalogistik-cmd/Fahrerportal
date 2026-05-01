@@ -115,6 +115,7 @@ export type Database = {
           auftraggeber_id: string | null;
           schema: Json;
           pdfs: Json;
+          email_config: Json | null;
         };
         Insert: {
           id?: string;
@@ -122,6 +123,7 @@ export type Database = {
           auftraggeber_id?: string | null;
           schema: Json;
           pdfs?: Json;
+          email_config?: Json | null;
         };
         Update: {
           id?: string;
@@ -129,6 +131,7 @@ export type Database = {
           auftraggeber_id?: string | null;
           schema?: Json;
           pdfs?: Json;
+          email_config?: Json | null;
         };
         Relationships: [
           {

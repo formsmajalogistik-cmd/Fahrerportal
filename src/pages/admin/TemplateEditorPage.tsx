@@ -5,13 +5,14 @@ import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { TemplateStructureEditor } from './TemplateStructureEditor';
 import { TemplateMappingEditor } from './TemplateMappingEditor';
+import { TemplateEmailEditor } from './TemplateEmailEditor';
 import { copyPdfInStorage, deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
-  Auftraggeber, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
+  Auftraggeber, EmailConfig, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
 } from '../../types/db';
 import type { Json } from '../../types/supabase';
 
-type Tab = 'struktur' | 'mapping';
+type Tab = 'struktur' | 'mapping' | 'email';
 
 const MAX_PDFS = 3;
 
@@ -43,6 +44,7 @@ export function TemplateEditorPage() {
   const [schema, setSchema] = useState<FormSchema>({ sections: [] });
   const [pdfs, setPdfs] = useState<TemplatePdf[]>([]);
   const [activePdfId, setActivePdfId] = useState<string | null>(null);
+  const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
 
   const [tab, setTab] = useState<Tab>('struktur');
   const [loading, setLoading] = useState(true);
@@ -77,6 +79,7 @@ export function TemplateEditorPage() {
     const loadedPdfs = Array.isArray(t.pdfs) ? (t.pdfs as TemplatePdf[]) : [];
     setPdfs(loadedPdfs);
     setActivePdfId((cur) => cur ?? loadedPdfs[0]?.id ?? null);
+    setEmailConfig((t.email_config as EmailConfig | null) ?? null);
     setAuftraggeber(ag ?? []);
     setLoading(false);
   }, [id]);
@@ -109,6 +112,7 @@ export function TemplateEditorPage() {
         auftraggeber_id: auftraggeberId || null,
         schema: schema as unknown as Json,
         pdfs: pdfs as unknown as Json,
+        email_config: (emailConfig ?? null) as unknown as Json,
       })
       .eq('id', template.id);
     setSaving(false);
@@ -140,6 +144,7 @@ export function TemplateEditorPage() {
           auftraggeber_id: auftraggeberId || null,
           schema: schema as unknown as Json,
           pdfs: [] as unknown as Json,
+          email_config: (emailConfig ?? null) as unknown as Json,
         })
         .select('id')
         .single();
@@ -287,6 +292,9 @@ export function TemplateEditorPage() {
         <TabButton active={tab === 'mapping'} onClick={() => setTab('mapping')}>
           PDF-Mapping
         </TabButton>
+        <TabButton active={tab === 'email'} onClick={() => setTab('email')}>
+          Email
+        </TabButton>
       </div>
 
       {tab === 'struktur' && (
@@ -324,6 +332,15 @@ export function TemplateEditorPage() {
             </div>
           )}
         </div>
+      )}
+
+      {tab === 'email' && (
+        <TemplateEmailEditor
+          config={emailConfig}
+          onChange={setEmailConfig}
+          pdfs={pdfs}
+          fieldIds={allFieldIds}
+        />
       )}
 
       {(error || statusMsg) && (

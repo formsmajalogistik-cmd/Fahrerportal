@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { compressImage, downloadFile, getPhotoUrl, uploadPhoto } from '../../../lib/photo';
-import { supabase } from '../../../lib/supabase';
+import { compressImage, downloadFile, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
 import { useAuth } from '../../../auth/AuthContext';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
   field: FormField;
   value: unknown;
-  userId: string;
-  formularId: string;
+  /** OneDrive-Folder des Formulars; Photos landen unter <folder>/Fotos/ */
+  oneDriveFolder: string;
   onChange: (v: PhotoValue[]) => void;
   disabled?: boolean;
 }
@@ -23,7 +22,7 @@ function asArray(v: unknown): PhotoValue[] {
 const MAX_DYNAMIC_PHOTOS = 8;
 
 export function DynamicPhotosField({
-  field, value, userId, formularId, onChange, disabled,
+  field, value, oneDriveFolder, onChange, disabled,
 }: Props) {
   const { profile } = useAuth();
   const items = asArray(value);
@@ -46,8 +45,9 @@ export function DynamicPhotosField({
         const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
         downloadFile(compressed, `${field.id}_${items.length + 1}_${ts}.jpg`);
       }
-      const slot = `${field.id}_${Date.now()}_${items.length}`;
-      const path = await uploadPhoto(compressed, userId, formularId, slot);
+      const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
+      const filename = `${field.id}_${String(items.length + 1).padStart(3, '0')}_${Date.now()}.${ext}`;
+      const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
       const next: PhotoValue = {
         storage_path: path,
         mime_type: compressed.type,
@@ -61,12 +61,10 @@ export function DynamicPhotosField({
     }
   }
 
-  async function removeAt(idx: number) {
-    const removed = items[idx];
+  function removeAt(idx: number) {
+    // Eintrag aus dem State nehmen — die Datei in OneDrive bleibt liegen
+    // (Cleanup könnte später als Hintergrund-Job laufen).
     onChange(items.filter((_, i) => i !== idx));
-    if (removed?.storage_path) {
-      await supabase.storage.from('formular-fotos').remove([removed.storage_path]).catch(() => {});
-    }
   }
 
   return (
@@ -87,7 +85,7 @@ export function DynamicPhotosField({
               <DynamicPhotoTile
                 photo={p}
                 index={i}
-                onRemove={() => void removeAt(i)}
+                onRemove={() => removeAt(i)}
                 disabled={disabled}
               />
             </li>
@@ -166,8 +164,15 @@ function DynamicPhotoTile({
 
   useEffect(() => {
     let cancelled = false;
-    getPhotoUrl(photo.storage_path).then((u) => { if (!cancelled) setUrl(u); });
-    return () => { cancelled = true; };
+    let createdUrl: string | null = null;
+    getPhotoUrl(photo.storage_path).then((u) => {
+      if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
+      createdUrl = u; setUrl(u);
+    });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
   }, [photo.storage_path]);
 
   return (

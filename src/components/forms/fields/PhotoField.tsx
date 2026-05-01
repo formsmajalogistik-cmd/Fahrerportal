@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { compressImage, downloadFile, getPhotoUrl, uploadPhoto } from '../../../lib/photo';
+import { compressImage, downloadFile, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
 import { useAuth } from '../../../auth/AuthContext';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
   field: FormField;
   value: unknown;
-  userId: string;
-  formularId: string;
+  /** OneDrive-Ordner des Formulars (z.B. "Maja-Logistik/Formulare/2026-05/…"). */
+  oneDriveFolder: string;
   onChange: (v: PhotoValue | null) => void;
   disabled?: boolean;
 }
@@ -17,7 +17,7 @@ function asPhoto(v: unknown): PhotoValue | null {
   return null;
 }
 
-export function PhotoField({ field, value, userId, formularId, onChange, disabled }: Props) {
+export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }: Props) {
   const { profile } = useAuth();
   const current = asPhoto(value);
   const [uploading, setUploading] = useState(false);
@@ -31,12 +31,23 @@ export function PhotoField({ field, value, userId, formularId, onChange, disable
 
   useEffect(() => {
     let cancelled = false;
+    let createdUrl: string | null = null;
     if (current?.storage_path) {
-      getPhotoUrl(current.storage_path).then((u) => { if (!cancelled) setSignedUrl(u); });
+      getPhotoUrl(current.storage_path).then((u) => {
+        if (cancelled) {
+          if (u) URL.revokeObjectURL(u);
+          return;
+        }
+        createdUrl = u;
+        setSignedUrl(u);
+      });
     } else {
       setSignedUrl(null);
     }
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
   }, [current?.storage_path]);
 
   // ObjectURL nach Wechsel wieder freigeben
@@ -63,7 +74,9 @@ export function PhotoField({ field, value, userId, formularId, onChange, disable
         const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
         downloadFile(compressed, `${field.id}_${ts}.jpg`);
       }
-      const path = await uploadPhoto(compressed, userId, formularId, field.id);
+      const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
+      const filename = `${field.id}.${ext}`;
+      const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
       onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');

@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { deleteFormularPhotos } from '../lib/photo';
 import type { AusgefuelltesFormular, FormularTemplate } from '../types/db';
 
 interface DraftRow extends AusgefuelltesFormular {
@@ -43,8 +42,8 @@ export function OffeneFormularePage() {
 
   async function handleDelete(r: DraftRow) {
     if (!session) throw new Error('Nicht angemeldet');
-    // Storage-Cleanup zuerst — dann der DB-Eintrag.
-    await deleteFormularPhotos(session.user.id, r.id);
+    // Foto-Dateien in OneDrive werden NICHT mitgelöscht; sie bleiben unter
+    // dem Formular-Ordner liegen und können manuell aufgeräumt werden.
     const { error: err } = await supabase
       .from('ausgefuellte_formulare').delete().eq('id', r.id);
     if (err) throw err;

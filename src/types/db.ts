@@ -128,10 +128,19 @@ export interface TemplatePdf {
   filename_pattern?: string | null;
 }
 
+export interface EmailConfig {
+  to?: string;               // Komma-getrennt, Platzhalter erlaubt
+  cc?: string;               // Komma-getrennt, Platzhalter erlaubt
+  subject_pattern?: string;  // Platzhalter erlaubt
+  body_pattern?: string;     // Platzhalter erlaubt
+  attach_pdf_ids?: string[]; // Welche pdf.id's anhängen
+}
+
 type TemplateRow = Database['public']['Tables']['formular_templates']['Row'];
-export type FormularTemplate = Omit<TemplateRow, 'schema' | 'pdfs'> & {
+export type FormularTemplate = Omit<TemplateRow, 'schema' | 'pdfs' | 'email_config'> & {
   schema: FormSchema;
   pdfs: TemplatePdf[];
+  email_config: EmailConfig | null;
 };
 
 type AfRow = Database['public']['Tables']['ausgefuellte_formulare']['Row'];

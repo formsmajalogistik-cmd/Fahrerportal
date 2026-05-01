@@ -17,13 +17,13 @@ interface Props {
   data: Record<string, unknown>;
   onChange: (fieldId: string, value: unknown) => void;
   disabled?: boolean;
-  userId: string;
-  formularId: string;
+  /** OneDrive-Ordner des Formulars — Photos landen unter <folder>/Fotos/ */
+  oneDriveFolder: string;
   /** Optional: nur diese Sections rendern (für Seitenfilterung). */
   sections?: FormSection[];
 }
 
-export function FormRenderer({ schema, data, onChange, disabled, userId, formularId, sections }: Props) {
+export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder, sections }: Props) {
   const visible = sections ?? schema.sections ?? [];
   return (
     <div className="space-y-6">
@@ -57,8 +57,7 @@ export function FormRenderer({ schema, data, onChange, disabled, userId, formula
                     value={data[field.id]}
                     onChange={(v) => onChange(field.id, v)}
                     disabled={disabled}
-                    userId={userId}
-                    formularId={formularId}
+                    oneDriveFolder={oneDriveFolder}
                   />
                 </ErrorBoundary>
               );
@@ -75,11 +74,10 @@ interface FieldProps {
   value: unknown;
   onChange: (v: unknown) => void;
   disabled?: boolean;
-  userId: string;
-  formularId: string;
+  oneDriveFolder: string;
 }
 
-function FieldSwitch({ field, value, onChange, disabled, userId, formularId }: FieldProps) {
+function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder }: FieldProps) {
   switch (field.type) {
     case 'text':
       return <TextField field={field} value={value} onChange={onChange} disabled={disabled} />;
@@ -99,7 +97,7 @@ function FieldSwitch({ field, value, onChange, disabled, userId, formularId }: F
       return (
         <PhotoField
           field={field} value={value}
-          userId={userId} formularId={formularId}
+          oneDriveFolder={oneDriveFolder}
           onChange={onChange} disabled={disabled}
         />
       );
@@ -111,7 +109,7 @@ function FieldSwitch({ field, value, onChange, disabled, userId, formularId }: F
       return (
         <DynamicPhotosField
           field={field} value={value}
-          userId={userId} formularId={formularId}
+          oneDriveFolder={oneDriveFolder}
           onChange={onChange} disabled={disabled}
         />
       );

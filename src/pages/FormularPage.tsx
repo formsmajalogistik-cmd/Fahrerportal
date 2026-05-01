@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
-import { generateAndUploadFormPdfs } from '../lib/pdfGenerate';
+import { generateAndUploadFormPdfs, sendTemplateEmail } from '../lib/pdfGenerate';
+import { buildFormularFolder } from '../lib/onedrivePaths';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
 
@@ -29,7 +29,6 @@ function parseSchema(raw: unknown): FormSchema {
 export function FormularPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { session } = useAuth();
 
   const [formular, setFormular] = useState<AusgefuelltesFormular | null>(null);
   const [template, setTemplate] = useState<FormularTemplate | null>(null);
@@ -185,25 +184,42 @@ export function FormularPage() {
     setFormular(submitted);
     setStatusMsg('Protokoll eingereicht. PDFs werden erzeugt …');
 
-    // PDFs nach Submit generieren — läuft async, blockiert die UI nicht.
-    if (session) {
+    // PDFs nach Submit generieren + ggf. Email versenden.
+    try {
+      const generated = await generateAndUploadFormPdfs(template, submitted);
+      let msg = generated.length > 0
+        ? `Protokoll eingereicht. ${generated.length} PDF${generated.length === 1 ? '' : 's'} in OneDrive abgelegt.`
+        : 'Protokoll eingereicht. (Keine PDF-Vorlagen am Template hinterlegt.)';
+      // Email-Versand laut Template-Konfig
       try {
-        const paths = await generateAndUploadFormPdfs(template, submitted, session.user.id);
-        setStatusMsg(
-          paths.length > 0
-            ? `Protokoll eingereicht. ${paths.length} PDF${paths.length === 1 ? '' : 's'} erzeugt.`
-            : 'Protokoll eingereicht. (Keine PDF-Vorlagen am Template hinterlegt.)',
-        );
+        const r = await sendTemplateEmail(template, submitted, generated);
+        if (r.sent) msg += ' Email versendet.';
       } catch (err) {
-        console.warn('[FormularPage] PDF-Erzeugung fehlgeschlagen', err);
-        setStatusMsg('Protokoll eingereicht. PDF-Erzeugung schlug fehl — siehe Konsole.');
+        console.warn('[FormularPage] Email-Versand fehlgeschlagen', err);
+        msg += ' Email-Versand schlug fehl — siehe Konsole.';
       }
+      setStatusMsg(msg);
+    } catch (err) {
+      console.warn('[FormularPage] PDF-Erzeugung fehlgeschlagen', err);
+      setStatusMsg('Protokoll eingereicht. PDF-Erzeugung schlug fehl — siehe Konsole.');
     }
   }
 
-  const userId = session?.user.id ?? '';
   const title = useMemo(() => template?.name ?? 'Formular', [template]);
   const sectionCount = template?.schema.sections.length ?? 0;
+
+  // OneDrive-Ordner für dieses Formular: Maja-Logistik/Formulare/<JJJJ-MM>/<…>/
+  const oneDriveFolder = useMemo(() => {
+    if (!template || !formular) return '';
+    const isoDate = formular.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+    const kennzeichen = (data.kennzeichen ?? data.Kennzeichen ?? '') as string;
+    return buildFormularFolder({
+      date: isoDate,
+      kennzeichen: typeof kennzeichen === 'string' ? kennzeichen : null,
+      templateName: template.name,
+      formularId: formular.id,
+    });
+  }, [template, formular, data]);
 
   const pages = useMemo(
     () => (template ? effectivePages(template.schema) : []),
@@ -357,8 +373,7 @@ export function FormularPage() {
           data={data}
           onChange={handleChange}
           disabled={readonly}
-          userId={userId}
-          formularId={formular.id}
+          oneDriveFolder={oneDriveFolder}
         />
       </ErrorBoundary>
 

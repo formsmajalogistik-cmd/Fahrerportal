@@ -4,7 +4,7 @@ import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
 import { useAuth } from '../../auth/AuthContext';
 import {
-  downloadFormPdf, expectedPdfPath, generateAndUploadFormPdfs, resolveFilename,
+  downloadFormPdf, expectedOneDrivePath, generateAndUploadFormPdfs, resolveFilename,
 } from '../../lib/pdfGenerate';
 import type {
   AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
@@ -15,7 +15,10 @@ interface Row extends AusgefuelltesFormular {
     user_id: string;
     user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
   } | null;
-  template?: (Pick<FormularTemplate, 'name'> & { pdfs: TemplatePdf[]; schema: unknown }) | null;
+  template?:
+    & Pick<FormularTemplate, 'name'>
+    & { pdfs: TemplatePdf[]; schema: unknown }
+    | null;
 }
 
 export function EingaengePage() {
@@ -45,7 +48,7 @@ export function EingaengePage() {
   }, []);
 
   async function regeneratePdfs(r: Row) {
-    if (!r.template || !r.fahrer?.user_id) return;
+    if (!r.template) return;
     setRegen(r.id);
     try {
       const tpl: FormularTemplate = {
@@ -54,9 +57,9 @@ export function EingaengePage() {
         auftraggeber_id: null,
         schema: (r.template.schema as FormularTemplate['schema']) ?? { sections: [] },
         pdfs: r.template.pdfs ?? [],
+        email_config: null,
       };
-      await generateAndUploadFormPdfs(tpl, r, r.fahrer.user_id);
-      // Reload damit Download-Buttons den neuen Stand zeigen
+      await generateAndUploadFormPdfs(tpl, r);
       window.location.reload();
     } finally {
       setRegen(null);
@@ -74,8 +77,8 @@ export function EingaengePage() {
         <h1 className="text-2xl font-semibold text-maja-navy">Eingänge</h1>
         <p className="text-sm text-maja-muted">
           {isAdmin
-            ? 'Alle Protokolle. PDF-Downloads stehen für eingereichte Formulare zur Verfügung.'
-            : 'Deine Protokolle. PDF-Downloads stehen für eingereichte Formulare zur Verfügung.'}
+            ? 'Alle Protokolle. PDF-Downloads holen die Datei aus OneDrive.'
+            : 'Deine Protokolle. PDF-Downloads holen die Datei aus OneDrive.'}
         </p>
       </div>
 
@@ -95,50 +98,58 @@ export function EingaengePage() {
               <tr><td colSpan={isAdmin ? 5 : 4} className="px-4 py-6 text-center text-maja-muted">
                 Noch keine Formulare erfasst.
               </td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.id} className="align-top hover:bg-maja-light/50">
-                <td className="px-4 py-3 font-medium text-maja-ink">{r.template?.name ?? '—'}</td>
-                {isAdmin && (
-                  <td className="px-4 py-3 text-maja-muted">
-                    {displayName(r.fahrer?.user ?? null)}
+            ) : rows.map((r) => {
+              const tpl: FormularTemplate | null = r.template ? {
+                id: r.template_id,
+                name: r.template.name ?? '',
+                auftraggeber_id: null,
+                schema: (r.template.schema as FormularTemplate['schema']) ?? { sections: [] },
+                pdfs: r.template.pdfs ?? [],
+                email_config: null,
+              } : null;
+              return (
+                <tr key={r.id} className="align-top hover:bg-maja-light/50">
+                  <td className="px-4 py-3 font-medium text-maja-ink">{r.template?.name ?? '—'}</td>
+                  {isAdmin && (
+                    <td className="px-4 py-3 text-maja-muted">
+                      {displayName(r.fahrer?.user ?? null)}
+                    </td>
+                  )}
+                  <td className="px-4 py-3">
+                    <span className={
+                      'inline-flex rounded-full px-2 py-0.5 text-xs font-medium ' +
+                      (r.status === 'submitted'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800')
+                    }>
+                      {r.status === 'submitted' ? 'eingereicht' : 'Entwurf'}
+                    </span>
                   </td>
-                )}
-                <td className="px-4 py-3">
-                  <span className={
-                    'inline-flex rounded-full px-2 py-0.5 text-xs font-medium ' +
-                    (r.status === 'submitted'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800')
-                  }>
-                    {r.status === 'submitted' ? 'eingereicht' : 'Entwurf'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-maja-muted">
-                  {new Date(r.created_at).toLocaleString('de-DE')}
-                </td>
-                <td className="px-4 py-3">
-                  {r.status === 'submitted' && r.fahrer?.user_id ? (
-                    <PdfDownloads
-                      pdfs={r.template?.pdfs ?? []}
-                      userId={r.fahrer.user_id}
-                      formularId={r.id}
-                      data={(r.daten as Record<string, unknown>) ?? {}}
-                    />
-                  ) : (
-                    <span className="text-xs text-maja-muted">—</span>
-                  )}
-                  {isAdmin && r.status === 'submitted' && (r.template?.pdfs ?? []).some((p) => p.path) && (
-                    <button
-                      onClick={() => void regeneratePdfs(r)}
-                      disabled={regen === r.id}
-                      className="mt-1 block text-xs font-medium text-maja-accent hover:underline"
-                    >
-                      {regen === r.id ? 'Generiere …' : 'PDFs neu erzeugen'}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  <td className="px-4 py-3 text-maja-muted">
+                    {new Date(r.created_at).toLocaleString('de-DE')}
+                  </td>
+                  <td className="px-4 py-3">
+                    {r.status === 'submitted' && tpl ? (
+                      <PdfDownloads
+                        template={tpl}
+                        formular={r}
+                      />
+                    ) : (
+                      <span className="text-xs text-maja-muted">—</span>
+                    )}
+                    {isAdmin && r.status === 'submitted' && (r.template?.pdfs ?? []).some((p) => p.path) && (
+                      <button
+                        onClick={() => void regeneratePdfs(r)}
+                        disabled={regen === r.id}
+                        className="mt-1 block text-xs font-medium text-maja-accent hover:underline"
+                      >
+                        {regen === r.id ? 'Generiere …' : 'PDFs neu erzeugen'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -147,26 +158,22 @@ export function EingaengePage() {
 }
 
 function PdfDownloads({
-  pdfs, userId, formularId, data,
-}: {
-  pdfs: TemplatePdf[];
-  userId: string;
-  formularId: string;
-  data: Record<string, unknown>;
-}) {
-  if (!pdfs || pdfs.length === 0) {
+  template, formular,
+}: { template: FormularTemplate; formular: AusgefuelltesFormular }) {
+  if (!template.pdfs || template.pdfs.length === 0) {
     return <span className="text-xs text-maja-muted">keine Vorlagen</span>;
   }
   return (
     <div className="flex flex-wrap gap-2">
-      {pdfs.map((p) => {
-        const filename = resolveFilename(p.filename_pattern, data, p.id);
+      {template.pdfs.map((p) => {
+        const filename = resolveFilename(p.filename_pattern, formular.daten, p.id);
+        const path = expectedOneDrivePath(template, formular, p);
         return (
           <PdfDownloadButton
             key={p.id}
             label={p.name}
             filename={filename}
-            path={expectedPdfPath(p, userId, formularId)}
+            path={path}
           />
         );
       })}
@@ -182,14 +189,14 @@ function PdfDownloadButton({
     setBusy(true);
     const ok = await downloadFormPdf(path, filename);
     setBusy(false);
-    if (!ok) alert('PDF noch nicht generiert. Beim Einreichen werden die PDFs automatisch erzeugt.');
+    if (!ok) alert('PDF noch nicht generiert oder nicht erreichbar. Beim Einreichen werden die PDFs automatisch erzeugt.');
   }
   return (
     <button
       onClick={open}
       disabled={busy}
       className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-1 text-xs text-maja-navy hover:bg-maja-accent/20"
-      title={`${filename} (${path})`}
+      title={`${filename}\n${path}`}
     >
       {busy ? '…' : '⬇'} {label}
     </button>

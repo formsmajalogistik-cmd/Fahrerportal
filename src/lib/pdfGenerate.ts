@@ -9,16 +9,17 @@ import {
   OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT,
 } from './fieldMapping';
 import { fetchDamageDiagramBytes } from './damageDiagramStorage';
-import { supabase } from './supabase';
 import { fetchPdfBytes } from './pdfStorage';
+import {
+  downloadFromOneDrive, sendEmail, triggerOneDriveDownload, uploadToOneDrive,
+} from './onedrive';
+import { buildFormularFolder, pathForPdf } from './onedrivePaths';
 import type {
   AusgefuelltesFormular, FieldMapping, FormSchema, FormularTemplate,
   PhotoValue, TemplatePdf,
 } from '../types/db';
 
 const INK = rgb(0.06, 0.14, 0.22); // Maja-Ink
-const SUBMIT_PHOTOS_BUCKET = 'formular-fotos';
-const OUTPUT_BUCKET = 'formular-pdfs';
 
 interface CheckTextEntry { option: string; text: string }
 
@@ -52,9 +53,14 @@ function dataUrlToBytes(dataUrl: string): Uint8Array | null {
 }
 
 async function fetchSubmittedPhotoBytes(path: string): Promise<ArrayBuffer | null> {
-  const { data, error } = await supabase.storage.from(SUBMIT_PHOTOS_BUCKET).download(path);
-  if (error || !data) return null;
-  return await data.arrayBuffer();
+  // Photos liegen jetzt in OneDrive — Download über /api/download.
+  try {
+    const blob = await downloadFromOneDrive(path);
+    return await blob.arrayBuffer();
+  } catch (err) {
+    console.warn('[fetchSubmittedPhotoBytes]', path, err);
+    return null;
+  }
 }
 
 /**
@@ -338,17 +344,31 @@ export async function fillPdf(
   return await pdf.save();
 }
 
+export interface GeneratedPdf {
+  pdf: TemplatePdf;        // Original-Template-Eintrag (für name, attach_pdf_ids)
+  filename: string;        // resolved Filename (z.B. "Protokoll_HB-ML_421.pdf")
+  onedrive_path: string;   // Pfad in OneDrive
+}
+
 /**
- * Generiert alle PDFs eines Templates für ein konkretes Formular und
- * speichert sie im Bucket formular-pdfs unter <userId>/<formularId>/<pdfId>.pdf.
- * Liefert die Liste der erfolgreich erzeugten Pfade zurück.
+ * Generiert alle PDFs eines Templates für ein konkretes Formular und legt sie
+ * in OneDrive unter dem Formular-Ordner ab. Filenames kommen aus dem
+ * filename_pattern bzw. fallback auf pdf.id.
  */
 export async function generateAndUploadFormPdfs(
   template: FormularTemplate,
   formular: AusgefuelltesFormular,
-  userId: string,
-): Promise<string[]> {
-  const generated: string[] = [];
+): Promise<GeneratedPdf[]> {
+  const isoDate = formular.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+  const kennzeichenRaw = formular.daten?.['kennzeichen'] ?? formular.daten?.['Kennzeichen'];
+  const folder = buildFormularFolder({
+    date: isoDate,
+    kennzeichen: typeof kennzeichenRaw === 'string' ? kennzeichenRaw : null,
+    templateName: template.name,
+    formularId: formular.id,
+  });
+
+  const generated: GeneratedPdf[] = [];
   for (const tplPdf of template.pdfs ?? []) {
     if (!tplPdf.path) continue;
     try {
@@ -357,16 +377,11 @@ export async function generateAndUploadFormPdfs(
       const out = await fillPdf(
         tplBytes, template.schema, tplPdf.field_mapping ?? {}, formular.daten,
       );
-      const outPath = `${userId}/${formular.id}/${tplPdf.id}.pdf`;
+      const filename = resolveFilename(tplPdf.filename_pattern, formular.daten, tplPdf.id);
+      const onedrivePath = pathForPdf(folder, filename);
       const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
-      const { error } = await supabase.storage
-        .from(OUTPUT_BUCKET)
-        .upload(outPath, blob, { contentType: 'application/pdf', upsert: true });
-      if (error) {
-        console.warn(`[generateAndUploadFormPdfs] upload ${outPath} fehlgeschlagen`, error);
-        continue;
-      }
-      generated.push(outPath);
+      await uploadToOneDrive(onedrivePath, blob);
+      generated.push({ pdf: tplPdf, filename, onedrive_path: onedrivePath });
     } catch (err) {
       console.warn(`[generateAndUploadFormPdfs] PDF ${tplPdf.id} fehlgeschlagen`, err);
     }
@@ -375,21 +390,53 @@ export async function generateAndUploadFormPdfs(
 }
 
 /**
- * Listet die bereits generierten PDFs eines Formulars im Storage und gibt
- * pro Eintrag den TemplatePdf-Eintrag (für Anzeigename) und den Storage-Pfad zurück.
+ * Sendet die in der Template-Email-Config konfigurierte Email mit den
+ * generierten PDFs als Anhang. Platzhalter `{feld_id}` werden in to/cc/
+ * subject/body durch die Werte aus `formular.daten` ersetzt.
  */
-export function expectedPdfPath(
-  pdf: TemplatePdf, userId: string, formularId: string,
-): string {
-  return `${userId}/${formularId}/${pdf.id}.pdf`;
+export async function sendTemplateEmail(
+  template: FormularTemplate,
+  formular: AusgefuelltesFormular,
+  generated: GeneratedPdf[],
+): Promise<{ sent: boolean; reason?: string }> {
+  const cfg = template.email_config;
+  if (!cfg || !cfg.to || !cfg.to.trim()) {
+    return { sent: false, reason: 'keine Email-Konfiguration' };
+  }
+  const data = formular.daten;
+  const splitList = (s: string) => s.split(/[,;]+/).map((x) => x.trim()).filter(Boolean);
+  const to = splitList(resolvePattern(cfg.to, data));
+  const cc = cfg.cc ? splitList(resolvePattern(cfg.cc, data)) : [];
+  if (to.length === 0) return { sent: false, reason: 'keine Empfänger' };
+
+  const subject = resolvePattern(cfg.subject_pattern ?? template.name, data);
+  const body    = resolvePattern(cfg.body_pattern ?? '', data);
+  const wantedIds = new Set(cfg.attach_pdf_ids ?? []);
+  const attachments = generated
+    .filter((g) => wantedIds.size === 0 ? false : wantedIds.has(g.pdf.id))
+    .map((g) => ({
+      name: g.filename,
+      contentType: 'application/pdf',
+      onedrive_path: g.onedrive_path,
+    }));
+
+  await sendEmail({ to, cc: cc.length > 0 ? cc : undefined, subject, body, attachments });
+  return { sent: true };
 }
 
-export async function getPdfDownloadUrl(path: string): Promise<string | null> {
-  const { data, error } = await supabase.storage
-    .from(OUTPUT_BUCKET)
-    .createSignedUrl(path, 60 * 60);
-  if (error) return null;
-  return data?.signedUrl ?? null;
+/**
+ * Frontend-Variante des Pattern-Resolvers, ohne Filename-Sanitisierung —
+ * für Subject/Body/E-Mails. Sonderzeichen bleiben erhalten.
+ */
+function resolvePattern(pattern: string, data: Record<string, unknown>): string {
+  if (!pattern) return '';
+  return pattern.replace(/\{([a-zA-Z0-9_]+)\}/g, (_m, key) => {
+    const v = data[key];
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number') return String(v);
+    if (typeof v === 'boolean') return v ? 'ja' : 'nein';
+    return '';
+  });
 }
 
 /**
@@ -431,29 +478,31 @@ export function resolveFilename(
 }
 
 /**
- * Lädt die generierte PDF und triggert einen Browser-Download mit dem
- * gewünschten Dateinamen. Workaround für die Tatsache, dass das
- * `download`-Attribut bei Cross-Origin-Signed-URLs ignoriert wird.
+ * Lädt die generierte PDF aus OneDrive und triggert einen Browser-Download
+ * mit dem gewünschten Dateinamen.
  */
 export async function downloadFormPdf(
-  storagePath: string,
-  filename: string,
+  oneDrivePath: string, filename: string,
 ): Promise<boolean> {
-  const { data, error } = await supabase.storage
-    .from(OUTPUT_BUCKET)
-    .download(storagePath);
-  if (error || !data) return false;
-  const url = URL.createObjectURL(data);
-  try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-  return true;
+  return await triggerOneDriveDownload(oneDrivePath, filename);
+}
+
+/**
+ * Berechnet den OneDrive-Pfad einer ausgegebenen PDF anhand von Template,
+ * Formular und PDF-Eintrag — wird von der Eingänge-Seite genutzt, um den
+ * Download-Pfad zu kennen, ohne das Generierungsergebnis selbst zu speichern.
+ */
+export function expectedOneDrivePath(
+  template: FormularTemplate, formular: AusgefuelltesFormular, pdf: TemplatePdf,
+): string {
+  const isoDate = formular.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+  const kennzeichenRaw = formular.daten?.['kennzeichen'] ?? formular.daten?.['Kennzeichen'];
+  const folder = buildFormularFolder({
+    date: isoDate,
+    kennzeichen: typeof kennzeichenRaw === 'string' ? kennzeichenRaw : null,
+    templateName: template.name,
+    formularId: formular.id,
+  });
+  const filename = resolveFilename(pdf.filename_pattern, formular.daten, pdf.id);
+  return pathForPdf(folder, filename);
 }

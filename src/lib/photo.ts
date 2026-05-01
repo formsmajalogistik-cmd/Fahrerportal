@@ -1,5 +1,5 @@
 import imageCompression from 'browser-image-compression';
-import { supabase } from './supabase';
+import { uploadToOneDrive, getOneDriveObjectUrl } from './onedrive';
 
 // Client-seitige Komprimierung: max. 1200px Kante, JPEG ~80%
 const COMPRESSION_OPTIONS = {
@@ -23,26 +23,26 @@ export async function compressImage(file: File): Promise<File> {
   }
 }
 
-export async function uploadPhoto(
+/**
+ * Lädt ein Foto nach OneDrive hoch und gibt den OneDrive-Pfad zurück, der
+ * im daten-JSON unter `storage_path` gespeichert wird.
+ */
+export async function uploadPhotoToOneDrive(
   file: File,
-  userId: string,
-  formularId: string,
-  fieldId: string,
+  folder: string,
+  filename: string,
 ): Promise<string> {
   const compressed = await compressImage(file);
-  const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
-  const path = `${userId}/${formularId}/${fieldId}.${ext}`;
-  const { error } = await supabase.storage
-    .from('formular-fotos')
-    .upload(path, compressed, { contentType: compressed.type, upsert: true });
-  if (error) throw error;
+  // Pfad: <folder>/Fotos/<filename>
+  const path = `${folder.replace(/\/+$/, '')}/Fotos/${filename}`;
+  await uploadToOneDrive(path, compressed);
   return path;
 }
 
 /**
- * Triggert einen Browser-Download der angegebenen Datei. Wird genutzt, wenn
- * der User in den Profil-Einstellungen die Option „Auch in Galerie speichern"
- * aktiviert hat.
+ * Triggert einen Browser-Download der angegebenen Datei (lokal). Wird genutzt,
+ * wenn der User in den Profil-Einstellungen die Option „Auch in Galerie
+ * speichern" aktiviert hat.
  */
 export function downloadFile(file: Blob, filename: string): void {
   try {
@@ -62,31 +62,10 @@ export function downloadFile(file: Blob, filename: string): void {
   }
 }
 
-export async function getPhotoUrl(storagePath: string): Promise<string | null> {
-  const { data, error } = await supabase.storage
-    .from('formular-fotos')
-    .createSignedUrl(storagePath, 60 * 60);
-  if (error) { console.warn('Signed URL fehlgeschlagen', error); return null; }
-  return data?.signedUrl ?? null;
-}
-
 /**
- * Löscht alle Fotos eines ausgefüllten Formulars im Bucket formular-fotos.
- * Pfad-Konvention: <user_id>/<formular_id>/<feld>.jpg
+ * Liefert eine Object-URL für ein OneDrive-Foto. Aufrufer ist verantwortlich
+ * fürs URL.revokeObjectURL.
  */
-export async function deleteFormularPhotos(
-  userId: string,
-  formularId: string,
-): Promise<void> {
-  const prefix = `${userId}/${formularId}`;
-  const { data: list, error } = await supabase.storage
-    .from('formular-fotos')
-    .list(prefix);
-  if (error) { console.warn('Foto-Liste fehlgeschlagen', error); return; }
-  if (!list || list.length === 0) return;
-  const paths = list.map((f) => `${prefix}/${f.name}`);
-  const { error: rmErr } = await supabase.storage
-    .from('formular-fotos')
-    .remove(paths);
-  if (rmErr) console.warn('Foto-Löschen fehlgeschlagen', rmErr);
+export async function getPhotoUrl(storagePath: string): Promise<string | null> {
+  return await getOneDriveObjectUrl(storagePath);
 }
