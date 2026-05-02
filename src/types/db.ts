@@ -5,11 +5,27 @@ import type { Database } from './supabase';
 
 export type UserRole = Database['public']['Enums']['user_role'];
 export type FormularStatus = Database['public']['Enums']['formular_status'];
+export type TourStatus = Database['public']['Enums']['tour_status'];
+export type TourenArt = Database['public']['Enums']['tourenart'];
 
 export type AppUser = Database['public']['Tables']['app_users']['Row'];
 export type Auftraggeber = Database['public']['Tables']['auftraggeber']['Row'];
 export type Preisstufe = Database['public']['Tables']['preisstufen']['Row'];
 export type Sonderverguetung = Database['public']['Tables']['sonderverguetungen']['Row'];
+
+// ---- Touren -----------------------------------------------
+
+export interface Zwischenstopp {
+  stadt: string;
+  km_ab_vorher: number;
+}
+
+type TourRow = Database['public']['Tables']['touren']['Row'];
+export type Tour = Omit<TourRow, 'zwischenstopps'> & {
+  zwischenstopps: Zwischenstopp[];
+};
+
+export type TourZusatz = Database['public']['Tables']['tour_zusaetze']['Row'];
 export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
 export type FormularZuweisung =
   Database['public']['Tables']['formular_zuweisungen']['Row'];

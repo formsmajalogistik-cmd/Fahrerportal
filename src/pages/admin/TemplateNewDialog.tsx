@@ -80,6 +80,11 @@ export function TemplateNewDialog({ onClose, onCreated }: Props) {
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
+            {auftraggeber.find((a) => a.id === auftraggeberId)?.kontakt && (
+              <p className="mt-1 text-xs text-maja-muted">
+                Kontakt: {auftraggeber.find((a) => a.id === auftraggeberId)!.kontakt}
+              </p>
+            )}
           </div>
 
           {error && (

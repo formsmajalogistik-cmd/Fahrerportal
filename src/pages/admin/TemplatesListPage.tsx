@@ -7,7 +7,7 @@ import { TemplateNewDialog } from './TemplateNewDialog';
 import type { Auftraggeber, FormularTemplate } from '../../types/db';
 
 interface Row extends FormularTemplate {
-  auftraggeber?: Pick<Auftraggeber, 'name'> | null;
+  auftraggeber?: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
 }
 
 export function TemplatesListPage() {
@@ -23,7 +23,7 @@ export function TemplatesListPage() {
     setError(null);
     const { data, error: err } = await supabase
       .from('formular_templates')
-      .select('*, auftraggeber:auftraggeber_id (name)')
+      .select('*, auftraggeber:auftraggeber_id (name, kontakt)')
       .order('name');
     if (err) setError(err.message);
     else setRows((data as unknown as Row[]) ?? []);
@@ -96,6 +96,9 @@ export function TemplatesListPage() {
                 <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
                   {t.auftraggeber?.name ?? 'ohne Auftraggeber'}
                 </div>
+                {t.auftraggeber?.kontakt && (
+                  <div className="text-xs text-maja-muted">{t.auftraggeber.kontakt}</div>
+                )}
                 <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
                 <div className="mt-2 text-xs text-maja-muted">
                   {sectionCount} Sektionen · {fieldCount} Felder

@@ -16,6 +16,7 @@ const adminNav: NavItem[] = [
   { to: '/templates',       label: 'Templates' },
   { to: '/zuweisungen',     label: 'Zuweisungen' },
   { to: '/eingaenge',       label: 'Eingänge' },
+  { to: '/touren',          label: 'Tourenliste' },
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {

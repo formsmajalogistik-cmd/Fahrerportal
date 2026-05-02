@@ -6,7 +6,7 @@ import { Spinner } from '../components/Spinner';
 import type { Auftraggeber, Fahrer, FormularTemplate } from '../types/db';
 
 interface TemplateRow extends FormularTemplate {
-  auftraggeber?: Pick<Auftraggeber, 'name'> | null;
+  auftraggeber?: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
 }
 
 export function FahrerDashboard() {
@@ -33,7 +33,7 @@ export function FahrerDashboard() {
     // RLS liefert uns ohnehin nur zugewiesene Templates
     const { data: tpls, error: tplErr } = await supabase
       .from('formular_templates')
-      .select('*, auftraggeber:auftraggeber_id (name)')
+      .select('*, auftraggeber:auftraggeber_id (name, kontakt)')
       .order('name');
     if (tplErr) setError(tplErr.message);
     else setTemplates((tpls as unknown as TemplateRow[]) ?? []);
@@ -95,6 +95,9 @@ export function FahrerDashboard() {
               <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
                 {t.auftraggeber?.name ?? 'Maja-Logistik'}
               </div>
+              {t.auftraggeber?.kontakt && (
+                <div className="text-xs text-maja-muted">{t.auftraggeber.kontakt}</div>
+              )}
               <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
               <div className="mt-1 text-xs text-maja-muted">
                 {(t.schema?.sections ?? []).length} Sektionen

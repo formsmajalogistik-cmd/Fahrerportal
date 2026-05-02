@@ -10,6 +10,7 @@ const fahrerNav: NavItem[] = [
   { to: '/', label: 'Meine Formulare' },
   { to: '/offen', label: 'Begonnen' },
   { to: '/eingaenge', label: 'Eingänge' },
+  { to: '/touren', label: 'Tourenliste' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

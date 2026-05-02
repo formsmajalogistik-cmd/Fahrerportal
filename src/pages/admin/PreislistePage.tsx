@@ -181,7 +181,16 @@ export function PreislistePage() {
                           : 'hover:bg-maja-light'
                       }`}
                     >
-                      <span className="font-medium truncate">{a.name}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{a.name}</span>
+                        {a.kontakt && (
+                          <span className={`block truncate text-xs ${
+                            isActive ? 'text-white/70' : 'text-maja-muted'
+                          }`}>
+                            {a.kontakt}
+                          </span>
+                        )}
+                      </span>
                       <span
                         className={`inline-flex min-w-[1.75rem] items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold ${
                           isActive
@@ -465,6 +474,9 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
     <div className="space-y-4">
       <div className="card p-5">
         <h2 className="text-lg font-semibold text-maja-navy">{auftraggeber.name}</h2>
+        {auftraggeber.kontakt && (
+          <p className="text-xs text-maja-muted">Kontakt: {auftraggeber.kontakt}</p>
+        )}
         <p className="text-sm text-maja-muted">
           Preisliste-PDF, km-Stufen und Sondervergütungen für diesen Auftraggeber.
         </p>

@@ -12,6 +12,8 @@ export type Json =
 
 export type UserRole = 'admin' | 'fahrer';
 export type FormularStatus = 'draft' | 'submitted';
+export type TourStatus = 'geplant' | 'aktiv' | 'abgeschlossen';
+export type TourenArt = 'AB' | 'ABC' | 'ABA';
 
 export type Database = {
   public: {
@@ -150,6 +152,128 @@ export type Database = {
             foreignKeyName: 'sonderverguetungen_auftraggeber_id_fkey';
             columns: ['auftraggeber_id'];
             referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      touren: {
+        Row: {
+          id: string;
+          tour_id: string | null;
+          start_stadt: string;
+          ziel_stadt: string;
+          zwischenstopps: Json;
+          km_start_bis_erster_stopp: number | null;
+          km_letzter_stopp_bis_ziel: number | null;
+          km_gesamt: number | null;
+          auftraggeber_id: string | null;
+          fahrer_id: string | null;
+          status: TourStatus;
+          startdatum: string | null;
+          enddatum: string | null;
+          verguetung: number | null;
+          tourenart: TourenArt | null;
+          sondervereinbarung: string | null;
+          kennzeichen: string[];
+          barauslagen: number;
+          fahrer_honorar: number;
+          info: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tour_id?: string | null;
+          start_stadt: string;
+          ziel_stadt: string;
+          zwischenstopps?: Json;
+          km_start_bis_erster_stopp?: number | null;
+          km_letzter_stopp_bis_ziel?: number | null;
+          km_gesamt?: number | null;
+          auftraggeber_id?: string | null;
+          fahrer_id?: string | null;
+          status?: TourStatus;
+          startdatum?: string | null;
+          enddatum?: string | null;
+          verguetung?: number | null;
+          tourenart?: TourenArt | null;
+          sondervereinbarung?: string | null;
+          kennzeichen?: string[];
+          barauslagen?: number;
+          fahrer_honorar?: number;
+          info?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string | null;
+          start_stadt?: string;
+          ziel_stadt?: string;
+          zwischenstopps?: Json;
+          km_start_bis_erster_stopp?: number | null;
+          km_letzter_stopp_bis_ziel?: number | null;
+          km_gesamt?: number | null;
+          auftraggeber_id?: string | null;
+          fahrer_id?: string | null;
+          status?: TourStatus;
+          startdatum?: string | null;
+          enddatum?: string | null;
+          verguetung?: number | null;
+          tourenart?: TourenArt | null;
+          sondervereinbarung?: string | null;
+          kennzeichen?: string[];
+          barauslagen?: number;
+          fahrer_honorar?: number;
+          info?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'touren_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'touren_fahrer_id_fkey';
+            columns: ['fahrer_id'];
+            referencedRelation: 'fahrer';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      tour_zusaetze: {
+        Row: {
+          id: string;
+          tour_id: string;
+          kategorie: string;
+          betrag: number;
+          notiz: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tour_id: string;
+          kategorie: string;
+          betrag: number;
+          notiz?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string;
+          kategorie?: string;
+          betrag?: number;
+          notiz?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'tour_zusaetze_tour_id_fkey';
+            columns: ['tour_id'];
+            referencedRelation: 'touren';
             referencedColumns: ['id'];
           },
         ];
@@ -297,6 +421,8 @@ export type Database = {
     Enums: {
       user_role: UserRole;
       formular_status: FormularStatus;
+      tour_status: TourStatus;
+      tourenart: TourenArt;
     };
     CompositeTypes: {
       [_ in never]: never;
