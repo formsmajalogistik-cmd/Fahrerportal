@@ -12,6 +12,7 @@ const adminNav: NavItem[] = [
   { to: '/meine-drafts',    label: 'Begonnen' },
   { to: '/fahrer',          label: 'Fahrer' },
   { to: '/auftraggeber',    label: 'Auftraggeber' },
+  { to: '/preisliste',      label: 'Preisliste' },
   { to: '/templates',       label: 'Templates' },
   { to: '/zuweisungen',     label: 'Zuweisungen' },
   { to: '/eingaenge',       label: 'Eingänge' },

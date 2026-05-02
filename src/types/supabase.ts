@@ -60,6 +60,7 @@ export type Database = {
           ort: string | null;
           email1: string | null;
           email2: string | null;
+          preisliste_pdf_url: string | null;
         };
         Insert: {
           id?: string;
@@ -70,6 +71,7 @@ export type Database = {
           ort?: string | null;
           email1?: string | null;
           email2?: string | null;
+          preisliste_pdf_url?: string | null;
         };
         Update: {
           id?: string;
@@ -80,8 +82,43 @@ export type Database = {
           ort?: string | null;
           email1?: string | null;
           email2?: string | null;
+          preisliste_pdf_url?: string | null;
         };
         Relationships: [];
+      };
+      preisstufen: {
+        Row: {
+          id: string;
+          auftraggeber_id: string;
+          km_von: number;
+          km_bis: number;
+          preis: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          auftraggeber_id: string;
+          km_von: number;
+          km_bis: number;
+          preis?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          auftraggeber_id?: string;
+          km_von?: number;
+          km_bis?: number;
+          preis?: number;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'preisstufen_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       fahrer: {
         Row: {

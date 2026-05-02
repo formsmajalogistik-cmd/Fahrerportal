@@ -13,6 +13,7 @@ import { ProfilPage } from './pages/ProfilPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { FahrerListPage } from './pages/admin/FahrerListPage';
 import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
+import { PreislistePage } from './pages/admin/PreislistePage';
 import { TemplatesListPage } from './pages/admin/TemplatesListPage';
 import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { ZuweisungenPage } from './pages/admin/ZuweisungenPage';
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/meine-drafts" element={<OffeneFormularePage />} />
           <Route path="/fahrer" element={<FahrerListPage />} />
           <Route path="/auftraggeber" element={<AuftraggeberListPage />} />
+          <Route path="/preisliste" element={<PreislistePage />} />
           <Route path="/templates" element={<TemplatesListPage />} />
           <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/zuweisungen" element={<ZuweisungenPage />} />
