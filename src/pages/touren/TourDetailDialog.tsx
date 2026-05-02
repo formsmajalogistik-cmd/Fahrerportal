@@ -6,7 +6,9 @@ import { useAuth } from '../../auth/AuthContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { displayName } from '../../lib/names';
-import { computeKmGesamt, formatDateTime, formatEuro, formatKm, tourTitel } from '../../lib/touren';
+import {
+  computeKmGesamt, fetchTourPrice, formatDateTime, formatEuro, formatKm, tourTitel,
+} from '../../lib/touren';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourenArt, TourStatus, TourZusatz,
 } from '../../types/db';
@@ -92,10 +94,12 @@ interface EditDraft {
   hatRueckfuehrung: boolean;
   kmHin: string;
   kmRueck: string;
+  kmGesamtAba: string;
   startdatum: string;
   enddatum: string;
   kennzeichenHin: string;
   kennzeichenRueck: string;
+  istSondervereinbarung: boolean;
   sondervereinbarung: string;
   kundenname: string;
   verguetung: string;
@@ -108,6 +112,7 @@ interface EditDraft {
 function draftFromTour(t: FullTour): EditDraft {
   const hat = !!t.rueckfuehrung_stadt;
   const kz = Array.isArray(t.kennzeichen) ? t.kennzeichen : [];
+  const isAba = t.tourenart === 'ABA';
   return {
     status: t.status,
     fahrerId: t.fahrer_id ?? '',
@@ -119,10 +124,12 @@ function draftFromTour(t: FullTour): EditDraft {
     hatRueckfuehrung: hat,
     kmHin: intToInput(t.km_hin),
     kmRueck: intToInput(t.km_rueck),
+    kmGesamtAba: isAba ? intToInput(t.km_hin ?? t.km_gesamt) : '',
     startdatum: isoToLocalInput(t.startdatum),
     enddatum: isoToLocalInput(t.enddatum),
     kennzeichenHin: kz[0] ?? '',
     kennzeichenRueck: kz[1] ?? '',
+    istSondervereinbarung: !!t.ist_sondervereinbarung,
     sondervereinbarung: t.sondervereinbarung ?? '',
     kundenname: t.kundenname ?? '',
     verguetung: decimalToInput(t.verguetung),
@@ -245,19 +252,44 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     }
   }
 
+  const draftIsAba = draft?.tourenart === 'ABA';
+
   const liveKmGesamt = useMemo(() => {
     if (!draft) return null;
+    if (draftIsAba) return parseInteger(draft.kmGesamtAba);
     return computeKmGesamt({
       km_hin: parseInteger(draft.kmHin),
       km_rueck: parseInteger(draft.kmRueck),
       hatRueckfuehrung: draft.hatRueckfuehrung,
     });
-  }, [draft]);
+  }, [draft, draftIsAba]);
 
   const draftSelectedAg = useMemo(
-    () => (draft ? auftraggeber.find((a) => a.id === draft.auftraggeberId) ?? null : null),
+    () => (draft ? (auftraggeber ?? []).find((a) => a.id === draft.auftraggeberId) ?? null : null),
     [auftraggeber, draft],
   );
+
+  // Auto-Preis im Edit-Modus
+  const [autoPrice, setAutoPrice] = useState<number | null>(null);
+  const [pricing, setPricing] = useState(false);
+
+  useEffect(() => {
+    if (!editing || !draft) { setAutoPrice(null); return; }
+    if (draft.istSondervereinbarung) { setAutoPrice(null); return; }
+    if (!draft.auftraggeberId || liveKmGesamt == null) { setAutoPrice(null); return; }
+    let cancelled = false;
+    setPricing(true);
+    void fetchTourPrice({
+      auftraggeberId: draft.auftraggeberId,
+      km: liveKmGesamt,
+      tourenart: (draft.tourenart || 'AB') as TourenArt,
+    }).then((p) => {
+      if (cancelled) return;
+      setAutoPrice(p);
+      setPricing(false);
+    });
+    return () => { cancelled = true; };
+  }, [editing, draft, liveKmGesamt]);
 
   async function handleSave() {
     if (!draft || !tour) return;
@@ -273,14 +305,29 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       return;
     }
 
-    const verguetung = draft.verguetung.trim() === '' ? null : parseDecimal(draft.verguetung);
-    if (verguetung === null) {
-      setStatusMsg({ kind: 'err', text: 'Vergütung ist ungültig.' });
-      return;
+    let verguetung: number | null;
+    if (draft.istSondervereinbarung) {
+      const t = draft.verguetung.trim();
+      if (t === '') {
+        verguetung = null;
+      } else {
+        const v = parseDecimal(t);
+        if (v === null) { setStatusMsg({ kind: 'err', text: 'Vergütung ist ungültig.' }); return; }
+        verguetung = v;
+      }
+    } else {
+      verguetung = autoPrice;
     }
 
-    const km_hin = parseInteger(draft.kmHin);
-    const km_rueck = draft.hatRueckfuehrung ? parseInteger(draft.kmRueck) : null;
+    let km_hin: number | null;
+    let km_rueck: number | null;
+    if (draftIsAba) {
+      km_hin = parseInteger(draft.kmGesamtAba);
+      km_rueck = null;
+    } else {
+      km_hin = parseInteger(draft.kmHin);
+      km_rueck = draft.hatRueckfuehrung ? parseInteger(draft.kmRueck) : null;
+    }
 
     const kennzeichen: string[] = [];
     if (draft.kennzeichenHin.trim()) kennzeichen.push(draft.kennzeichenHin.trim().toUpperCase());
@@ -305,7 +352,10 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         startdatum: draft.startdatum ? new Date(draft.startdatum).toISOString() : null,
         enddatum: draft.enddatum ? new Date(draft.enddatum).toISOString() : null,
         kennzeichen,
-        sondervereinbarung: draft.sondervereinbarung.trim() || null,
+        ist_sondervereinbarung: draft.istSondervereinbarung,
+        sondervereinbarung: draft.istSondervereinbarung
+          ? (draft.sondervereinbarung.trim() || null)
+          : null,
         kundenname: draft.kundenname.trim() || null,
         verguetung,
         info: draft.info.trim() || null,
@@ -490,6 +540,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           auftraggeber={auftraggeber}
           fahrer={fahrer}
           draftSelectedAg={draftSelectedAg}
+          autoPrice={autoPrice}
+          pricing={pricing}
         />
       )}
 
@@ -730,12 +782,23 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung }: ViewModeProps) {
         </DetailItem>
         <DetailItem label="Kundenname">{tour.kundenname || '—'}</DetailItem>
         <DetailItem label="Tourenart">{tour.tourenart ?? '—'}</DetailItem>
-        <DetailItem label="Vergütung">{formatEuro(tour.verguetung)}</DetailItem>
+        <DetailItem label="Vergütung">
+          {formatEuro(tour.verguetung)}
+          {!tour.ist_sondervereinbarung && tour.auftraggeber_id && tour.km_gesamt != null && (
+            <span className="ml-2 text-xs text-maja-muted">Auto (Preisliste)</span>
+          )}
+        </DetailItem>
         <DetailItem label="Startdatum + Uhrzeit">{formatDateTime(tour.startdatum)}</DetailItem>
         <DetailItem label="Enddatum + Uhrzeit">{formatDateTime(tour.enddatum)}</DetailItem>
-        <DetailItem label="km Hin">{formatKm(tour.km_hin)}</DetailItem>
-        {hatRueckfuehrung && <DetailItem label="km Rück">{formatKm(tour.km_rueck)}</DetailItem>}
-        <DetailItem label="km Gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+        {tour.tourenart === 'ABA' ? (
+          <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+        ) : (
+          <>
+            <DetailItem label="km Hin">{formatKm(tour.km_hin)}</DetailItem>
+            {hatRueckfuehrung && <DetailItem label="km Rück">{formatKm(tour.km_rueck)}</DetailItem>}
+            <DetailItem label="km Gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+          </>
+        )}
         <DetailItem label={hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}>
           {tour.kennzeichen?.[0] ?? '—'}
         </DetailItem>
@@ -743,7 +806,14 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung }: ViewModeProps) {
           <DetailItem label="Kennzeichen Rück">{tour.kennzeichen?.[1] ?? '—'}</DetailItem>
         )}
         <DetailItem label="Sondervereinbarung" full>
-          {tour.sondervereinbarung || '—'}
+          {tour.ist_sondervereinbarung ? (
+            <>
+              <span className="font-medium text-maja-navy">Ja</span>
+              {tour.sondervereinbarung && (
+                <span className="ml-2 text-maja-muted">— {tour.sondervereinbarung}</span>
+              )}
+            </>
+          ) : 'Nein'}
         </DetailItem>
         <DetailItem label="Info" full>
           {tour.info ? <span className="whitespace-pre-wrap">{tour.info}</span> : '—'}
@@ -799,10 +869,14 @@ interface EditModeProps {
   auftraggeber: Auftraggeber[];
   fahrer: FahrerWithUser[];
   draftSelectedAg: Auftraggeber | null;
+  autoPrice: number | null;
+  pricing: boolean;
 }
 
 function EditMode(p: EditModeProps) {
-  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg } = p;
+  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, autoPrice, pricing } = p;
+  const isAba = draft.tourenart === 'ABA';
+  const abaAufschlag = draftSelectedAg?.aba_aufschlag_prozent ?? null;
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -883,30 +957,44 @@ function EditMode(p: EditModeProps) {
       )}
 
       {/* km */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      {draft.tourenart === 'ABA' ? (
         <div>
-          <label className="label">km Hin</label>
-          <input className="input" type="number" min={0} step={1}
-                 value={draft.kmHin}
-                 onChange={(e) => patchDraft({ kmHin: e.target.value })} />
-        </div>
-        {draft.hatRueckfuehrung && (
-          <div>
-            <label className="label">km Rück</label>
-            <input className="input" type="number" min={0} step={1}
-                   value={draft.kmRueck}
-                   onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
-          </div>
-        )}
-        <div>
-          <label className="label">km Gesamt</label>
+          <label className="label">Kilometer gesamt</label>
           <input
-            className="input bg-maja-light"
-            value={liveKmGesamt == null ? '' : String(liveKmGesamt)}
-            readOnly
+            className="input"
+            type="number"
+            min={0}
+            step={1}
+            value={draft.kmGesamtAba}
+            onChange={(e) => patchDraft({ kmGesamtAba: e.target.value })}
           />
         </div>
-      </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="label">km Hin</label>
+            <input className="input" type="number" min={0} step={1}
+                   value={draft.kmHin}
+                   onChange={(e) => patchDraft({ kmHin: e.target.value })} />
+          </div>
+          {draft.hatRueckfuehrung && (
+            <div>
+              <label className="label">km Rück</label>
+              <input className="input" type="number" min={0} step={1}
+                     value={draft.kmRueck}
+                     onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
+            </div>
+          )}
+          <div>
+            <label className="label">km Gesamt</label>
+            <input
+              className="input bg-maja-light"
+              value={liveKmGesamt == null ? '' : String(liveKmGesamt)}
+              readOnly
+            />
+          </div>
+        </div>
+      )}
 
       {/* Zeit */}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -944,20 +1032,69 @@ function EditMode(p: EditModeProps) {
         </div>
       )}
 
-      {/* Sondervereinbarung + Kundenname + Vergütung */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="sm:col-span-2">
-          <label className="label">Sondervereinbarung</label>
-          <input className="input" value={draft.sondervereinbarung}
-                 onChange={(e) => patchDraft({ sondervereinbarung: e.target.value })} />
-        </div>
+      {/* Sondervereinbarung */}
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+            checked={draft.istSondervereinbarung}
+            onChange={(e) => patchDraft({ istSondervereinbarung: e.target.checked })}
+          />
+          Sondervereinbarung
+        </label>
+        {draft.istSondervereinbarung && (
+          <div>
+            <label className="label">Anmerkung zur Sondervereinbarung</label>
+            <input className="input" value={draft.sondervereinbarung}
+                   onChange={(e) => patchDraft({ sondervereinbarung: e.target.value })} />
+          </div>
+        )}
+      </div>
+
+      {/* Vergütung + Kundenname */}
+      <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label">Vergütung (€)</label>
-          <input className="input" type="text" inputMode="decimal"
-                 value={draft.verguetung}
-                 onChange={(e) => patchDraft({ verguetung: e.target.value })} />
+          {draft.istSondervereinbarung ? (
+            <>
+              <input
+                className="input"
+                type="text"
+                inputMode="decimal"
+                value={draft.verguetung}
+                onChange={(e) => patchDraft({ verguetung: e.target.value })}
+              />
+              <p className="mt-1 text-xs text-maja-muted">
+                Manueller Preis (Sondervereinbarung aktiv).
+              </p>
+            </>
+          ) : (
+            <>
+              <input
+                className="input bg-maja-light"
+                type="text"
+                readOnly
+                value={pricing ? '…' : (autoPrice == null ? '' : Number(autoPrice).toFixed(2).replace('.', ','))}
+              />
+              <p className="mt-1 text-xs text-maja-muted">
+                {draft.auftraggeberId && liveKmGesamt != null
+                  ? autoPrice == null
+                    ? 'Auto (Preisliste): keine passende Stufe gefunden.'
+                    : (
+                      <>
+                        Auto (Preisliste)
+                        {isAba && abaAufschlag != null && Number(abaAufschlag) > 0 && (
+                          <> · ABA +{Number(abaAufschlag).toString().replace('.', ',')}%</>
+                        )}
+                      </>
+                    )
+                  : 'Auto (Preisliste): Auftraggeber + km wählen.'}
+              </p>
+            </>
+          )}
         </div>
-        <div className="sm:col-span-3">
+        <div>
           <label className="label">Kundenname</label>
           <input className="input" value={draft.kundenname}
                  onChange={(e) => patchDraft({ kundenname: e.target.value })} />

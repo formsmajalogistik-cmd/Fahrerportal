@@ -1,6 +1,7 @@
 // Hilfsfunktionen rund um die Tourenliste.
 
-import type { Tour } from '../types/db';
+import { supabase } from './supabase';
+import type { Tour, TourenArt } from '../types/db';
 
 const EUR = new Intl.NumberFormat('de-DE', {
   style: 'currency', currency: 'EUR', minimumFractionDigits: 2,
@@ -42,6 +43,29 @@ export function computeKmGesamt(args: {
   }
   if (km_hin == null && km_rueck == null) return null;
   return (km_hin ?? 0) + (km_rueck ?? 0);
+}
+
+/**
+ * Schlägt den Tour-Preis aus der Preisliste nach. Nutzt die Supabase-RPC
+ * `calculate_tour_price`. Gibt `null` zurück wenn keine passende Preisstufe
+ * gefunden wurde, Pflicht-Parameter fehlen oder ein Fehler auftritt.
+ */
+export async function fetchTourPrice(args: {
+  auftraggeberId: string | null | undefined;
+  km: number | null | undefined;
+  tourenart?: TourenArt | null;
+}): Promise<number | null> {
+  if (!args.auftraggeberId || args.km == null) return null;
+  const { data, error } = await supabase.rpc('calculate_tour_price', {
+    p_auftraggeber_id: args.auftraggeberId,
+    p_km: args.km,
+    p_tourenart: args.tourenart ?? 'AB',
+  });
+  if (error) {
+    console.warn('[fetchTourPrice]', error);
+    return null;
+  }
+  return data == null ? null : Number(data);
 }
 
 /** Baut den Routen-Titel: "Start → Ziel" bzw. "Start → Ziel → Rückführung". */

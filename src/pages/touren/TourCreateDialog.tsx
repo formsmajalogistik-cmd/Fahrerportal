@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import { computeKmGesamt, formatKm } from '../../lib/touren';
+import { computeKmGesamt, fetchTourPrice, formatKm } from '../../lib/touren';
 import { displayName } from '../../lib/names';
 import type {
   AppUser, Auftraggeber, Fahrer, TourenArt,
@@ -21,6 +21,18 @@ function parseInteger(v: string): number | null {
   return n;
 }
 
+function parseDecimal(input: string): number | null {
+  const normalized = input.trim().replace(/\./g, '').replace(',', '.');
+  if (!normalized) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+
+function decimalToInput(v: number | null | undefined): string {
+  if (v == null) return '';
+  return Number(v).toFixed(2).replace('.', ',');
+}
+
 export function TourCreateDialog({ onClose, onCreated }: Props) {
   // Pflichtfelder
   const [startStadt, setStartStadt] = useState('');
@@ -33,6 +45,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   // km
   const [kmHin, setKmHin]     = useState('');
   const [kmRueck, setKmRueck] = useState('');
+  const [kmGesamtAba, setKmGesamtAba] = useState(''); // bei Tourenart=ABA
 
   // Auftraggeber/Fahrer
   const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
@@ -49,10 +62,17 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [kennzeichenHin, setKennzeichenHin]   = useState('');
   const [kennzeichenRueck, setKennzeichenRueck] = useState('');
 
-  // Sondervereinbarung, Kundenname, Info
+  // Sondervereinbarung (Checkbox + manueller Preis + Anmerkung)
+  const [istSondervereinbarung, setIstSondervereinbarung] = useState(false);
   const [sondervereinbarung, setSondervereinbarung] = useState('');
+  const [verguetungInput, setVerguetungInput] = useState('');
+
   const [kundenname, setKundenname] = useState('');
   const [info, setInfo] = useState('');
+
+  // Auto-Preis
+  const [autoPrice, setAutoPrice] = useState<number | null>(null);
+  const [pricing, setPricing] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState<string | null>(null);
@@ -75,15 +95,38 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   }, []);
 
   const selectedAg = useMemo(
-    () => auftraggeber.find((a) => a.id === auftraggeberId) ?? null,
+    () => (auftraggeber ?? []).find((a) => a.id === auftraggeberId) ?? null,
     [auftraggeber, auftraggeberId],
   );
 
-  const kmGesamt = useMemo(() => computeKmGesamt({
-    km_hin: parseInteger(kmHin),
-    km_rueck: parseInteger(kmRueck),
-    hatRueckfuehrung,
-  }), [kmHin, kmRueck, hatRueckfuehrung]);
+  const isAba = tourenart === 'ABA';
+
+  const kmGesamt = useMemo(() => {
+    if (isAba) return parseInteger(kmGesamtAba);
+    return computeKmGesamt({
+      km_hin: parseInteger(kmHin),
+      km_rueck: parseInteger(kmRueck),
+      hatRueckfuehrung,
+    });
+  }, [isAba, kmGesamtAba, kmHin, kmRueck, hatRueckfuehrung]);
+
+  // Auto-Preis berechnen, sobald Auftraggeber + km + tourenart sich ändern
+  useEffect(() => {
+    if (istSondervereinbarung) { setAutoPrice(null); return; }
+    if (!auftraggeberId || kmGesamt == null) { setAutoPrice(null); return; }
+    let cancelled = false;
+    setPricing(true);
+    void fetchTourPrice({
+      auftraggeberId,
+      km: kmGesamt,
+      tourenart: (tourenart || 'AB') as TourenArt,
+    }).then((p) => {
+      if (cancelled) return;
+      setAutoPrice(p);
+      setPricing(false);
+    });
+    return () => { cancelled = true; };
+  }, [auftraggeberId, kmGesamt, tourenart, istSondervereinbarung]);
 
   function toggleRueckfuehrung() {
     if (hatRueckfuehrung) {
@@ -95,6 +138,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       setHatRueckfuehrung(true);
     }
   }
+
+  const abaAufschlag = selectedAg?.aba_aufschlag_prozent ?? null;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -112,8 +157,15 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       return;
     }
 
-    const km_hin   = parseInteger(kmHin);
-    const km_rueck = hatRueckfuehrung ? parseInteger(kmRueck) : null;
+    let km_hin: number | null;
+    let km_rueck: number | null;
+    if (isAba) {
+      km_hin = parseInteger(kmGesamtAba);
+      km_rueck = null;
+    } else {
+      km_hin = parseInteger(kmHin);
+      km_rueck = hatRueckfuehrung ? parseInteger(kmRueck) : null;
+    }
 
     const kennzeichen: string[] = [];
     const kzHin = kennzeichenHin.trim().toUpperCase();
@@ -121,6 +173,20 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     if (hatRueckfuehrung) {
       const kzRueck = kennzeichenRueck.trim().toUpperCase();
       if (kzRueck) kennzeichen.push(kzRueck);
+    }
+
+    let verguetung: number | null;
+    if (istSondervereinbarung) {
+      const t = verguetungInput.trim();
+      if (t === '') {
+        verguetung = null;
+      } else {
+        const v = parseDecimal(t);
+        if (v === null) { setError('Vergütung ist ungültig.'); return; }
+        verguetung = v;
+      }
+    } else {
+      verguetung = autoPrice;
     }
 
     setSaving(true);
@@ -136,7 +202,11 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       tourenart: tourenart || null,
       startdatum: startdatum ? new Date(startdatum).toISOString() : null,
       enddatum: enddatum ? new Date(enddatum).toISOString() : null,
-      sondervereinbarung: sondervereinbarung.trim() || null,
+      ist_sondervereinbarung: istSondervereinbarung,
+      sondervereinbarung: istSondervereinbarung
+        ? (sondervereinbarung.trim() || null)
+        : null,
+      verguetung,
       kundenname: kundenname.trim() || null,
       info: info.trim() || null,
       kennzeichen,
@@ -213,21 +283,29 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             </div>
           )}
 
-          {/* km Hin / Rück */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/* km Felder */}
+          {isAba ? (
             <div>
-              <label htmlFor="t-km-hin" className="label">km Hin (Start → Ziel)</label>
-              <input id="t-km-hin" className="input" type="number" min={0} step={1}
-                     value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
+              <label htmlFor="t-km-aba" className="label">Kilometer gesamt</label>
+              <input id="t-km-aba" className="input" type="number" min={0} step={1}
+                     value={kmGesamtAba} onChange={(e) => setKmGesamtAba(e.target.value)} />
             </div>
-            {hatRueckfuehrung && (
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="t-km-rueck" className="label">km Rück (Ziel → Rückführung)</label>
-                <input id="t-km-rueck" className="input" type="number" min={0} step={1}
-                       value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
+                <label htmlFor="t-km-hin" className="label">km Hin (Start → Ziel)</label>
+                <input id="t-km-hin" className="input" type="number" min={0} step={1}
+                       value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
               </div>
-            )}
-          </div>
+              {hatRueckfuehrung && (
+                <div>
+                  <label htmlFor="t-km-rueck" className="label">km Rück (Ziel → Rückführung)</label>
+                  <input id="t-km-rueck" className="input" type="number" min={0} step={1}
+                         value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="rounded-lg bg-maja-light px-3 py-2 text-sm">
             <span className="text-maja-muted">Gesamtstrecke (live): </span>
@@ -313,20 +391,78 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             </div>
           )}
 
-          {/* Sondervereinbarung + Kundenname */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="t-sv" className="label">Sondervereinbarung</label>
-              <input id="t-sv" className="input"
-                     value={sondervereinbarung}
-                     onChange={(e) => setSondervereinbarung(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="t-kn" className="label">Kundenname</label>
-              <input id="t-kn" className="input"
-                     value={kundenname}
-                     onChange={(e) => setKundenname(e.target.value)} />
-            </div>
+          {/* Sondervereinbarung */}
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+                checked={istSondervereinbarung}
+                onChange={(e) => setIstSondervereinbarung(e.target.checked)}
+              />
+              Sondervereinbarung
+            </label>
+            {istSondervereinbarung && (
+              <div>
+                <label htmlFor="t-sv-note" className="label">Anmerkung zur Sondervereinbarung</label>
+                <input id="t-sv-note" className="input"
+                       value={sondervereinbarung}
+                       onChange={(e) => setSondervereinbarung(e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          {/* Vergütung */}
+          <div>
+            <label htmlFor="t-verg" className="label">Vergütung (€)</label>
+            {istSondervereinbarung ? (
+              <>
+                <input
+                  id="t-verg"
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="z.B. 1234,56"
+                  value={verguetungInput}
+                  onChange={(e) => setVerguetungInput(e.target.value)}
+                />
+                <p className="mt-1 text-xs text-maja-muted">
+                  Manueller Preis (Sondervereinbarung aktiv).
+                </p>
+              </>
+            ) : (
+              <>
+                <input
+                  id="t-verg"
+                  className="input bg-maja-light"
+                  type="text"
+                  readOnly
+                  value={pricing ? '…' : decimalToInput(autoPrice)}
+                />
+                <p className="mt-1 text-xs text-maja-muted">
+                  {auftraggeberId && kmGesamt != null
+                    ? autoPrice == null
+                      ? 'Auto (Preisliste): keine passende Stufe gefunden.'
+                      : (
+                        <>
+                          Auto (Preisliste)
+                          {isAba && abaAufschlag != null && Number(abaAufschlag) > 0 && (
+                            <> · ABA +{Number(abaAufschlag).toString().replace('.', ',')}%</>
+                          )}
+                        </>
+                      )
+                    : 'Auto (Preisliste): Auftraggeber + km wählen.'}
+                </p>
+              </>
+            )}
+          </div>
+
+          {/* Kundenname */}
+          <div>
+            <label htmlFor="t-kn" className="label">Kundenname</label>
+            <input id="t-kn" className="input"
+                   value={kundenname}
+                   onChange={(e) => setKundenname(e.target.value)} />
           </div>
 
           {/* Info */}

@@ -239,6 +239,11 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
   const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
   const [serverSv, setServerSv] = useState<Sonderverguetung[]>([]);
   const [draftSv, setDraftSv] = useState<SvDraftRow[]>([]);
+  const [abaAufschlagInput, setAbaAufschlagInput] = useState<string>(
+    auftraggeber.aba_aufschlag_prozent == null
+      ? ''
+      : Number(auftraggeber.aba_aufschlag_prozent).toFixed(2).replace('.', ','),
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -280,6 +285,15 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
 
   useEffect(() => { void load(); }, [load]);
 
+  // Sync ABA-Aufschlag-Input wenn Auftraggeber sich ändert (z.B. nach Save).
+  useEffect(() => {
+    setAbaAufschlagInput(
+      auftraggeber.aba_aufschlag_prozent == null
+        ? ''
+        : Number(auftraggeber.aba_aufschlag_prozent).toFixed(2).replace('.', ','),
+    );
+  }, [auftraggeber.aba_aufschlag_prozent]);
+
   function updateRow(key: string, patch: Partial<DraftRow>) {
     setDraftRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
@@ -310,6 +324,18 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
 
   async function handleSave() {
     setStatusMsg(null);
+
+    // --- Validate ABA-Aufschlag ---
+    const abaTrim = abaAufschlagInput.trim();
+    let abaValue: number | null = null;
+    if (abaTrim !== '') {
+      const parsed = parsePreis(abaTrim);
+      if (parsed === null || parsed < 0) {
+        setStatusMsg({ kind: 'err', text: 'ABA-Aufschlag: bitte einen gültigen Prozentwert eingeben (oder leer für „kein Aufschlag").' });
+        return;
+      }
+      abaValue = parsed === 0 ? null : parsed;
+    }
 
     // --- Validate Preisstufen ---
     const parsedPs: Array<{ row: DraftRow; km_von: number; km_bis: number; preis: number }> = [];
@@ -420,6 +446,17 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
         if (error) throw error;
       }
 
+      // --- ABA-Aufschlag auf auftraggeber speichern ---
+      if (abaValue !== Number(auftraggeber.aba_aufschlag_prozent ?? 0)
+          || (abaValue === null && auftraggeber.aba_aufschlag_prozent != null)) {
+        const { error } = await supabase
+          .from('auftraggeber')
+          .update({ aba_aufschlag_prozent: abaValue })
+          .eq('id', auftraggeber.id);
+        if (error) throw error;
+        onPatched({ ...auftraggeber, aba_aufschlag_prozent: abaValue });
+      }
+
       await load();
       onCountChanged(parsedPs.length);
       setStatusMsg({ kind: 'ok', text: 'Preisstufen und Sondervergütungen gespeichert.' });
@@ -523,6 +560,28 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
             {uploading ? 'Hochladen …' : 'PDF hochladen'}
           </button>
         )}
+      </div>
+
+      <div className="card p-5 space-y-3">
+        <h3 className="text-base font-semibold text-maja-navy">ABA-Aufschlag</h3>
+        <div className="grid gap-3 sm:grid-cols-[12rem_1fr] sm:items-start">
+          <div>
+            <label htmlFor="aba-aufschlag" className="label">ABA-Aufschlag (%)</label>
+            <input
+              id="aba-aufschlag"
+              className="input"
+              type="text"
+              inputMode="decimal"
+              placeholder="z.B. 15,00"
+              value={abaAufschlagInput}
+              onChange={(e) => setAbaAufschlagInput(e.target.value)}
+            />
+          </div>
+          <p className="text-xs text-maja-muted sm:pt-7">
+            Prozentsatz, der auf den Standardpreis bei ABA-Touren aufgeschlagen wird.
+            Leer oder 0 = kein Aufschlag.
+          </p>
+        </div>
       </div>
 
       <div className="card p-5 space-y-3">

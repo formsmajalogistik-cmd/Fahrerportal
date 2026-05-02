@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
+import { TourImportDialog } from './touren/TourImportDialog';
 import { displayName } from '../lib/names';
 import {
   formatDateTime, formatEuro, formatKm, tourTitel,
@@ -50,6 +51,7 @@ export function TourenlistePage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [openTourId, setOpenTourId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
@@ -178,9 +180,14 @@ export function TourenlistePage() {
             {refreshing ? 'Lädt …' : 'Aktualisieren'}
           </button>
           {isAdmin && (
-            <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
-              + Neue Tour
-            </button>
+            <>
+              <button type="button" className="btn-secondary" onClick={() => setShowImport(true)}>
+                Touren importieren
+              </button>
+              <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
+                + Neue Tour
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -306,6 +313,13 @@ export function TourenlistePage() {
         <TourCreateDialog
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); void load(); }}
+        />
+      )}
+
+      {showImport && isAdmin && (
+        <TourImportDialog
+          onClose={() => setShowImport(false)}
+          onImported={() => { void load(); }}
         />
       )}
 

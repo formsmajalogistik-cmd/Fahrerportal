@@ -63,6 +63,7 @@ export type Database = {
           email1: string | null;
           email2: string | null;
           preisliste_pdf_url: string | null;
+          aba_aufschlag_prozent: number | null;
         };
         Insert: {
           id?: string;
@@ -74,6 +75,7 @@ export type Database = {
           email1?: string | null;
           email2?: string | null;
           preisliste_pdf_url?: string | null;
+          aba_aufschlag_prozent?: number | null;
         };
         Update: {
           id?: string;
@@ -85,6 +87,7 @@ export type Database = {
           email1?: string | null;
           email2?: string | null;
           preisliste_pdf_url?: string | null;
+          aba_aufschlag_prozent?: number | null;
         };
         Relationships: [];
       };
@@ -178,6 +181,7 @@ export type Database = {
           verguetung: number | null;
           tourenart: TourenArt | null;
           sondervereinbarung: string | null;
+          ist_sondervereinbarung: boolean;
           kennzeichen: string[];
           barauslagen: number;
           fahrer_honorar: number;
@@ -206,6 +210,7 @@ export type Database = {
           verguetung?: number | null;
           tourenart?: TourenArt | null;
           sondervereinbarung?: string | null;
+          ist_sondervereinbarung?: boolean;
           kennzeichen?: string[];
           barauslagen?: number;
           fahrer_honorar?: number;
@@ -234,6 +239,7 @@ export type Database = {
           verguetung?: number | null;
           tourenart?: TourenArt | null;
           sondervereinbarung?: string | null;
+          ist_sondervereinbarung?: boolean;
           kennzeichen?: string[];
           barauslagen?: number;
           fahrer_honorar?: number;
@@ -428,6 +434,14 @@ export type Database = {
       is_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      calculate_tour_price: {
+        Args: {
+          p_auftraggeber_id: string | null;
+          p_km: number | null;
+          p_tourenart?: string | null;
+        };
+        Returns: number | null;
       };
     };
     Enums: {
