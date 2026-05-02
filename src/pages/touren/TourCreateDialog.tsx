@@ -1,27 +1,16 @@
-import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { computeKmGesamt, formatKm } from '../../lib/touren';
 import { displayName } from '../../lib/names';
 import type {
-  AppUser, Auftraggeber, Fahrer, TourenArt, Zwischenstopp,
+  AppUser, Auftraggeber, Fahrer, TourenArt,
 } from '../../types/db';
-import type { Json } from '../../types/supabase';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
 
 interface Props {
   onClose: () => void;
   onCreated: () => void;
-}
-
-interface ZwischenstoppDraft {
-  key: string;
-  stadt: string;
-  km_ab_vorher: string;
-}
-
-function newStop(): ZwischenstoppDraft {
-  return { key: `stop-${Math.random().toString(36).slice(2, 10)}`, stadt: '', km_ab_vorher: '' };
 }
 
 function parseInteger(v: string): number | null {
@@ -37,27 +26,33 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [startStadt, setStartStadt] = useState('');
   const [zielStadt, setZielStadt]   = useState('');
 
+  // Rückführung
+  const [hatRueckfuehrung, setHatRueckfuehrung] = useState(false);
+  const [rueckfuehrungStadt, setRueckfuehrungStadt] = useState('');
+
+  // km
+  const [kmHin, setKmHin]     = useState('');
+  const [kmRueck, setKmRueck] = useState('');
+
   // Auftraggeber/Fahrer
   const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
   const [fahrer, setFahrer] = useState<FahrerWithUser[]>([]);
   const [auftraggeberId, setAuftraggeberId] = useState('');
   const [fahrerId, setFahrerId] = useState('');
 
-  // Optional
-  const [tourenart, setTourenart] = useState<TourenArt | ''>('');
-  const [startdatum, setStartdatum] = useState(''); // local datetime input
+  // Tourenart + Daten
+  const [tourenart, setTourenart]   = useState<TourenArt | ''>('');
+  const [startdatum, setStartdatum] = useState('');
   const [enddatum, setEnddatum]     = useState('');
+
+  // Kennzeichen — 1 oder 2 Felder
+  const [kennzeichenHin, setKennzeichenHin]   = useState('');
+  const [kennzeichenRueck, setKennzeichenRueck] = useState('');
+
+  // Sondervereinbarung, Kundenname, Info
   const [sondervereinbarung, setSondervereinbarung] = useState('');
+  const [kundenname, setKundenname] = useState('');
   const [info, setInfo] = useState('');
-
-  // Zwischenstopps + km
-  const [stops, setStops] = useState<ZwischenstoppDraft[]>([]);
-  const [kmStartZuStop, setKmStartZuStop] = useState('');
-  const [kmStopZuZiel, setKmStopZuZiel]   = useState('');
-
-  // Kennzeichen
-  const [kennzeichenList, setKennzeichenList] = useState<string[]>([]);
-  const [kennzeichenInput, setKennzeichenInput] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState<string | null>(null);
@@ -83,45 +78,20 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     [auftraggeber, auftraggeberId],
   );
 
-  const liveZwischenstopps: Zwischenstopp[] = useMemo(
-    () => stops.map((s) => ({
-      stadt: s.stadt.trim(),
-      km_ab_vorher: parseInteger(s.km_ab_vorher) ?? 0,
-    })),
-    [stops],
-  );
-
   const kmGesamt = useMemo(() => computeKmGesamt({
-    km_start_bis_erster_stopp: parseInteger(kmStartZuStop),
-    zwischenstopps: liveZwischenstopps,
-    km_letzter_stopp_bis_ziel: parseInteger(kmStopZuZiel),
-  }), [kmStartZuStop, kmStopZuZiel, liveZwischenstopps]);
+    km_hin: parseInteger(kmHin),
+    km_rueck: parseInteger(kmRueck),
+    hatRueckfuehrung,
+  }), [kmHin, kmRueck, hatRueckfuehrung]);
 
-  const hasStops = stops.length > 0;
-
-  function addStop() {
-    setStops((s) => [...s, newStop()]);
-  }
-  function removeStop(key: string) {
-    setStops((s) => s.filter((x) => x.key !== key));
-  }
-  function updateStop(key: string, patch: Partial<ZwischenstoppDraft>) {
-    setStops((s) => s.map((x) => (x.key === key ? { ...x, ...patch } : x)));
-  }
-
-  function commitKennzeichen() {
-    const raw = kennzeichenInput.trim().toUpperCase();
-    if (!raw) return;
-    setKennzeichenList((list) => (list.includes(raw) ? list : [...list, raw]));
-    setKennzeichenInput('');
-  }
-
-  function handleKennzeichenKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      commitKennzeichen();
-    } else if (e.key === 'Backspace' && kennzeichenInput === '' && kennzeichenList.length > 0) {
-      setKennzeichenList((list) => list.slice(0, -1));
+  function toggleRueckfuehrung() {
+    if (hatRueckfuehrung) {
+      setHatRueckfuehrung(false);
+      setRueckfuehrungStadt('');
+      setKmRueck('');
+      setKennzeichenRueck('');
+    } else {
+      setHatRueckfuehrung(true);
     }
   }
 
@@ -136,32 +106,29 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       return;
     }
 
-    // Validate stops
-    const cleanStops: Zwischenstopp[] = [];
-    for (const s of stops) {
-      const stadt = s.stadt.trim();
-      const km = parseInteger(s.km_ab_vorher);
-      if (!stadt) {
-        setError('Jeder Zwischenstopp braucht eine Stadt.');
-        return;
-      }
-      if (km == null) {
-        setError(`Zwischenstopp „${stadt}": km ab vorherigem Stopp ungültig.`);
-        return;
-      }
-      cleanStops.push({ stadt, km_ab_vorher: km });
+    if (hatRueckfuehrung && !rueckfuehrungStadt.trim()) {
+      setError('Rückführung aktiviert: Stadt darf nicht leer sein.');
+      return;
     }
 
-    const kmStart = parseInteger(kmStartZuStop);
-    const kmZiel  = parseInteger(kmStopZuZiel);
+    const km_hin   = parseInteger(kmHin);
+    const km_rueck = hatRueckfuehrung ? parseInteger(kmRueck) : null;
+
+    const kennzeichen: string[] = [];
+    const kzHin = kennzeichenHin.trim().toUpperCase();
+    if (kzHin) kennzeichen.push(kzHin);
+    if (hatRueckfuehrung) {
+      const kzRueck = kennzeichenRueck.trim().toUpperCase();
+      if (kzRueck) kennzeichen.push(kzRueck);
+    }
 
     setSaving(true);
     const payload = {
       start_stadt: start,
       ziel_stadt: ziel,
-      zwischenstopps: cleanStops as unknown as Json,
-      km_start_bis_erster_stopp: kmStart,
-      km_letzter_stopp_bis_ziel: hasStops ? kmZiel : null,
+      rueckfuehrung_stadt: hatRueckfuehrung ? rueckfuehrungStadt.trim() : null,
+      km_hin,
+      km_rueck,
       km_gesamt: kmGesamt,
       auftraggeber_id: auftraggeberId || null,
       fahrer_id: fahrerId || null,
@@ -169,8 +136,9 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       startdatum: startdatum ? new Date(startdatum).toISOString() : null,
       enddatum: enddatum ? new Date(enddatum).toISOString() : null,
       sondervereinbarung: sondervereinbarung.trim() || null,
+      kundenname: kundenname.trim() || null,
       info: info.trim() || null,
-      kennzeichen: kennzeichenList,
+      kennzeichen,
     };
 
     const { error: err } = await supabase.from('touren').insert(payload);
@@ -214,83 +182,48 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             </div>
           </div>
 
-          {/* Zwischenstopps */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-maja-ink">Zwischenstopps</span>
-              <button type="button" className="btn-secondary px-3 py-1 text-sm" onClick={addStop}>
-                + Zwischenstopp
-              </button>
-            </div>
-            {stops.length === 0 ? (
-              <p className="text-xs text-maja-muted">Keine Zwischenstopps.</p>
-            ) : (
-              <ul className="space-y-2">
-                {stops.map((s, i) => (
-                  <li key={s.key} className="grid grid-cols-[auto_1fr_8rem_auto] items-end gap-2">
-                    <span className="pb-2 text-xs text-maja-muted">{i + 1}.</span>
-                    <div>
-                      <label className="label">Stadt</label>
-                      <input
-                        className="input"
-                        value={s.stadt}
-                        onChange={(e) => updateStop(s.key, { stadt: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">km ab vorher</label>
-                      <input
-                        className="input"
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={s.km_ab_vorher}
-                        onChange={(e) => updateStop(s.key, { km_ab_vorher: e.target.value })}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removeStop(s.key)}
-                      className="mb-0.5 rounded-md px-2 py-2 text-red-600 hover:bg-red-50"
-                      aria-label="Zwischenstopp löschen"
-                      title="Zwischenstopp löschen"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* km Start → erster Stopp / letzter Stopp → Ziel */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/* Rückführung */}
+          {!hatRueckfuehrung ? (
+            <button
+              type="button"
+              className="btn-secondary px-3 py-1.5 text-sm"
+              onClick={toggleRueckfuehrung}
+            >
+              + Rückführung
+            </button>
+          ) : (
             <div>
-              <label htmlFor="t-km-start" className="label">
-                km Start → {hasStops ? 'erster Stopp' : 'Ziel'}
-              </label>
+              <div className="mb-1 flex items-center justify-between">
+                <label htmlFor="t-rueck" className="label mb-0">Rückführung-Stadt</label>
+                <button
+                  type="button"
+                  onClick={toggleRueckfuehrung}
+                  className="text-xs font-medium text-red-600 hover:underline"
+                >
+                  Rückführung entfernen
+                </button>
+              </div>
               <input
-                id="t-km-start"
+                id="t-rueck"
                 className="input"
-                type="number"
-                min={0}
-                step={1}
-                value={kmStartZuStop}
-                onChange={(e) => setKmStartZuStop(e.target.value)}
+                value={rueckfuehrungStadt}
+                onChange={(e) => setRueckfuehrungStadt(e.target.value)}
               />
             </div>
-            {hasStops && (
+          )}
+
+          {/* km Hin / Rück */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="t-km-hin" className="label">km Hin (Start → Ziel)</label>
+              <input id="t-km-hin" className="input" type="number" min={0} step={1}
+                     value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
+            </div>
+            {hatRueckfuehrung && (
               <div>
-                <label htmlFor="t-km-end" className="label">km letzter Stopp → Ziel</label>
-                <input
-                  id="t-km-end"
-                  className="input"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={kmStopZuZiel}
-                  onChange={(e) => setKmStopZuZiel(e.target.value)}
-                />
+                <label htmlFor="t-km-rueck" className="label">km Rück (Ziel → Rückführung)</label>
+                <input id="t-km-rueck" className="input" type="number" min={0} step={1}
+                       value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
               </div>
             )}
           </div>
@@ -354,46 +287,48 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             </div>
           </div>
 
-          {/* Kennzeichen Tags */}
-          <div>
-            <label htmlFor="t-kz" className="label">
-              Kennzeichen <span className="text-xs font-normal text-maja-muted">
-                (Enter zum Hinzufügen)
-              </span>
-            </label>
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-maja-navy/20 bg-white px-2 py-2 focus-within:border-maja-accent focus-within:ring-2 focus-within:ring-maja-accent/30">
-              {kennzeichenList.map((k) => (
-                <span key={k} className="inline-flex items-center gap-1 rounded-md bg-maja-light px-2 py-1 text-xs font-medium text-maja-navy">
-                  {k}
-                  <button
-                    type="button"
-                    onClick={() => setKennzeichenList((l) => l.filter((x) => x !== k))}
-                    className="text-maja-muted hover:text-red-600"
-                    aria-label={`${k} entfernen`}
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-              <input
-                id="t-kz"
-                className="flex-1 min-w-[8rem] border-0 bg-transparent px-1 py-1 text-sm focus:outline-none focus:ring-0"
-                value={kennzeichenInput}
-                onChange={(e) => setKennzeichenInput(e.target.value)}
-                onKeyDown={handleKennzeichenKey}
-                onBlur={commitKennzeichen}
-                placeholder={kennzeichenList.length === 0 ? 'z.B. M-XY 1234' : ''}
-              />
+          {/* Kennzeichen */}
+          {!hatRueckfuehrung ? (
+            <div>
+              <label htmlFor="t-kz" className="label">Kennzeichen</label>
+              <input id="t-kz" className="input" placeholder="z.B. M-XY 1234"
+                     value={kennzeichenHin}
+                     onChange={(e) => setKennzeichenHin(e.target.value)} />
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="t-kz-hin" className="label">Kennzeichen Hin</label>
+                <input id="t-kz-hin" className="input"
+                       value={kennzeichenHin}
+                       onChange={(e) => setKennzeichenHin(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="t-kz-rueck" className="label">Kennzeichen Rück</label>
+                <input id="t-kz-rueck" className="input"
+                       value={kennzeichenRueck}
+                       onChange={(e) => setKennzeichenRueck(e.target.value)} />
+              </div>
+            </div>
+          )}
+
+          {/* Sondervereinbarung + Kundenname */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="t-sv" className="label">Sondervereinbarung</label>
+              <input id="t-sv" className="input"
+                     value={sondervereinbarung}
+                     onChange={(e) => setSondervereinbarung(e.target.value)} />
+            </div>
+            <div>
+              <label htmlFor="t-kn" className="label">Kundenname</label>
+              <input id="t-kn" className="input"
+                     value={kundenname}
+                     onChange={(e) => setKundenname(e.target.value)} />
             </div>
           </div>
 
-          {/* Sondervereinbarung + Info */}
-          <div>
-            <label htmlFor="t-sv" className="label">Sondervereinbarung</label>
-            <input id="t-sv" className="input"
-                   value={sondervereinbarung}
-                   onChange={(e) => setSondervereinbarung(e.target.value)} />
-          </div>
+          {/* Info */}
           <div>
             <label htmlFor="t-info" className="label">Info</label>
             <textarea id="t-info" className="input min-h-[5rem]"

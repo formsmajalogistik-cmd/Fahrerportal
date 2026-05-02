@@ -1,6 +1,6 @@
 // Hilfsfunktionen rund um die Tourenliste.
 
-import type { Tour, Zwischenstopp } from '../types/db';
+import type { Tour } from '../types/db';
 
 const EUR = new Intl.NumberFormat('de-DE', {
   style: 'currency', currency: 'EUR', minimumFractionDigits: 2,
@@ -30,26 +30,27 @@ export function formatDateTime(iso: string | null | undefined): string {
   return DATETIME.format(d);
 }
 
-/** Berechnet die Gesamtstrecke aus Start, Stopps und Ziel. */
+/** Berechnet die Gesamtstrecke aus km_hin und km_rueck. */
 export function computeKmGesamt(args: {
-  km_start_bis_erster_stopp: number | null;
-  zwischenstopps: Zwischenstopp[];
-  km_letzter_stopp_bis_ziel: number | null;
+  km_hin: number | null;
+  km_rueck: number | null;
+  hatRueckfuehrung: boolean;
 }): number | null {
-  const { km_start_bis_erster_stopp, zwischenstopps, km_letzter_stopp_bis_ziel } = args;
-  if (zwischenstopps.length === 0) {
-    return km_start_bis_erster_stopp ?? null;
+  const { km_hin, km_rueck, hatRueckfuehrung } = args;
+  if (!hatRueckfuehrung) {
+    return km_hin ?? null;
   }
-  let total = km_start_bis_erster_stopp ?? 0;
-  for (const stop of zwischenstopps) {
-    total += Number(stop.km_ab_vorher) || 0;
-  }
-  total += km_letzter_stopp_bis_ziel ?? 0;
-  return total;
+  if (km_hin == null && km_rueck == null) return null;
+  return (km_hin ?? 0) + (km_rueck ?? 0);
 }
 
-/** Baut den Routen-Titel aus Start → (Stopps) → Ziel. */
-export function tourTitel(t: Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'zwischenstopps'>): string {
-  const parts = [t.start_stadt, ...t.zwischenstopps.map((s) => s.stadt), t.ziel_stadt];
+/** Baut den Routen-Titel: "Start → Ziel" bzw. "Start → Ziel → Rückführung". */
+export function tourTitel(
+  t: Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt'>,
+): string {
+  const parts = [t.start_stadt, t.ziel_stadt];
+  if (t.rueckfuehrung_stadt && t.rueckfuehrung_stadt.trim()) {
+    parts.push(t.rueckfuehrung_stadt);
+  }
   return parts.filter(Boolean).join(' → ');
 }

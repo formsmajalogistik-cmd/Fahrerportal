@@ -15,16 +15,7 @@ export type Sonderverguetung = Database['public']['Tables']['sonderverguetungen'
 
 // ---- Touren -----------------------------------------------
 
-export interface Zwischenstopp {
-  stadt: string;
-  km_ab_vorher: number;
-}
-
-type TourRow = Database['public']['Tables']['touren']['Row'];
-export type Tour = Omit<TourRow, 'zwischenstopps'> & {
-  zwischenstopps: Zwischenstopp[];
-};
-
+export type Tour = Database['public']['Tables']['touren']['Row'];
 export type TourZusatz = Database['public']['Tables']['tour_zusaetze']['Row'];
 export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
 export type FormularZuweisung =

@@ -3,12 +3,13 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
 import { TourCreateDialog } from './touren/TourCreateDialog';
+import { TourDetailDialog } from './touren/TourDetailDialog';
 import { displayName } from '../lib/names';
 import {
   formatDateTime, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
 import type {
-  AppUser, Auftraggeber, Fahrer, Tour, TourStatus, Zwischenstopp,
+  AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
 } from '../types/db';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
@@ -49,6 +50,7 @@ export function TourenlistePage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
+  const [openTourId, setOpenTourId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -105,7 +107,8 @@ export function TourenlistePage() {
         t.tour_id ?? '',
         t.start_stadt,
         t.ziel_stadt,
-        ...(t.zwischenstopps?.map((z) => z.stadt) ?? []),
+        t.rueckfuehrung_stadt ?? '',
+        t.kundenname ?? '',
         fahrerName,
         ...(t.kennzeichen ?? []),
       ].join(' ').toLowerCase();
@@ -241,7 +244,7 @@ export function TourenlistePage() {
       ) : (
         <ul className="space-y-3">
           {pageRows.map((t) => (
-            <TourCard key={t.id} tour={t} />
+            <TourCard key={t.id} tour={t} onOpen={() => setOpenTourId(t.id)} />
           ))}
         </ul>
       )}
@@ -279,6 +282,15 @@ export function TourenlistePage() {
           onCreated={() => { setShowCreate(false); void load(); }}
         />
       )}
+
+      {openTourId && (
+        <TourDetailDialog
+          tourId={openTourId}
+          onClose={() => setOpenTourId(null)}
+          onChanged={() => void load(true)}
+          onDeleted={() => { setOpenTourId(null); void load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -296,8 +308,8 @@ function KpiCard({ title, value, hint, accent }: KpiProps) {
   );
 }
 
-interface CardProps { tour: TourRow }
-function TourCard({ tour }: CardProps) {
+interface CardProps { tour: TourRow; onOpen: () => void }
+function TourCard({ tour, onOpen }: CardProps) {
   const fahrerName = displayName(tour.fahrer?.user ?? null) || '— kein Fahrer —';
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
@@ -307,17 +319,11 @@ function TourCard({ tour }: CardProps) {
     return formatDateTime(tour.startdatum ?? tour.enddatum);
   })();
 
-  function handleClick() {
-    // Detail-Panel kommt im nächsten Schritt.
-    // eslint-disable-next-line no-console
-    console.log('Tour Detail:', tour.id);
-  }
-
   return (
     <li>
       <button
         type="button"
-        onClick={handleClick}
+        onClick={onOpen}
         className="card w-full p-5 text-left transition hover:shadow-lg"
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -329,11 +335,7 @@ function TourCard({ tour }: CardProps) {
                 </span>
               )}
               <h3 className="text-base font-semibold text-maja-navy break-words">
-                {tourTitel({
-                  start_stadt: tour.start_stadt,
-                  ziel_stadt: tour.ziel_stadt,
-                  zwischenstopps: tour.zwischenstopps as Zwischenstopp[],
-                })}
+                {tourTitel(tour)}
               </h3>
             </div>
 
