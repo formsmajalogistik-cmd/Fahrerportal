@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { triggerOneDriveDownload, uploadToOneDrive } from '../../lib/onedrive';
 import { sanitizeSegment } from '../../lib/onedrivePaths';
-import type { Auftraggeber, Preisstufe } from '../../types/db';
+import type { Auftraggeber, Preisstufe, Sonderverguetung } from '../../types/db';
 
 const DEFAULT_RANGES: Array<[number, number]> = [
   [1, 24], [25, 50], [51, 74], [75, 100], [101, 125], [126, 150], [151, 174],
@@ -16,6 +16,13 @@ const DEFAULT_RANGES: Array<[number, number]> = [
   [1801, 1850], [1851, 1900], [1901, 1948], [1949, 2000],
 ];
 
+const DEFAULT_SV: Array<{ bezeichnung: string; einheit: string }> = [
+  { bezeichnung: 'Reifenhandling',  einheit: 'pro Vorgang' },
+  { bezeichnung: 'Rote Kennzeichen', einheit: 'pauschal' },
+  { bezeichnung: 'Wartezeit',        einheit: 'pro Stunde' },
+  { bezeichnung: 'Ladezeit',         einheit: 'pro Vorgang' },
+];
+
 interface DraftRow {
   // Local row id used as React key. Existing rows reuse the DB id.
   key: string;
@@ -23,6 +30,14 @@ interface DraftRow {
   id: string | null;
   km_von: string;
   km_bis: string;
+  preis: string;
+}
+
+interface SvDraftRow {
+  key: string;
+  id: string | null;
+  bezeichnung: string;
+  einheit: string;
   preis: string;
 }
 
@@ -42,6 +57,26 @@ function newDraftRow(km_von = '', km_bis = '', preis = '0,00'): DraftRow {
     id: null,
     km_von,
     km_bis,
+    preis,
+  };
+}
+
+function svRowFromServer(s: Sonderverguetung): SvDraftRow {
+  return {
+    key: s.id,
+    id: s.id,
+    bezeichnung: s.bezeichnung,
+    einheit: s.einheit,
+    preis: Number(s.preis).toFixed(2).replace('.', ','),
+  };
+}
+
+function newSvDraftRow(bezeichnung = '', einheit = '', preis = '0,00'): SvDraftRow {
+  return {
+    key: `sv-new-${Math.random().toString(36).slice(2, 10)}`,
+    id: null,
+    bezeichnung,
+    einheit,
     preis,
   };
 }
@@ -120,7 +155,7 @@ export function PreislistePage() {
       <div>
         <h1 className="text-2xl font-semibold text-maja-navy">Preisliste</h1>
         <p className="text-sm text-maja-muted">
-          Pro Auftraggeber Preisliste-PDF und km-Stufen pflegen.
+          Pro Auftraggeber Preisliste-PDF, km-Stufen und Sondervergütungen pflegen.
         </p>
       </div>
 
@@ -168,7 +203,7 @@ export function PreislistePage() {
         <section className="min-w-0">
           {!selected ? (
             <div className="card p-8 text-center text-sm text-maja-muted">
-              Wähle links einen Auftraggeber aus, um Preisliste und km-Stufen zu bearbeiten.
+              Wähle links einen Auftraggeber aus, um Preisliste, km-Stufen und Sondervergütungen zu bearbeiten.
             </div>
           ) : (
             <PreislisteDetail
@@ -193,6 +228,8 @@ interface DetailProps {
 function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailProps) {
   const [serverRows, setServerRows] = useState<Preisstufe[]>([]);
   const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
+  const [serverSv, setServerSv] = useState<Sonderverguetung[]>([]);
+  const [draftSv, setDraftSv] = useState<SvDraftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -201,19 +238,33 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('preisstufen')
-      .select('*')
-      .eq('auftraggeber_id', auftraggeber.id)
-      .order('km_von', { ascending: true });
-    if (error) {
-      setStatusMsg({ kind: 'err', text: error.message });
-      setServerRows([]);
-      setDraftRows([]);
+    const [psRes, svRes] = await Promise.all([
+      supabase
+        .from('preisstufen')
+        .select('*')
+        .eq('auftraggeber_id', auftraggeber.id)
+        .order('km_von', { ascending: true }),
+      supabase
+        .from('sonderverguetungen')
+        .select('*')
+        .eq('auftraggeber_id', auftraggeber.id)
+        .order('bezeichnung', { ascending: true }),
+    ]);
+    if (psRes.error) {
+      setStatusMsg({ kind: 'err', text: psRes.error.message });
+      setServerRows([]); setDraftRows([]);
     } else {
-      const rows = (data ?? []) as Preisstufe[];
+      const rows = (psRes.data ?? []) as Preisstufe[];
       setServerRows(rows);
       setDraftRows(rows.map(rowFromServer));
+    }
+    if (svRes.error) {
+      setStatusMsg({ kind: 'err', text: svRes.error.message });
+      setServerSv([]); setDraftSv([]);
+    } else {
+      const rows = (svRes.data ?? []) as Sonderverguetung[];
+      setServerSv(rows);
+      setDraftSv(rows.map(svRowFromServer));
     }
     setLoading(false);
   }, [auftraggeber.id]);
@@ -223,25 +274,36 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
   function updateRow(key: string, patch: Partial<DraftRow>) {
     setDraftRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
-
   function removeRow(key: string) {
     setDraftRows((rows) => rows.filter((r) => r.key !== key));
   }
-
   function addEmptyRow() {
     setDraftRows((rows) => [...rows, newDraftRow()]);
   }
-
   function loadDefaults() {
     setDraftRows(DEFAULT_RANGES.map(([von, bis]) => newDraftRow(String(von), String(bis), '0,00')));
+    setStatusMsg(null);
+  }
+
+  function updateSvRow(key: string, patch: Partial<SvDraftRow>) {
+    setDraftSv((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+  function removeSvRow(key: string) {
+    setDraftSv((rows) => rows.filter((r) => r.key !== key));
+  }
+  function addEmptySvRow() {
+    setDraftSv((rows) => [...rows, newSvDraftRow()]);
+  }
+  function loadSvDefaults() {
+    setDraftSv(DEFAULT_SV.map((d) => newSvDraftRow(d.bezeichnung, d.einheit, '0,00')));
     setStatusMsg(null);
   }
 
   async function handleSave() {
     setStatusMsg(null);
 
-    // Validate
-    const parsed: Array<{ row: DraftRow; km_von: number; km_bis: number; preis: number }> = [];
+    // --- Validate Preisstufen ---
+    const parsedPs: Array<{ row: DraftRow; km_von: number; km_bis: number; preis: number }> = [];
     for (const row of draftRows) {
       const km_von = parseKm(row.km_von);
       const km_bis = parseKm(row.km_bis);
@@ -258,14 +320,43 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
         setStatusMsg({ kind: 'err', text: `Stufe ${row.km_von}–${row.km_bis}: Preis ist ungültig.` });
         return;
       }
-      parsed.push({ row, km_von, km_bis, preis });
+      parsedPs.push({ row, km_von, km_bis, preis });
+    }
+
+    // --- Validate Sondervergütungen ---
+    const parsedSv: Array<{ row: SvDraftRow; bezeichnung: string; einheit: string; preis: number }> = [];
+    const seen = new Set<string>();
+    for (const row of draftSv) {
+      const bezeichnung = row.bezeichnung.trim();
+      const einheit = row.einheit.trim();
+      const preis = parsePreis(row.preis);
+      if (!bezeichnung) {
+        setStatusMsg({ kind: 'err', text: 'Sondervergütung: Bezeichnung darf nicht leer sein.' });
+        return;
+      }
+      if (!einheit) {
+        setStatusMsg({ kind: 'err', text: `Sondervergütung „${bezeichnung}": Einheit darf nicht leer sein.` });
+        return;
+      }
+      if (preis === null) {
+        setStatusMsg({ kind: 'err', text: `Sondervergütung „${bezeichnung}": Preis ist ungültig.` });
+        return;
+      }
+      const lower = bezeichnung.toLowerCase();
+      if (seen.has(lower)) {
+        setStatusMsg({ kind: 'err', text: `Sondervergütung „${bezeichnung}" ist mehrfach vorhanden.` });
+        return;
+      }
+      seen.add(lower);
+      parsedSv.push({ row, bezeichnung, einheit, preis });
     }
 
     setSaving(true);
     try {
-      const draftIds = new Set(draftRows.map((r) => r.id).filter((id): id is string => !!id));
-      const toDelete = serverRows.filter((s) => !draftIds.has(s.id)).map((s) => s.id);
-      const toInsert = parsed
+      // --- Preisstufen: diff & sync ---
+      const psDraftIds = new Set(draftRows.map((r) => r.id).filter((id): id is string => !!id));
+      const psToDelete = serverRows.filter((s) => !psDraftIds.has(s.id)).map((s) => s.id);
+      const psToInsert = parsedPs
         .filter((p) => p.row.id === null)
         .map((p) => ({
           auftraggeber_id: auftraggeber.id,
@@ -273,17 +364,17 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
           km_bis: p.km_bis,
           preis: p.preis,
         }));
-      const toUpdate = parsed.filter((p) => p.row.id !== null);
+      const psToUpdate = parsedPs.filter((p) => p.row.id !== null);
 
-      if (toDelete.length > 0) {
-        const { error } = await supabase.from('preisstufen').delete().in('id', toDelete);
+      if (psToDelete.length > 0) {
+        const { error } = await supabase.from('preisstufen').delete().in('id', psToDelete);
         if (error) throw error;
       }
-      if (toInsert.length > 0) {
-        const { error } = await supabase.from('preisstufen').insert(toInsert);
+      if (psToInsert.length > 0) {
+        const { error } = await supabase.from('preisstufen').insert(psToInsert);
         if (error) throw error;
       }
-      for (const u of toUpdate) {
+      for (const u of psToUpdate) {
         const { error } = await supabase
           .from('preisstufen')
           .update({ km_von: u.km_von, km_bis: u.km_bis, preis: u.preis })
@@ -291,9 +382,38 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
         if (error) throw error;
       }
 
+      // --- Sondervergütungen: diff & sync ---
+      const svDraftIds = new Set(draftSv.map((r) => r.id).filter((id): id is string => !!id));
+      const svToDelete = serverSv.filter((s) => !svDraftIds.has(s.id)).map((s) => s.id);
+      const svToInsert = parsedSv
+        .filter((p) => p.row.id === null)
+        .map((p) => ({
+          auftraggeber_id: auftraggeber.id,
+          bezeichnung: p.bezeichnung,
+          einheit: p.einheit,
+          preis: p.preis,
+        }));
+      const svToUpdate = parsedSv.filter((p) => p.row.id !== null);
+
+      if (svToDelete.length > 0) {
+        const { error } = await supabase.from('sonderverguetungen').delete().in('id', svToDelete);
+        if (error) throw error;
+      }
+      if (svToInsert.length > 0) {
+        const { error } = await supabase.from('sonderverguetungen').insert(svToInsert);
+        if (error) throw error;
+      }
+      for (const u of svToUpdate) {
+        const { error } = await supabase
+          .from('sonderverguetungen')
+          .update({ bezeichnung: u.bezeichnung, einheit: u.einheit, preis: u.preis })
+          .eq('id', u.row.id!);
+        if (error) throw error;
+      }
+
       await load();
-      onCountChanged(parsed.length);
-      setStatusMsg({ kind: 'ok', text: 'Preisstufen gespeichert.' });
+      onCountChanged(parsedPs.length);
+      setStatusMsg({ kind: 'ok', text: 'Preisstufen und Sondervergütungen gespeichert.' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Speichern fehlgeschlagen';
       setStatusMsg({ kind: 'err', text: msg });
@@ -338,14 +458,15 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
     if (!ok) setStatusMsg({ kind: 'err', text: 'Download fehlgeschlagen.' });
   }
 
-  const hasNoRows = !loading && draftRows.length === 0;
+  const noPs = !loading && draftRows.length === 0;
+  const noSv = !loading && draftSv.length === 0;
 
   return (
     <div className="space-y-4">
       <div className="card p-5">
         <h2 className="text-lg font-semibold text-maja-navy">{auftraggeber.name}</h2>
         <p className="text-sm text-maja-muted">
-          Preisliste-PDF und km-Stufen für diesen Auftraggeber.
+          Preisliste-PDF, km-Stufen und Sondervergütungen für diesen Auftraggeber.
         </p>
       </div>
 
@@ -397,7 +518,7 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
 
         {loading ? (
           <Spinner label="Stufen werden geladen …" />
-        ) : hasNoRows ? (
+        ) : noPs ? (
           <div className="space-y-3">
             <p className="text-sm text-maja-muted">
               Für diesen Auftraggeber sind noch keine Preisstufen hinterlegt.
@@ -471,33 +592,110 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
             </div>
           </div>
         )}
+      </div>
 
-        {statusMsg && (
-          <div
-            role="status"
-            className={`rounded-lg p-3 text-sm ${
-              statusMsg.kind === 'ok'
-                ? 'bg-green-50 text-green-700'
-                : 'bg-red-50 text-red-700'
-            }`}
-          >
-            {statusMsg.text}
-          </div>
-        )}
+      <div className="card p-5 space-y-3">
+        <h3 className="text-base font-semibold text-maja-navy">Sondervergütungen</h3>
 
-        {!hasNoRows && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => void handleSave()}
-              disabled={saving || loading}
-            >
-              {saving ? 'Speichert …' : 'Speichern'}
+        {loading ? (
+          <Spinner label="Sondervergütungen werden geladen …" />
+        ) : noSv ? (
+          <div className="space-y-3">
+            <p className="text-sm text-maja-muted">
+              Für diesen Auftraggeber sind noch keine Sondervergütungen hinterlegt.
+            </p>
+            <button type="button" className="btn-primary" onClick={loadSvDefaults}>
+              Standard-Sondervergütungen laden
             </button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-maja-light text-left text-maja-navy">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Bezeichnung</th>
+                  <th className="px-3 py-2 font-semibold">Einheit</th>
+                  <th className="px-3 py-2 font-semibold">Preis (€)</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-maja-navy/10">
+                {draftSv.map((row) => (
+                  <tr key={row.key} className="align-middle">
+                    <td className="px-2 py-1">
+                      <input
+                        className="input py-1.5"
+                        type="text"
+                        value={row.bezeichnung}
+                        onChange={(e) => updateSvRow(row.key, { bezeichnung: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="input py-1.5"
+                        type="text"
+                        value={row.einheit}
+                        onChange={(e) => updateSvRow(row.key, { einheit: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="input py-1.5"
+                        type="text"
+                        inputMode="decimal"
+                        value={row.preis}
+                        onChange={(e) => updateSvRow(row.key, { preis: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-right">
+                      <button
+                        type="button"
+                        aria-label="Sondervergütung löschen"
+                        title="Sondervergütung löschen"
+                        className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
+                        onClick={() => removeSvRow(row.key)}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-3">
+              <button type="button" className="btn-secondary" onClick={addEmptySvRow}>
+                Sondervergütung hinzufügen
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {statusMsg && (
+        <div
+          role="status"
+          className={`rounded-lg p-3 text-sm ${
+            statusMsg.kind === 'ok'
+              ? 'bg-green-50 text-green-700'
+              : 'bg-red-50 text-red-700'
+          }`}
+        >
+          {statusMsg.text}
+        </div>
+      )}
+
+      {!loading && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => void handleSave()}
+            disabled={saving}
+          >
+            {saving ? 'Speichert …' : 'Speichern'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

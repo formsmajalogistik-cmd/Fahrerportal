@@ -9,6 +9,7 @@ export type FormularStatus = Database['public']['Enums']['formular_status'];
 export type AppUser = Database['public']['Tables']['app_users']['Row'];
 export type Auftraggeber = Database['public']['Tables']['auftraggeber']['Row'];
 export type Preisstufe = Database['public']['Tables']['preisstufen']['Row'];
+export type Sonderverguetung = Database['public']['Tables']['sonderverguetungen']['Row'];
 export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
 export type FormularZuweisung =
   Database['public']['Tables']['formular_zuweisungen']['Row'];

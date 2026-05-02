@@ -120,6 +120,40 @@ export type Database = {
           },
         ];
       };
+      sonderverguetungen: {
+        Row: {
+          id: string;
+          auftraggeber_id: string;
+          bezeichnung: string;
+          preis: number;
+          einheit: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          auftraggeber_id: string;
+          bezeichnung: string;
+          preis?: number;
+          einheit: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          auftraggeber_id?: string;
+          bezeichnung?: string;
+          preis?: number;
+          einheit?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'sonderverguetungen_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       fahrer: {
         Row: {
           id: string;
