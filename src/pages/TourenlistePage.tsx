@@ -67,8 +67,27 @@ export function TourenlistePage() {
       `)
       .order('startdatum', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
-    if (err) setError(err.message);
-    else setRows((data as unknown as TourRow[]) ?? []);
+    if (err) {
+      setError(err.message);
+      setRows([]);
+    } else {
+      // Defensive Normalisierung: Supabase kann je nach Schema-Cache-Zustand
+      // text[]-Spalten als null oder ein vergessener Default-Wert liefern.
+      // Wir stellen sicher, dass kennzeichen IMMER ein Array ist und auch
+      // die joined Relationen kein "undefined" einschleusen.
+      const list = Array.isArray(data) ? data : [];
+      const normalized = list.map((r: unknown) => {
+        const row = (r as Record<string, unknown>) ?? {};
+        const kz = row.kennzeichen;
+        return {
+          ...row,
+          kennzeichen: Array.isArray(kz) ? kz : [],
+          auftraggeber: (row.auftraggeber as TourRow['auftraggeber']) ?? null,
+          fahrer: (row.fahrer as TourRow['fahrer']) ?? null,
+        } as TourRow;
+      });
+      setRows(normalized);
+    }
     if (silent) setRefreshing(false); else setLoading(false);
   }, []);
 
@@ -80,8 +99,9 @@ export function TourenlistePage() {
   // ---- Jahres-Optionen + Counts ----
   const yearCounts = useMemo(() => {
     const m = new Map<number, number>();
-    for (const t of rows) {
-      const ref = t.startdatum ?? t.created_at;
+    for (const t of rows ?? []) {
+      const ref = t?.startdatum ?? t?.created_at;
+      if (!ref) continue;
       const y = new Date(ref).getFullYear();
       if (!Number.isFinite(y)) continue;
       m.set(y, (m.get(y) ?? 0) + 1);
@@ -91,26 +111,27 @@ export function TourenlistePage() {
   }, [rows, currentYear]);
 
   // ---- Touren des gewählten Jahres ----
-  const yearRows = useMemo(() => rows.filter((t) => {
-    const ref = t.startdatum ?? t.created_at;
+  const yearRows = useMemo(() => (rows ?? []).filter((t) => {
+    const ref = t?.startdatum ?? t?.created_at;
+    if (!ref) return false;
     return new Date(ref).getFullYear() === year;
   }), [rows, year]);
 
   // ---- Gefilterte Touren (Status + Suche) ----
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return yearRows.filter((t) => {
+    return (yearRows ?? []).filter((t) => {
       if (statusFilter !== 'alle' && t.status !== statusFilter) return false;
       if (!q) return true;
       const fahrerName = displayName(t.fahrer?.user ?? null).toLowerCase();
       const haystack = [
         t.tour_id ?? '',
-        t.start_stadt,
-        t.ziel_stadt,
+        t.start_stadt ?? '',
+        t.ziel_stadt ?? '',
         t.rueckfuehrung_stadt ?? '',
         t.kundenname ?? '',
         fahrerName,
-        ...(t.kennzeichen ?? []),
+        ...(Array.isArray(t.kennzeichen) ? t.kennzeichen : []),
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
@@ -118,16 +139,21 @@ export function TourenlistePage() {
 
   // ---- KPI-Daten ----
   const kpi = useMemo(() => {
-    const sum = filteredRows.reduce((acc, t) => acc + Number(t.verguetung ?? 0), 0);
-    const aktiv = yearRows.filter((t) => t.status === 'aktiv').length;
-    const geplant = yearRows.filter((t) => t.status === 'geplant').length;
-    return { jahr: yearRows.length, sum, sumCount: filteredRows.length, aktiv, geplant };
+    const sum = (filteredRows ?? []).reduce((acc, t) => acc + Number(t.verguetung ?? 0), 0);
+    const aktiv = (yearRows ?? []).filter((t) => t.status === 'aktiv').length;
+    const geplant = (yearRows ?? []).filter((t) => t.status === 'geplant').length;
+    return {
+      jahr: (yearRows ?? []).length,
+      sum,
+      sumCount: (filteredRows ?? []).length,
+      aktiv, geplant,
+    };
   }, [yearRows, filteredRows]);
 
   // ---- Pagination ----
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil((filteredRows ?? []).length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const pageRows = filteredRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageRows = (filteredRows ?? []).slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   if (loading) return <Spinner label="Touren werden geladen …" />;
   if (error)   return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -161,7 +187,7 @@ export function TourenlistePage() {
 
       {/* Jahres-Filter */}
       <div className="flex flex-wrap gap-2">
-        {yearCounts.map(([y, count]) => {
+        {(yearCounts ?? []).map(([y, count]) => {
           const active = y === year;
           return (
             <button
@@ -237,13 +263,13 @@ export function TourenlistePage() {
       </div>
 
       {/* Tourenliste */}
-      {pageRows.length === 0 ? (
+      {(pageRows ?? []).length === 0 ? (
         <div className="card p-8 text-center text-sm text-maja-muted">
           Keine Touren entsprechen den aktuellen Filtern.
         </div>
       ) : (
         <ul className="space-y-3">
-          {pageRows.map((t) => (
+          {(pageRows ?? []).map((t) => (
             <TourCard key={t.id} tour={t} onOpen={() => setOpenTourId(t.id)} />
           ))}
         </ul>
@@ -343,8 +369,8 @@ function TourCard({ tour, onOpen }: CardProps) {
               <Meta icon={<IconUser />}>{fahrerName}</Meta>
               <Meta icon={<IconPin />}>{formatKm(tour.km_gesamt)}</Meta>
               {dateRange && <Meta icon={<IconCalendar />}>{dateRange}</Meta>}
-              {(tour.kennzeichen?.length ?? 0) > 0 && (
-                <Meta icon={<IconCar />}>{tour.kennzeichen.join(', ')}</Meta>
+              {((tour.kennzeichen ?? []).length > 0) && (
+                <Meta icon={<IconCar />}>{(tour.kennzeichen ?? []).join(', ')}</Meta>
               )}
               {tour.auftraggeber && (
                 <Meta icon={<IconBuilding />}>

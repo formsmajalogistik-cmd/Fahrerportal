@@ -46,9 +46,12 @@ export function computeKmGesamt(args: {
 
 /** Baut den Routen-Titel: "Start → Ziel" bzw. "Start → Ziel → Rückführung". */
 export function tourTitel(
-  t: Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt'>,
+  t: Partial<Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt'>> | null | undefined,
 ): string {
-  const parts = [t.start_stadt, t.ziel_stadt];
+  if (!t) return '';
+  const parts: string[] = [];
+  if (t.start_stadt) parts.push(t.start_stadt);
+  if (t.ziel_stadt) parts.push(t.ziel_stadt);
   if (t.rueckfuehrung_stadt && t.rueckfuehrung_stadt.trim()) {
     parts.push(t.rueckfuehrung_stadt);
   }

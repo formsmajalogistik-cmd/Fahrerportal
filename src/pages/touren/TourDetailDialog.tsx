@@ -107,7 +107,7 @@ interface EditDraft {
 
 function draftFromTour(t: FullTour): EditDraft {
   const hat = !!t.rueckfuehrung_stadt;
-  const kz = t.kennzeichen ?? [];
+  const kz = Array.isArray(t.kennzeichen) ? t.kennzeichen : [];
   return {
     status: t.status,
     fahrerId: t.fahrer_id ?? '',
@@ -190,13 +190,20 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         .eq('aktiv', true),
     ]);
     if (tRes.error) { setError(tRes.error.message); setLoading(false); return; }
-    const full = tRes.data as unknown as FullTour;
+    const raw = (tRes.data ?? {}) as Record<string, unknown>;
+    const full: FullTour = {
+      ...(raw as unknown as FullTour),
+      kennzeichen: Array.isArray(raw.kennzeichen) ? (raw.kennzeichen as string[]) : [],
+      auftraggeber: (raw.auftraggeber as FullTour['auftraggeber']) ?? null,
+      fahrer: (raw.fahrer as FullTour['fahrer']) ?? null,
+    };
     setTour(full);
     setBarauslagenInput(decimalToInput(full.barauslagen));
     setHonorarInput(decimalToInput(full.fahrer_honorar));
-    setZusaetze((zRes.data ?? []) as TourZusatz[]);
-    setAuftraggeber(agRes.data ?? []);
-    setFahrer(((faRes.data ?? []) as unknown as FahrerWithUser[]).sort((a, b) =>
+    setZusaetze(Array.isArray(zRes.data) ? (zRes.data as TourZusatz[]) : []);
+    setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
+    const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
+    setFahrer(faList.sort((a, b) =>
       displayName(a.user ?? null).localeCompare(displayName(b.user ?? null), 'de'),
     ));
     setLoading(false);
@@ -507,7 +514,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                   onChange={(e) => setNeueKategorie(e.target.value)}
                 >
                   <option value="">— wählen —</option>
-                  {ZUSATZ_KATEGORIEN.map((k) => (
+                  {(ZUSATZ_KATEGORIEN ?? []).map((k) => (
                     <option key={k} value={k}>{k}</option>
                   ))}
                 </select>
@@ -543,7 +550,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
             </div>
 
             <div className="flex flex-wrap gap-1.5">
-              {ZUSATZ_KATEGORIEN.map((k) => (
+              {(ZUSATZ_KATEGORIEN ?? []).map((k) => (
                 <button
                   key={k}
                   type="button"
@@ -561,11 +568,11 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           </div>
         )}
 
-        {zusaetze.length === 0 ? (
+        {(zusaetze ?? []).length === 0 ? (
           <p className="text-sm text-maja-muted">Noch keine Zusätze erfasst.</p>
         ) : (
           <ul className="card divide-y divide-maja-navy/10 overflow-hidden">
-            {zusaetze.map((z) => (
+            {(zusaetze ?? []).map((z) => (
               <li key={z.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-maja-ink">{z.kategorie}</div>
@@ -813,7 +820,7 @@ function EditMode(p: EditModeProps) {
           <select className="input" value={draft.fahrerId}
                   onChange={(e) => patchDraft({ fahrerId: e.target.value })}>
             <option value="">— kein Fahrer —</option>
-            {fahrer.map((f) => (
+            {(fahrer ?? []).map((f) => (
               <option key={f.id} value={f.id}>{displayName(f.user ?? null)}</option>
             ))}
           </select>
@@ -823,7 +830,7 @@ function EditMode(p: EditModeProps) {
           <select className="input" value={draft.auftraggeberId}
                   onChange={(e) => patchDraft({ auftraggeberId: e.target.value })}>
             <option value="">— kein Auftraggeber —</option>
-            {auftraggeber.map((a) => (
+            {(auftraggeber ?? []).map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>

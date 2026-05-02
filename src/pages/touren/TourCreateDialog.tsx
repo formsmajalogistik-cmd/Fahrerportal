@@ -66,8 +66,9 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
           .select('*, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true),
       ]);
-      setAuftraggeber(agRes.data ?? []);
-      setFahrer(((faRes.data ?? []) as unknown as FahrerWithUser[]).sort((a, b) =>
+      setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
+      const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
+      setFahrer(faList.sort((a, b) =>
         displayName(a.user ?? null).localeCompare(displayName(b.user ?? null), 'de'),
       ));
     })();
@@ -241,7 +242,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
                       value={auftraggeberId}
                       onChange={(e) => setAuftraggeberId(e.target.value)}>
                 <option value="">— kein Auftraggeber —</option>
-                {auftraggeber.map((a) => (
+                {(auftraggeber ?? []).map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
@@ -255,7 +256,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
                       value={fahrerId}
                       onChange={(e) => setFahrerId(e.target.value)}>
                 <option value="">— kein Fahrer —</option>
-                {fahrer.map((f) => (
+                {(fahrer ?? []).map((f) => (
                   <option key={f.id} value={f.id}>{displayName(f.user ?? null)}</option>
                 ))}
               </select>
