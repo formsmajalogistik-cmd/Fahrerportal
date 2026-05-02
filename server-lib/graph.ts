@@ -21,7 +21,7 @@ export async function getGraphToken(): Promise<string> {
   const clientId = env('AZURE_CLIENT_ID');
   const clientSecret = env('AZURE_CLIENT_SECRET');
 
-  const resp = await fetch(`${LOGIN}/${tenant}/oauth2/v2/token`, {
+  const resp = await fetch(`${LOGIN}/${tenant}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
