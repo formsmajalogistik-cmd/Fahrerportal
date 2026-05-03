@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { computeKmGesamt, fetchTourPrice, formatKm } from '../../lib/touren';
 import { displayName } from '../../lib/names';
+import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
+import { ProtokollSection } from './ProtokollSection';
 import type {
-  AppUser, Auftraggeber, Fahrer, TourenArt,
+  AppUser, Auftraggeber, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
 } from '../../types/db';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
@@ -70,6 +72,13 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [kundenname, setKundenname] = useState('');
   const [info, setInfo] = useState('');
 
+  // Protokoll
+  const [protokollArt, setProtokollArt] = useState<ProtokollArt | null>(null);
+  const [schriftlichesProtokollId, setSchriftlichesProtokollId] = useState<string | null>(null);
+  const [greimelZugangId, setGreimelZugangId] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
+  const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
+
   // Auto-Preis
   const [autoPrice, setAutoPrice] = useState<number | null>(null);
   const [pricing, setPricing] = useState(false);
@@ -79,18 +88,22 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [agRes, faRes] = await Promise.all([
+      const [agRes, faRes, tplRes, zRes] = await Promise.all([
         supabase.from('auftraggeber').select('*').order('name'),
         supabase
           .from('fahrer')
           .select('*, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true),
+        supabase.from('formular_templates').select('id, name').order('name'),
+        supabase.from('greimel_zugaenge').select('*').order('titel'),
       ]);
       setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
       const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
       setFahrer(faList.sort((a, b) =>
         displayName(a.user ?? null).localeCompare(displayName(b.user ?? null), 'de'),
       ));
+      setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
+      setZugaenge(Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : []);
     })();
   }, []);
 
@@ -190,6 +203,12 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     }
 
     setSaving(true);
+    const ag = (auftraggeber ?? []).find((a) => a.id === auftraggeberId) ?? null;
+    const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app'
+      ? greimelZugangId
+      : null;
+    const schriftlichEffective = protokollArt === 'schriftlich' ? schriftlichesProtokollId : null;
+
     const payload = {
       start_stadt: start,
       ziel_stadt: ziel,
@@ -210,11 +229,21 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       kundenname: kundenname.trim() || null,
       info: info.trim() || null,
       kennzeichen,
+      protokoll_art: protokollArt,
+      schriftliches_protokoll_id: schriftlichEffective,
+      greimel_zugang_id: greimelEffective,
     };
 
     const { error: err } = await supabase.from('touren').insert(payload);
+    if (err) { setSaving(false); setError(err.message); return; }
+
+    // Greimel-Zugang automatisch dem Fahrer zuweisen
+    if (greimelEffective && fahrerId) {
+      try { await assignFahrerToZugang(greimelEffective, fahrerId); }
+      catch (e) { console.warn('Greimel-Zugang-Zuweisung fehlgeschlagen', e); }
+    }
+
     setSaving(false);
-    if (err) { setError(err.message); return; }
     onCreated();
   }
 
@@ -390,6 +419,22 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
               </div>
             </div>
           )}
+
+          {/* Protokoll */}
+          <ProtokollSection
+            protokollArt={protokollArt}
+            schriftlichesProtokollId={schriftlichesProtokollId}
+            greimelZugangId={greimelZugangId}
+            onChange={(p) => {
+              if ('protokoll_art' in p) setProtokollArt(p.protokoll_art ?? null);
+              if ('schriftliches_protokoll_id' in p) setSchriftlichesProtokollId(p.schriftliches_protokoll_id ?? null);
+              if ('greimel_zugang_id' in p) setGreimelZugangId(p.greimel_zugang_id ?? null);
+            }}
+            isGreimel={isGreimelAuftraggeber(selectedAg)}
+            fahrerId={fahrerId || null}
+            templates={templates}
+            zugaenge={zugaenge}
+          />
 
           {/* Sondervereinbarung */}
           <div className="space-y-2">

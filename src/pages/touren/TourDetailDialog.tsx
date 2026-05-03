@@ -9,6 +9,9 @@ import { displayName } from '../../lib/names';
 import {
   computeKmGesamt, fetchTourPrice, formatDateTime, formatEuro, formatKm, tourTitel,
 } from '../../lib/touren';
+import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
+import { ProtokollSection } from './ProtokollSection';
+import type { FormularTemplate, GreimelZugang, ProtokollArt } from '../../types/db';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourenArt, TourStatus, TourZusatz,
 } from '../../types/db';
@@ -107,6 +110,9 @@ interface EditDraft {
   adresseStart: string;
   adresseZiel: string;
   adresseRueckfuehrung: string;
+  protokollArt: ProtokollArt | null;
+  schriftlichesProtokollId: string | null;
+  greimelZugangId: string | null;
 }
 
 function draftFromTour(t: FullTour): EditDraft {
@@ -137,6 +143,9 @@ function draftFromTour(t: FullTour): EditDraft {
     adresseStart: t.adresse_start ?? '',
     adresseZiel: t.adresse_ziel ?? '',
     adresseRueckfuehrung: t.adresse_rueckfuehrung ?? '',
+    protokollArt: t.protokoll_art ?? null,
+    schriftlichesProtokollId: t.schriftliches_protokoll_id ?? null,
+    greimelZugangId: t.greimel_zugang_id ?? null,
   };
 }
 
@@ -150,6 +159,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const [zusaetze, setZusaetze] = useState<TourZusatz[]>([]);
   const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
   const [fahrer, setFahrer] = useState<FahrerWithUser[]>([]);
+  const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
+  const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -172,7 +183,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [tRes, zRes, agRes, faRes] = await Promise.all([
+    const [tRes, zRes, agRes, faRes, tplRes, gzRes] = await Promise.all([
       supabase
         .from('touren')
         .select(`
@@ -195,6 +206,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         .from('fahrer')
         .select('*, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true),
+      supabase.from('formular_templates').select('id, name').order('name'),
+      supabase.from('greimel_zugaenge').select('*').order('titel'),
     ]);
     if (tRes.error) { setError(tRes.error.message); setLoading(false); return; }
     const raw = (tRes.data ?? {}) as Record<string, unknown>;
@@ -213,6 +226,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     setFahrer(faList.sort((a, b) =>
       displayName(a.user ?? null).localeCompare(displayName(b.user ?? null), 'de'),
     ));
+    setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
+    setZugaenge(Array.isArray(gzRes.data) ? (gzRes.data as GreimelZugang[]) : []);
     setLoading(false);
   }, [tourId]);
 
@@ -336,6 +351,23 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     }
 
     setSaving(true);
+    // Protokoll-Felder normalisieren — bei Status 'abgeschlossen' wird der
+    // Greimel-Zugang freigegeben (siehe unten).
+    const draftAg = draftSelectedAg;
+    const isGreimelTour = isGreimelAuftraggeber(draftAg);
+    const willComplete = draft.status === 'abgeschlossen';
+
+    let nextGreimelId: string | null = null;
+    if (draft.protokollArt === 'app' && isGreimelTour && !willComplete) {
+      nextGreimelId = draft.greimelZugangId ?? null;
+    }
+    const nextSchriftlichesId = draft.protokollArt === 'schriftlich'
+      ? (draft.schriftlichesProtokollId ?? null)
+      : null;
+
+    const previousGreimelId = tour.greimel_zugang_id ?? null;
+    const previousFahrerId = tour.fahrer_id ?? null;
+
     const { error: err } = await supabase
       .from('touren')
       .update({
@@ -364,10 +396,31 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         adresse_rueckfuehrung: draft.hatRueckfuehrung
           ? (draft.adresseRueckfuehrung.trim() || null)
           : null,
+        protokoll_art: draft.protokollArt,
+        schriftliches_protokoll_id: nextSchriftlichesId,
+        greimel_zugang_id: nextGreimelId,
       })
       .eq('id', tour.id);
+    if (err) { setSaving(false); setStatusMsg({ kind: 'err', text: err.message }); return; }
+
+    // Greimel-Zugang Zuweisung synchron halten:
+    // - Wenn Tour 'abgeschlossen' wurde → vorherige Zuweisung freigeben.
+    // - Wenn neuer Zugang gewählt → Fahrer hinzufügen.
+    // - Wenn Zugang gewechselt/entfernt → vorherigen Fahrer entfernen.
+    try {
+      if (willComplete && previousGreimelId && previousFahrerId) {
+        await unassignFahrerFromZugang(previousGreimelId, previousFahrerId);
+      } else if (previousGreimelId && previousGreimelId !== nextGreimelId && previousFahrerId) {
+        await unassignFahrerFromZugang(previousGreimelId, previousFahrerId);
+      }
+      if (nextGreimelId && draft.fahrerId && nextGreimelId !== previousGreimelId) {
+        await assignFahrerToZugang(nextGreimelId, draft.fahrerId);
+      }
+    } catch (e) {
+      console.warn('Greimel-Zugang-Zuweisung konnte nicht synchronisiert werden', e);
+    }
+
     setSaving(false);
-    if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setEditing(false);
     setDraft(null);
     setStatusMsg({ kind: 'ok', text: 'Tour gespeichert.' });
@@ -530,7 +583,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} />
+        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} />
       ) : (
         <EditMode
           draft={draft}
@@ -542,6 +595,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           draftSelectedAg={draftSelectedAg}
           autoPrice={autoPrice}
           pricing={pricing}
+          templates={templates}
+          zugaenge={zugaenge}
         />
       )}
 
@@ -748,9 +803,17 @@ function Shell({ children, onClose }: { children: ReactNode; onClose: () => void
 
 // ---------- View-Mode ----------
 
-interface ViewModeProps { tour: FullTour; fahrerName: string; hatRueckfuehrung: boolean }
+interface ViewModeProps {
+  tour: FullTour;
+  fahrerName: string;
+  hatRueckfuehrung: boolean;
+  templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
+  zugaenge: GreimelZugang[];
+}
 
-function ViewMode({ tour, fahrerName, hatRueckfuehrung }: ViewModeProps) {
+function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge }: ViewModeProps) {
+  const linkedTemplate = templates.find((t) => t.id === tour.schriftliches_protokoll_id) ?? null;
+  const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return '—';
     const a = formatDateTime(tour.startdatum);
@@ -822,6 +885,41 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung }: ViewModeProps) {
         <DetailItem label="Zeitraum" full>{dateRange}</DetailItem>
       </div>
 
+      {/* Protokoll */}
+      <div>
+        <h3 className="mb-2 text-base font-semibold text-maja-navy">Protokoll</h3>
+        <div className="rounded-lg border border-maja-navy/10 p-3 text-sm text-maja-ink">
+          {tour.protokoll_art == null ? (
+            <span className="text-maja-muted">Noch nicht festgelegt.</span>
+          ) : tour.protokoll_art === 'app' ? (
+            <div className="space-y-2">
+              <div>
+                <span className="font-medium">App.</span>{' '}
+                <span className="text-maja-muted">Die Protokollierung erfolgt über die App.</span>
+              </div>
+              {linkedZugang && (
+                <div className="rounded-md bg-maja-light/60 p-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
+                    Greimel Zugang
+                  </div>
+                  <div className="mt-0.5 font-medium text-maja-ink">{linkedZugang.titel}</div>
+                  <div className="text-xs text-maja-muted">{linkedZugang.benutzername}</div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <div className="font-medium">Schriftlich.</div>
+              <div className="text-maja-muted">
+                {linkedTemplate
+                  ? <>Verknüpft: <span className="font-medium text-maja-ink">{linkedTemplate.name}</span></>
+                  : 'Noch kein Protokoll verknüpft.'}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Adressen */}
       <div>
         <h3 className="mb-2 text-base font-semibold text-maja-navy">Adressen</h3>
@@ -871,12 +969,15 @@ interface EditModeProps {
   draftSelectedAg: Auftraggeber | null;
   autoPrice: number | null;
   pricing: boolean;
+  templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
+  zugaenge: GreimelZugang[];
 }
 
 function EditMode(p: EditModeProps) {
-  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, autoPrice, pricing } = p;
+  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, autoPrice, pricing, templates, zugaenge } = p;
   const isAba = draft.tourenart === 'ABA';
   const abaAufschlag = draftSelectedAg?.aba_aufschlag_prozent ?? null;
+  const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -1031,6 +1132,24 @@ function EditMode(p: EditModeProps) {
           </div>
         </div>
       )}
+
+      {/* Protokoll */}
+      <ProtokollSection
+        protokollArt={draft.protokollArt}
+        schriftlichesProtokollId={draft.schriftlichesProtokollId}
+        greimelZugangId={draft.greimelZugangId}
+        onChange={(p) => {
+          const patch: Partial<EditDraft> = {};
+          if ('protokoll_art' in p) patch.protokollArt = p.protokoll_art ?? null;
+          if ('schriftliches_protokoll_id' in p) patch.schriftlichesProtokollId = p.schriftliches_protokoll_id ?? null;
+          if ('greimel_zugang_id' in p) patch.greimelZugangId = p.greimel_zugang_id ?? null;
+          patchDraft(patch);
+        }}
+        isGreimel={isGreimel}
+        fahrerId={draft.fahrerId || null}
+        templates={templates}
+        zugaenge={zugaenge}
+      />
 
       {/* Sondervereinbarung */}
       <div className="space-y-2">

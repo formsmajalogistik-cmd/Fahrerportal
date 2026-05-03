@@ -14,6 +14,7 @@ export type UserRole = 'admin' | 'fahrer';
 export type FormularStatus = 'draft' | 'submitted';
 export type TourStatus = 'geplant' | 'aktiv' | 'abgeschlossen';
 export type TourenArt = 'AB' | 'ABC' | 'ABA';
+export type ProtokollArt = 'app' | 'schriftlich';
 
 export type Database = {
   public: {
@@ -186,6 +187,9 @@ export type Database = {
           barauslagen: number;
           fahrer_honorar: number;
           info: string | null;
+          protokoll_art: ProtokollArt | null;
+          schriftliches_protokoll_id: string | null;
+          greimel_zugang_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -215,6 +219,9 @@ export type Database = {
           barauslagen?: number;
           fahrer_honorar?: number;
           info?: string | null;
+          protokoll_art?: ProtokollArt | null;
+          schriftliches_protokoll_id?: string | null;
+          greimel_zugang_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -244,6 +251,9 @@ export type Database = {
           barauslagen?: number;
           fahrer_honorar?: number;
           info?: string | null;
+          protokoll_art?: ProtokollArt | null;
+          schriftliches_protokoll_id?: string | null;
+          greimel_zugang_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -261,6 +271,42 @@ export type Database = {
             referencedColumns: ['id'];
           },
         ];
+      };
+      greimel_zugaenge: {
+        Row: {
+          id: string;
+          titel: string;
+          benutzername: string;
+          passwort: string;
+          link: string | null;
+          fahrer_ids: string[];
+          sichtbar_fuer_alle: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          titel: string;
+          benutzername: string;
+          passwort: string;
+          link?: string | null;
+          fahrer_ids?: string[];
+          sichtbar_fuer_alle?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          titel?: string;
+          benutzername?: string;
+          passwort?: string;
+          link?: string | null;
+          fahrer_ids?: string[];
+          sichtbar_fuer_alle?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
       };
       tour_zusaetze: {
         Row: {

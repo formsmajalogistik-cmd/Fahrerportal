@@ -17,6 +17,7 @@ const adminNav: NavItem[] = [
   { to: '/zuweisungen',     label: 'Zuweisungen' },
   { to: '/eingaenge',       label: 'Eingänge' },
   { to: '/touren',          label: 'Tourenliste' },
+  { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
@@ -18,6 +19,7 @@ type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nach
 interface TourRow extends Tour {
   auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
   fahrer: FahrerWithUser | null;
+  schriftliches_protokoll: { id: string; name: string } | null;
 }
 
 const PAGE_SIZE = 25;
@@ -37,8 +39,55 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 };
 
 export function TourenlistePage() {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const isAdmin = profile?.role === 'admin';
+  const navigate = useNavigate();
+  const [openingProtokoll, setOpeningProtokoll] = useState<string | null>(null);
+
+  /**
+   * Öffnet das verknüpfte schriftliche Protokoll für den aktuellen Fahrer.
+   * Sucht einen vorhandenen Draft (fahrer + template) — falls keiner existiert,
+   * wird ein neuer angelegt. Anschließend Navigation auf /formular/<id>.
+   */
+  async function openSchriftlichesProtokoll(t: TourRow) {
+    const tplId = t.schriftliches_protokoll?.id ?? t.schriftliches_protokoll_id;
+    if (!tplId || !session) return;
+    setOpeningProtokoll(t.id);
+    try {
+      const { data: fahrerRow } = await supabase
+        .from('fahrer').select('id').eq('user_id', session.user.id).maybeSingle();
+      if (!fahrerRow?.id) {
+        // Kein Fahrer-Profil → fallback: nichts tun
+        setOpeningProtokoll(null);
+        return;
+      }
+      const { data: existing } = await supabase
+        .from('ausgefuellte_formulare')
+        .select('id')
+        .eq('fahrer_id', fahrerRow.id)
+        .eq('template_id', tplId)
+        .eq('status', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existing?.id) {
+        navigate(`/formular/${existing.id}`);
+        return;
+      }
+      const { data: created, error } = await supabase
+        .from('ausgefuellte_formulare')
+        .insert({ fahrer_id: fahrerRow.id, template_id: tplId, daten: {} })
+        .select('id').single();
+      if (error || !created) {
+        console.warn('Konnte Protokoll-Draft nicht anlegen', error);
+        setOpeningProtokoll(null);
+        return;
+      }
+      navigate(`/formular/${created.id}`);
+    } finally {
+      setOpeningProtokoll(null);
+    }
+  }
 
   const [rows, setRows] = useState<TourRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +114,8 @@ export function TourenlistePage() {
         fahrer:fahrer_id (
           id, user_id, aktiv,
           user:user_id (email, vorname, nachname)
-        )
+        ),
+        schriftliches_protokoll:schriftliches_protokoll_id (id, name)
       `)
       .order('startdatum', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
@@ -86,6 +136,7 @@ export function TourenlistePage() {
           kennzeichen: Array.isArray(kz) ? kz : [],
           auftraggeber: (row.auftraggeber as TourRow['auftraggeber']) ?? null,
           fahrer: (row.fahrer as TourRow['fahrer']) ?? null,
+          schriftliches_protokoll: (row.schriftliches_protokoll as TourRow['schriftliches_protokoll']) ?? null,
         } as TourRow;
       });
       setRows(normalized);
@@ -277,7 +328,14 @@ export function TourenlistePage() {
       ) : (
         <ul className="space-y-3">
           {(pageRows ?? []).map((t) => (
-            <TourCard key={t.id} tour={t} onOpen={() => setOpenTourId(t.id)} />
+            <TourCard
+              key={t.id}
+              tour={t}
+              onOpen={() => setOpenTourId(t.id)}
+              onOpenProtokoll={() => void openSchriftlichesProtokoll(t)}
+              opening={openingProtokoll === t.id}
+              isAdmin={isAdmin}
+            />
           ))}
         </ul>
       )}
@@ -348,8 +406,16 @@ function KpiCard({ title, value, hint, accent }: KpiProps) {
   );
 }
 
-interface CardProps { tour: TourRow; onOpen: () => void }
-function TourCard({ tour, onOpen }: CardProps) {
+interface CardProps {
+  tour: TourRow;
+  onOpen: () => void;
+  onOpenProtokoll: () => void;
+  opening: boolean;
+  isAdmin: boolean;
+}
+function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps) {
+  const protokollName = tour.schriftliches_protokoll?.name ?? null;
+  const hasSchriftlich = tour.protokoll_art === 'schriftlich' && !!tour.schriftliches_protokoll_id;
   const fahrerName = displayName(tour.fahrer?.user ?? null) || '— kein Fahrer —';
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
@@ -397,6 +463,28 @@ function TourCard({ tour, onOpen }: CardProps) {
                 </Meta>
               )}
             </div>
+
+            {/* Schriftliches Protokoll: für Fahrer als Direkt-Link öffnen */}
+            {hasSchriftlich && (
+              isAdmin ? (
+                <div className="mt-3 inline-flex items-center gap-1 rounded-full bg-maja-light px-3 py-1 text-xs font-medium text-maja-navy">
+                  <IconClipboard /> Protokoll: {protokollName ?? 'verknüpft'}
+                </div>
+              ) : (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); onOpenProtokoll(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onOpenProtokoll(); }
+                  }}
+                  className="mt-3 inline-flex cursor-pointer items-center gap-1 rounded-full bg-maja-navy px-3 py-1 text-xs font-medium text-white transition hover:bg-maja-accent"
+                >
+                  <IconClipboard />
+                  {opening ? 'Öffne …' : `Protokoll öffnen${protokollName ? `: ${protokollName}` : ''}`}
+                </div>
+              )
+            )}
           </div>
 
           <div className="flex flex-col items-end gap-2">
@@ -457,6 +545,13 @@ function IconCar() {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
       <path d="M4.5 7l1.2-2.5A2 2 0 017.5 3.5h5a2 2 0 011.8 1L15.5 7H17a1 1 0 011 1v3a1 1 0 01-1 1h-.5v1a1.5 1.5 0 11-3 0v-1h-7v1a1.5 1.5 0 11-3 0v-1H3a1 1 0 01-1-1V8a1 1 0 011-1h1.5zM6 9a1 1 0 100 2 1 1 0 000-2zm8 0a1 1 0 100 2 1 1 0 000-2z" />
+    </svg>
+  );
+}
+function IconClipboard() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+      <path d="M7 2a2 2 0 00-2 2H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1a2 2 0 00-2-2H7zm0 2h6v2H7V4zm-1 5h8v1H6V9zm0 3h8v1H6v-1zm0 3h5v1H6v-1z" />
     </svg>
   );
 }

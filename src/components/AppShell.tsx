@@ -11,6 +11,7 @@ const fahrerNav: NavItem[] = [
   { to: '/offen', label: 'Begonnen' },
   { to: '/eingaenge', label: 'Eingänge' },
   { to: '/touren', label: 'Tourenliste' },
+  { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
