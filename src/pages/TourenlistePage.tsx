@@ -267,18 +267,20 @@ export function TourenlistePage() {
         })}
       </div>
 
-      {/* KPI-Karten */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* KPI-Karten — Summe Ansicht (Vergütung) nur für Admins */}
+      <div className={`grid gap-3 sm:grid-cols-2 ${isAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         <KpiCard
           title={`Touren ${year}`}
           value={String(kpi.jahr)}
           hint="in diesem Jahr"
         />
-        <KpiCard
-          title="Summe Ansicht"
-          value={formatEuro(kpi.sum)}
-          hint={`${kpi.sumCount} ${kpi.sumCount === 1 ? 'Tour' : 'Touren'}`}
-        />
+        {isAdmin && (
+          <KpiCard
+            title="Summe Ansicht"
+            value={formatEuro(kpi.sum)}
+            hint={`${kpi.sumCount} ${kpi.sumCount === 1 ? 'Tour' : 'Touren'}`}
+          />
+        )}
         <KpiCard
           title="Aktiv"
           value={String(kpi.aktiv)}
@@ -447,7 +449,7 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
 
             <div className="mt-3 grid gap-2 text-sm text-maja-ink sm:grid-cols-2">
               <Meta icon={<IconUser />}>{fahrerName}</Meta>
-              <Meta icon={<IconPin />}>{formatKm(tour.km_gesamt)}</Meta>
+              {isAdmin && <Meta icon={<IconPin />}>{formatKm(tour.km_gesamt)}</Meta>}
               {dateRange && <Meta icon={<IconCalendar />}>{dateRange}</Meta>}
               {((tour.kennzeichen ?? []).length > 0) && (
                 <Meta icon={<IconCar />}>{(tour.kennzeichen ?? []).join(', ')}</Meta>
@@ -493,14 +495,16 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
             }`}>
               {STATUS_LABEL[tour.status]}
             </span>
-            <div className="text-right">
-              <div className="text-2xl font-bold text-maja-navy">
-                {formatEuro(tour.verguetung)}
+            {isAdmin && (
+              <div className="text-right">
+                <div className="text-2xl font-bold text-maja-navy">
+                  {formatEuro(tour.verguetung)}
+                </div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-maja-muted">
+                  Netto
+                </div>
               </div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-maja-muted">
-                Netto
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </button>

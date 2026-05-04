@@ -556,16 +556,18 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         </button>
       </div>
 
-      {/* Preis-Banner */}
+      {/* Route-Banner — Vergütung nur für Admins */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-maja-navy px-5 py-4 text-white">
         <div className="min-w-0">
           <div className="text-xs font-medium uppercase tracking-wider text-white/70">Route</div>
           <div className="mt-0.5 text-base font-semibold break-words">{titel}</div>
         </div>
-        <div className="text-right">
-          <div className="text-2xl font-bold">{formatEuro(tour.verguetung)}</div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">Netto</div>
-        </div>
+        {isAdmin && (
+          <div className="text-right">
+            <div className="text-2xl font-bold">{formatEuro(tour.verguetung)}</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">Netto</div>
+          </div>
+        )}
       </div>
 
       {statusMsg && (
@@ -583,7 +585,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} />
+        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} isAdmin={isAdmin} />
       ) : (
         <EditMode
           draft={draft}
@@ -600,7 +602,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         />
       )}
 
-      {/* Zusätze */}
+      {/* Zusätze — nur für Admins */}
+      {isAdmin && (
       <div className="mt-6">
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-base font-semibold text-maja-navy">Zusätze zur Tour</h3>
@@ -701,24 +704,25 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           </ul>
         )}
       </div>
+      )}
 
-      {/* Barauslagen + Fahrer-Honorar */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <FinanceField
-          label="Barauslagen"
-          value={isAdmin ? barauslagenInput : decimalToInput(tour.barauslagen)}
-          onChange={isAdmin ? setBarauslagenInput : undefined}
-          onCommit={isAdmin ? commitBarauslagen : undefined}
-          readOnly={!isAdmin}
-        />
-        <FinanceField
-          label="Fahrer Honorar"
-          value={isAdmin ? honorarInput : decimalToInput(tour.fahrer_honorar)}
-          onChange={isAdmin ? setHonorarInput : undefined}
-          onCommit={isAdmin ? commitHonorar : undefined}
-          readOnly={!isAdmin}
-        />
-      </div>
+      {/* Barauslagen + Fahrer-Honorar — nur für Admins */}
+      {isAdmin && (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <FinanceField
+            label="Barauslagen"
+            value={barauslagenInput}
+            onChange={setBarauslagenInput}
+            onCommit={commitBarauslagen}
+          />
+          <FinanceField
+            label="Fahrer Honorar"
+            value={honorarInput}
+            onChange={setHonorarInput}
+            onCommit={commitHonorar}
+          />
+        </div>
+      )}
 
       {/* Footer */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 pt-4">
@@ -809,9 +813,10 @@ interface ViewModeProps {
   hatRueckfuehrung: boolean;
   templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
   zugaenge: GreimelZugang[];
+  isAdmin: boolean;
 }
 
-function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge }: ViewModeProps) {
+function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isAdmin }: ViewModeProps) {
   const linkedTemplate = templates.find((t) => t.id === tour.schriftliches_protokoll_id) ?? null;
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const dateRange = (() => {
@@ -845,22 +850,26 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge }: V
         </DetailItem>
         <DetailItem label="Kundenname">{tour.kundenname || '—'}</DetailItem>
         <DetailItem label="Tourenart">{tour.tourenart ?? '—'}</DetailItem>
-        <DetailItem label="Vergütung">
-          {formatEuro(tour.verguetung)}
-          {!tour.ist_sondervereinbarung && tour.auftraggeber_id && tour.km_gesamt != null && (
-            <span className="ml-2 text-xs text-maja-muted">Auto (Preisliste)</span>
-          )}
-        </DetailItem>
+        {isAdmin && (
+          <DetailItem label="Vergütung">
+            {formatEuro(tour.verguetung)}
+            {!tour.ist_sondervereinbarung && tour.auftraggeber_id && tour.km_gesamt != null && (
+              <span className="ml-2 text-xs text-maja-muted">Auto (Preisliste)</span>
+            )}
+          </DetailItem>
+        )}
         <DetailItem label="Startdatum + Uhrzeit">{formatDateTime(tour.startdatum)}</DetailItem>
         <DetailItem label="Enddatum + Uhrzeit">{formatDateTime(tour.enddatum)}</DetailItem>
-        {tour.tourenart === 'ABA' ? (
-          <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
-        ) : (
-          <>
-            <DetailItem label="km Hin">{formatKm(tour.km_hin)}</DetailItem>
-            {hatRueckfuehrung && <DetailItem label="km Rück">{formatKm(tour.km_rueck)}</DetailItem>}
-            <DetailItem label="km Gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
-          </>
+        {isAdmin && (
+          tour.tourenart === 'ABA' ? (
+            <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+          ) : (
+            <>
+              <DetailItem label="km Hin">{formatKm(tour.km_hin)}</DetailItem>
+              {hatRueckfuehrung && <DetailItem label="km Rück">{formatKm(tour.km_rueck)}</DetailItem>}
+              <DetailItem label="km Gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+            </>
+          )
         )}
         <DetailItem label={hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}>
           {tour.kennzeichen?.[0] ?? '—'}
@@ -868,19 +877,23 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge }: V
         {hatRueckfuehrung && (
           <DetailItem label="Kennzeichen Rück">{tour.kennzeichen?.[1] ?? '—'}</DetailItem>
         )}
-        <DetailItem label="Sondervereinbarung" full>
-          {tour.ist_sondervereinbarung ? (
-            <>
-              <span className="font-medium text-maja-navy">Ja</span>
-              {tour.sondervereinbarung && (
-                <span className="ml-2 text-maja-muted">— {tour.sondervereinbarung}</span>
-              )}
-            </>
-          ) : 'Nein'}
-        </DetailItem>
-        <DetailItem label="Info" full>
-          {tour.info ? <span className="whitespace-pre-wrap">{tour.info}</span> : '—'}
-        </DetailItem>
+        {isAdmin && (
+          <DetailItem label="Sondervereinbarung" full>
+            {tour.ist_sondervereinbarung ? (
+              <>
+                <span className="font-medium text-maja-navy">Ja</span>
+                {tour.sondervereinbarung && (
+                  <span className="ml-2 text-maja-muted">— {tour.sondervereinbarung}</span>
+                )}
+              </>
+            ) : 'Nein'}
+          </DetailItem>
+        )}
+        {isAdmin && (
+          <DetailItem label="Info" full>
+            {tour.info ? <span className="whitespace-pre-wrap">{tour.info}</span> : '—'}
+          </DetailItem>
+        )}
         {/* Datum-Bereich (Komfort-Anzeige) */}
         <DetailItem label="Zeitraum" full>{dateRange}</DetailItem>
       </div>
