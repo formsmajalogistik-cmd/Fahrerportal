@@ -133,17 +133,19 @@ async function embedImage(pdf: PDFDocument, bytes: ArrayBuffer | Uint8Array, hin
 
 /**
  * Berechnet Zeichenmaße so, dass ein Bild OHNE Verzerrung in eine Box passt.
+ * Der Box-Anker `boxX` ist der RECHTE Rand der Box; das Bild wird daher mit
+ * seinem rechten Rand an `boxX` ausgerichtet (rechtsbündig).
  * Querformat-Bilder (Breite > Höhe) füllen die volle Boxbreite aus.
  * Hochformat-Bilder (Höhe > Breite) nutzen die volle Boxhöhe als Anker;
- * die resultierende Breite ist kleiner und das Bild wird linksbündig
- * platziert (rechts bleibt Platz frei).
+ * die resultierende Breite ist kleiner und das Bild bleibt rechtsbündig
+ * platziert (links bleibt Platz frei).
  */
 function aspectFit(
   imgWidth: number, imgHeight: number,
   boxX: number, boxY: number, boxWidth: number, boxHeight: number,
 ): { x: number; y: number; width: number; height: number } {
   if (imgWidth <= 0 || imgHeight <= 0) {
-    return { x: boxX, y: boxY - boxHeight, width: boxWidth, height: boxHeight };
+    return { x: boxX - boxWidth, y: boxY - boxHeight, width: boxWidth, height: boxHeight };
   }
   const isPortrait = imgHeight > imgWidth;
   let drawWidth = boxWidth;
@@ -152,15 +154,14 @@ function aspectFit(
     drawHeight = boxHeight;
     drawWidth = boxHeight * (imgWidth / imgHeight);
     if (drawWidth > boxWidth) {
-      // Bild ist zu schmal-hoch um trotzdem in die Box zu passen — auf Boxbreite reduzieren.
       drawWidth = boxWidth;
       drawHeight = boxWidth * (imgHeight / imgWidth);
     }
   }
   // PDF-Koordinaten: y ist der OBERE Rand → unteren Rand berechnen.
-  // Linksbündig (boxX), top-aligned an boxY.
+  // Rechtsbündig (boxX = rechter Rand), top-aligned an boxY.
   return {
-    x: boxX,
+    x: boxX - drawWidth,
     y: boxY - drawHeight,
     width: drawWidth,
     height: drawHeight,
@@ -220,8 +221,10 @@ export async function fillPdf(
         const pos = entry.options[opt];
         if (!pos) continue;
         const size = pos.size ?? OPTION_DEFAULT_SIZE;
+        // X-Anker = rechter Rand → 'X' rechtsbündig zeichnen.
+        const xWidth = font.widthOfTextAtSize('X', size);
         page(pos.page).drawText('X', {
-          x: pos.x, y: pos.y, size, font, color: INK,
+          x: pos.x - xWidth, y: pos.y, size, font, color: INK,
         });
       }
       continue;
@@ -239,7 +242,9 @@ export async function fillPdf(
         if (!map) continue;
         const cb = map.checkbox;
         const sz = cb.size ?? OPTION_DEFAULT_SIZE;
-        page(cb.page).drawText('X', { x: cb.x, y: cb.y, size: sz, font, color: INK });
+        // X-Anker = rechter Rand → Häkchen rechtsbündig.
+        const cbWidth = font.widthOfTextAtSize('X', sz);
+        page(cb.page).drawText('X', { x: cb.x - cbWidth, y: cb.y, size: sz, font, color: INK });
         if (e.text.trim()) {
           const tx = map.text;
           const tFontSize = tx.fontSize ?? TEXT_DEFAULT_FONT;
@@ -267,8 +272,9 @@ export async function fillPdf(
         );
         if (!png) continue;
         const img = await pdf.embedPng(png);
+        // X-Anker = rechter Rand → Bild rechtsbündig.
         page(entry.page).drawImage(img, {
-          x: entry.x, y: entry.y - entry.height,
+          x: entry.x - entry.width, y: entry.y - entry.height,
           width: entry.width, height: entry.height,
         });
         continue;

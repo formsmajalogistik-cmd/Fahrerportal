@@ -247,6 +247,7 @@ function PointMarker({
   label: string; selected: boolean;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
+  // X-Anker = rechter Rand des Feldes → Marker rechts-ankern (translate-x-full).
   const left = (x / pageSize.w) * 100;
   const top = ((pageSize.h - y) / pageSize.h) * 100;
   return (
@@ -255,7 +256,7 @@ function PointMarker({
       onClick={onClick}
       title={label}
       className={
-        'absolute z-20 -translate-y-full whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
+        'absolute z-20 -translate-x-full -translate-y-full whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
         (selected ? 'bg-red-600' : 'bg-maja-accent')
       }
       style={{ left: `${left}%`, top: `${top}%` }}
@@ -273,7 +274,8 @@ function BoxMarker({
   label: string; selected: boolean;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
-  const leftPct = (x / pageSize.w) * 100;
+  // X-Anker = rechter Rand der Box → linker Rand = x - width.
+  const leftPct = ((x - width) / pageSize.w) * 100;
   // entry.y = oberer Rand der Box (in PDF-Koords)
   const topPct = ((pageSize.h - y) / pageSize.h) * 100;
   const widthPct = (width / pageSize.w) * 100;
@@ -290,13 +292,13 @@ function BoxMarker({
       onClick={onClick}
       title={label}
       className={
-        'absolute z-20 origin-top-left rounded border-2 ' +
+        'absolute z-20 origin-top-right rounded border-2 ' +
         (selected ? 'border-red-600 bg-red-500/10' : 'border-maja-accent bg-maja-accent/10')
       }
       style={style}
     >
       <span className={
-        'absolute -top-5 left-0 whitespace-nowrap rounded px-1 py-0.5 text-[10px] font-semibold text-white ' +
+        'absolute -top-5 right-0 whitespace-nowrap rounded px-1 py-0.5 text-[10px] font-semibold text-white ' +
         (selected ? 'bg-red-600' : 'bg-maja-accent')
       }>
         {label}
@@ -313,8 +315,8 @@ function CheckMarker({
   label: string; selected: boolean;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
-  // Häkchen-Marker: ein Quadrat von `size` PDF-Punkten, Anker unten-links
-  const leftPct = (x / pageSize.w) * 100;
+  // Häkchen-Marker: ein Quadrat von `size` PDF-Punkten, Anker unten-RECHTS.
+  const leftPct = ((x - size) / pageSize.w) * 100;
   const topPct = ((pageSize.h - y - size) / pageSize.h) * 100;
   const sizePctW = (size / pageSize.w) * 100;
   const sizePctH = (size / pageSize.h) * 100;
