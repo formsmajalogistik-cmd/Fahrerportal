@@ -2,6 +2,7 @@
 // bedienen. Alle Calls laufen mit dem Supabase-Bearer-Token im Header.
 
 import { supabase } from './supabase';
+import { fetchWithRetry } from './fetchRetry';
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -24,7 +25,8 @@ export async function uploadToOneDrive(
 ): Promise<{ ok: true; path: string; webUrl?: string }> {
   const buf = await file.arrayBuffer();
   const b64 = await bytesToBase64(new Uint8Array(buf));
-  const resp = await fetch('/api/upload', {
+  // Uploads sind groß und langsam → längeres Timeout als der 15-s-Default.
+  const resp = await fetchWithRetry('/api/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({
@@ -32,6 +34,7 @@ export async function uploadToOneDrive(
       contentType: file.type || 'application/octet-stream',
       content_base64: b64,
     }),
+    timeoutMs: 60_000,
   });
   if (!resp.ok) {
     const txt = await resp.text();
@@ -42,7 +45,7 @@ export async function uploadToOneDrive(
 
 export async function downloadFromOneDrive(path: string): Promise<Blob> {
   const url = `/api/download?path=${encodeURIComponent(path)}`;
-  const resp = await fetch(url, { headers: await authHeader() });
+  const resp = await fetchWithRetry(url, { headers: await authHeader(), timeoutMs: 60_000 });
   if (!resp.ok) throw new Error(`Download fehlgeschlagen (${resp.status})`);
   return await resp.blob();
 }
@@ -84,7 +87,7 @@ export async function sendEmail(args: {
   body: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
 }): Promise<void> {
-  const resp = await fetch('/api/email', {
+  const resp = await fetchWithRetry('/api/email', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify(args),

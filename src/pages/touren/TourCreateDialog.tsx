@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import { computeKmGesamt, fetchTourPrice, formatKm } from '../../lib/touren';
+import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro, formatKm, type TourPriceBreakdown } from '../../lib/touren';
 import { displayName } from '../../lib/names';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { ProtokollSection } from './ProtokollSection';
 import type {
-  AppUser, Auftraggeber, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
+  AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
 } from '../../types/db';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
@@ -30,10 +30,6 @@ function parseDecimal(input: string): number | null {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 }
 
-function decimalToInput(v: number | null | undefined): string {
-  if (v == null) return '';
-  return Number(v).toFixed(2).replace('.', ',');
-}
 
 export function TourCreateDialog({ onClose, onCreated }: Props) {
   // Pflichtfelder
@@ -72,6 +68,12 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [kundenname, setKundenname] = useState('');
   const [info, setInfo] = useState('');
 
+  // E-Fahrzeug + FIN + Kontakt
+  const [istEFahrzeug, setIstEFahrzeug] = useState(false);
+  const [fin, setFin] = useState('');
+  const [kontaktId, setKontaktId] = useState('');
+  const [kontakte, setKontakte] = useState<AuftraggeberKontakt[]>([]);
+
   // Protokoll
   const [protokollArt, setProtokollArt] = useState<ProtokollArt | null>(null);
   const [schriftlichesProtokollId, setSchriftlichesProtokollId] = useState<string | null>(null);
@@ -79,8 +81,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
   const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
 
-  // Auto-Preis
-  const [autoPrice, setAutoPrice] = useState<number | null>(null);
+  // Auto-Preis-Aufschlüsselung
+  const [breakdown, setBreakdown] = useState<TourPriceBreakdown | null>(null);
   const [pricing, setPricing] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -123,23 +125,40 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     });
   }, [isAba, kmGesamtAba, kmHin, kmRueck, hatRueckfuehrung]);
 
-  // Auto-Preis berechnen, sobald Auftraggeber + km + tourenart sich ändern
+  // Auto-Preis berechnen, sobald Auftraggeber + km + tourenart + ist_e_fahrzeug sich ändern
   useEffect(() => {
-    if (istSondervereinbarung) { setAutoPrice(null); return; }
-    if (!auftraggeberId || kmGesamt == null) { setAutoPrice(null); return; }
+    if (istSondervereinbarung) { setBreakdown(null); return; }
+    if (!auftraggeberId || kmGesamt == null) { setBreakdown(null); return; }
     let cancelled = false;
     setPricing(true);
-    void fetchTourPrice({
+    void fetchTourPriceBreakdown({
       auftraggeberId,
       km: kmGesamt,
       tourenart: (tourenart || 'AB') as TourenArt,
-    }).then((p) => {
+      istEFahrzeug,
+    }).then((b) => {
       if (cancelled) return;
-      setAutoPrice(p);
+      setBreakdown(b);
       setPricing(false);
     });
     return () => { cancelled = true; };
-  }, [auftraggeberId, kmGesamt, tourenart, istSondervereinbarung]);
+  }, [auftraggeberId, kmGesamt, tourenart, istSondervereinbarung, istEFahrzeug]);
+
+  // Kontakte des ausgewählten Auftraggebers laden
+  useEffect(() => {
+    if (!auftraggeberId) { setKontakte([]); setKontaktId(''); return; }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('auftraggeber_kontakte')
+        .select('*')
+        .eq('auftraggeber_id', auftraggeberId)
+        .order('created_at', { ascending: true });
+      if (cancelled) return;
+      setKontakte(Array.isArray(data) ? data : []);
+    })();
+    return () => { cancelled = true; };
+  }, [auftraggeberId]);
 
   function toggleRueckfuehrung() {
     if (hatRueckfuehrung) {
@@ -152,7 +171,6 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     }
   }
 
-  const abaAufschlag = selectedAg?.aba_aufschlag_prozent ?? null;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -199,12 +217,17 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
         verguetung = v;
       }
     } else {
-      verguetung = autoPrice;
+      verguetung = breakdown?.total ?? null;
     }
 
     setSaving(true);
     const ag = (auftraggeber ?? []).find((a) => a.id === auftraggeberId) ?? null;
-    const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app'
+    // Bei einer rückwirkend angelegten Tour (Datum bereits in der Vergangenheit)
+    // wird der Greimel-Zugang nicht zugewiesen, weil die Tour als
+    // "abgeschlossen" gilt.
+    const isoStart = startdatum ? new Date(startdatum).toISOString() : null;
+    const willBeCompleted = computeTourStatus(isoStart) === 'abgeschlossen';
+    const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app' && !willBeCompleted
       ? greimelZugangId
       : null;
     const schriftlichEffective = protokollArt === 'schriftlich' ? schriftlichesProtokollId : null;
@@ -218,8 +241,9 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       km_gesamt: kmGesamt,
       auftraggeber_id: auftraggeberId || null,
       fahrer_id: fahrerId || null,
+      kontakt_id: kontaktId || null,
       tourenart: tourenart || null,
-      startdatum: startdatum ? new Date(startdatum).toISOString() : null,
+      startdatum: isoStart,
       enddatum: enddatum ? new Date(enddatum).toISOString() : null,
       ist_sondervereinbarung: istSondervereinbarung,
       sondervereinbarung: istSondervereinbarung
@@ -229,6 +253,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       kundenname: kundenname.trim() || null,
       info: info.trim() || null,
       kennzeichen,
+      ist_e_fahrzeug: istEFahrzeug,
+      fin: fin.trim() || null,
       protokoll_art: protokollArt,
       schriftliches_protokoll_id: schriftlichEffective,
       greimel_zugang_id: greimelEffective,
@@ -353,9 +379,6 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
-              {selectedAg?.kontakt && (
-                <p className="mt-1 text-xs text-maja-muted">Kontakt: {selectedAg.kontakt}</p>
-              )}
             </div>
             <div>
               <label htmlFor="t-fa" className="label">Fahrer</label>
@@ -369,6 +392,23 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
               </select>
             </div>
           </div>
+
+          {/* Kontakt-Dropdown (nur wenn Auftraggeber + Kontakte vorhanden) */}
+          {auftraggeberId && kontakte.length > 0 && (
+            <div>
+              <label htmlFor="t-kontakt" className="label">Ansprechpartner</label>
+              <select id="t-kontakt" className="input"
+                      value={kontaktId}
+                      onChange={(e) => setKontaktId(e.target.value)}>
+                <option value="">— kein Ansprechpartner —</option>
+                {kontakte.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.name}{k.position ? ` · ${k.position}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Tourenart + Daten */}
           <div className="grid gap-3 sm:grid-cols-3">
@@ -457,6 +497,25 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             )}
           </div>
 
+          {/* E-Fahrzeug-Checkbox + FIN */}
+          <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
+            <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+                checked={istEFahrzeug}
+                onChange={(e) => setIstEFahrzeug(e.target.checked)}
+              />
+              E-Fahrzeug
+            </label>
+            <div>
+              <label htmlFor="t-fin" className="label">FIN</label>
+              <input id="t-fin" className="input"
+                     value={fin}
+                     onChange={(e) => setFin(e.target.value.toUpperCase())} />
+            </div>
+          </div>
+
           {/* Vergütung */}
           <div>
             <label htmlFor="t-verg" className="label">Vergütung (€)</label>
@@ -482,20 +541,26 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
                   className="input bg-maja-light"
                   type="text"
                   readOnly
-                  value={pricing ? '…' : decimalToInput(autoPrice)}
+                  value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
                 />
                 <p className="mt-1 text-xs text-maja-muted">
                   {auftraggeberId && kmGesamt != null
-                    ? autoPrice == null
+                    ? breakdown == null
                       ? 'Auto (Preisliste): keine passende Stufe gefunden.'
-                      : (
-                        <>
-                          Auto (Preisliste)
-                          {isAba && abaAufschlag != null && Number(abaAufschlag) > 0 && (
-                            <> · ABA +{Number(abaAufschlag).toString().replace('.', ',')}%</>
-                          )}
-                        </>
-                      )
+                      : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
+                        ? 'Auto (Preisliste)'
+                        : (
+                          <>
+                            {formatEuro(breakdown.base)}
+                            {breakdown.abaAufschlag > 0 && (
+                              <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
+                            )}
+                            {breakdown.eAufschlag > 0 && (
+                              <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
+                            )}
+                            <> = {formatEuro(breakdown.total)}</>
+                          </>
+                        )
                     : 'Auto (Preisliste): Auftraggeber + km wählen.'}
                 </p>
               </>

@@ -11,6 +11,7 @@ export type ProtokollArt = 'app' | 'schriftlich';
 
 export type AppUser = Database['public']['Tables']['app_users']['Row'];
 export type Auftraggeber = Database['public']['Tables']['auftraggeber']['Row'];
+export type AuftraggeberKontakt = Database['public']['Tables']['auftraggeber_kontakte']['Row'];
 export type Preisstufe = Database['public']['Tables']['preisstufen']['Row'];
 export type Sonderverguetung = Database['public']['Tables']['sonderverguetungen']['Row'];
 

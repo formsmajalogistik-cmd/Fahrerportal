@@ -8,7 +8,7 @@ import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
 import { displayName } from '../lib/names';
 import {
-  formatDateTime, formatEuro, formatKm, tourTitel,
+  computeTourStatus, formatDateTime, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
@@ -33,9 +33,9 @@ const STATUS_LABEL: Record<TourStatus, string> = {
 };
 
 const STATUS_BADGE: Record<TourStatus, string> = {
-  geplant:        'bg-gray-100 text-gray-700',
-  aktiv:          'bg-maja-accent/15 text-maja-accent',
-  abgeschlossen:  'bg-emerald-100 text-emerald-700',
+  geplant:        'bg-blue-100 text-blue-700',
+  aktiv:          'bg-emerald-100 text-emerald-700',
+  abgeschlossen:  'bg-gray-100 text-gray-600',
 };
 
 export function TourenlistePage() {
@@ -94,8 +94,16 @@ export function TourenlistePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const currentYear = new Date().getFullYear();
-  const [year, setYear] = useState<number>(currentYear);
+  // Default-Filter: aktueller Monat (1. → letzter Tag).
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd   = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  const ymd = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const [dateFrom, setDateFrom] = useState<string>(ymd(monthStart));
+  const [dateTo, setDateTo]     = useState<string>(ymd(monthEnd));
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('alle');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -147,34 +155,29 @@ export function TourenlistePage() {
   useEffect(() => { void load(); }, [load]);
 
   // Reset Pagination wenn Filter sich ändern
-  useEffect(() => { setPage(1); }, [year, statusFilter, search]);
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search]);
 
-  // ---- Jahres-Optionen + Counts ----
-  const yearCounts = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const t of rows ?? []) {
-      const ref = t?.startdatum ?? t?.created_at;
-      if (!ref) continue;
-      const y = new Date(ref).getFullYear();
-      if (!Number.isFinite(y)) continue;
-      m.set(y, (m.get(y) ?? 0) + 1);
-    }
-    if (!m.has(currentYear)) m.set(currentYear, 0);
-    return [...m.entries()].sort((a, b) => b[0] - a[0]);
-  }, [rows, currentYear]);
+  // ---- Touren im gewählten Datums-Bereich ----
+  const rangeRows = useMemo(() => {
+    // Vergleich auf Tagesebene mit YMD-Schlüssel.
+    const fromKey = dateFrom.replace(/-/g, '');
+    const toKey   = dateTo.replace(/-/g, '');
+    return (rows ?? []).filter((t) => {
+      const ref = t?.startdatum;
+      if (!ref) return false;
+      const d = new Date(ref);
+      if (isNaN(d.getTime())) return false;
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const key = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+      return key >= fromKey && key <= toKey;
+    });
+  }, [rows, dateFrom, dateTo]);
 
-  // ---- Touren des gewählten Jahres ----
-  const yearRows = useMemo(() => (rows ?? []).filter((t) => {
-    const ref = t?.startdatum ?? t?.created_at;
-    if (!ref) return false;
-    return new Date(ref).getFullYear() === year;
-  }), [rows, year]);
-
-  // ---- Gefilterte Touren (Status + Suche) ----
+  // ---- Gefilterte Touren (Status [computed] + Suche) ----
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (yearRows ?? []).filter((t) => {
-      if (statusFilter !== 'alle' && t.status !== statusFilter) return false;
+    return (rangeRows ?? []).filter((t) => {
+      if (statusFilter !== 'alle' && computeTourStatus(t.startdatum) !== statusFilter) return false;
       if (!q) return true;
       const fahrerName = displayName(t.fahrer?.user ?? null).toLowerCase();
       const haystack = [
@@ -183,25 +186,31 @@ export function TourenlistePage() {
         t.ziel_stadt ?? '',
         t.rueckfuehrung_stadt ?? '',
         t.kundenname ?? '',
+        t.fin ?? '',
         fahrerName,
         ...(Array.isArray(t.kennzeichen) ? t.kennzeichen : []),
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [yearRows, statusFilter, search]);
+  }, [rangeRows, statusFilter, search]);
 
-  // ---- KPI-Daten ----
+  // ---- KPI-Daten (basieren auf rangeRows / filteredRows + computed status) ----
   const kpi = useMemo(() => {
     const sum = (filteredRows ?? []).reduce((acc, t) => acc + Number(t.verguetung ?? 0), 0);
-    const aktiv = (yearRows ?? []).filter((t) => t.status === 'aktiv').length;
-    const geplant = (yearRows ?? []).filter((t) => t.status === 'geplant').length;
+    let aktiv = 0;
+    let geplant = 0;
+    for (const t of rangeRows ?? []) {
+      const s = computeTourStatus(t.startdatum);
+      if (s === 'aktiv') aktiv += 1;
+      if (s === 'geplant') geplant += 1;
+    }
     return {
-      jahr: (yearRows ?? []).length,
+      total: (rangeRows ?? []).length,
       sum,
       sumCount: (filteredRows ?? []).length,
       aktiv, geplant,
     };
-  }, [yearRows, filteredRows]);
+  }, [rangeRows, filteredRows]);
 
   // ---- Pagination ----
   const totalPages = Math.max(1, Math.ceil((filteredRows ?? []).length / PAGE_SIZE));
@@ -243,36 +252,46 @@ export function TourenlistePage() {
         </div>
       </div>
 
-      {/* Jahres-Filter */}
-      <div className="flex flex-wrap gap-2">
-        {(yearCounts ?? []).map(([y, count]) => {
-          const active = y === year;
-          return (
-            <button
-              key={y}
-              type="button"
-              onClick={() => setYear(y)}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                active ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light border border-maja-navy/15'
-              }`}
-            >
-              {y}
-              <span className={`inline-flex min-w-[1.5rem] justify-center rounded-full px-1.5 text-xs font-semibold ${
-                active ? 'bg-white/20 text-white' : 'bg-maja-light text-maja-navy'
-              }`}>
-                {count}
-              </span>
-            </button>
-          );
-        })}
+      {/* Datums-Filter */}
+      <div className="card p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="t-from" className="label">Startdatum</label>
+            <input id="t-from" type="date" className="input"
+                   value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="t-to" className="label">Enddatum</label>
+            <input id="t-to" type="date" className="input"
+                   value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <button
+            type="button"
+            className="btn-secondary px-3 py-2 text-sm"
+            onClick={() => { setDateFrom(ymd(monthStart)); setDateTo(ymd(monthEnd)); }}
+          >
+            Aktueller Monat
+          </button>
+          <button
+            type="button"
+            className="btn-secondary px-3 py-2 text-sm"
+            onClick={() => {
+              const yStart = new Date(today.getFullYear(), 0, 1);
+              const yEnd = new Date(today.getFullYear(), 11, 31);
+              setDateFrom(ymd(yStart)); setDateTo(ymd(yEnd));
+            }}
+          >
+            Aktuelles Jahr
+          </button>
+        </div>
       </div>
 
       {/* KPI-Karten — Summe Ansicht (Vergütung) nur für Admins */}
       <div className={`grid gap-3 sm:grid-cols-2 ${isAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         <KpiCard
-          title={`Touren ${year}`}
-          value={String(kpi.jahr)}
-          hint="in diesem Jahr"
+          title="Touren im Zeitraum"
+          value={String(kpi.total)}
+          hint={`${dateFrom} – ${dateTo}`}
         />
         {isAdmin && (
           <KpiCard
@@ -419,6 +438,7 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
   const protokollName = tour.schriftliches_protokoll?.name ?? null;
   const hasSchriftlich = tour.protokoll_art === 'schriftlich' && !!tour.schriftliches_protokoll_id;
   const fahrerName = displayName(tour.fahrer?.user ?? null) || '— kein Fahrer —';
+  const computedStatus = computeTourStatus(tour.startdatum);
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
     if (tour.startdatum && tour.enddatum) {
@@ -452,7 +472,15 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
               {isAdmin && <Meta icon={<IconPin />}>{formatKm(tour.km_gesamt)}</Meta>}
               {dateRange && <Meta icon={<IconCalendar />}>{dateRange}</Meta>}
               {((tour.kennzeichen ?? []).length > 0) && (
-                <Meta icon={<IconCar />}>{(tour.kennzeichen ?? []).join(', ')}</Meta>
+                <Meta icon={<IconCar />}>
+                  {(tour.kennzeichen ?? []).join(', ')}
+                  {tour.fin && (
+                    <span className="ml-1 text-xs text-maja-muted">· FIN: {tour.fin}</span>
+                  )}
+                </Meta>
+              )}
+              {((tour.kennzeichen ?? []).length === 0) && tour.fin && (
+                <Meta icon={<IconCar />}>FIN: {tour.fin}</Meta>
               )}
               {tour.auftraggeber && (
                 <Meta icon={<IconBuilding />}>
@@ -491,10 +519,15 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
 
           <div className="flex flex-col items-end gap-2">
             <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
-              STATUS_BADGE[tour.status]
+              STATUS_BADGE[computedStatus]
             }`}>
-              {STATUS_LABEL[tour.status]}
+              {STATUS_LABEL[computedStatus]}
             </span>
+            {tour.ist_e_fahrzeug && (
+              <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                E-Fahrzeug
+              </span>
+            )}
             {isAdmin && (
               <div className="text-right">
                 <div className="text-2xl font-bold text-maja-navy">

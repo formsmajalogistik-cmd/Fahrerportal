@@ -99,6 +99,7 @@ export type Database = {
           km_von: number;
           km_bis: number;
           preis: number;
+          e_fahrzeug_aufschlag: number;
           created_at: string;
         };
         Insert: {
@@ -107,6 +108,7 @@ export type Database = {
           km_von: number;
           km_bis: number;
           preis?: number;
+          e_fahrzeug_aufschlag?: number;
           created_at?: string;
         };
         Update: {
@@ -115,6 +117,7 @@ export type Database = {
           km_von?: number;
           km_bis?: number;
           preis?: number;
+          e_fahrzeug_aufschlag?: number;
           created_at?: string;
         };
         Relationships: [
@@ -190,6 +193,9 @@ export type Database = {
           protokoll_art: ProtokollArt | null;
           schriftliches_protokoll_id: string | null;
           greimel_zugang_id: string | null;
+          ist_e_fahrzeug: boolean;
+          fin: string | null;
+          kontakt_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -222,6 +228,9 @@ export type Database = {
           protokoll_art?: ProtokollArt | null;
           schriftliches_protokoll_id?: string | null;
           greimel_zugang_id?: string | null;
+          ist_e_fahrzeug?: boolean;
+          fin?: string | null;
+          kontakt_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -254,6 +263,9 @@ export type Database = {
           protokoll_art?: ProtokollArt | null;
           schriftliches_protokoll_id?: string | null;
           greimel_zugang_id?: string | null;
+          ist_e_fahrzeug?: boolean;
+          fin?: string | null;
+          kontakt_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -268,6 +280,49 @@ export type Database = {
             foreignKeyName: 'touren_fahrer_id_fkey';
             columns: ['fahrer_id'];
             referencedRelation: 'fahrer';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'touren_kontakt_id_fkey';
+            columns: ['kontakt_id'];
+            referencedRelation: 'auftraggeber_kontakte';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      auftraggeber_kontakte: {
+        Row: {
+          id: string;
+          auftraggeber_id: string;
+          name: string;
+          telefon: string | null;
+          email: string | null;
+          position: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          auftraggeber_id: string;
+          name: string;
+          telefon?: string | null;
+          email?: string | null;
+          position?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          auftraggeber_id?: string;
+          name?: string;
+          telefon?: string | null;
+          email?: string | null;
+          position?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'auftraggeber_kontakte_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
             referencedColumns: ['id'];
           },
         ];
@@ -486,6 +541,7 @@ export type Database = {
           p_auftraggeber_id: string | null;
           p_km: number | null;
           p_tourenart?: string | null;
+          p_ist_e_fahrzeug?: boolean | null;
         };
         Returns: number | null;
       };

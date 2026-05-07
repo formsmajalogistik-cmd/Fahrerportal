@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import type { Auftraggeber } from '../../types/db';
+import type { Auftraggeber, AuftraggeberKontakt } from '../../types/db';
 
 interface Props {
   initial: Auftraggeber | null;
@@ -8,42 +8,168 @@ interface Props {
   onSaved: () => void;
 }
 
+interface KontaktDraft {
+  key: string;
+  id: string | null;
+  name: string;
+  telefon: string;
+  email: string;
+  position: string;
+}
+
+function newKontakt(): KontaktDraft {
+  return {
+    key: `new-${Math.random().toString(36).slice(2, 10)}`,
+    id: null,
+    name: '',
+    telefon: '',
+    email: '',
+    position: '',
+  };
+}
+
+function fromServer(k: AuftraggeberKontakt): KontaktDraft {
+  return {
+    key: k.id,
+    id: k.id,
+    name: k.name,
+    telefon: k.telefon ?? '',
+    email: k.email ?? '',
+    position: k.position ?? '',
+  };
+}
+
 export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
   const isNew = !initial;
   const [name, setName]       = useState(initial?.name ?? '');
-  const [kontakt, setKontakt] = useState(initial?.kontakt ?? '');
   const [strasse, setStrasse] = useState(initial?.strasse ?? '');
   const [plz, setPlz]         = useState(initial?.plz ?? '');
   const [ort, setOrt]         = useState(initial?.ort ?? '');
   const [email1, setEmail1]   = useState(initial?.email1 ?? '');
   const [email2, setEmail2]   = useState(initial?.email2 ?? '');
-  const [saving, setSaving]   = useState(false);
-  const [error, setError]     = useState<string | null>(null);
+
+  // Kontakte
+  const [serverKontakte, setServerKontakte] = useState<AuftraggeberKontakt[]>([]);
+  const [kontakte, setKontakte]             = useState<KontaktDraft[]>([]);
+
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!initial) {
+      // Neuer Auftraggeber → leere Liste, ggf. legacy `kontakt` als ersten Eintrag.
+      setKontakte([]);
+      setServerKontakte([]);
+      return;
+    }
+    void (async () => {
+      const { data } = await supabase
+        .from('auftraggeber_kontakte')
+        .select('*')
+        .eq('auftraggeber_id', initial.id)
+        .order('created_at', { ascending: true });
+      const list = Array.isArray(data) ? data : [];
+      setServerKontakte(list);
+      if (list.length > 0) {
+        setKontakte(list.map(fromServer));
+      } else if (initial.kontakt && initial.kontakt.trim()) {
+        // Legacy single-kontakt-Feld als ersten Kontakt vorbelegen.
+        const fresh = newKontakt();
+        fresh.name = initial.kontakt.trim();
+        setKontakte([fresh]);
+      } else {
+        setKontakte([]);
+      }
+    })();
+  }, [initial]);
+
+  function updateK(key: string, patch: Partial<KontaktDraft>) {
+    setKontakte((ks) => ks.map((k) => (k.key === key ? { ...k, ...patch } : k)));
+  }
+  function removeK(key: string) {
+    setKontakte((ks) => ks.filter((k) => k.key !== key));
+  }
+  function addK() {
+    setKontakte((ks) => [...ks, newKontakt()]);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSaving(true);
+    if (!name.trim()) { setError('Name ist Pflicht.'); return; }
     setError(null);
-    const payload = {
-      name: name.trim(),
-      kontakt: kontakt.trim() || null,
-      strasse: strasse.trim() || null,
-      plz:     plz.trim() || null,
-      ort:     ort.trim() || null,
-      email1:  email1.trim() || null,
-      email2:  email2.trim() || null,
-    };
-    const { error: err } = isNew
-      ? await supabase.from('auftraggeber').insert(payload)
-      : await supabase.from('auftraggeber').update(payload).eq('id', initial!.id);
-    setSaving(false);
-    if (err) { setError(err.message); return; }
-    onSaved();
+    setSaving(true);
+    try {
+      // Auftraggeber speichern (kontakt-Legacy-Feld auf primären Kontakt-Namen
+      // synchronisieren, damit alte Anzeigen weiter sinnvolle Werte zeigen).
+      const primaerKontaktName = kontakte[0]?.name.trim() || null;
+      const payload = {
+        name: name.trim(),
+        kontakt: primaerKontaktName,
+        strasse: strasse.trim() || null,
+        plz:     plz.trim() || null,
+        ort:     ort.trim() || null,
+        email1:  email1.trim() || null,
+        email2:  email2.trim() || null,
+      };
+      let auftraggeberId: string;
+      if (isNew) {
+        const { data, error: err } = await supabase
+          .from('auftraggeber').insert(payload).select('id').single();
+        if (err) throw err;
+        auftraggeberId = data.id;
+      } else {
+        const { error: err } = await supabase
+          .from('auftraggeber').update(payload).eq('id', initial!.id);
+        if (err) throw err;
+        auftraggeberId = initial!.id;
+      }
+
+      // Kontakte diffen
+      const draftIds = new Set(kontakte.map((k) => k.id).filter((id): id is string => !!id));
+      const toDelete = serverKontakte.filter((s) => !draftIds.has(s.id)).map((s) => s.id);
+      const toInsert = kontakte
+        .filter((k) => k.id === null && k.name.trim())
+        .map((k) => ({
+          auftraggeber_id: auftraggeberId,
+          name: k.name.trim(),
+          telefon: k.telefon.trim() || null,
+          email: k.email.trim() || null,
+          position: k.position.trim() || null,
+        }));
+      const toUpdate = kontakte.filter((k) => k.id !== null && k.name.trim());
+
+      if (toDelete.length > 0) {
+        const { error: err } = await supabase
+          .from('auftraggeber_kontakte').delete().in('id', toDelete);
+        if (err) throw err;
+      }
+      if (toInsert.length > 0) {
+        const { error: err } = await supabase
+          .from('auftraggeber_kontakte').insert(toInsert);
+        if (err) throw err;
+      }
+      for (const u of toUpdate) {
+        const { error: err } = await supabase
+          .from('auftraggeber_kontakte').update({
+            name: u.name.trim(),
+            telefon: u.telefon.trim() || null,
+            email: u.email.trim() || null,
+            position: u.position.trim() || null,
+          }).eq('id', u.id!);
+        if (err) throw err;
+      }
+
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-maja-ink/40 px-4 py-6 overflow-auto">
-      <div className="card w-full max-w-lg p-6">
+    <div className="fixed inset-0 z-20 flex items-start justify-center bg-maja-ink/40 px-4 py-6 overflow-auto">
+      <div className="card w-full max-w-2xl p-6">
         <h2 className="mb-4 text-lg font-semibold text-maja-navy">
           {isNew ? 'Neuen Auftraggeber anlegen' : 'Auftraggeber bearbeiten'}
         </h2>
@@ -53,12 +179,6 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
             <label htmlFor="ag-name" className="label">Name *</label>
             <input id="ag-name" className="input" required
                    value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-
-          <div>
-            <label htmlFor="ag-kontakt" className="label">Kontaktperson</label>
-            <input id="ag-kontakt" className="input"
-                   value={kontakt} onChange={(e) => setKontakt(e.target.value)} />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-[2fr_1fr_2fr]">
@@ -90,6 +210,59 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
               <input id="ag-email2" type="email" className="input"
                      value={email2} onChange={(e) => setEmail2(e.target.value)} />
             </div>
+          </div>
+
+          {/* Kontakte */}
+          <div className="space-y-3 rounded-lg border border-maja-navy/10 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-maja-navy">Kontakte</h3>
+              <button type="button" className="btn-secondary px-3 py-1 text-sm" onClick={addK}>
+                + Kontakt hinzufügen
+              </button>
+            </div>
+            {kontakte.length === 0 ? (
+              <p className="text-xs text-maja-muted">Noch keine Kontakte hinterlegt.</p>
+            ) : (
+              <ul className="space-y-3">
+                {kontakte.map((k, idx) => (
+                  <li key={k.key} className="rounded-md border border-maja-navy/10 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-medium text-maja-muted">Kontakt {idx + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeK(k.key)}
+                        aria-label="Kontakt entfernen"
+                        className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="label">Name *</label>
+                        <input className="input" value={k.name}
+                               onChange={(e) => updateK(k.key, { name: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="label">Position / Rolle</label>
+                        <input className="input" value={k.position}
+                               onChange={(e) => updateK(k.key, { position: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="label">Telefon</label>
+                        <input className="input" type="tel" value={k.telefon}
+                               onChange={(e) => updateK(k.key, { telefon: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="label">E-Mail</label>
+                        <input className="input" type="email" value={k.email}
+                               onChange={(e) => updateK(k.key, { email: e.target.value })} />
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {error && (

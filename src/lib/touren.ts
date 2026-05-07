@@ -1,7 +1,7 @@
 // Hilfsfunktionen rund um die Tourenliste.
 
 import { supabase } from './supabase';
-import type { Tour, TourenArt } from '../types/db';
+import type { Tour, TourenArt, TourStatus } from '../types/db';
 
 const EUR = new Intl.NumberFormat('de-DE', {
   style: 'currency', currency: 'EUR', minimumFractionDigits: 2,
@@ -54,18 +54,93 @@ export async function fetchTourPrice(args: {
   auftraggeberId: string | null | undefined;
   km: number | null | undefined;
   tourenart?: TourenArt | null;
+  istEFahrzeug?: boolean;
 }): Promise<number | null> {
   if (!args.auftraggeberId || args.km == null) return null;
   const { data, error } = await supabase.rpc('calculate_tour_price', {
     p_auftraggeber_id: args.auftraggeberId,
     p_km: args.km,
     p_tourenart: args.tourenart ?? 'AB',
+    p_ist_e_fahrzeug: !!args.istEFahrzeug,
   });
   if (error) {
     console.warn('[fetchTourPrice]', error);
     return null;
   }
   return data == null ? null : Number(data);
+}
+
+export interface TourPriceBreakdown {
+  base: number;
+  abaAufschlag: number;
+  eAufschlag: number;
+  total: number;
+}
+
+/**
+ * Liefert die Aufschlüsselung des Tour-Preises (Basispreis, ABA-Aufschlag,
+ * E-Fahrzeug-Aufschlag, Summe). Kommt direkt aus den Tabellen statt aus der
+ * RPC, damit das Frontend die Komponenten getrennt anzeigen kann.
+ */
+export async function fetchTourPriceBreakdown(args: {
+  auftraggeberId: string | null | undefined;
+  km: number | null | undefined;
+  tourenart?: TourenArt | null;
+  istEFahrzeug?: boolean;
+}): Promise<TourPriceBreakdown | null> {
+  if (!args.auftraggeberId || args.km == null) return null;
+  const km = args.km;
+  const [stufeRes, agRes] = await Promise.all([
+    supabase
+      .from('preisstufen')
+      .select('preis, e_fahrzeug_aufschlag')
+      .eq('auftraggeber_id', args.auftraggeberId)
+      .lte('km_von', km)
+      .gte('km_bis', km)
+      .order('km_von', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('auftraggeber')
+      .select('aba_aufschlag_prozent')
+      .eq('id', args.auftraggeberId)
+      .maybeSingle(),
+  ]);
+  if (stufeRes.error) { console.warn('[fetchTourPriceBreakdown stufe]', stufeRes.error); return null; }
+  const stufe = stufeRes.data;
+  if (!stufe) return null;
+  const base = Math.round(Number(stufe.preis) * 100) / 100;
+  let abaAufschlag = 0;
+  if (args.tourenart === 'ABA') {
+    const prozent = Number(agRes.data?.aba_aufschlag_prozent ?? 0);
+    if (prozent > 0) abaAufschlag = Math.round(base * prozent) / 100;
+  }
+  const eAufschlag = args.istEFahrzeug
+    ? Math.round(Number(stufe.e_fahrzeug_aufschlag ?? 0) * 100) / 100
+    : 0;
+  const total = Math.round((base + abaAufschlag + eAufschlag) * 100) / 100;
+  return { base, abaAufschlag, eAufschlag, total };
+}
+
+/**
+ * Berechnet den Status einer Tour live aus dem Startdatum:
+ *  - Datum noch in Zukunft → 'geplant'
+ *  - Datum heute            → 'aktiv'
+ *  - Datum in Vergangenheit → 'abgeschlossen'
+ *
+ * Wenn kein Startdatum gesetzt ist, wird 'geplant' als Default zurückgegeben.
+ * Verglichen wird auf Tagesebene (Lokalzeit).
+ */
+export function computeTourStatus(startdatum: string | null | undefined): TourStatus {
+  if (!startdatum) return 'geplant';
+  const d = new Date(startdatum);
+  if (isNaN(d.getTime())) return 'geplant';
+  const today = new Date();
+  const ymdToday = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
+  const ymdTour = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  if (ymdTour > ymdToday) return 'geplant';
+  if (ymdTour < ymdToday) return 'abgeschlossen';
+  return 'aktiv';
 }
 
 /** Baut den Routen-Titel: "Start → Ziel" bzw. "Start → Ziel → Rückführung". */

@@ -31,6 +31,7 @@ interface DraftRow {
   km_von: string;
   km_bis: string;
   preis: string;
+  e_aufschlag: string;
 }
 
 interface SvDraftRow {
@@ -48,16 +49,18 @@ function rowFromServer(p: Preisstufe): DraftRow {
     km_von: String(p.km_von),
     km_bis: String(p.km_bis),
     preis: Number(p.preis).toFixed(2).replace('.', ','),
+    e_aufschlag: Number(p.e_fahrzeug_aufschlag ?? 0).toFixed(2).replace('.', ','),
   };
 }
 
-function newDraftRow(km_von = '', km_bis = '', preis = '0,00'): DraftRow {
+function newDraftRow(km_von = '', km_bis = '', preis = '0,00', e_aufschlag = '0,00'): DraftRow {
   return {
     key: `new-${Math.random().toString(36).slice(2, 10)}`,
     id: null,
     km_von,
     km_bis,
     preis,
+    e_aufschlag,
   };
 }
 
@@ -338,11 +341,12 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
     }
 
     // --- Validate Preisstufen ---
-    const parsedPs: Array<{ row: DraftRow; km_von: number; km_bis: number; preis: number }> = [];
+    const parsedPs: Array<{ row: DraftRow; km_von: number; km_bis: number; preis: number; e_aufschlag: number }> = [];
     for (const row of draftRows) {
       const km_von = parseKm(row.km_von);
       const km_bis = parseKm(row.km_bis);
       const preis = parsePreis(row.preis);
+      const e_aufschlag = parsePreis(row.e_aufschlag);
       if (km_von === null || km_bis === null) {
         setStatusMsg({ kind: 'err', text: 'Bitte gültige km-Werte eingeben (ganze Zahlen).' });
         return;
@@ -355,7 +359,11 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
         setStatusMsg({ kind: 'err', text: `Stufe ${row.km_von}–${row.km_bis}: Preis ist ungültig.` });
         return;
       }
-      parsedPs.push({ row, km_von, km_bis, preis });
+      if (e_aufschlag === null) {
+        setStatusMsg({ kind: 'err', text: `Stufe ${row.km_von}–${row.km_bis}: E-Fahrzeug-Aufschlag ist ungültig.` });
+        return;
+      }
+      parsedPs.push({ row, km_von, km_bis, preis, e_aufschlag });
     }
 
     // --- Validate Sondervergütungen ---
@@ -398,6 +406,7 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
           km_von: p.km_von,
           km_bis: p.km_bis,
           preis: p.preis,
+          e_fahrzeug_aufschlag: p.e_aufschlag,
         }));
       const psToUpdate = parsedPs.filter((p) => p.row.id !== null);
 
@@ -412,7 +421,10 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
       for (const u of psToUpdate) {
         const { error } = await supabase
           .from('preisstufen')
-          .update({ km_von: u.km_von, km_bis: u.km_bis, preis: u.preis })
+          .update({
+            km_von: u.km_von, km_bis: u.km_bis,
+            preis: u.preis, e_fahrzeug_aufschlag: u.e_aufschlag,
+          })
           .eq('id', u.row.id!);
         if (error) throw error;
       }
@@ -606,6 +618,7 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
                   <th className="px-3 py-2 font-semibold">km von</th>
                   <th className="px-3 py-2 font-semibold">km bis</th>
                   <th className="px-3 py-2 font-semibold">Preis (€)</th>
+                  <th className="px-3 py-2 font-semibold">E-Aufschlag (€)</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
@@ -639,6 +652,15 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
                         inputMode="decimal"
                         value={row.preis}
                         onChange={(e) => updateRow(row.key, { preis: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="input py-1.5"
+                        type="text"
+                        inputMode="decimal"
+                        value={row.e_aufschlag}
+                        onChange={(e) => updateRow(row.key, { e_aufschlag: e.target.value })}
                       />
                     </td>
                     <td className="px-2 py-1 text-right">

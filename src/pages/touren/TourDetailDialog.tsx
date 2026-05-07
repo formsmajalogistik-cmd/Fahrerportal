@@ -7,13 +7,14 @@ import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { displayName } from '../../lib/names';
 import {
-  computeKmGesamt, fetchTourPrice, formatDateTime, formatEuro, formatKm, tourTitel,
+  computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
+  formatDateTime, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
 } from '../../lib/touren';
 import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
 import { ProtokollSection } from './ProtokollSection';
 import type { FormularTemplate, GreimelZugang, ProtokollArt } from '../../types/db';
 import type {
-  AppUser, Auftraggeber, Fahrer, Tour, TourenArt, TourStatus, TourZusatz,
+  AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, Tour, TourenArt, TourStatus, TourZusatz,
 } from '../../types/db';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
@@ -21,6 +22,7 @@ type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nach
 interface FullTour extends Tour {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt'> | null;
   fahrer: FahrerWithUser | null;
+  kontakt: AuftraggeberKontakt | null;
 }
 
 interface Props {
@@ -37,9 +39,9 @@ const STATUS_LABEL: Record<TourStatus, string> = {
 };
 
 const STATUS_BADGE: Record<TourStatus, string> = {
-  geplant:        'bg-gray-100 text-gray-700',
-  aktiv:          'bg-maja-accent/15 text-maja-accent',
-  abgeschlossen:  'bg-emerald-100 text-emerald-700',
+  geplant:        'bg-blue-100 text-blue-700',
+  aktiv:          'bg-emerald-100 text-emerald-700',
+  abgeschlossen:  'bg-gray-100 text-gray-600',
 };
 
 const ZUSATZ_KATEGORIEN = [
@@ -113,6 +115,9 @@ interface EditDraft {
   protokollArt: ProtokollArt | null;
   schriftlichesProtokollId: string | null;
   greimelZugangId: string | null;
+  istEFahrzeug: boolean;
+  fin: string;
+  kontaktId: string;
 }
 
 function draftFromTour(t: FullTour): EditDraft {
@@ -146,6 +151,9 @@ function draftFromTour(t: FullTour): EditDraft {
     protokollArt: t.protokoll_art ?? null,
     schriftlichesProtokollId: t.schriftliches_protokoll_id ?? null,
     greimelZugangId: t.greimel_zugang_id ?? null,
+    istEFahrzeug: !!t.ist_e_fahrzeug,
+    fin: t.fin ?? '',
+    kontaktId: t.kontakt_id ?? '',
   };
 }
 
@@ -189,6 +197,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         .select(`
           *,
           auftraggeber:auftraggeber_id (id, name, kontakt),
+          kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at),
           fahrer:fahrer_id (
             id, user_id, aktiv,
             user:user_id (email, vorname, nachname)
@@ -216,6 +225,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       kennzeichen: Array.isArray(raw.kennzeichen) ? (raw.kennzeichen as string[]) : [],
       auftraggeber: (raw.auftraggeber as FullTour['auftraggeber']) ?? null,
       fahrer: (raw.fahrer as FullTour['fahrer']) ?? null,
+      kontakt: (raw.kontakt as FullTour['kontakt']) ?? null,
     };
     setTour(full);
     setBarauslagenInput(decimalToInput(full.barauslagen));
@@ -285,26 +295,59 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   );
 
   // Auto-Preis im Edit-Modus
-  const [autoPrice, setAutoPrice] = useState<number | null>(null);
+  const [breakdown, setBreakdown] = useState<TourPriceBreakdown | null>(null);
   const [pricing, setPricing] = useState(false);
 
   useEffect(() => {
-    if (!editing || !draft) { setAutoPrice(null); return; }
-    if (draft.istSondervereinbarung) { setAutoPrice(null); return; }
-    if (!draft.auftraggeberId || liveKmGesamt == null) { setAutoPrice(null); return; }
+    if (!editing || !draft) { setBreakdown(null); return; }
+    if (draft.istSondervereinbarung) { setBreakdown(null); return; }
+    if (!draft.auftraggeberId || liveKmGesamt == null) { setBreakdown(null); return; }
     let cancelled = false;
     setPricing(true);
-    void fetchTourPrice({
+    void fetchTourPriceBreakdown({
       auftraggeberId: draft.auftraggeberId,
       km: liveKmGesamt,
       tourenart: (draft.tourenart || 'AB') as TourenArt,
-    }).then((p) => {
+      istEFahrzeug: draft.istEFahrzeug,
+    }).then((b) => {
       if (cancelled) return;
-      setAutoPrice(p);
+      setBreakdown(b);
       setPricing(false);
     });
     return () => { cancelled = true; };
   }, [editing, draft, liveKmGesamt]);
+
+  // Breakdown für die View-Anzeige (Aufschlüsselung zum gespeicherten Preis).
+  const [viewBreakdown, setViewBreakdown] = useState<TourPriceBreakdown | null>(null);
+  useEffect(() => {
+    if (!tour || tour.ist_sondervereinbarung) { setViewBreakdown(null); return; }
+    if (!tour.auftraggeber_id || tour.km_gesamt == null) { setViewBreakdown(null); return; }
+    let cancelled = false;
+    void fetchTourPriceBreakdown({
+      auftraggeberId: tour.auftraggeber_id,
+      km: tour.km_gesamt,
+      tourenart: (tour.tourenart || 'AB') as TourenArt,
+      istEFahrzeug: !!tour.ist_e_fahrzeug,
+    }).then((b) => { if (!cancelled) setViewBreakdown(b); });
+    return () => { cancelled = true; };
+  }, [tour]);
+
+  // Kontakte für den im Edit-Draft gewählten Auftraggeber.
+  const [editKontakte, setEditKontakte] = useState<AuftraggeberKontakt[]>([]);
+  useEffect(() => {
+    if (!editing || !draft?.auftraggeberId) { setEditKontakte([]); return; }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('auftraggeber_kontakte')
+        .select('*')
+        .eq('auftraggeber_id', draft.auftraggeberId)
+        .order('created_at', { ascending: true });
+      if (cancelled) return;
+      setEditKontakte(Array.isArray(data) ? data : []);
+    })();
+    return () => { cancelled = true; };
+  }, [editing, draft?.auftraggeberId]);
 
   async function handleSave() {
     if (!draft || !tour) return;
@@ -331,7 +374,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         verguetung = v;
       }
     } else {
-      verguetung = autoPrice;
+      verguetung = breakdown?.total ?? null;
     }
 
     let km_hin: number | null;
@@ -355,7 +398,10 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     // Greimel-Zugang freigegeben (siehe unten).
     const draftAg = draftSelectedAg;
     const isGreimelTour = isGreimelAuftraggeber(draftAg);
-    const willComplete = draft.status === 'abgeschlossen';
+    // Status wird live aus dem Datum berechnet — Greimel-Zugang wird nur
+    // gehalten, solange die Tour nicht "abgeschlossen" ist.
+    const draftIsoStart = draft.startdatum ? new Date(draft.startdatum).toISOString() : null;
+    const willComplete = computeTourStatus(draftIsoStart) === 'abgeschlossen';
 
     let nextGreimelId: string | null = null;
     if (draft.protokollArt === 'app' && isGreimelTour && !willComplete) {
@@ -371,9 +417,12 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     const { error: err } = await supabase
       .from('touren')
       .update({
-        status: draft.status,
+        // status wird im Frontend live aus dem Datum berechnet — wir
+        // schreiben den Wert nicht mehr in die DB (Spalte bleibt mit
+        // ihrem Default-Wert bestehen).
         fahrer_id: draft.fahrerId || null,
         auftraggeber_id: draft.auftraggeberId || null,
+        kontakt_id: draft.kontaktId || null,
         tourenart: draft.tourenart || null,
         start_stadt: start,
         ziel_stadt: ziel,
@@ -381,7 +430,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         km_hin,
         km_rueck,
         km_gesamt: liveKmGesamt,
-        startdatum: draft.startdatum ? new Date(draft.startdatum).toISOString() : null,
+        startdatum: draftIsoStart,
         enddatum: draft.enddatum ? new Date(draft.enddatum).toISOString() : null,
         kennzeichen,
         ist_sondervereinbarung: draft.istSondervereinbarung,
@@ -396,6 +445,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         adresse_rueckfuehrung: draft.hatRueckfuehrung
           ? (draft.adresseRueckfuehrung.trim() || null)
           : null,
+        ist_e_fahrzeug: draft.istEFahrzeug,
+        fin: draft.fin.trim() || null,
         protokoll_art: draft.protokollArt,
         schriftliches_protokoll_id: nextSchriftlichesId,
         greimel_zugang_id: nextGreimelId,
@@ -585,7 +636,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} isAdmin={isAdmin} />
+        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
       ) : (
         <EditMode
           draft={draft}
@@ -595,10 +646,11 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           auftraggeber={auftraggeber}
           fahrer={fahrer}
           draftSelectedAg={draftSelectedAg}
-          autoPrice={autoPrice}
+          breakdown={breakdown}
           pricing={pricing}
           templates={templates}
           zugaenge={zugaenge}
+          kontakte={editKontakte}
         />
       )}
 
@@ -814,9 +866,10 @@ interface ViewModeProps {
   templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
   zugaenge: GreimelZugang[];
   isAdmin: boolean;
+  viewBreakdown: TourPriceBreakdown | null;
 }
 
-function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isAdmin }: ViewModeProps) {
+function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isAdmin, viewBreakdown }: ViewModeProps) {
   const linkedTemplate = templates.find((t) => t.id === tour.schriftliches_protokoll_id) ?? null;
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const dateRange = (() => {
@@ -827,33 +880,64 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
     return tour.startdatum ? a : b;
   })();
 
+  const computedStatus = computeTourStatus(tour.startdatum);
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
         <DetailItem label="Status">
-          <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${STATUS_BADGE[tour.status]}`}>
-            {STATUS_LABEL[tour.status]}
+          <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${STATUS_BADGE[computedStatus]}`}>
+            {STATUS_LABEL[computedStatus]}
           </span>
+          <span className="ml-2 text-xs text-maja-muted">(automatisch nach Datum)</span>
         </DetailItem>
         <DetailItem label="Fahrer">{fahrerName}</DetailItem>
         <DetailItem label="Auftraggeber">
           {tour.auftraggeber ? (
+            <span className="block">{tour.auftraggeber.name}</span>
+          ) : '—'}
+        </DetailItem>
+        <DetailItem label="Ansprechpartner">
+          {tour.kontakt ? (
             <>
-              <span className="block">{tour.auftraggeber.name}</span>
-              {tour.auftraggeber.kontakt && (
+              <span className="block">{tour.kontakt.name}</span>
+              {tour.kontakt.position && (
+                <span className="block text-xs text-maja-muted">{tour.kontakt.position}</span>
+              )}
+              {(tour.kontakt.telefon || tour.kontakt.email) && (
                 <span className="block text-xs text-maja-muted">
-                  Kontakt: {tour.auftraggeber.kontakt}
+                  {[tour.kontakt.telefon, tour.kontakt.email].filter(Boolean).join(' · ')}
                 </span>
               )}
             </>
           ) : '—'}
         </DetailItem>
         <DetailItem label="Kundenname">{tour.kundenname || '—'}</DetailItem>
-        <DetailItem label="Tourenart">{tour.tourenart ?? '—'}</DetailItem>
+        <DetailItem label="Tourenart">
+          {tour.tourenart ?? '—'}
+          {tour.ist_e_fahrzeug && (
+            <span className="ml-2 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+              E-Fahrzeug
+            </span>
+          )}
+        </DetailItem>
+        <DetailItem label="FIN">{tour.fin || '—'}</DetailItem>
         {isAdmin && (
-          <DetailItem label="Vergütung">
-            {formatEuro(tour.verguetung)}
-            {!tour.ist_sondervereinbarung && tour.auftraggeber_id && tour.km_gesamt != null && (
+          <DetailItem label="Vergütung" full>
+            <span className="text-base font-semibold text-maja-navy">{formatEuro(tour.verguetung)}</span>
+            {tour.ist_sondervereinbarung ? (
+              <span className="ml-2 text-xs text-maja-muted">Manueller Preis (Sondervereinbarung)</span>
+            ) : viewBreakdown && (viewBreakdown.abaAufschlag > 0 || viewBreakdown.eAufschlag > 0) ? (
+              <div className="mt-1 text-xs text-maja-muted">
+                {formatEuro(viewBreakdown.base)}
+                {viewBreakdown.abaAufschlag > 0 && (
+                  <> + {formatEuro(viewBreakdown.abaAufschlag)} ABA</>
+                )}
+                {viewBreakdown.eAufschlag > 0 && (
+                  <> + {formatEuro(viewBreakdown.eAufschlag)} E-Aufschlag</>
+                )}
+                <> = {formatEuro(viewBreakdown.total)}</>
+              </div>
+            ) : (
               <span className="ml-2 text-xs text-maja-muted">Auto (Preisliste)</span>
             )}
           </DetailItem>
@@ -980,29 +1064,28 @@ interface EditModeProps {
   auftraggeber: Auftraggeber[];
   fahrer: FahrerWithUser[];
   draftSelectedAg: Auftraggeber | null;
-  autoPrice: number | null;
+  breakdown: TourPriceBreakdown | null;
   pricing: boolean;
   templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
   zugaenge: GreimelZugang[];
+  kontakte: AuftraggeberKontakt[];
 }
 
 function EditMode(p: EditModeProps) {
-  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, autoPrice, pricing, templates, zugaenge } = p;
-  const isAba = draft.tourenart === 'ABA';
-  const abaAufschlag = draftSelectedAg?.aba_aufschlag_prozent ?? null;
+  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, breakdown, pricing, templates, zugaenge, kontakte } = p;
   const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
+  // Live-Status aus dem Datum (analog zur Anzeige in der Liste).
+  const draftIsoStart = draft.startdatum ? new Date(draft.startdatum).toISOString() : null;
+  const computedStatus = computeTourStatus(draftIsoStart);
   return (
     <div className="space-y-5">
+      <div className="rounded-md bg-maja-light/60 p-3 text-xs text-maja-muted">
+        Status wird automatisch aus dem Startdatum berechnet:{' '}
+        <span className={`ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[computedStatus]}`}>
+          {STATUS_LABEL[computedStatus]}
+        </span>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Status</label>
-          <select className="input" value={draft.status}
-                  onChange={(e) => patchDraft({ status: e.target.value as TourStatus })}>
-            {(['geplant', 'aktiv', 'abgeschlossen'] as TourStatus[]).map((s) => (
-              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-            ))}
-          </select>
-        </div>
         <div>
           <label className="label">Fahrer</label>
           <select className="input" value={draft.fahrerId}
@@ -1016,15 +1099,12 @@ function EditMode(p: EditModeProps) {
         <div>
           <label className="label">Auftraggeber</label>
           <select className="input" value={draft.auftraggeberId}
-                  onChange={(e) => patchDraft({ auftraggeberId: e.target.value })}>
+                  onChange={(e) => patchDraft({ auftraggeberId: e.target.value, kontaktId: '' })}>
             <option value="">— kein Auftraggeber —</option>
             {(auftraggeber ?? []).map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
-          {draftSelectedAg?.kontakt && (
-            <p className="mt-1 text-xs text-maja-muted">Kontakt: {draftSelectedAg.kontakt}</p>
-          )}
         </div>
         <div>
           <label className="label">Tourenart</label>
@@ -1036,6 +1116,20 @@ function EditMode(p: EditModeProps) {
             <option value="ABA">ABA</option>
           </select>
         </div>
+        {draft.auftraggeberId && kontakte.length > 0 && (
+          <div className="sm:col-span-2">
+            <label className="label">Ansprechpartner</label>
+            <select className="input" value={draft.kontaktId}
+                    onChange={(e) => patchDraft({ kontaktId: e.target.value })}>
+              <option value="">— kein Ansprechpartner —</option>
+              {kontakte.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name}{k.position ? ` · ${k.position}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label className="label">Start-Stadt *</label>
           <input className="input" value={draft.startStadt}
@@ -1164,6 +1258,25 @@ function EditMode(p: EditModeProps) {
         zugaenge={zugaenge}
       />
 
+      {/* E-Fahrzeug + FIN */}
+      <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
+        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+            checked={draft.istEFahrzeug}
+            onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
+          />
+          E-Fahrzeug
+        </label>
+        <div>
+          <label className="label">FIN</label>
+          <input className="input"
+                 value={draft.fin}
+                 onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
+        </div>
+      </div>
+
       {/* Sondervereinbarung */}
       <div className="space-y-2">
         <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
@@ -1207,20 +1320,26 @@ function EditMode(p: EditModeProps) {
                 className="input bg-maja-light"
                 type="text"
                 readOnly
-                value={pricing ? '…' : (autoPrice == null ? '' : Number(autoPrice).toFixed(2).replace('.', ','))}
+                value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
               />
               <p className="mt-1 text-xs text-maja-muted">
                 {draft.auftraggeberId && liveKmGesamt != null
-                  ? autoPrice == null
+                  ? breakdown == null
                     ? 'Auto (Preisliste): keine passende Stufe gefunden.'
-                    : (
-                      <>
-                        Auto (Preisliste)
-                        {isAba && abaAufschlag != null && Number(abaAufschlag) > 0 && (
-                          <> · ABA +{Number(abaAufschlag).toString().replace('.', ',')}%</>
-                        )}
-                      </>
-                    )
+                    : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
+                      ? 'Auto (Preisliste)'
+                      : (
+                        <>
+                          {formatEuro(breakdown.base)}
+                          {breakdown.abaAufschlag > 0 && (
+                            <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
+                          )}
+                          {breakdown.eAufschlag > 0 && (
+                            <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
+                          )}
+                          <> = {formatEuro(breakdown.total)}</>
+                        </>
+                      )
                   : 'Auto (Preisliste): Auftraggeber + km wählen.'}
               </p>
             </>
