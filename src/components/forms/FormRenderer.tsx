@@ -11,6 +11,7 @@ import { PhotoField } from './fields/PhotoField';
 import { SignatureField } from './fields/SignatureField';
 import { DamageDiagramField } from './fields/DamageDiagramField';
 import { DynamicPhotosField } from './fields/DynamicPhotosField';
+import { AddressField } from './fields/AddressField';
 
 interface Props {
   schema: FormSchema;
@@ -113,6 +114,8 @@ function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder }: Field
           onChange={onChange} disabled={disabled}
         />
       );
+    case 'address':
+      return <AddressField field={field} value={value} onChange={onChange} disabled={disabled} />;
     default:
       return (
         <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">

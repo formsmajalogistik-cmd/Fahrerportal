@@ -57,7 +57,17 @@ export function TemplateMappingEditor({
   const fields = useMemo(() => Array.from(fieldMap.values()), [fieldMap]);
   const fieldLabels = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const f of fields) m[f.id] = f.label;
+    for (const f of fields) {
+      m[f.id] = f.label;
+      if (f.type === 'address') {
+        m[`${f.id}.strasse`] = `${f.label} – Straße`;
+        m[`${f.id}.plz`]     = `${f.label} – PLZ`;
+        m[`${f.id}.stadt`]   = `${f.label} – Stadt`;
+      }
+      if (f.type === 'damage_diagram') {
+        m[`${f.id}.beschreibung`] = `${f.label} – Beschreibungsliste`;
+      }
+    }
     return m;
   }, [fields]);
 
@@ -149,6 +159,26 @@ export function TemplateMappingEditor({
     } else {
       placeSimpleField(field);
     }
+  }
+
+  /**
+   * Platziert einen TextEntry an einem zusammengesetzten Mapping-Schlüssel
+   * (z.B. `adresse.strasse` oder `schaeden.beschreibung`). Wird für Sub-
+   * Felder von `address` und für die Beschreibungs-Position bei
+   * `damage_diagram` genutzt.
+   */
+  function placeTextAtKey(key: string) {
+    if (!pending) return;
+    const entry: TextEntry = {
+      type: 'text',
+      page: pending.page,
+      x: Math.round(pending.x),
+      y: Math.round(pending.y),
+    };
+    onMappingChange({ ...mapping, [key]: entry });
+    setSelected({ fieldId: key });
+    setPending(null);
+    setPickerStep(null);
   }
 
   function removeFieldEntry(fieldId: string) {
@@ -324,6 +354,16 @@ export function TemplateMappingEditor({
           </div>
 
           <aside className="lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-auto space-y-4">
+            <OrphansBanner
+              fields={fields}
+              mapping={mapping}
+              onRemove={(key) => {
+                const { [key]: _gone, ...rest } = mapping;
+                void _gone;
+                onMappingChange(rest);
+                if (selected?.fieldId === key) setSelected(null);
+              }}
+            />
             <FieldsSidebar
               fields={fields}
               mapping={mapping}
@@ -370,14 +410,76 @@ export function TemplateMappingEditor({
               {fields.length === 0 && (
                 <p className="text-sm text-maja-muted">Es gibt noch keine Felder.</p>
               )}
-              {fields.map((f) => {
+              {fields.flatMap((f) => {
+                // Address: 3 Sub-Felder pro Eintrag
+                if (f.type === 'address') {
+                  const subs: Array<{ key: 'strasse' | 'plz' | 'stadt'; label: string }> = [
+                    { key: 'strasse', label: 'Straße' },
+                    { key: 'plz',     label: 'PLZ' },
+                    { key: 'stadt',   label: 'Stadt' },
+                  ];
+                  return subs.map((s) => {
+                    const compositeKey = `${f.id}.${s.key}`;
+                    const isMapped = !!mapping[compositeKey];
+                    return (
+                      <button
+                        key={compositeKey}
+                        type="button"
+                        onClick={() => placeTextAtKey(compositeKey)}
+                        className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
+                      >
+                        <span>
+                          <span className="font-medium text-maja-ink">{f.label}</span>
+                          {' '}
+                          <span className="text-xs text-maja-muted">– {s.label}</span>
+                        </span>
+                        {isMapped && <span className="text-xs text-amber-700">bereits gemappt</span>}
+                      </button>
+                    );
+                  });
+                }
+                // Damage diagram: zusätzlich Beschreibungs-Text als Sub-Eintrag
+                if (f.type === 'damage_diagram') {
+                  const beschKey = `${f.id}.beschreibung`;
+                  const eBox = mapping[f.id];
+                  const eBesch = mapping[beschKey];
+                  return [
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => pickField(f)}
+                      className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
+                    >
+                      <span>
+                        <span className="font-medium text-maja-ink">{f.label}</span>
+                        {' '}
+                        <span className="text-xs text-maja-muted">– Diagramm</span>
+                      </span>
+                      {eBox && <span className="text-xs text-amber-700">bereits gemappt</span>}
+                    </button>,
+                    <button
+                      key={beschKey}
+                      type="button"
+                      onClick={() => placeTextAtKey(beschKey)}
+                      className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
+                    >
+                      <span>
+                        <span className="font-medium text-maja-ink">{f.label}</span>
+                        {' '}
+                        <span className="text-xs text-maja-muted">– Beschreibungsliste</span>
+                      </span>
+                      {eBesch && <span className="text-xs text-amber-700">bereits gemappt</span>}
+                    </button>,
+                  ];
+                }
+                // Standardfall: ein Eintrag pro Feld
                 const m = modeFor(f.type);
                 const e = mapping[f.id];
                 const tag =
                   m === 'options'
                     ? `${Object.keys(isOptionsEntry(e) ? e.options : {}).length}/${(f.options ?? []).length} Optionen gemappt`
                     : e ? 'bereits gemappt' : '';
-                return (
+                return [(
                   <button
                     key={f.id}
                     type="button"
@@ -391,7 +493,7 @@ export function TemplateMappingEditor({
                     </span>
                     {tag && <span className="text-xs text-amber-700">{tag}</span>}
                   </button>
-                );
+                )];
               })}
             </div>
             <div className="mt-4 flex justify-end">
@@ -477,6 +579,50 @@ export function TemplateMappingEditor({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------- Orphan-Warnung: Mapping-Schlüssel ohne passendes Feld ----------
+
+function OrphansBanner({
+  fields, mapping, onRemove,
+}: {
+  fields: FormField[];
+  mapping: FieldMapping;
+  onRemove: (key: string) => void;
+}) {
+  const knownIds = new Set(fields.map((f) => f.id));
+  const orphans = Object.keys(mapping).filter((key) => {
+    // Direkter Match
+    if (knownIds.has(key)) return false;
+    // Sub-Field-Keys "fieldId.subfield" — gültig wenn fieldId bekannt.
+    const dot = key.indexOf('.');
+    if (dot > 0 && knownIds.has(key.slice(0, dot))) return false;
+    return true;
+  });
+  if (orphans.length === 0) return null;
+  return (
+    <div className="card border border-amber-300 bg-amber-50 p-4 text-amber-900">
+      <h3 className="text-sm font-semibold">Verwaiste Mapping-Einträge</h3>
+      <p className="mt-1 text-xs">
+        Diese Einträge zeigen auf Feld-IDs, die nicht mehr im Schema existieren
+        (z.B. nach einer Umbenennung oder Löschung).
+      </p>
+      <ul className="mt-2 space-y-1 text-xs">
+        {orphans.map((key) => (
+          <li key={key} className="flex items-center justify-between gap-2 rounded-md bg-white/70 px-2 py-1">
+            <code className="break-all">{key}</code>
+            <button
+              type="button"
+              onClick={() => onRemove(key)}
+              className="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
+            >
+              Löschen
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

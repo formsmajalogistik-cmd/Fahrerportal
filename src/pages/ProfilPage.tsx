@@ -30,17 +30,17 @@ export function ProfilPage() {
     setProfileErr(null);
     setProfileMsg(null);
     setSavingProfile(true);
-    const { error } = await supabase
-      .from('app_users')
-      .update({
-        vorname: vorname.trim() || null,
-        nachname: nachname.trim() || null,
-        save_to_gallery: saveGallery,
-      })
-      .eq('id', profile.id);
+    // RPC mit SECURITY DEFINER — funktioniert auch für Fahrer (deren RLS-Policy
+    // sonst keinen UPDATE auf app_users erlaubt).
+    const { error } = await supabase.rpc('update_my_profile', {
+      p_vorname: vorname.trim() || null,
+      p_nachname: nachname.trim() || null,
+      p_save_to_gallery: saveGallery,
+    });
     setSavingProfile(false);
     if (error) { setProfileErr(error.message); return; }
     setProfileMsg('Profil gespeichert.');
+    window.setTimeout(() => setProfileMsg((m) => m === 'Profil gespeichert.' ? null : m), 3000);
     await refreshProfile();
   }
 

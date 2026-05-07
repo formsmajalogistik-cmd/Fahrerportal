@@ -13,6 +13,11 @@ export function hasValue(v: unknown): boolean {
   if (Array.isArray(v)) return v.length > 0;
   if (typeof v === 'object') {
     if ('storage_path' in v) return !!(v as { storage_path?: unknown }).storage_path;
+    // Adress-Wert: alle drei Sub-Felder müssen Inhalt haben.
+    if ('strasse' in v || 'plz' in v || 'stadt' in v) {
+      const a = v as { strasse?: unknown; plz?: unknown; stadt?: unknown };
+      return hasValue(a.strasse) && hasValue(a.plz) && hasValue(a.stadt);
+    }
     return Object.keys(v).length > 0;
   }
   return true;

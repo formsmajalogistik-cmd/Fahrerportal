@@ -545,6 +545,14 @@ export type Database = {
         };
         Returns: number | null;
       };
+      update_my_profile: {
+        Args: {
+          p_vorname: string | null;
+          p_nachname: string | null;
+          p_save_to_gallery: boolean;
+        };
+        Returns: void;
+      };
     };
     Enums: {
       user_role: UserRole;

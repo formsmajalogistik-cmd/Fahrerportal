@@ -30,7 +30,24 @@ export type FormularZuweisung =
 export type FieldType =
   | 'text' | 'number' | 'date' | 'select' | 'checkboxes'
   | 'textarea' | 'photo' | 'signature' | 'damage_diagram'
-  | 'dynamic_photos' | 'checkboxes_with_text';
+  | 'dynamic_photos' | 'checkboxes_with_text'
+  | 'address';
+
+/** Sub-Felder eines `address`-Feldes — werden im PDF-Mapping einzeln
+ *  positioniert (Schlüssel `<fieldId>.strasse` / `.plz` / `.stadt`). */
+export type AddressSubField = 'strasse' | 'plz' | 'stadt';
+export const ADDRESS_SUBFIELDS: AddressSubField[] = ['strasse', 'plz', 'stadt'];
+export const ADDRESS_LABEL: Record<AddressSubField, string> = {
+  strasse: 'Straße',
+  plz: 'PLZ',
+  stadt: 'Stadt',
+};
+
+export interface AddressValue {
+  strasse?: string;
+  plz?: string;
+  stadt?: string;
+}
 
 export interface FormField {
   id: string;
@@ -168,8 +185,22 @@ export interface PhotoValue {
 }
 
 // Damage-Diagram-Werte: Liste von Markern (x/y in Prozent)
+//
+// `kind` ist die Schadensart und wird auf dem Diagramm als einzelner
+// Buchstabe gerendert (D=Delle, K=Kratzer, S=Steinschlag, U=Unfallschaden).
+// Alte Markierungen ohne `kind` werden weiterhin akzeptiert (Fallback "?").
+export type DamageKind = 'D' | 'K' | 'S' | 'U';
+
+export const DAMAGE_KIND_LABEL: Record<DamageKind, string> = {
+  D: 'Delle',
+  K: 'Kratzer',
+  S: 'Steinschlag',
+  U: 'Unfallschaden',
+};
+
 export interface DamageMarker {
   x: number;
   y: number;
+  kind?: DamageKind;
   note?: string;
 }

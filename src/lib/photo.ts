@@ -39,17 +39,65 @@ export async function uploadPhotoToOneDrive(
   return path;
 }
 
+function isIosLike(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent ?? '';
+  // iOS-Safari + iPadOS-Safari (gibt sich seit iPadOS 13 als Mac aus)
+  return /iP(hone|ad|od)/.test(ua)
+    || (/Macintosh/.test(ua) && (navigator as Navigator & { maxTouchPoints?: number }).maxTouchPoints! > 1);
+}
+
 /**
- * Triggert einen Browser-Download der angegebenen Datei (lokal). Wird genutzt,
- * wenn der User in den Profil-Einstellungen die Option „Auch in Galerie
- * speichern" aktiviert hat.
+ * Speichert eine Datei lokal — auf iOS bevorzugt über die Web Share API
+ * (`navigator.share`), die das Bild direkt zum Speichern in der Foto-
+ * Mediathek anbietet. Auf Desktop/Android wird ein klassischer
+ * `<a download>`-Trigger verwendet. `<a download>` wird auf iOS-Safari
+ * weitgehend ignoriert und öffnet das Bild stattdessen in einem neuen
+ * Tab — daher der Share-Fallback dort.
  */
-export function downloadFile(file: Blob, filename: string): void {
+export async function downloadFile(file: Blob, filename: string): Promise<boolean> {
+  // 1. iOS: Web Share API mit File → System-Dialog "In Fotos sichern".
+  if (isIosLike() && typeof navigator !== 'undefined' && 'share' in navigator) {
+    try {
+      const shareFile = file instanceof File
+        ? file
+        : new File([file], filename, { type: file.type || 'image/jpeg' });
+      const data: ShareData = { files: [shareFile], title: filename };
+      // canShare ist nur in Chromium implementiert — auf iOS verlassen wir uns
+      // auf den Try-Catch.
+      const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+      if (typeof nav.canShare === 'function' && !nav.canShare(data)) {
+        // Fallback wenn der Browser explizit sagt: nicht teilbar.
+        throw new Error('canShare=false');
+      }
+      await navigator.share(data);
+      return true;
+    } catch (err) {
+      // AbortError = User hat den Dialog abgebrochen — nicht weiter probieren.
+      if (err instanceof Error && err.name === 'AbortError') return false;
+      console.warn('[downloadFile] Web Share fehlgeschlagen, falle auf Download zurück', err);
+      // Auf iOS reicht der Download-Fallback nicht — wir öffnen das Bild
+      // stattdessen in einem neuen Tab, damit der User es per Long-Press
+      // speichern kann.
+      try {
+        const url = URL.createObjectURL(file);
+        window.open(url, '_blank', 'noopener,noreferrer');
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return true;
+      } catch (e) {
+        console.warn('[downloadFile] Tab-Öffnen fehlgeschlagen', e);
+        return false;
+      }
+    }
+  }
+
+  // 2. Desktop / Android: klassischer Download über <a download>.
   try {
     const url = URL.createObjectURL(file);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    a.rel = 'noopener';
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
@@ -57,8 +105,10 @@ export function downloadFile(file: Blob, filename: string): void {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 1000);
+    return true;
   } catch (err) {
-    console.warn('[downloadFile] fehlgeschlagen', err);
+    console.warn('[downloadFile] Download fehlgeschlagen', err);
+    return false;
   }
 }
 

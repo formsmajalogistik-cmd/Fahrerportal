@@ -98,7 +98,7 @@ export function PdfMappingCanvas({
           PDF wird gerendert …
         </div>
       )}
-      <div className="relative cursor-crosshair shadow-card" onClick={handleCanvasClick}>
+      <div className="relative cursor-crosshair overflow-hidden shadow-card" onClick={handleCanvasClick}>
         <canvas ref={canvasRef} className="block max-w-full" />
         {pageSize && Object.entries(mapping).flatMap(([fieldId, entry]) => {
           const label = fieldLabels?.[fieldId] ?? fieldId;

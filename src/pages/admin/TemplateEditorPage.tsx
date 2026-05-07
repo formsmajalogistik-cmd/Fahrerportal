@@ -118,6 +118,8 @@ export function TemplateEditorPage() {
     setSaving(false);
     if (err) { setError(err.message); return; }
     setStatusMsg('Template gespeichert.');
+    // Auto-hide nach 3 s
+    window.setTimeout(() => setStatusMsg((m) => m === 'Template gespeichert.' ? null : m), 3000);
   }
 
   async function handleDelete() {
@@ -303,7 +305,30 @@ export function TemplateEditorPage() {
       </div>
 
       {tab === 'struktur' && (
-        <TemplateStructureEditor templateId={template.id} schema={schema} onChange={setSchema} />
+        <TemplateStructureEditor
+          templateId={template.id}
+          schema={schema}
+          onChange={setSchema}
+          onFieldRename={(oldId, newId) => {
+            // Mapping-Schlüssel auf neue ID umbenennen — sowohl flache Keys
+            // als auch Sub-Field-Keys (z.B. "adresse.strasse" → "rechnung.strasse").
+            setPdfs((prev) => prev.map((p) => {
+              const m = p.field_mapping ?? {};
+              const next: typeof m = {};
+              let changed = false;
+              for (const [key, entry] of Object.entries(m)) {
+                if (key === oldId) {
+                  next[newId] = entry; changed = true;
+                } else if (key.startsWith(oldId + '.')) {
+                  next[newId + key.slice(oldId.length)] = entry; changed = true;
+                } else {
+                  next[key] = entry;
+                }
+              }
+              return changed ? { ...p, field_mapping: next } : p;
+            }));
+          }}
+        />
       )}
 
       {tab === 'mapping' && (

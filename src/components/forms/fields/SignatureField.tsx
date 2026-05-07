@@ -1,4 +1,5 @@
-import { useEffect, useRef, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { FullscreenOverlay } from '../FullscreenOverlay';
 import type { FormField } from '../../../types/db';
 
 interface Props {
@@ -8,29 +9,72 @@ interface Props {
   disabled?: boolean;
 }
 
-const HEIGHT = 160;
 const STROKE = '#0F2439';
 
-/**
- * Canvas-basierte Unterschrift ohne externe Abhängigkeit. Die externe
- * Bibliothek `react-signature-canvas` führte unter React 19 zu Render-Errors
- * (Element type is invalid / #130) — diese eigene Implementierung umgeht das.
- */
 export function SignatureField({ field, value, onChange, disabled }: Props) {
+  const dataUrl = typeof value === 'string' && value.startsWith('data:image') ? value : null;
+  const [overlayOpen, setOverlayOpen] = useState(false);
+
+  return (
+    <div>
+      <label className="label">
+        {field.label}{field.required && <span className="text-red-600"> *</span>}
+      </label>
+      <button
+        type="button"
+        onClick={() => setOverlayOpen(true)}
+        disabled={disabled}
+        className="block w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-white text-left transition hover:bg-maja-light/40 disabled:opacity-50"
+      >
+        {dataUrl ? (
+          <img src={dataUrl} alt={field.label} className="block max-h-32 w-full object-contain p-2" />
+        ) : (
+          <div className="flex h-24 items-center justify-center text-sm font-medium text-maja-accent">
+            ✍ Unterschrift erfassen
+          </div>
+        )}
+      </button>
+      {dataUrl && !disabled && (
+        <div className="mt-2 flex justify-end gap-2">
+          <button type="button" className="text-sm font-medium text-red-600 hover:underline"
+                  onClick={() => onChange(null)}>
+            Zurücksetzen
+          </button>
+        </div>
+      )}
+
+      {overlayOpen && !disabled && (
+        <SignatureOverlay
+          title={field.label}
+          initial={dataUrl}
+          onCancel={() => setOverlayOpen(false)}
+          onConfirm={(url) => { onChange(url); setOverlayOpen(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+interface OverlayProps {
+  title: string;
+  initial: string | null;
+  onCancel: () => void;
+  onConfirm: (url: string | null) => void;
+}
+
+function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
   const last = useRef<{ x: number; y: number } | null>(null);
-  const cssSize = useRef<{ w: number; h: number }>({ w: 0, h: HEIGHT });
+  const [hasContent, setHasContent] = useState<boolean>(!!initial);
 
-  // Canvas einmalig auf die DPR skalieren und ggf. existierende DataURL laden.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    const w = rect.width || 320;
-    const h = rect.height || HEIGHT;
-    cssSize.current = { w, h };
+    const w = rect.width || 600;
+    const h = rect.height || 240;
     canvas.width = Math.max(1, Math.floor(w * dpr));
     canvas.height = Math.max(1, Math.floor(h * dpr));
     const ctx = canvas.getContext('2d');
@@ -38,17 +82,16 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
     ctx.scale(dpr, dpr);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = STROKE;
-    if (typeof value === 'string' && value.startsWith('data:image')) {
+    if (initial) {
       const img = new Image();
       img.onload = () => {
         try { ctx.drawImage(img, 0, 0, w, h); }
-        catch (err) { console.warn('[SignatureField] Bild laden fehlgeschlagen', err); }
+        catch (err) { console.warn('[SignatureOverlay] Bild laden fehlgeschlagen', err); }
       };
-      img.src = value;
+      img.src = initial;
     }
-    // value/disabled bewusst nicht in deps: wir laden nur einmal beim Mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -60,7 +103,6 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
   }
 
   function onDown(e: RPointerEvent<HTMLCanvasElement>) {
-    if (disabled) return;
     e.preventDefault();
     const p = getPoint(e);
     if (!p) return;
@@ -70,7 +112,7 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
   }
 
   function onMove(e: RPointerEvent<HTMLCanvasElement>) {
-    if (!drawing.current || disabled) return;
+    if (!drawing.current) return;
     e.preventDefault();
     const p = getPoint(e);
     const ctx = canvasRef.current?.getContext('2d');
@@ -80,6 +122,7 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
     last.current = p;
+    setHasContent(true);
   }
 
   function onUp(e: RPointerEvent<HTMLCanvasElement>) {
@@ -87,12 +130,6 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
     drawing.current = false;
     last.current = null;
     try { canvasRef.current?.releasePointerCapture(e.pointerId); } catch {/* ignore */}
-    try {
-      const url = canvasRef.current?.toDataURL('image/png') ?? null;
-      onChange(url);
-    } catch (err) {
-      console.warn('[SignatureField] toDataURL fehlgeschlagen', err);
-    }
   }
 
   function clear() {
@@ -100,33 +137,46 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    onChange(null);
+    setHasContent(false);
+  }
+
+  function handleConfirm() {
+    if (!hasContent) { onConfirm(null); return; }
+    try {
+      const url = canvasRef.current?.toDataURL('image/png') ?? null;
+      onConfirm(url);
+    } catch (err) {
+      console.warn('[SignatureOverlay] toDataURL fehlgeschlagen', err);
+      onConfirm(null);
+    }
   }
 
   return (
-    <div>
-      <label className="label">
-        {field.label}{field.required && <span className="text-red-600"> *</span>}
-      </label>
-      <div className="overflow-hidden rounded-lg border border-maja-navy/20 bg-white">
-        <canvas
-          ref={canvasRef}
-          onPointerDown={onDown}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerCancel={onUp}
-          onPointerLeave={onUp}
-          className="block w-full touch-none"
-          style={{ height: HEIGHT }}
-        />
-      </div>
-      {!disabled && (
-        <div className="mt-2 flex justify-end">
+    <FullscreenOverlay
+      title={title}
+      hint="Mit dem Finger oder Stift unterschreiben."
+      onCancel={onCancel}
+      onConfirm={handleConfirm}
+      confirmDisabled={!hasContent}
+    >
+      <div className="mx-auto flex h-full max-w-5xl flex-col gap-3">
+        <div className="flex-1 overflow-hidden rounded-lg border border-maja-navy/20 bg-white">
+          <canvas
+            ref={canvasRef}
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            onPointerCancel={onUp}
+            onPointerLeave={onUp}
+            className="block h-full w-full touch-none"
+          />
+        </div>
+        <div className="flex justify-end">
           <button type="button" onClick={clear} className="text-sm font-medium text-maja-accent hover:underline">
             Zurücksetzen
           </button>
         </div>
-      )}
-    </div>
+      </div>
+    </FullscreenOverlay>
   );
 }

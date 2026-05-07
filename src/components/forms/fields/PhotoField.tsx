@@ -72,7 +72,9 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
       // einen Browser-Download (Galerie-Bilder kommen über die Downloads).
       if (fromCamera && profile?.save_to_gallery) {
         const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-        downloadFile(compressed, `${field.id}_${ts}.jpg`);
+        // Awaiten — auf iOS startet Web Share einen System-Dialog. Der Upload
+        // erst NACH dem Share-Versuch fortsetzen, sonst friert der Dialog ein.
+        await downloadFile(compressed, `${field.id}_${ts}.jpg`);
       }
       const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
       const filename = `${field.id}.${ext}`;

@@ -19,15 +19,19 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'damage_diagram', label: 'Schadensdiagramm' },
   { value: 'dynamic_photos', label: 'Foto-Sammlung (dynamisch)' },
   { value: 'checkboxes_with_text', label: 'Mehrfachauswahl mit Textfeld' },
+  { value: 'address',        label: 'Adresse (Straße / PLZ / Stadt)' },
 ];
 
 interface Props {
   templateId: string;
   schema: FormSchema;
   onChange: (next: FormSchema) => void;
+  /** Wird aufgerufen, wenn die ID eines bestehenden Felds geändert wird. Der
+   *  Parent kann damit die PDF-Mappings auf die neue ID umschreiben. */
+  onFieldRename?: (oldId: string, newId: string) => void;
 }
 
-export function TemplateStructureEditor({ templateId, schema, onChange }: Props) {
+export function TemplateStructureEditor({ templateId, schema, onChange, onFieldRename }: Props) {
   const sections = schema.sections ?? [];
   const pages = schema.pages ?? [];
 
@@ -128,7 +132,14 @@ export function TemplateStructureEditor({ templateId, schema, onChange }: Props)
 
   function updateField(sIdx: number, fIdx: number, patch: Partial<FormField>) {
     const section = sections[sIdx];
+    const oldField = section.fields[fIdx];
     const nextFields = section.fields.map((f, i) => (i === fIdx ? { ...f, ...patch } : f));
+    // Wenn die Feld-ID geändert wurde, das zugehörige PDF-Mapping
+    // automatisch mitziehen — sonst wird der bestehende Marker zu einem
+    // Orphan, der weder verschoben noch gelöscht werden kann.
+    if (typeof patch.id === 'string' && patch.id !== oldField.id && oldField.id) {
+      onFieldRename?.(oldField.id, patch.id);
+    }
     updateSection(sIdx, { fields: nextFields });
   }
 

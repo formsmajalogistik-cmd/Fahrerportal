@@ -30,6 +30,25 @@ function asString(v: unknown): string {
   return '';
 }
 
+/**
+ * Liest einen Wert aus dem Formular-`daten`-JSON. Unterstützt zusätzlich
+ * Sub-Field-Schlüssel mit Punktnotation (z.B. `adresse.strasse`) — dabei
+ * wird zuerst der Top-Level-Schlüssel geprüft, danach das gleichnamige
+ * Sub-Feld in einem object-Wert.
+ */
+function readDataValue(data: Record<string, unknown>, key: string): unknown {
+  if (key in data) return data[key];
+  const dot = key.indexOf('.');
+  if (dot <= 0) return undefined;
+  const head = key.slice(0, dot);
+  const tail = key.slice(dot + 1);
+  const parent = data[head];
+  if (parent && typeof parent === 'object' && tail in (parent as Record<string, unknown>)) {
+    return (parent as Record<string, unknown>)[tail];
+  }
+  return undefined;
+}
+
 function asPhoto(v: unknown): PhotoValue | null {
   if (v && typeof v === 'object' && 'storage_path' in v) return v as PhotoValue;
   return null;
@@ -67,9 +86,17 @@ async function fetchSubmittedPhotoBytes(path: string): Promise<ArrayBuffer | nul
  * Zeichnet ein Bild mit den Marker-Punkten als PNG-Bytes — wird für
  * damage_diagram-Felder beim PDF-Export genutzt.
  */
+// Farben pro Schadensart — entsprechen DamageKind in src/types/db.ts
+const DAMAGE_KIND_COLOR: Record<string, string> = {
+  D: 'rgba(245, 158, 11, 0.95)',   // amber
+  K: 'rgba(220, 38, 38, 0.95)',    // red
+  S: 'rgba(147, 51, 234, 0.95)',   // purple
+  U: 'rgba(234, 88, 12, 0.95)',    // orange
+};
+
 async function renderDamageDiagramWithMarkers(
   imageBytes: ArrayBuffer,
-  markers: Array<{ x: number; y: number }>,
+  markers: Array<{ x: number; y: number; kind?: string }>,
   outputWidth: number,
   outputHeight: number,
 ): Promise<Uint8Array | null> {
@@ -87,23 +114,25 @@ async function renderDamageDiagramWithMarkers(
         if (!ctx) { resolve(null); URL.revokeObjectURL(url); return; }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-        // Marker
+        // Marker — Buchstabe statt Nummer (D/K/S/U); Fallback "?"
         const r = Math.max(8, Math.min(canvas.width, canvas.height) * 0.025);
         ctx.font = `bold ${Math.round(r * 1.2)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        markers.forEach((m, idx) => {
+        markers.forEach((m) => {
           const cx = (m.x / 100) * canvas.width;
           const cy = (m.y / 100) * canvas.height;
+          const kind = (m.kind ?? '').toString().toUpperCase();
+          const color = DAMAGE_KIND_COLOR[kind] ?? 'rgba(27, 58, 92, 0.95)';
           ctx.beginPath();
-          ctx.fillStyle = 'rgba(220, 38, 38, 0.95)';
+          ctx.fillStyle = color;
           ctx.arc(cx, cy, r, 0, Math.PI * 2);
           ctx.fill();
           ctx.lineWidth = 2;
           ctx.strokeStyle = 'white';
           ctx.stroke();
           ctx.fillStyle = 'white';
-          ctx.fillText(String(idx + 1), cx, cy + 1);
+          ctx.fillText(kind || '?', cx, cy + 1);
         });
 
         canvas.toBlob((b) => {
@@ -193,7 +222,7 @@ export async function fillPdf(
   };
 
   for (const [fieldId, entry] of Object.entries(mapping)) {
-    const value = data[fieldId];
+    const value = readDataValue(data, fieldId);
     const meta = fields.get(fieldId);
 
     if (isTextEntry(entry)) {
@@ -264,7 +293,7 @@ export async function fillPdf(
         const bg = await fetchDamageDiagramBytes(meta.vehicleImage);
         if (!bg) continue;
         const markers = Array.isArray(value)
-          ? (value as Array<{ x: number; y: number }>)
+          ? (value as Array<{ x: number; y: number; kind?: string; note?: string }>)
               .filter((m) => typeof m?.x === 'number' && typeof m?.y === 'number')
           : [];
         const png = await renderDamageDiagramWithMarkers(
@@ -277,6 +306,31 @@ export async function fillPdf(
           x: entry.x - entry.width, y: entry.y - entry.height,
           width: entry.width, height: entry.height,
         });
+
+        // Optionale Beschreibungsliste an einer separaten Position
+        // (Mapping-Schlüssel "<fieldId>.beschreibung", TextEntry).
+        const descEntry = mapping[`${fieldId}.beschreibung`];
+        if (isTextEntry(descEntry) && markers.length > 0) {
+          const fontSize = descEntry.fontSize ?? TEXT_DEFAULT_FONT;
+          const lineHeight = fontSize * 1.3;
+          const KIND_LABELS: Record<string, string> = {
+            D: 'Delle', K: 'Kratzer', S: 'Steinschlag', U: 'Unfallschaden',
+          };
+          // Eine Zeile pro Marker, rechtsbündig wie alle Texte.
+          for (let i = 0; i < markers.length; i += 1) {
+            const m = markers[i];
+            const kind = (m.kind ?? '').toString().toUpperCase();
+            const label = KIND_LABELS[kind] ?? '';
+            const note = (m.note ?? '').trim();
+            const line = `${kind || '?'}: ${label}${note ? ` — ${note}` : ''}`;
+            const w = font.widthOfTextAtSize(line, fontSize);
+            page(descEntry.page).drawText(line, {
+              x: descEntry.x - w,
+              y: descEntry.y - i * lineHeight,
+              size: fontSize, font, color: INK,
+            });
+          }
+        }
         continue;
       }
       // photo

@@ -12,7 +12,7 @@ export const DYNAMIC_DEFAULT_COLUMNS = 2;
 export const DYNAMIC_DEFAULT_PER_PAGE = 4;
 export const DYNAMIC_DEFAULT_GAP = 12;
 
-export type MappingMode = 'text' | 'box' | 'options' | 'dynamic' | 'options_text';
+export type MappingMode = 'text' | 'box' | 'options' | 'dynamic' | 'options_text' | 'composite';
 
 export function modeFor(type: FieldType): MappingMode {
   switch (type) {
@@ -32,6 +32,10 @@ export function modeFor(type: FieldType): MappingMode {
       return 'dynamic';
     case 'checkboxes_with_text':
       return 'options_text';
+    case 'address':
+      // Adresse hat keine direkte 1:1-Mapping-Position; ihre Sub-Felder
+      // werden im Mapping-Editor als separate Text-Einträge platziert.
+      return 'composite';
   }
 }
 
@@ -83,6 +87,14 @@ export function makeDefaultEntry(
   }
   if (mode === 'options_text') {
     return { type: 'checkboxes_with_text', options: {} };
+  }
+  if (mode === 'composite') {
+    // Address: kein eigener Mapping-Eintrag — Sub-Felder werden separat
+    // unter Schlüsseln "<id>.strasse|plz|stadt" als TextEntries gemappt.
+    // Wir geben hier dennoch einen leeren TextEntry zurück, damit
+    // makeDefaultEntry für unerwartete Calls sicher ist; im Mapping-Editor
+    // wird dieser Pfad nicht aufgerufen.
+    return { type: 'text', page: pos.page, x: pos.x, y: pos.y };
   }
   // options-mode startet leer; einzelne Optionen werden via setOptionPosition gesetzt
   return { type: field.type as OptionsEntry['type'], options: {} };
