@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Spinner } from '../components/Spinner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { FormRenderer } from '../components/forms/FormRenderer';
+import { PdfPreviewModal } from '../components/forms/PdfPreviewModal';
+import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { generateAndUploadFormPdfs, sendTemplateEmail } from '../lib/pdfGenerate';
@@ -11,10 +13,6 @@ import { buildFormularFolder } from '../lib/onedrivePaths';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
 
-/**
- * Normalisiert das schema-JSON aus der DB. Akzeptiert Object oder String, gibt
- * immer ein Schema mit (mindestens leerem) sections-Array zurück.
- */
 function parseSchema(raw: unknown): FormSchema {
   let value: unknown = raw;
   if (typeof value === 'string') {
@@ -25,6 +23,8 @@ function parseSchema(raw: unknown): FormSchema {
   }
   return { sections: [] };
 }
+
+const REDIRECT_AFTER_SUBMIT_MS = 3000;
 
 export function FormularPage() {
   const { id } = useParams();
@@ -37,6 +37,35 @@ export function FormularPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<'idle' | 'draft' | 'submit'>('idle');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  // ---- Dirty-Tracking + Unsaved-Warnung ----
+  const [savedDataJson, setSavedDataJson] = useState<string>('{}');
+  const dirty = useMemo(() => {
+    if (formular?.status === 'submitted') return false;
+    return JSON.stringify(data) !== savedDataJson;
+  }, [data, savedDataJson, formular?.status]);
+  // pendingExit: gewünschtes Ziel für die Navigation, das auf Bestätigung wartet.
+  const [pendingExit, setPendingExit] = useState<string | null>(null);
+
+  // ---- Submit-Erfolg + Auto-Redirect ----
+  const [submittedSummary, setSubmittedSummary] = useState<string | null>(null);
+  const [redirectIn, setRedirectIn] = useState<number>(0);
+  const redirectTimerRef = useRef<number | null>(null);
+
+  // ---- PDF-Vorschau ----
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // ---- Browser-Level: beforeunload-Warnung bei dirty ----
+  useEffect(() => {
+    if (!dirty || saving === 'submit') return;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      // Chrome erfordert das setzen von returnValue; Text wird ignoriert.
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty, saving]);
 
   useEffect(() => {
     if (!id) {
@@ -55,17 +84,8 @@ export function FormularPage() {
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
-      if (afErr) {
-        console.error('FormularPage: Fehler beim Laden des Formulars', afErr);
-        setError(`Formular konnte nicht geladen werden: ${afErr.message}`);
-        setLoading(false);
-        return;
-      }
-      if (!af) {
-        setError('Formular nicht gefunden oder du hast keinen Zugriff darauf.');
-        setLoading(false);
-        return;
-      }
+      if (afErr) { setError(`Formular konnte nicht geladen werden: ${afErr.message}`); setLoading(false); return; }
+      if (!af) { setError('Formular nicht gefunden oder du hast keinen Zugriff darauf.'); setLoading(false); return; }
 
       const { data: tpl, error: tplErr } = await supabase
         .from('formular_templates')
@@ -73,42 +93,18 @@ export function FormularPage() {
         .eq('id', af.template_id)
         .maybeSingle();
       if (cancelled) return;
-      if (tplErr) {
-        console.error('FormularPage: Fehler beim Laden des Templates', tplErr);
-        setError(`Template konnte nicht geladen werden: ${tplErr.message}`);
-        setLoading(false);
-        return;
-      }
+      if (tplErr) { setError(`Template konnte nicht geladen werden: ${tplErr.message}`); setLoading(false); return; }
       if (!tpl) {
-        setError(
-          'Das verknüpfte Template wurde nicht gefunden. Es wurde möglicherweise gelöscht ' +
-          'oder du hast keine Zuweisung. Bitte wende dich an die Administration.',
-        );
+        setError('Das verknüpfte Template wurde nicht gefunden.');
         setLoading(false);
         return;
       }
 
       const schema = parseSchema(tpl.schema);
-      const normalizedTpl = {
-        ...tpl,
-        schema,
-      } as unknown as FormularTemplate;
-
-      // Debug-Ausgabe (im Browser sichtbar) — hilft beim Diagnostizieren leerer Templates.
-      console.log('[FormularPage] Formular geladen:', af);
-      console.log('[FormularPage] Template geladen:', normalizedTpl);
-      console.log(
-        '[FormularPage] Schema-Sections:',
-        schema.sections.length,
-        'Felder gesamt:',
-        schema.sections.reduce((acc, s) => acc + (s.fields?.length ?? 0), 0),
-      );
-
+      const normalizedTpl = { ...tpl, schema } as unknown as FormularTemplate;
       setFormular(af as unknown as AusgefuelltesFormular);
       setTemplate(normalizedTpl);
 
-      // Wenn der Browser nach Foto-Aufnahme die Seite neu lädt (mobile Tab-Recycling),
-      // sind unsere lokalen Eingaben noch nicht in der DB. sessionStorage rettet sie.
       const localKey = `formular-draft-${af.id}`;
       let nextData = (af.daten as unknown as Record<string, unknown>) ?? {};
       try {
@@ -117,13 +113,14 @@ export function FormularPage() {
           const parsed = JSON.parse(cached);
           if (parsed && typeof parsed === 'object') {
             nextData = { ...nextData, ...parsed };
-            console.log('[FormularPage] sessionStorage-Snapshot wiederhergestellt');
           }
         }
       } catch (err) {
         console.warn('[FormularPage] sessionStorage-Lesen fehlgeschlagen', err);
       }
       setData(nextData);
+      // Saved-State spiegelt das, was tatsächlich in der DB liegt.
+      setSavedDataJson(JSON.stringify((af.daten as unknown as Record<string, unknown>) ?? {}));
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -134,12 +131,9 @@ export function FormularPage() {
   const handleChange = useCallback((fieldId: string, value: unknown) => {
     setData((prev) => {
       const next = { ...prev, [fieldId]: value };
-      // Sofort lokal persistieren, damit ein Reload (z.B. nach Foto-Aufnahme)
-      // den eingegebenen Stand nicht verliert.
       if (id) {
-        try {
-          sessionStorage.setItem(`formular-draft-${id}`, JSON.stringify(next));
-        } catch {/* QuotaExceeded etc. ignorieren */}
+        try { sessionStorage.setItem(`formular-draft-${id}`, JSON.stringify(next)); }
+        catch {/* QuotaExceeded etc. ignorieren */}
       }
       return next;
     });
@@ -150,7 +144,7 @@ export function FormularPage() {
     try { sessionStorage.removeItem(`formular-draft-${id}`); } catch {/* ignore */}
   }
 
-  async function saveDraft() {
+  async function saveDraft(): Promise<void> {
     if (!formular) return;
     setSaving('draft');
     setStatusMsg(null);
@@ -159,9 +153,10 @@ export function FormularPage() {
       .update({ daten: data as Json })
       .eq('id', formular.id);
     setSaving('idle');
-    if (err) { setError(err.message); return; }
+    if (err) { setError(err.message); throw new Error(err.message); }
     clearLocalDraft();
     setStatusMsg('Entwurf gespeichert.');
+    setSavedDataJson(JSON.stringify(data));
   }
 
   async function submit() {
@@ -177,38 +172,67 @@ export function FormularPage() {
       .from('ausgefuellte_formulare')
       .update({ daten: data as Json, status: 'submitted' })
       .eq('id', formular.id);
-    setSaving('idle');
-    if (err) { setError(err.message); return; }
+    if (err) { setSaving('idle'); setError(err.message); return; }
     clearLocalDraft();
     const submitted = { ...formular, daten: data, status: 'submitted' as const };
     setFormular(submitted);
+    setSavedDataJson(JSON.stringify(data));
     setStatusMsg('Protokoll eingereicht. PDFs werden erzeugt …');
 
-    // PDFs nach Submit generieren + ggf. Email versenden.
+    let summary = 'Formular erfolgreich eingereicht!';
     try {
       const generated = await generateAndUploadFormPdfs(template, submitted);
-      let msg = generated.length > 0
-        ? `Protokoll eingereicht. ${generated.length} PDF${generated.length === 1 ? '' : 's'} in OneDrive abgelegt.`
-        : 'Protokoll eingereicht. (Keine PDF-Vorlagen am Template hinterlegt.)';
-      // Email-Versand laut Template-Konfig
+      summary = generated.length > 0
+        ? `Formular erfolgreich eingereicht — ${generated.length} PDF${generated.length === 1 ? '' : 's'} wurden generiert und in OneDrive abgelegt.`
+        : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
       try {
         const r = await sendTemplateEmail(template, submitted, generated);
-        if (r.sent) msg += ' Email versendet.';
-      } catch (err) {
-        console.warn('[FormularPage] Email-Versand fehlgeschlagen', err);
-        msg += ' Email-Versand schlug fehl — siehe Konsole.';
+        if (r.sent) summary += ' Email versendet.';
+      } catch (emailErr) {
+        console.warn('[FormularPage] Email-Versand fehlgeschlagen', emailErr);
+        summary += ' Email-Versand schlug fehl — siehe Konsole.';
       }
-      setStatusMsg(msg);
-    } catch (err) {
-      console.warn('[FormularPage] PDF-Erzeugung fehlgeschlagen', err);
-      setStatusMsg('Protokoll eingereicht. PDF-Erzeugung schlug fehl — siehe Konsole.');
+    } catch (pdfErr) {
+      console.warn('[FormularPage] PDF-Erzeugung fehlgeschlagen', pdfErr);
+      summary = 'Formular eingereicht. PDF-Erzeugung schlug fehl — siehe Konsole.';
     }
+    setSaving('idle');
+    setStatusMsg(null);
+    setSubmittedSummary(summary);
+    // Auto-Redirect: 3-Sekunden-Countdown.
+    setRedirectIn(REDIRECT_AFTER_SUBMIT_MS);
+    if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+    redirectTimerRef.current = window.setTimeout(() => {
+      navigate('/touren');
+    }, REDIRECT_AFTER_SUBMIT_MS);
+  }
+
+  function goNow() {
+    if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+    navigate('/touren');
+  }
+
+  // Aufräumen, falls der User per Zurück-Button aussteigt während der Timer läuft.
+  useEffect(() => () => {
+    if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+  }, []);
+
+  /**
+   * Sicherer Navigations-Wrapper: zeigt bei dirty-State den Unsaved-Dialog
+   * und merkt sich die Ziel-URL als pendingExit. Wird vom Zurück-Button
+   * und von In-Page-Links aufgerufen.
+   */
+  function safeNavigate(path: string) {
+    if (dirty && saving !== 'submit') {
+      setPendingExit(path);
+      return;
+    }
+    navigate(path);
   }
 
   const title = useMemo(() => template?.name ?? 'Formular', [template]);
   const sectionCount = template?.schema.sections.length ?? 0;
 
-  // OneDrive-Ordner für dieses Formular: Maja-Logistik/Formulare/<JJJJ-MM>/<…>/
   const oneDriveFolder = useMemo(() => {
     if (!template || !formular) return '';
     const isoDate = formular.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
@@ -226,7 +250,6 @@ export function FormularPage() {
     [template],
   );
   const [currentPageId, setCurrentPageId] = useState<string | null>(null);
-  // Beim ersten Laden / Wechsel des Templates die erste Seite aktiv setzen
   useEffect(() => {
     if (!currentPageId && pages.length > 0) setCurrentPageId(pages[0].id);
   }, [pages, currentPageId]);
@@ -238,7 +261,6 @@ export function FormularPage() {
   const currentPageIdx = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : 0;
   const hasMultiplePages = pages.length > 1;
 
-  // Header mit Zurück-Button — IMMER sichtbar, unabhängig vom Lade-/Fehler-Zustand.
   const header = (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
@@ -250,7 +272,7 @@ export function FormularPage() {
           </p>
         )}
       </div>
-      <button onClick={() => navigate('/')} className="btn-secondary">← Zurück</button>
+      <button onClick={() => safeNavigate('/')} className="btn-secondary">← Zurück</button>
     </div>
   );
 
@@ -270,9 +292,6 @@ export function FormularPage() {
         <div role="alert" className="card space-y-3 p-6">
           <h2 className="text-lg font-semibold text-red-700">Formular konnte nicht geöffnet werden</h2>
           <p className="text-sm text-maja-ink">{error}</p>
-          <p className="text-xs text-maja-muted">
-            Diagnose-Hinweise stehen in der Browser-Konsole (Rechtsklick → Untersuchen → Console).
-          </p>
         </div>
       </div>
     );
@@ -283,8 +302,7 @@ export function FormularPage() {
       <div className="space-y-6">
         {header}
         <div role="alert" className="card p-6 text-sm text-maja-muted">
-          Unerwarteter Zustand — weder Formular noch Template geladen, aber kein Fehler gemeldet.
-          Bitte erneut laden.
+          Unerwarteter Zustand — bitte erneut laden.
         </div>
       </div>
     );
@@ -297,8 +315,7 @@ export function FormularPage() {
         <div className="card space-y-2 p-6">
           <h2 className="text-lg font-semibold text-maja-navy">Leeres Template</h2>
           <p className="text-sm text-maja-muted">
-            Dieses Template enthält noch keine Sektionen oder Felder. Bitte den Admin
-            bitten, das Template unter „Templates → Bearbeiten" mit Inhalt zu füllen.
+            Dieses Template enthält noch keine Sektionen oder Felder.
           </p>
         </div>
       </div>
@@ -309,13 +326,34 @@ export function FormularPage() {
     <div className="space-y-6">
       {header}
 
+      {/* Submit-Erfolgsbanner mit Auto-Redirect-Countdown */}
+      {submittedSummary && (
+        <div role="status" className="card border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+          <div className="font-medium">{submittedSummary}</div>
+          <p className="mt-1 text-xs text-emerald-800">
+            Du wirst automatisch zur Tourenliste weitergeleitet …
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={goNow} className="btn-primary text-sm">
+              Jetzt zur Tourenliste
+            </button>
+            <button type="button" onClick={() => {
+              if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+              setRedirectIn(0);
+              setSubmittedSummary(null);
+            }} className="btn-secondary text-sm">
+              Hier bleiben
+            </button>
+          </div>
+        </div>
+      )}
+      {void redirectIn /* nur Re-Render-Trigger */}
+
       {hasMultiplePages && (
         <div className="sticky top-0 z-10 -mx-4 border-b border-maja-navy/10 bg-white/95 px-4 py-2 backdrop-blur">
           <nav className="flex gap-1 overflow-x-auto">
             {pages.map((p) => {
-              const status = pageCompletion(
-                p, template.schema.sections ?? [], data,
-              );
+              const status = pageCompletion(p, template.schema.sections ?? [], data);
               const active = p.id === currentPage?.id;
               return (
                 <button
@@ -324,16 +362,14 @@ export function FormularPage() {
                   onClick={() => setCurrentPageId(p.id)}
                   className={
                     'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ' +
-                    (active
-                      ? 'bg-maja-navy text-white'
-                      : 'bg-maja-light text-maja-navy hover:bg-maja-light/70')
+                    (active ? 'bg-maja-navy text-white' : 'bg-maja-light text-maja-navy hover:bg-maja-light/70')
                   }
                   aria-current={active ? 'page' : undefined}
                 >
                   {status === 'complete' ? (
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white" aria-label="vollständig">✓</span>
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white">✓</span>
                   ) : status === 'started' ? (
-                    <span className="h-2 w-2 rounded-full bg-amber-400" aria-label="angefangen" />
+                    <span className="h-2 w-2 rounded-full bg-amber-400" />
                   ) : null}
                   {p.title}
                 </button>
@@ -351,18 +387,14 @@ export function FormularPage() {
               Fehler beim Rendern des Formulars
             </h2>
             <p className="text-sm text-maja-ink">
-              Ein unerwarteter Fehler ist im Formular-Renderer aufgetreten. Die App
-              läuft weiter — du kannst zurück zur Übersicht oder erneut versuchen.
+              Ein unerwarteter Fehler ist aufgetreten.
             </p>
             <pre className="overflow-auto rounded bg-red-50 p-3 text-xs text-red-900">
               {error.message}
             </pre>
-            <p className="text-xs text-maja-muted">
-              Details und Stack stehen in der Browser-Konsole.
-            </p>
             <div className="flex gap-2">
               <button onClick={reset} className="btn-secondary">Erneut versuchen</button>
-              <button onClick={() => navigate('/')} className="btn-primary">Zurück</button>
+              <button onClick={() => safeNavigate('/')} className="btn-primary">Zurück</button>
             </div>
           </div>
         )}
@@ -421,15 +453,42 @@ export function FormularPage() {
         </div>
       )}
 
-      {!readonly && (
-        <div className="sticky bottom-0 -mx-4 flex flex-wrap justify-end gap-2 border-t border-maja-navy/10 bg-white/90 px-4 py-3 backdrop-blur">
-          <button onClick={saveDraft} className="btn-secondary" disabled={saving !== 'idle'}>
-            {saving === 'draft' ? 'Speichern …' : 'Entwurf speichern'}
+      {!readonly && !submittedSummary && (
+        <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 bg-white/90 px-4 py-3 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            className="btn-secondary"
+            disabled={saving !== 'idle'}
+            title="Vorschau der gefüllten PDF anzeigen"
+          >
+            👁 PDF-Vorschau
           </button>
-          <button onClick={submit} className="btn-primary" disabled={saving !== 'idle'}>
-            {saving === 'submit' ? 'Einreichen …' : 'Einreichen'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => void saveDraft().catch(() => {})} className="btn-secondary" disabled={saving !== 'idle'}>
+              {saving === 'draft' ? 'Speichern …' : 'Entwurf speichern'}
+            </button>
+            <button onClick={submit} className="btn-primary" disabled={saving !== 'idle'}>
+              {saving === 'submit' ? 'Einreichen …' : 'Einreichen'}
+            </button>
+          </div>
         </div>
+      )}
+
+      {pendingExit !== null && (
+        <UnsavedChangesDialog
+          onSave={async () => { await saveDraft(); }}
+          onLeave={() => { const target = pendingExit; setPendingExit(null); if (target) navigate(target); }}
+          onCancel={() => setPendingExit(null)}
+        />
+      )}
+
+      {previewOpen && (
+        <PdfPreviewModal
+          template={template}
+          data={data}
+          onClose={() => setPreviewOpen(false)}
+        />
       )}
     </div>
   );

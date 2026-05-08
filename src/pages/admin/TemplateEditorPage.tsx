@@ -14,8 +14,6 @@ import type { Json } from '../../types/supabase';
 
 type Tab = 'struktur' | 'mapping' | 'email';
 
-const MAX_PDFS = 3;
-
 function slugify(s: string): string {
   return s.toLowerCase()
     .replace(/[äöüß]/g, (c) => ({ ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' }[c] ?? c))
@@ -181,11 +179,10 @@ export function TemplateEditorPage() {
   }
 
   function addPdf() {
-    if (pdfs.length >= MAX_PDFS) return;
-    const baseName = pdfs.length === 0
-      ? 'Protokoll'
-      : pdfs.length === 1 ? 'Fotodokumentation'
-      : 'Belege';
+    // Kein hartes Limit mehr — der Admin kann beliebig viele PDF-Vorlagen
+    // anlegen (z.B. Fotos_Übernahme, Fotos_Übergabe, Fotos_Schäden, …).
+    const defaultNames = ['Protokoll', 'Fotodokumentation', 'Belege'];
+    const baseName = defaultNames[pdfs.length] ?? `PDF ${pdfs.length + 1}`;
     const newPdf: TemplatePdf = {
       id: uniquePdfId(baseName, pdfs),
       name: baseName,
@@ -342,7 +339,7 @@ export function TemplateEditorPage() {
             onAdd={addPdf}
             onPatternChange={updatePdfPattern}
             fieldIds={allFieldIds}
-            canAdd={pdfs.length < MAX_PDFS}
+            canAdd={true}
           />
           {activePdf ? (
             <TemplateMappingEditor
