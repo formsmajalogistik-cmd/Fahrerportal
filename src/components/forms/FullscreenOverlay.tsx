@@ -1,87 +1,46 @@
 import { useEffect, type ReactNode } from 'react';
 
 /**
- * Vollbild-Overlay für Signature- und DamageDiagram-Felder. Auf
- * Hochformat-Geräten wird der Inhalt mittels CSS-Transform um 90°
- * gedreht, damit die volle Bildschirmbreite zur Verfügung steht.
- *
- * - body-Scroll wird während des Overlays gesperrt.
- * - ESC schließt (über `onCancel`).
- * - „Bestätigen"/„Abbrechen" sind sticky am unteren Rand.
+ * Vollbild-Modal für Signature- und DamageDiagram-Felder. Bewusst KEIN
+ * automatisches Drehen — auf Smartphones führte das CSS-Rotate zu
+ * Layout-Problemen mit Touch-Koordinaten. Stattdessen: normales
+ * Hochformat-Modal mit voller Bildschirmbreite.
  */
 interface Props {
   title: string;
   hint?: string;
   onCancel: () => void;
   onConfirm: () => void;
+  confirmLabel?: string;
   confirmDisabled?: boolean;
+  /** Optionaler Aktions-Button im Footer links (z.B. „Alles löschen"). */
+  destructiveAction?: { label: string; onClick: () => void };
   children: ReactNode;
 }
 
 export function FullscreenOverlay({
-  title, hint, onCancel, onConfirm, confirmDisabled, children,
+  title, hint, onCancel, onConfirm,
+  confirmLabel = 'Bestätigen',
+  confirmDisabled, destructiveAction, children,
 }: Props) {
+  // body-Scroll-Lock + ESC zum Schließen.
   useEffect(() => {
-    const prev = document.body.style.overflow;
+    const prevOverflow = document.body.style.overflow;
+    const prevTouch = (document.body.style as CSSStyleDeclaration & { touchAction?: string }).touchAction;
     document.body.style.overflow = 'hidden';
+    (document.body.style as CSSStyleDeclaration & { touchAction?: string }).touchAction = 'none';
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onCancel(); }
     document.addEventListener('keydown', onKey);
     return () => {
-      document.body.style.overflow = prev;
+      document.body.style.overflow = prevOverflow;
+      (document.body.style as CSSStyleDeclaration & { touchAction?: string }).touchAction = prevTouch ?? '';
       document.removeEventListener('keydown', onKey);
     };
   }, [onCancel]);
 
-  // Auf Hochformat-Geräten (Höhe > Breite, Touch) drehen wir das Overlay um
-  // 90° — dadurch wird die "lange" Bildschirmkante zur Breite des Canvas.
-  const isPortrait = typeof window !== 'undefined'
-    && window.innerHeight > window.innerWidth
-    && (window.matchMedia?.('(pointer: coarse)').matches ?? false);
-
   return (
-    <div className="fixed inset-0 z-50 bg-maja-ink/90">
-      {isPortrait ? (
-        <div
-          className="absolute left-1/2 top-1/2 origin-center"
-          style={{
-            transform: 'translate(-50%, -50%) rotate(90deg)',
-            width: '100vh',
-            height: '100vw',
-          }}
-        >
-          <OverlayBody
-            title={title}
-            hint={hint}
-            onCancel={onCancel}
-            onConfirm={onConfirm}
-            confirmDisabled={confirmDisabled}
-          >
-            {children}
-          </OverlayBody>
-        </div>
-      ) : (
-        <div className="absolute inset-0">
-          <OverlayBody
-            title={title}
-            hint={hint}
-            onCancel={onCancel}
-            onConfirm={onConfirm}
-            confirmDisabled={confirmDisabled}
-          >
-            {children}
-          </OverlayBody>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function OverlayBody({
-  title, hint, onCancel, onConfirm, confirmDisabled, children,
-}: Props) {
-  return (
-    <div className="flex h-full w-full flex-col bg-white">
-      <header className="flex items-center justify-between gap-3 border-b border-maja-navy/10 bg-white px-4 py-3">
+    <div className="fixed inset-0 z-50 flex flex-col bg-white">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-maja-navy/10 bg-white px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-maja-navy">{title}</h2>
           {hint && <p className="text-xs text-maja-muted">{hint}</p>}
@@ -89,21 +48,30 @@ function OverlayBody({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md p-2 text-maja-muted hover:bg-maja-light"
-          aria-label="Schließen"
+          className="rounded-md p-2 text-sm font-medium text-maja-muted hover:bg-maja-light"
         >
-          ✕
+          Abbrechen
         </button>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-auto bg-maja-light/30 p-3">
+      <div className="flex-1 min-h-0 overflow-hidden bg-maja-light/30">
         {children}
       </div>
 
-      <footer className="flex items-center justify-end gap-2 border-t border-maja-navy/10 bg-white px-4 py-3">
-        <button type="button" onClick={onCancel} className="btn-secondary">Abbrechen</button>
+      <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-maja-navy/10 bg-white px-4 py-3">
+        <div>
+          {destructiveAction && (
+            <button
+              type="button"
+              onClick={destructiveAction.onClick}
+              className="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
+            >
+              {destructiveAction.label}
+            </button>
+          )}
+        </div>
         <button type="button" onClick={onConfirm} className="btn-primary" disabled={confirmDisabled}>
-          Bestätigen
+          {confirmLabel}
         </button>
       </footer>
     </div>

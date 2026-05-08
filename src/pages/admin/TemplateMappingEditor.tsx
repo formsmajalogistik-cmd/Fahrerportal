@@ -64,9 +64,6 @@ export function TemplateMappingEditor({
         m[`${f.id}.plz`]     = `${f.label} – PLZ`;
         m[`${f.id}.stadt`]   = `${f.label} – Stadt`;
       }
-      if (f.type === 'damage_diagram') {
-        m[`${f.id}.beschreibung`] = `${f.label} – Beschreibungsliste`;
-      }
     }
     return m;
   }, [fields]);
@@ -437,40 +434,6 @@ export function TemplateMappingEditor({
                       </button>
                     );
                   });
-                }
-                // Damage diagram: zusätzlich Beschreibungs-Text als Sub-Eintrag
-                if (f.type === 'damage_diagram') {
-                  const beschKey = `${f.id}.beschreibung`;
-                  const eBox = mapping[f.id];
-                  const eBesch = mapping[beschKey];
-                  return [
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => pickField(f)}
-                      className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
-                    >
-                      <span>
-                        <span className="font-medium text-maja-ink">{f.label}</span>
-                        {' '}
-                        <span className="text-xs text-maja-muted">– Diagramm</span>
-                      </span>
-                      {eBox && <span className="text-xs text-amber-700">bereits gemappt</span>}
-                    </button>,
-                    <button
-                      key={beschKey}
-                      type="button"
-                      onClick={() => placeTextAtKey(beschKey)}
-                      className="flex w-full items-center justify-between rounded-lg border border-maja-navy/15 bg-white px-3 py-2 text-left text-sm hover:bg-maja-light"
-                    >
-                      <span>
-                        <span className="font-medium text-maja-ink">{f.label}</span>
-                        {' '}
-                        <span className="text-xs text-maja-muted">– Beschreibungsliste</span>
-                      </span>
-                      {eBesch && <span className="text-xs text-amber-700">bereits gemappt</span>}
-                    </button>,
-                  ];
                 }
                 // Standardfall: ein Eintrag pro Feld
                 const m = modeFor(f.type);

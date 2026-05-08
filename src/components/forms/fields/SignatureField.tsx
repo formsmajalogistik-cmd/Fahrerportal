@@ -62,42 +62,82 @@ interface OverlayProps {
   onConfirm: (url: string | null) => void;
 }
 
+/**
+ * Unterschrifts-Overlay. Bewusst kein Drehen — Hochformat, volle Breite.
+ * Touch-Tracking: getBoundingClientRect() des Canvas + DPR-Skalierung
+ * direkt im 2D-Kontext (`ctx.scale(dpr, dpr)`), sodass die Pointer-
+ * Koordinaten 1:1 in CSS-Pixeln mit dem gezeichneten Bild übereinstimmen.
+ */
 function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
   const last = useRef<{ x: number; y: number } | null>(null);
   const [hasContent, setHasContent] = useState<boolean>(!!initial);
 
+  // Canvas an Container-Größe anpassen + auf DPR skalieren. Wird auch
+  // bei Resize (Tastatur ein/aus, Rotation, etc.) erneut ausgeführt.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const w = rect.width || 600;
-    const h = rect.height || 240;
-    canvas.width = Math.max(1, Math.floor(w * dpr));
-    canvas.height = Math.max(1, Math.floor(h * dpr));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = STROKE;
-    if (initial) {
-      const img = new Image();
-      img.onload = () => {
-        try { ctx.drawImage(img, 0, 0, w, h); }
-        catch (err) { console.warn('[SignatureOverlay] Bild laden fehlgeschlagen', err); }
+
+    function setup() {
+      const c = canvasRef.current;
+      if (!c) return;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = c.getBoundingClientRect();
+      const w = rect.width;
+      const h = rect.height;
+      // Bestehendes Bild sichern, neu aufsetzen, alten Inhalt zurückzeichnen.
+      let snapshot: HTMLImageElement | null = null;
+      try {
+        const url = c.toDataURL('image/png');
+        if (url && hasContent) {
+          const img = new Image();
+          img.src = url;
+          snapshot = img;
+        }
+      } catch { /* canvas evtl. leer */ }
+      c.width = Math.max(1, Math.floor(w * dpr));
+      c.height = Math.max(1, Math.floor(h * dpr));
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = STROKE;
+      // Initial / Snapshot zurückzeichnen
+      const drawSrc = (src: string) => {
+        const img = new Image();
+        img.onload = () => { try { ctx.drawImage(img, 0, 0, w, h); } catch { /* ignore */ } };
+        img.src = src;
       };
-      img.src = initial;
+      if (snapshot) {
+        // Aus dem Backup nochmal laden (Image kann durch das toDataURL bereits dekodiert sein)
+        drawSrc(snapshot.src);
+      } else if (initial) {
+        drawSrc(initial);
+      }
     }
+
+    setup();
+    const onResize = () => setup();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function getPoint(e: RPointerEvent<HTMLCanvasElement>): { x: number; y: number } | null {
     const canvas = canvasRef.current;
     if (!canvas) return null;
+    // Bounding-Rect liefert die CSS-Pixel-Position des Canvas relativ
+    // zum Viewport — Pointer-Coords sind in clientX/Y, also einfach
+    // subtrahieren.
     const rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
@@ -109,6 +149,15 @@ function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps)
     drawing.current = true;
     last.current = p;
     try { canvasRef.current?.setPointerCapture(e.pointerId); } catch {/* ignore */}
+    // Sofort einen Punkt zeichnen, damit Tap-without-Move auch sichtbar ist.
+    const ctx = canvasRef.current?.getContext('2d');
+    if (ctx) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = STROKE;
+      ctx.fill();
+    }
+    setHasContent(true);
   }
 
   function onMove(e: RPointerEvent<HTMLCanvasElement>) {
@@ -122,7 +171,6 @@ function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps)
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
     last.current = p;
-    setHasContent(true);
   }
 
   function onUp(e: RPointerEvent<HTMLCanvasElement>) {
@@ -136,7 +184,12 @@ function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps)
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
+    // ClearRect respektiert die Transform-Matrix nicht für die Devicegröße,
+    // also über die Pixel-Größe putzen.
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
     setHasContent(false);
   }
 
@@ -153,14 +206,15 @@ function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps)
 
   return (
     <FullscreenOverlay
-      title={title}
+      title={`Unterschrift — ${title}`}
       hint="Mit dem Finger oder Stift unterschreiben."
       onCancel={onCancel}
       onConfirm={handleConfirm}
       confirmDisabled={!hasContent}
+      destructiveAction={hasContent ? { label: 'Löschen', onClick: clear } : undefined}
     >
-      <div className="mx-auto flex h-full max-w-5xl flex-col gap-3">
-        <div className="flex-1 overflow-hidden rounded-lg border border-maja-navy/20 bg-white">
+      <div className="h-full w-full p-3">
+        <div className="h-full w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-white">
           <canvas
             ref={canvasRef}
             onPointerDown={onDown}
@@ -168,13 +222,9 @@ function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps)
             onPointerUp={onUp}
             onPointerCancel={onUp}
             onPointerLeave={onUp}
-            className="block h-full w-full touch-none"
+            className="block h-full w-full"
+            style={{ touchAction: 'none' }}
           />
-        </div>
-        <div className="flex justify-end">
-          <button type="button" onClick={clear} className="text-sm font-medium text-maja-accent hover:underline">
-            Zurücksetzen
-          </button>
         </div>
       </div>
     </FullscreenOverlay>

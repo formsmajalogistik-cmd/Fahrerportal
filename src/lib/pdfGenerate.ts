@@ -293,7 +293,7 @@ export async function fillPdf(
         const bg = await fetchDamageDiagramBytes(meta.vehicleImage);
         if (!bg) continue;
         const markers = Array.isArray(value)
-          ? (value as Array<{ x: number; y: number; kind?: string; note?: string }>)
+          ? (value as Array<{ x: number; y: number; kind?: string }>)
               .filter((m) => typeof m?.x === 'number' && typeof m?.y === 'number')
           : [];
         const png = await renderDamageDiagramWithMarkers(
@@ -306,31 +306,6 @@ export async function fillPdf(
           x: entry.x - entry.width, y: entry.y - entry.height,
           width: entry.width, height: entry.height,
         });
-
-        // Optionale Beschreibungsliste an einer separaten Position
-        // (Mapping-Schlüssel "<fieldId>.beschreibung", TextEntry).
-        const descEntry = mapping[`${fieldId}.beschreibung`];
-        if (isTextEntry(descEntry) && markers.length > 0) {
-          const fontSize = descEntry.fontSize ?? TEXT_DEFAULT_FONT;
-          const lineHeight = fontSize * 1.3;
-          const KIND_LABELS: Record<string, string> = {
-            D: 'Delle', K: 'Kratzer', S: 'Steinschlag', U: 'Unfallschaden',
-          };
-          // Eine Zeile pro Marker, rechtsbündig wie alle Texte.
-          for (let i = 0; i < markers.length; i += 1) {
-            const m = markers[i];
-            const kind = (m.kind ?? '').toString().toUpperCase();
-            const label = KIND_LABELS[kind] ?? '';
-            const note = (m.note ?? '').trim();
-            const line = `${kind || '?'}: ${label}${note ? ` — ${note}` : ''}`;
-            const w = font.widthOfTextAtSize(line, fontSize);
-            page(descEntry.page).drawText(line, {
-              x: descEntry.x - w,
-              y: descEntry.y - i * lineHeight,
-              size: fontSize, font, color: INK,
-            });
-          }
-        }
         continue;
       }
       // photo
