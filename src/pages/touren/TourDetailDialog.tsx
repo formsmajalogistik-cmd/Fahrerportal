@@ -10,11 +10,15 @@ import {
   computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
   formatDateTime, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
 } from '../../lib/touren';
+import {
+  downloadFormPdf, expectedOneDrivePath, resolveFilename,
+} from '../../lib/pdfGenerate';
 import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
 import { ProtokollSection } from './ProtokollSection';
-import type { FormularTemplate, GreimelZugang, ProtokollArt } from '../../types/db';
 import type {
-  AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, Tour, TourenArt, TourStatus, TourZusatz,
+  AppUser, Auftraggeber, AuftraggeberKontakt, AusgefuelltesFormular, Fahrer,
+  FormularTemplate, GreimelZugang, ProtokollArt, TemplatePdf, Tour, TourenArt,
+  TourStatus, TourZusatz,
 } from '../../types/db';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
@@ -169,6 +173,14 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const [fahrer, setFahrer] = useState<FahrerWithUser[]>([]);
   const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
   const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
+
+  // Verknüpfter Eingang (ausgefuelltes_formular) inklusive Template — wird
+  // gelesen, sobald tour.eingang_id gesetzt ist, um die PDF-Downloads
+  // direkt im Tour-Detail anbieten zu können.
+  const [eingang, setEingang] = useState<{
+    formular: AusgefuelltesFormular;
+    template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown };
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -238,6 +250,25 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     ));
     setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
     setZugaenge(Array.isArray(gzRes.data) ? (gzRes.data as GreimelZugang[]) : []);
+
+    // Optional: zugehörigen Eingang + Template laden.
+    if (full.eingang_id) {
+      const { data: eingangRow } = await supabase
+        .from('ausgefuellte_formulare')
+        .select('*, template:template_id (id, name, pdfs, schema)')
+        .eq('id', full.eingang_id)
+        .maybeSingle();
+      if (eingangRow && eingangRow.template) {
+        setEingang({
+          formular: eingangRow as unknown as AusgefuelltesFormular,
+          template: (eingangRow as unknown as { template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown } }).template,
+        });
+      } else {
+        setEingang(null);
+      }
+    } else {
+      setEingang(null);
+    }
     setLoading(false);
   }, [tourId]);
 
@@ -652,6 +683,29 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           zugaenge={zugaenge}
           kontakte={editKontakte}
         />
+      )}
+
+      {/* Verknüpfter Eingang — PDF-Downloads */}
+      {eingang && (
+        <div className="mt-6">
+          <h3 className="mb-2 text-base font-semibold text-maja-navy">Verknüpfter Eingang</h3>
+          <div className="rounded-lg border border-maja-navy/10 bg-white p-3 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-medium text-maja-ink">{eingang.template.name}</div>
+                <div className="text-xs text-maja-muted">
+                  {eingang.formular.created_at
+                    ? new Date(eingang.formular.created_at).toLocaleString('de-DE')
+                    : '—'}
+                </div>
+              </div>
+              <EingangPdfDownloads
+                template={eingang.template}
+                formular={eingang.formular}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Zusätze — nur für Admins */}
@@ -1432,5 +1486,64 @@ function FinanceField({ label, value, onChange, onCommit, readOnly }: FinanceFie
         <span className="text-sm text-maja-muted">€</span>
       </div>
     </div>
+  );
+}
+
+// ---------- Eingang-PDF-Downloads ----------
+
+function EingangPdfDownloads({
+  template, formular,
+}: {
+  template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown };
+  formular: AusgefuelltesFormular;
+}) {
+  const tpl: FormularTemplate = {
+    id: template.id,
+    name: template.name,
+    auftraggeber_id: null,
+    schema: (template.schema as FormularTemplate['schema']) ?? { sections: [] },
+    pdfs: template.pdfs ?? [],
+    email_config: null,
+  };
+  if (!tpl.pdfs || tpl.pdfs.length === 0) {
+    return <span className="text-xs text-maja-muted">keine PDF-Vorlagen</span>;
+  }
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      {tpl.pdfs.map((p) => {
+        const filename = resolveFilename(p.filename_pattern, formular.daten, p.id);
+        const path = expectedOneDrivePath(tpl, formular, p);
+        return (
+          <EingangPdfButton
+            key={p.id}
+            label={p.name}
+            filename={filename}
+            path={path}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function EingangPdfButton({
+  label, filename, path,
+}: { label: string; filename: string; path: string }) {
+  const [busy, setBusy] = useState(false);
+  async function open() {
+    setBusy(true);
+    const ok = await downloadFormPdf(path, filename);
+    setBusy(false);
+    if (!ok) alert('PDF noch nicht generiert oder nicht erreichbar.');
+  }
+  return (
+    <button
+      onClick={open}
+      disabled={busy}
+      className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-1 text-xs text-maja-navy hover:bg-maja-accent/20"
+      title={`${filename}\n${path}`}
+    >
+      {busy ? '…' : '⬇'} {label}
+    </button>
   );
 }

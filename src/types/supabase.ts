@@ -196,6 +196,7 @@ export type Database = {
           ist_e_fahrzeug: boolean;
           fin: string | null;
           kontakt_id: string | null;
+          eingang_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -231,6 +232,7 @@ export type Database = {
           ist_e_fahrzeug?: boolean;
           fin?: string | null;
           kontakt_id?: string | null;
+          eingang_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -266,6 +268,7 @@ export type Database = {
           ist_e_fahrzeug?: boolean;
           fin?: string | null;
           kontakt_id?: string | null;
+          eingang_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -286,6 +289,12 @@ export type Database = {
             foreignKeyName: 'touren_kontakt_id_fkey';
             columns: ['kontakt_id'];
             referencedRelation: 'auftraggeber_kontakte';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'touren_eingang_id_fkey';
+            columns: ['eingang_id'];
+            referencedRelation: 'ausgefuellte_formulare';
             referencedColumns: ['id'];
           },
         ];

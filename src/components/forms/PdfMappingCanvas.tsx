@@ -92,13 +92,15 @@ export function PdfMappingCanvas({
   }
 
   return (
-    <div className="relative inline-block">
+    <div className="relative inline-block max-w-full overflow-hidden" style={{ overflow: 'hidden' }}>
       {rendering && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-maja-muted">
           PDF wird gerendert …
         </div>
       )}
-      <div className="relative cursor-crosshair overflow-hidden shadow-card" onClick={handleCanvasClick}>
+      <div className="relative cursor-crosshair overflow-hidden shadow-card"
+           style={{ overflow: 'hidden' }}
+           onClick={handleCanvasClick}>
         <canvas ref={canvasRef} className="block max-w-full" />
         {pageSize && Object.entries(mapping).flatMap(([fieldId, entry]) => {
           const label = fieldLabels?.[fieldId] ?? fieldId;
@@ -247,19 +249,24 @@ function PointMarker({
   label: string; selected: boolean;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
-  // X-Anker = rechter Rand des Feldes → Marker rechts-ankern (translate-x-full).
+  // X-Anker = rechter Rand des Feldes → Marker links vom Anker.
+  // Y wird so umgerechnet, dass das Label IN das Canvas hineinragt: in der
+  // oberen Hälfte hängt es UNTER dem Anker-Punkt, in der unteren Hälfte
+  // ÜBER dem Anker-Punkt — so wird es nie vom Canvas-Rand abgeschnitten.
   const left = (x / pageSize.w) * 100;
-  const top = ((pageSize.h - y) / pageSize.h) * 100;
+  const topPct = ((pageSize.h - y) / pageSize.h) * 100;
+  const labelAbove = topPct > 50;
   return (
     <button
       type="button"
       onClick={onClick}
       title={label}
       className={
-        'absolute z-20 -translate-x-full -translate-y-full whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
+        'absolute z-20 -translate-x-full whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
+        (labelAbove ? '-translate-y-full' : 'translate-y-0') + ' ' +
         (selected ? 'bg-red-600' : 'bg-maja-accent')
       }
-      style={{ left: `${left}%`, top: `${top}%` }}
+      style={{ left: `${left}%`, top: `${topPct}%` }}
     >
       {label}
     </button>
@@ -286,6 +293,10 @@ function BoxMarker({
     width: `${widthPct}%`, height: `${heightPct}%`,
   };
 
+  // Label wird intern positioniert (top-0 right-0), damit es nicht über den
+  // Canvas-Rand hinausragt. Bei sehr flachen Boxen wandert das Label nach
+  // außen unten.
+  const flat = heightPct < 4;
   return (
     <button
       type="button"
@@ -298,7 +309,8 @@ function BoxMarker({
       style={style}
     >
       <span className={
-        'absolute -top-5 right-0 whitespace-nowrap rounded px-1 py-0.5 text-[10px] font-semibold text-white ' +
+        'absolute right-0 max-w-full truncate whitespace-nowrap rounded px-1 py-0.5 text-[10px] font-semibold text-white ' +
+        (flat ? 'top-full mt-1' : 'top-0') + ' ' +
         (selected ? 'bg-red-600' : 'bg-maja-accent')
       }>
         {label}

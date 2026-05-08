@@ -78,7 +78,7 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
           {markers.map((m, i) => (
             <span
               key={i}
-              className={`absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-xs font-bold text-white shadow ring-2 ring-white ${m.kind ? KIND_BG[m.kind] : 'bg-maja-navy'}`}
+              className={`absolute flex h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[9px] font-bold text-white shadow ring-1 ring-white ${m.kind ? KIND_BG[m.kind] : 'bg-maja-navy'}`}
               style={{ left: `${m.x}%`, top: `${m.y}%` }}
             >
               {m.kind ?? '?'}
@@ -319,7 +319,7 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
                       onPointerDown={(ev) => ev.stopPropagation()}
                       onPointerUp={(ev) => ev.stopPropagation()}
                       onClick={(ev) => { ev.stopPropagation(); setSelectedIdx(isSelected ? null : i); }}
-                      className={`flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-sm font-bold text-white shadow ring-2 ring-white ${m.kind ? KIND_BG[m.kind] : 'bg-maja-navy'}`}
+                      className={`flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[10px] font-bold text-white shadow ring-1 ring-white ${m.kind ? KIND_BG[m.kind] : 'bg-maja-navy'}`}
                       aria-label={`Markierung ${i + 1}`}
                       style={{ touchAction: 'none' }}
                     >

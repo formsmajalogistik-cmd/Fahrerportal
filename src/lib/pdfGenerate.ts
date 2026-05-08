@@ -115,7 +115,8 @@ async function renderDamageDiagramWithMarkers(
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
         // Marker — Buchstabe statt Nummer (D/K/S/U); Fallback "?"
-        const r = Math.max(8, Math.min(canvas.width, canvas.height) * 0.025);
+        // Etwa halbe Größe wie zuvor (entspricht visuell den UI-Markern).
+        const r = Math.max(5, Math.min(canvas.width, canvas.height) * 0.0125);
         ctx.font = `bold ${Math.round(r * 1.2)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';

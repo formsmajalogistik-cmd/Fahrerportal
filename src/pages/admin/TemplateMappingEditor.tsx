@@ -607,6 +607,13 @@ function FieldsSidebar({
   onRemoveOption: (fieldId: string, optionName: string) => void;
   onJumpToPage: (page: number) => void;
 }) {
+  // Address-Felder zu Sub-Rows aufdröseln, damit jeder Eintrag (Straße/PLZ/
+  // Stadt) eigenständig sichtbar, anwählbar und löschbar ist.
+  const ADDRESS_SUBS: Array<{ key: 'strasse' | 'plz' | 'stadt'; label: string }> = [
+    { key: 'strasse', label: 'Straße' },
+    { key: 'plz',     label: 'PLZ' },
+    { key: 'stadt',   label: 'Stadt' },
+  ];
   return (
     <div className="card p-4">
       <h3 className="mb-2 text-sm font-semibold text-maja-navy">Felder &amp; Mapping</h3>
@@ -615,6 +622,57 @@ function FieldsSidebar({
       )}
       <ul className="space-y-1 text-sm">
         {fields.map((f) => {
+          // Address: Eltern-Eintrag (read-only Header) + Sub-Rows.
+          if (f.type === 'address') {
+            return (
+              <li key={f.id} className="rounded-md border border-maja-navy/10 bg-white">
+                <div className="px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-maja-muted">
+                  {f.label}
+                </div>
+                <ul className="ml-2 space-y-1 border-l border-maja-navy/10 pl-3 pb-2">
+                  {ADDRESS_SUBS.map((sub) => {
+                    const subKey = `${f.id}.${sub.key}`;
+                    const subEntry = mapping[subKey];
+                    const isSel = selected?.fieldId === subKey;
+                    return (
+                      <li key={subKey}
+                          className={
+                            'flex items-center justify-between rounded px-2 py-1 cursor-pointer ' +
+                            (isSel ? 'bg-maja-accent/10' : 'hover:bg-maja-light/60')
+                          }
+                          onClick={() => onSelectField(subKey)}>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs">{sub.label}</div>
+                          <div className="text-[11px] text-maja-muted">
+                            {isTextEntry(subEntry)
+                              ? <>S.{subEntry.page} · ({Math.round(subEntry.x)}, {Math.round(subEntry.y)})</>
+                              : 'noch nicht gemappt'}
+                          </div>
+                        </div>
+                        {isTextEntry(subEntry) && (
+                          <div className="flex items-center gap-2">
+                            {subEntry.page !== page && (
+                              <button
+                                type="button"
+                                onClick={(ev) => { ev.stopPropagation(); onJumpToPage(subEntry.page); }}
+                                className="text-xs text-maja-accent hover:underline"
+                              >S.{subEntry.page}</button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(ev) => { ev.stopPropagation(); onRemoveField(subKey); }}
+                              className="text-xs font-medium text-red-600 hover:underline"
+                            >×</button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            );
+          }
+
           const e = mapping[f.id];
           const onPage = isFieldMappedOnPage(e, page);
           return (
@@ -736,14 +794,25 @@ function DetailPanel({
     patch: Partial<{ page: number; x: number; y: number; size: number; fontSize: number }>,
   ) => void;
 }) {
-  const field = fieldMap.get(selection.fieldId);
+  // Composite-Key-Auflösung: Sub-Field-Schlüssel wie "adresse.strasse"
+  // verweisen auf das Eltern-Feld, der Sub-Name liefert das passende Label.
+  const dot = selection.fieldId.indexOf('.');
+  const parentField = dot > 0 ? fieldMap.get(selection.fieldId.slice(0, dot)) : null;
+  const subKey = dot > 0 ? selection.fieldId.slice(dot + 1) : null;
+  const SUB_LABEL: Record<string, string> = {
+    strasse: 'Straße', plz: 'PLZ', stadt: 'Stadt',
+  };
+  const field = fieldMap.get(selection.fieldId) ?? parentField;
   const entry = mapping[selection.fieldId];
   if (!field || !entry) return null;
+  const headerLabel = subKey
+    ? `${field.label} – ${SUB_LABEL[subKey] ?? subKey}`
+    : field.label;
 
   if (isTextEntry(entry)) {
     return (
       <div className="card p-4">
-        <h3 className="mb-3 text-sm font-semibold text-maja-navy">{field.label}</h3>
+        <h3 className="mb-3 text-sm font-semibold text-maja-navy">{headerLabel}</h3>
         <div className="grid gap-2 sm:grid-cols-2">
           <NumberCell label="Seite"  value={entry.page} min={1}
                       onChange={(v) => onUpdateText(selection.fieldId, { page: v })} />
