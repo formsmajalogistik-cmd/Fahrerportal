@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
+import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { summarizeEingang } from '../lib/eingangData';
@@ -29,6 +30,7 @@ interface TourProtokoll {
 
 export function FahrerDashboard() {
   const { session, profile } = useAuth();
+  const { activeFahrer } = useFahrerContext();
   const navigate = useNavigate();
   const [fahrer, setFahrer] = useState<Fahrer | null>(null);
   const [templates, setTemplates] = useState<AssignedTemplate[]>([]);
@@ -44,12 +46,19 @@ export function FahrerDashboard() {
     setLoading(true);
     setError(null);
 
-    const { data: fahrerRow, error: fahrerErr } = await supabase
-      .from('fahrer')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .maybeSingle();
-    if (fahrerErr) { setError(fahrerErr.message); setLoading(false); return; }
+    // Aktiv gewähltes Konto bestimmt die Perspektive — fällt nichts gewählt
+    // ist (kein Unterkonto-Modell), fallback auf den Haupt-Eintrag des Users.
+    let fahrerRow: Fahrer | null = activeFahrer;
+    if (!fahrerRow) {
+      const { data, error: fahrerErr } = await supabase
+        .from('fahrer')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .eq('ist_unterkonto', false)
+        .maybeSingle();
+      if (fahrerErr) { setError(fahrerErr.message); setLoading(false); return; }
+      fahrerRow = data;
+    }
     setFahrer(fahrerRow);
 
     // Templates: Admin sieht alle (inkl. versteckte mit Badge),
@@ -120,7 +129,7 @@ export function FahrerDashboard() {
     setTourProtokolle(filtered);
 
     setLoading(false);
-  }, [session, profile?.role]);
+  }, [session, profile?.role, activeFahrer]);
 
   useEffect(() => { void load(); }, [load]);
 

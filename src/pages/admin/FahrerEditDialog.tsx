@@ -21,8 +21,10 @@ export function FahrerEditDialog({ initial, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!isNew) return;
     (async () => {
-      // Alle app_users (Admin + Fahrer), die noch keinen Fahrer-Eintrag haben.
-      const { data: existing } = await supabase.from('fahrer').select('user_id');
+      // Alle app_users (Admin + Fahrer), die noch keinen HAUPT-Fahrer-Eintrag haben.
+      // Unterkonten teilen sich user_id mit dem Haupt-Eintrag.
+      const { data: existing } = await supabase
+        .from('fahrer').select('user_id').eq('ist_unterkonto', false);
       const taken = new Set((existing ?? []).map((r) => r.user_id));
       const { data: users } = await supabase
         .from('app_users')
@@ -46,7 +48,7 @@ export function FahrerEditDialog({ initial, onClose, onSaved }: Props) {
         if (e1) throw e1;
         const { error: e2 } = await supabase
           .from('fahrer')
-          .insert({ user_id: userId, aktiv });
+          .insert({ user_id: userId, aktiv, ist_unterkonto: false, haupt_user_id: null });
         if (e2) throw e2;
       } else {
         const { error: e1 } = await supabase

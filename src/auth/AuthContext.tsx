@@ -162,6 +162,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error;
       },
       signOut: async () => {
+        // Aktives Unterkonto pro User entfernen, damit beim nächsten Login
+        // wieder der Konto-Picker erscheint (falls mehrere vorhanden).
+        try {
+          const uid = session?.user.id;
+          if (uid) localStorage.removeItem(`maja:active-fahrer:${uid}`);
+        } catch { /* noop */ }
         await supabase.auth.signOut();
       },
       requestPasswordReset: async (email) => {

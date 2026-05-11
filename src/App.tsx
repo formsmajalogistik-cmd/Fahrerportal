@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
+import { useFahrerContext } from './auth/FahrerContext';
 import { Spinner } from './components/Spinner';
 import { AppShell } from './components/AppShell';
 import { AdminShell } from './components/AdminShell';
@@ -9,6 +10,8 @@ import { PasswordNewPage } from './pages/PasswordNewPage';
 import { FahrerDashboard } from './pages/FahrerDashboard';
 import { FormularPage } from './pages/FormularPage';
 import { ProfilPage } from './pages/ProfilPage';
+import { KontoAuswahlPage } from './pages/KontoAuswahlPage';
+import { MeineUnterkontenPage } from './pages/MeineUnterkontenPage';
 import { FahrerListPage } from './pages/admin/FahrerListPage';
 import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
 import { PreislistePage } from './pages/admin/PreislistePage';
@@ -21,6 +24,7 @@ import { GreimelZugaengePage } from './pages/GreimelZugaengePage';
 
 export default function App() {
   const { status, profile } = useAuth();
+  const fahrerCtx = useFahrerContext();
 
   if (status === 'loading') {
     return (
@@ -39,6 +43,18 @@ export default function App() {
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
+  }
+
+  // Bevor der User in die App geht: erst Konto wählen, wenn er mehrere hat.
+  if (fahrerCtx.loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-maja-light">
+        <Spinner label="Konten werden geladen …" />
+      </div>
+    );
+  }
+  if (fahrerCtx.needsPicker) {
+    return <KontoAuswahlPage />;
   }
 
   if (profile?.role === 'admin') {
@@ -68,6 +84,7 @@ export default function App() {
           <Route path="/zuweisungen" element={<Navigate to="/templates" replace />} />
           <Route path="/formular/:id" element={<FormularPage />} />
           <Route path="/profil" element={<ProfilPage />} />
+          <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
           <Route path="/passwort-neu" element={<PasswordNewPage />} />
           <Route path="*" element={<Navigate to="/touren" replace />} />
         </Routes>
@@ -87,6 +104,7 @@ export default function App() {
         <Route path="/eingaenge" element={<EingaengePage />} />
         <Route path="/formular/:id" element={<FormularPage />} />
         <Route path="/profil" element={<ProfilPage />} />
+        <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
         <Route path="/passwort-neu" element={<PasswordNewPage />} />
         <Route path="*" element={<Navigate to="/touren" replace />} />
       </Routes>

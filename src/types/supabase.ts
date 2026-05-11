@@ -426,22 +426,40 @@ export type Database = {
           id: string;
           user_id: string;
           aktiv: boolean;
+          vorname: string | null;
+          nachname: string | null;
+          haupt_user_id: string | null;
+          ist_unterkonto: boolean;
         };
         Insert: {
           id?: string;
           user_id: string;
           aktiv?: boolean;
+          vorname?: string | null;
+          nachname?: string | null;
+          haupt_user_id?: string | null;
+          ist_unterkonto?: boolean;
         };
         Update: {
           id?: string;
           user_id?: string;
           aktiv?: boolean;
+          vorname?: string | null;
+          nachname?: string | null;
+          haupt_user_id?: string | null;
+          ist_unterkonto?: boolean;
         };
         Relationships: [
           {
             foreignKeyName: 'fahrer_user_id_fkey';
             columns: ['user_id'];
             referencedRelation: 'app_users';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'fahrer_haupt_user_id_fkey';
+            columns: ['haupt_user_id'];
+            referencedRelation: 'fahrer';
             referencedColumns: ['id'];
           },
         ];

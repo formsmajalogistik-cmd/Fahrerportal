@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
+import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
-import { displayName } from '../lib/names';
+import { displayName, fahrerName as resolveFahrerName } from '../lib/names';
 import {
   computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
@@ -14,7 +15,9 @@ import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
 } from '../types/db';
 
-type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
+type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nachname'> & {
+  user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
+};
 
 interface TourRow extends Tour {
   auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
@@ -49,7 +52,18 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 
 export function TourenlistePage() {
   const { profile, session } = useAuth();
+  const { activeFahrer, availableFahrer } = useFahrerContext();
   const isAdmin = profile?.role === 'admin';
+  // Konten, deren Touren mein aktives Konto sieht: das aktive Konto selbst,
+  // und — falls es das Haupt-Konto ist — alle eigenen Unterkonten.
+  const scopedFahrerIds = useMemo(() => {
+    if (!activeFahrer) return [] as string[];
+    if (activeFahrer.ist_unterkonto) return [activeFahrer.id];
+    const subs = availableFahrer
+      .filter((f) => f.ist_unterkonto && f.haupt_user_id === activeFahrer.id)
+      .map((f) => f.id);
+    return [activeFahrer.id, ...subs];
+  }, [activeFahrer, availableFahrer]);
   const navigate = useNavigate();
   const [openingProtokoll, setOpeningProtokoll] = useState<string | null>(null);
 
@@ -125,18 +139,24 @@ export function TourenlistePage() {
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase
+    let query = supabase
       .from('touren')
       .select(`
         *,
         auftraggeber:auftraggeber_id (name, kontakt),
         fahrer:fahrer_id (
-          id, user_id, aktiv,
+          id, user_id, aktiv, vorname, nachname,
           user:user_id (email, vorname, nachname)
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
-      `)
+      `);
+    // Nicht-Admins: nur Touren des aktiven Kontos (inkl. eigener Unterkonten,
+    // wenn aktives Konto ein Haupt-Konto ist).
+    if (!isAdmin && scopedFahrerIds.length > 0) {
+      query = query.in('fahrer_id', scopedFahrerIds);
+    }
+    const { data, error: err } = await query
       .order('startdatum', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
     if (err) {
@@ -171,7 +191,7 @@ export function TourenlistePage() {
       setRows(normalized);
     }
     if (silent) setRefreshing(false); else setLoading(false);
-  }, []);
+  }, [isAdmin, scopedFahrerIds]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -186,34 +206,54 @@ export function TourenlistePage() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [agRes, faRes] = await Promise.all([
-        supabase.from('auftraggeber').select('id, name').order('name'),
-        supabase
-          .from('fahrer')
-          .select('id, user:user_id (email, vorname, nachname)')
-          .eq('aktiv', true),
-      ]);
+      // Auftraggeber-Dropdown: alle (für Admin), sonst nur die der eigenen Touren —
+      // hier reicht aber „alle" da RLS allen authentifizierten Lesezugriff erlaubt.
+      const agRes = await supabase.from('auftraggeber').select('id, name').order('name');
       if (cancelled) return;
       setAuftraggeberOptions(Array.isArray(agRes.data) ? agRes.data : []);
-      const fa = (Array.isArray(faRes.data) ? faRes.data : [])
-        .map((f) => {
-          const user = (f as { user?: unknown }).user;
-          const u = user && typeof user === 'object' ? user as { email?: unknown; vorname?: unknown; nachname?: unknown } : null;
-          const safeUser = u ? {
-            email:    typeof u.email === 'string' ? u.email : '',
-            vorname:  typeof u.vorname === 'string' ? u.vorname : null,
-            nachname: typeof u.nachname === 'string' ? u.nachname : null,
-          } : null;
-          return {
-            id: (f as { id: string }).id,
-            label: displayName(safeUser) || '—',
-          };
-        })
-        .sort((a, b) => a.label.localeCompare(b.label, 'de'));
-      setFahrerOptions(fa);
+
+      // Fahrer-Filter:
+      // - Admin: alle aktiven Fahrer (Haupt + Unterkonten)
+      // - Haupt-Konto mit Unterkonten: eigene Konten als Optionen
+      // - Sonst: leer (Dropdown wird ausgeblendet)
+      if (isAdmin) {
+        const faRes = await supabase
+          .from('fahrer')
+          .select('id, vorname, nachname, user:user_id (email, vorname, nachname)')
+          .eq('aktiv', true);
+        if (cancelled) return;
+        const fa = (Array.isArray(faRes.data) ? faRes.data : [])
+          .map((f) => {
+            const user = (f as { user?: unknown }).user;
+            const u = user && typeof user === 'object' ? user as { email?: unknown; vorname?: unknown; nachname?: unknown } : null;
+            const safeUser = u ? {
+              email:    typeof u.email === 'string' ? u.email : '',
+              vorname:  typeof u.vorname === 'string' ? u.vorname : null,
+              nachname: typeof u.nachname === 'string' ? u.nachname : null,
+            } : null;
+            const row = f as { vorname?: string | null; nachname?: string | null };
+            const ownName = [row.vorname, row.nachname].filter(Boolean).join(' ').trim();
+            return {
+              id: (f as { id: string }).id,
+              label: ownName || displayName(safeUser) || '—',
+            };
+          })
+          .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+        setFahrerOptions(fa);
+      } else if (scopedFahrerIds.length > 1) {
+        const fa = scopedFahrerIds.map((id) => {
+          const f = availableFahrer.find((x) => x.id === id);
+          const ownName = [f?.vorname, f?.nachname].filter(Boolean).join(' ').trim();
+          const label = ownName || displayName(profile) || 'Konto';
+          return { id, label };
+        });
+        setFahrerOptions(fa);
+      } else {
+        setFahrerOptions([]);
+      }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [isAdmin, scopedFahrerIds, availableFahrer, profile]);
 
   // ---- Touren im gewählten Datums-Bereich ----
   // Maßgeblich ist das ENDDATUM (Fallback auf startdatum, falls noch
@@ -241,7 +281,7 @@ export function TourenlistePage() {
       if (auftraggeberFilter && t.auftraggeber_id !== auftraggeberFilter) return false;
       if (fahrerFilter && t.fahrer_id !== fahrerFilter) return false;
       if (!q) return true;
-      const fahrerName = displayName(t.fahrer?.user ?? null).toLowerCase();
+      const fahrerName = resolveFahrerName(t.fahrer ?? null, t.fahrer?.user ?? null).toLowerCase();
       const haystack = [
         t.tour_id ?? '',
         t.start_stadt ?? '',
@@ -434,22 +474,24 @@ export function TourenlistePage() {
             ))}
           </select>
         </div>
-        <div className="flex flex-1 min-w-[12rem] flex-col">
-          <label htmlFor="t-fa-filter" className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-            Fahrer
-          </label>
-          <select
-            id="t-fa-filter"
-            className="input"
-            value={fahrerFilter}
-            onChange={(e) => setFahrerFilter(e.target.value)}
-          >
-            <option value="">Alle Fahrer</option>
-            {fahrerOptions.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
-        </div>
+        {fahrerOptions.length > 0 && (
+          <div className="flex flex-1 min-w-[12rem] flex-col">
+            <label htmlFor="t-fa-filter" className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+              Fahrer
+            </label>
+            <select
+              id="t-fa-filter"
+              className="input"
+              value={fahrerFilter}
+              onChange={(e) => setFahrerFilter(e.target.value)}
+            >
+              <option value="">Alle Fahrer</option>
+              {fahrerOptions.map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {(auftraggeberFilter || fahrerFilter) && (
           <button
             type="button"
@@ -557,7 +599,7 @@ interface CardProps {
 function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps) {
   const protokollName = tour.schriftliches_protokoll?.name ?? null;
   const hasSchriftlich = tour.protokoll_art === 'schriftlich' && !!tour.schriftliches_protokoll_id;
-  const fahrerName = displayName(tour.fahrer?.user ?? null) || '— kein Fahrer —';
+  const fahrerName = resolveFahrerName(tour.fahrer ?? null, tour.fahrer?.user ?? null) || '— kein Fahrer —';
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;

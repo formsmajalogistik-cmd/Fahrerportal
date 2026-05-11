@@ -3,9 +3,14 @@ import {
 } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
+import { useFahrerContext } from '../../auth/FahrerContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
-import { displayName } from '../../lib/names';
+import { fahrerName } from '../../lib/names';
+
+function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user: { email: string; vorname: string | null; nachname: string | null } | null }): string {
+  return fahrerName(f, f.user);
+}
 import {
   computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
   formatDate, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
@@ -21,7 +26,9 @@ import type {
   TourStatus, TourZusatz,
 } from '../../types/db';
 
-type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
+type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nachname' | 'ist_unterkonto' | 'haupt_user_id'> & {
+  user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
+};
 
 interface FullTour extends Tour {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt'> | null;
@@ -51,7 +58,7 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 const ZUSATZ_KATEGORIEN = [
   'Maut', 'Ladezeit', 'Wartezeit', 'Rote Kennzeichen', 'Reifenhandling',
   'Wäsche', 'Tankauslagen', 'Ladeauslagen', 'Waschauslagen',
-  'Tank und Waschauslagen', 'Lade und Waschauslagen',
+  'Tank und Waschauslagen', 'Lade und Waschauslagen', 'Taxiauslagen',
 ];
 
 // ---------- Helpers ----------
@@ -204,6 +211,7 @@ function kontaktFromDraft(
 
 export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Props) {
   const { profile } = useAuth();
+  const fahrerCtx = useFahrerContext();
   const isAdmin = profile?.role === 'admin';
 
   const [tour, setTour] = useState<FullTour | null>(null);
@@ -265,7 +273,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       supabase.from('auftraggeber').select('*').order('name'),
       supabase
         .from('fahrer')
-        .select('*, user:user_id (email, vorname, nachname)')
+        .select('id, user_id, aktiv, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true),
       supabase.from('formular_templates').select('id, name').order('name'),
       supabase.from('greimel_zugaenge').select('*').order('titel'),
@@ -284,9 +292,14 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     setHonorarInput(decimalToInput(full.fahrer_honorar));
     setZusaetze(Array.isArray(zRes.data) ? (zRes.data as TourZusatz[]) : []);
     setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
-    const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
+    const rawFahrer = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
+    // Nicht-Admin: nur eigene Konten (Haupt + eigene Unterkonten) als
+    // Zuweisungs-Optionen anbieten — Admin sieht alle.
+    const isAdminView = profile?.role === 'admin';
+    const ownIds = new Set(fahrerCtx.availableFahrer.map((f) => f.id));
+    const faList = isAdminView ? rawFahrer : rawFahrer.filter((f) => ownIds.has(f.id));
     setFahrer(faList.sort((a, b) =>
-      displayName(a.user ?? null).localeCompare(displayName(b.user ?? null), 'de'),
+      (fahrerNameOf(a)).localeCompare(fahrerNameOf(b), 'de'),
     ));
     setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
     setZugaenge(Array.isArray(gzRes.data) ? (gzRes.data as GreimelZugang[]) : []);
@@ -673,7 +686,9 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     );
   }
 
-  const fahrerName = displayName(tour.fahrer?.user ?? null) || '—';
+  const fahrerLabel = tour.fahrer
+    ? fahrerName(tour.fahrer, tour.fahrer.user ?? null) || '—'
+    : '—';
   const titel = tourTitel(tour);
   const hatRueckfuehrung = !!tour.rueckfuehrung_stadt;
 
@@ -727,7 +742,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerName} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
+        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
       ) : (
         <EditMode
           draft={draft}
@@ -1241,7 +1256,7 @@ function EditMode(p: EditModeProps) {
                   onChange={(e) => patchDraft({ fahrerId: e.target.value })}>
             <option value="">— kein Fahrer —</option>
             {(fahrer ?? []).map((f) => (
-              <option key={f.id} value={f.id}>{displayName(f.user ?? null)}</option>
+              <option key={f.id} value={f.id}>{fahrerNameOf(f)}</option>
             ))}
           </select>
         </div>

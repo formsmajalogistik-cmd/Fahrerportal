@@ -1,8 +1,7 @@
 import { type ReactNode } from 'react';
-import { Link, NavLink } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext';
-import { displayName, initials } from '../lib/names';
+import { NavLink } from 'react-router-dom';
 import { MajaLogo } from './Brand';
+import { ProfilMenu } from './ProfilMenu';
 
 interface NavItem { to: string; label: string; end?: boolean }
 
@@ -16,7 +15,6 @@ const adminNav: NavItem[] = [
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {
-  const { profile, signOut } = useAuth();
   return (
     <div className="min-h-screen bg-maja-light">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-maja-navy/10 bg-white lg:block">
@@ -51,25 +49,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <div className="flex items-center justify-between px-4 py-3 lg:px-8">
             <div className="lg:hidden"><MajaLogo className="h-8" /></div>
             <div className="ml-auto flex items-center gap-3">
-              {profile && (
-                <Link
-                  to="/profil"
-                  className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-maja-light"
-                  title="Profil und Einstellungen"
-                  aria-label="Profil"
-                >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-maja-navy text-xs font-semibold text-white">
-                    {initials(profile)}
-                  </span>
-                  <span className="hidden text-right text-xs sm:block">
-                    <span className="block font-medium text-maja-ink">{displayName(profile)}</span>
-                    <span className="block text-maja-muted">Admin</span>
-                  </span>
-                </Link>
-              )}
-              <button onClick={signOut} className="btn-secondary px-3 py-1.5 text-sm">
-                Abmelden
-              </button>
+              <ProfilMenu />
             </div>
           </div>
           <nav className="border-t border-maja-navy/10 px-2 lg:hidden">

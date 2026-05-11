@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
+import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { GreimelZugangEditDialog } from './greimel/GreimelZugangEditDialog';
 import { displayName } from '../lib/names';
 import type { AppUser, Fahrer, GreimelZugang } from '../types/db';
 
-type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
+type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nachname' | 'ist_unterkonto' | 'haupt_user_id'> & {
+  user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
+};
 
 export function GreimelZugaengePage() {
   const { profile } = useAuth();
+  const { activeFahrer } = useFahrerContext();
   const isAdmin = profile?.role === 'admin';
 
   const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
@@ -28,15 +32,23 @@ export function GreimelZugaengePage() {
       isAdmin
         ? supabase
             .from('fahrer')
-            .select('*, user:user_id (email, vorname, nachname)')
+            .select('id, user_id, aktiv, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
             .eq('aktiv', true)
         : Promise.resolve({ data: [] as unknown[], error: null }),
     ]);
     if (zRes.error) { setError(zRes.error.message); setLoading(false); return; }
-    setZugaenge(Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : []);
+    let list = Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : [];
+    // Nicht-Admin: nur Zugänge des aktiven Kontos (oder sichtbar_fuer_alle).
+    if (!isAdmin && activeFahrer) {
+      list = list.filter((z) =>
+        z.sichtbar_fuer_alle
+        || (Array.isArray(z.fahrer_ids) && z.fahrer_ids.includes(activeFahrer.id)),
+      );
+    }
+    setZugaenge(list);
     setFahrer(Array.isArray(fRes.data) ? (fRes.data as unknown as FahrerWithUser[]) : []);
     setLoading(false);
-  }, [isAdmin]);
+  }, [isAdmin, activeFahrer]);
 
   useEffect(() => { void load(); }, [load]);
 
