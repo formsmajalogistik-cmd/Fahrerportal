@@ -4,18 +4,16 @@ import { useAuth } from '../auth/AuthContext';
 import { displayName, initials } from '../lib/names';
 import { MajaLogo } from './Brand';
 
-interface NavItem { to: string; label: string }
+interface NavItem { to: string; label: string; end?: boolean }
 
 const adminNav: NavItem[] = [
-  { to: '/',                label: 'Übersicht' },
-  { to: '/meine-formulare', label: 'Formulare' },
-  { to: '/fahrer',          label: 'Fahrer' },
-  { to: '/auftraggeber',    label: 'Auftraggeber' },
-  { to: '/preisliste',      label: 'Preisliste' },
-  { to: '/templates',       label: 'Templates' },
-  { to: '/zuweisungen',     label: 'Zuweisungen' },
-  { to: '/eingaenge',       label: 'Eingänge' },
-  { to: '/touren',          label: 'Tourenliste' },
+  { to: '/',                 label: 'Übersicht', end: true },
+  { to: '/meine-formulare',  label: 'Formulare' },
+  { to: '/touren',           label: 'Tourenliste' },
+  { to: '/templates',        label: 'Templates' },
+  { to: '/zuweisungen',      label: 'Zuweisungen' },
+  { to: '/eingaenge',        label: 'Eingänge' },
+  { to: '/einstellungen',    label: 'Einstellungen' },
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
 ];
 
@@ -33,7 +31,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               <li key={item.to}>
                 <NavLink
                   to={item.to}
-                  end
+                  end={item.end ?? false}
                   className={({ isActive }) =>
                     `block rounded-lg px-3 py-2 text-sm font-medium transition ${
                       isActive
@@ -82,7 +80,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 <li key={item.to}>
                   <NavLink
                     to={item.to}
-                    end
+                    end={item.end ?? false}
                     className={({ isActive }) =>
                       `inline-block rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                         isActive

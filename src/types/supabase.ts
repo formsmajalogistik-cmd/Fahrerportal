@@ -389,6 +389,7 @@ export type Database = {
           id: string;
           tour_id: string;
           kategorie: string;
+          anzahl: number;
           betrag: number;
           notiz: string | null;
           created_at: string;
@@ -397,6 +398,7 @@ export type Database = {
           id?: string;
           tour_id: string;
           kategorie: string;
+          anzahl?: number;
           betrag: number;
           notiz?: string | null;
           created_at?: string;
@@ -405,6 +407,7 @@ export type Database = {
           id?: string;
           tour_id?: string;
           kategorie?: string;
+          anzahl?: number;
           betrag?: number;
           notiz?: string | null;
           created_at?: string;

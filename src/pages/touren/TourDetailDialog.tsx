@@ -235,8 +235,9 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
   // Zusatz-Eingabe
   const [neueKategorie, setNeueKategorie] = useState('');
-  const [neuerBetrag, setNeuerBetrag] = useState('');
-  const [neueNotiz, setNeueNotiz] = useState('');
+  const [neueAnzahl, setNeueAnzahl]       = useState<string>('1');
+  const [neuerBetrag, setNeuerBetrag]     = useState('');
+  const [neueNotiz, setNeueNotiz]         = useState('');
   const [addingZusatz, setAddingZusatz] = useState(false);
 
   const load = useCallback(async () => {
@@ -611,12 +612,15 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       setStatusMsg({ kind: 'err', text: 'Betrag ist ungültig.' });
       return;
     }
+    const anzahlNum = parseInt(neueAnzahl, 10);
+    const anzahl = Number.isFinite(anzahlNum) && anzahlNum >= 1 ? anzahlNum : 1;
     setAddingZusatz(true);
     const { data, error: err } = await supabase
       .from('tour_zusaetze')
       .insert({
         tour_id: tour.id,
         kategorie,
+        anzahl,
         betrag,
         notiz: neueNotiz.trim() || null,
       })
@@ -626,6 +630,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setZusaetze((z) => [...z, data as TourZusatz]);
     setNeueKategorie('');
+    setNeueAnzahl('1');
     setNeuerBetrag('');
     setNeueNotiz('');
     setStatusMsg(null);
@@ -775,7 +780,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
         {isAdmin && (
           <div className="card mb-3 space-y-3 p-4">
-            <div className="grid gap-2 sm:grid-cols-[1fr_8rem_1fr_auto] sm:items-end">
+            <div className="grid gap-2 sm:grid-cols-[1fr_5rem_8rem_1fr_auto] sm:items-end">
               <div>
                 <label htmlFor="z-kat" className="label">Kategorie</label>
                 <select
@@ -789,6 +794,18 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                     <option key={k} value={k}>{k}</option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label htmlFor="z-anzahl" className="label">Anzahl</label>
+                <input
+                  id="z-anzahl"
+                  className="input"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={neueAnzahl}
+                  onChange={(e) => setNeueAnzahl(e.target.value)}
+                />
               </div>
               <div>
                 <label htmlFor="z-betrag" className="label">Betrag (€)</label>
@@ -842,27 +859,54 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         {(zusaetze ?? []).length === 0 ? (
           <p className="text-sm text-maja-muted">Noch keine Zusätze erfasst.</p>
         ) : (
-          <ul className="card divide-y divide-maja-navy/10 overflow-hidden">
-            {(zusaetze ?? []).map((z) => (
-              <li key={z.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-maja-ink">{z.kategorie}</div>
-                  {z.notiz && <div className="text-xs text-maja-muted">{z.notiz}</div>}
-                </div>
-                <div className="font-semibold text-maja-navy">{formatEuro(Number(z.betrag))}</div>
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteZusatz(z.id)}
-                    aria-label="Zusatz löschen"
-                    className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
-                  >
-                    ✕
-                  </button>
+          <div className="card overflow-hidden">
+            <ul className="divide-y divide-maja-navy/10">
+              {(zusaetze ?? []).map((z) => {
+                const anzahl = Math.max(1, Math.round(Number(z.anzahl ?? 1)));
+                const betrag = Number(z.betrag);
+                const gesamt = Math.round(betrag * anzahl * 100) / 100;
+                return (
+                  <li key={z.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-maja-ink">
+                        <span className="font-medium">{z.kategorie}</span>
+                        <span className="text-maja-muted"> — </span>
+                        {anzahl > 1 ? (
+                          <>
+                            {anzahl} × {formatEuro(betrag)} = <span className="font-semibold">{formatEuro(gesamt)}</span>
+                          </>
+                        ) : (
+                          <span className="font-semibold">{formatEuro(betrag)}</span>
+                        )}
+                      </div>
+                      {z.notiz && <div className="text-xs text-maja-muted">{z.notiz}</div>}
+                    </div>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteZusatz(z.id)}
+                        aria-label="Zusatz löschen"
+                        className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex items-center justify-between border-t border-maja-navy/10 bg-maja-light/40 px-4 py-2 text-sm">
+              <span className="font-medium text-maja-navy">Zusätze gesamt</span>
+              <span className="font-semibold text-maja-navy">
+                {formatEuro(
+                  (zusaetze ?? []).reduce(
+                    (acc, z) => acc + Number(z.betrag) * Math.max(1, Math.round(Number(z.anzahl ?? 1))),
+                    0,
+                  ),
                 )}
-              </li>
-            ))}
-          </ul>
+              </span>
+            </div>
+          </div>
         )}
       </div>
       )}

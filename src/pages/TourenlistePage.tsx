@@ -20,6 +20,15 @@ interface TourRow extends Tour {
   auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
   fahrer: FahrerWithUser | null;
   schriftliches_protokoll: { id: string; name: string } | null;
+  zusaetze: TourZusatzLite[];
+}
+
+interface TourZusatzLite {
+  id: string;
+  kategorie: string;
+  anzahl: number;
+  betrag: number;
+  notiz: string | null;
 }
 
 const PAGE_SIZE = 25;
@@ -125,7 +134,8 @@ export function TourenlistePage() {
           id, user_id, aktiv,
           user:user_id (email, vorname, nachname)
         ),
-        schriftliches_protokoll:schriftliches_protokoll_id (id, name)
+        schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
       `)
       .order('startdatum', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
@@ -147,6 +157,15 @@ export function TourenlistePage() {
           auftraggeber: (row.auftraggeber as TourRow['auftraggeber']) ?? null,
           fahrer: (row.fahrer as TourRow['fahrer']) ?? null,
           schriftliches_protokoll: (row.schriftliches_protokoll as TourRow['schriftliches_protokoll']) ?? null,
+          zusaetze: Array.isArray(row.zusaetze)
+            ? (row.zusaetze as Array<Record<string, unknown>>).map((z) => ({
+                id: String(z.id ?? ''),
+                kategorie: String(z.kategorie ?? ''),
+                anzahl: Number.isFinite(Number(z.anzahl)) ? Math.max(1, Math.round(Number(z.anzahl))) : 1,
+                betrag: Number(z.betrag ?? 0),
+                notiz: typeof z.notiz === 'string' ? z.notiz : null,
+              }))
+            : [],
         } as TourRow;
       });
       setRows(normalized);
@@ -548,12 +567,21 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
     return formatDate(tour.startdatum ?? tour.enddatum);
   })();
 
+  const zusaetze = tour.zusaetze ?? [];
+  const hasZusaetze = zusaetze.length > 0;
+  const zusaetzeSumme = zusaetze.reduce(
+    (acc, z) => acc + (Number(z.anzahl) || 1) * Number(z.betrag ?? 0),
+    0,
+  );
+
   return (
     <li>
       <button
         type="button"
         onClick={onOpen}
-        className="card w-full p-5 text-left transition hover:shadow-lg"
+        className={`card w-full p-5 text-left transition hover:shadow-lg ${
+          hasZusaetze ? 'rounded-b-none' : ''
+        }`}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -642,6 +670,36 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
           </div>
         </div>
       </button>
+      {hasZusaetze && (
+        <div
+          className="rounded-b-xl border-t border-maja-navy/10 px-5 py-3 text-sm text-maja-ink"
+          style={{ backgroundColor: '#E8F0F8' }}
+        >
+          <ul className="space-y-1">
+            {zusaetze.map((z) => {
+              const anzahl = Math.max(1, Number(z.anzahl) || 1);
+              const betrag = Number(z.betrag ?? 0);
+              const gesamt = anzahl * betrag;
+              return (
+                <li key={z.id} className="flex flex-wrap items-baseline gap-x-1">
+                  <span className="font-medium">{z.kategorie}:</span>
+                  {anzahl > 1 ? (
+                    <span>
+                      {anzahl} × {formatEuro(betrag)} = {formatEuro(gesamt)}
+                    </span>
+                  ) : (
+                    <span>{formatEuro(betrag)}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-2 flex justify-between border-t border-maja-navy/10 pt-2 text-sm font-semibold text-maja-navy">
+            <span>Zusätze gesamt</span>
+            <span>{formatEuro(zusaetzeSumme)}</span>
+          </div>
+        </div>
+      )}
     </li>
   );
 }

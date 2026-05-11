@@ -13,6 +13,7 @@ import { AdminDashboard } from './pages/AdminDashboard';
 import { FahrerListPage } from './pages/admin/FahrerListPage';
 import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
 import { PreislistePage } from './pages/admin/PreislistePage';
+import { EinstellungenPage } from './pages/admin/EinstellungenPage';
 import { TemplatesListPage } from './pages/admin/TemplatesListPage';
 import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { ZuweisungenPage } from './pages/admin/ZuweisungenPage';
@@ -50,9 +51,16 @@ export default function App() {
           <Route path="/meine-formulare" element={<FahrerDashboard />} />
           {/* Alias auf /meine-formulare — alte Bookmark-URLs umleiten. */}
           <Route path="/meine-drafts" element={<Navigate to="/meine-formulare" replace />} />
-          <Route path="/fahrer" element={<FahrerListPage />} />
-          <Route path="/auftraggeber" element={<AuftraggeberListPage />} />
-          <Route path="/preisliste" element={<PreislistePage />} />
+          <Route path="/einstellungen" element={<EinstellungenPage />}>
+            <Route index element={<Navigate to="auftraggeber" replace />} />
+            <Route path="auftraggeber" element={<AuftraggeberListPage />} />
+            <Route path="preislisten" element={<PreislistePage />} />
+            <Route path="fahrer" element={<FahrerListPage />} />
+          </Route>
+          {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
+          <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />
+          <Route path="/auftraggeber" element={<Navigate to="/einstellungen/auftraggeber" replace />} />
+          <Route path="/preisliste" element={<Navigate to="/einstellungen/preislisten" replace />} />
           <Route path="/templates" element={<TemplatesListPage />} />
           <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/zuweisungen" element={<ZuweisungenPage />} />
