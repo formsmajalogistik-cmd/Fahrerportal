@@ -15,6 +15,10 @@ export interface EingangSummary {
   adresseUebergabe: string | null;
   fin: string | null;
   kmGesamt: number | null;
+  /** Kontaktperson vor Ort — Name, Telefon, E-Mail. */
+  kontaktName: string | null;
+  kontaktTelefon: string | null;
+  kontaktEmail: string | null;
 }
 
 function s(v: unknown): string | null {
@@ -84,6 +88,19 @@ export function summarizeEingang(formular: AusgefuelltesFormular): EingangSummar
     findKey(data, ['uebergabe_adresse', 'adresse_uebergabe', 'zielort']),
   );
 
+  // Kontaktperson vor Ort — Templates haben unterschiedliche Feld-IDs
+  // ("kontakt", "ansprechpartner", "rufnummer", "email_kunde", …). Wir
+  // probieren mehrere Varianten und fallen ggf. auf den Kunden zurück.
+  const kontaktName = s(findKey(data, [
+    'kontakt_name', 'kontakt', 'ansprechpartner', 'kontaktperson',
+  ])) ?? kundenname;
+  const kontaktTelefon = s(findKey(data, [
+    'kontakt_telefon', 'rufnummer', 'telefon', 'tel', 'phone',
+  ]));
+  const kontaktEmail = s(findKey(data, [
+    'kontakt_email', 'email_kunde', 'email', 'e_mail', 'mail',
+  ]));
+
   return {
     kennzeichen,
     fahrername,
@@ -93,6 +110,9 @@ export function summarizeEingang(formular: AusgefuelltesFormular): EingangSummar
     adresseUebergabe,
     fin,
     kmGesamt,
+    kontaktName,
+    kontaktTelefon,
+    kontaktEmail,
   };
 }
 

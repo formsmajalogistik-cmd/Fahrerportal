@@ -122,6 +122,10 @@ interface EditDraft {
   istEFahrzeug: boolean;
   fin: string;
   kontaktId: string;
+  appNotiz: string;
+  kontaktName: string;
+  kontaktTelefon: string;
+  kontaktEmail: string;
 }
 
 function draftFromTour(t: FullTour): EditDraft {
@@ -158,6 +162,10 @@ function draftFromTour(t: FullTour): EditDraft {
     istEFahrzeug: !!t.ist_e_fahrzeug,
     fin: t.fin ?? '',
     kontaktId: t.kontakt_id ?? '',
+    appNotiz: t.app_notiz ?? '',
+    kontaktName: t.kontakt_name ?? '',
+    kontaktTelefon: t.kontakt_telefon ?? '',
+    kontaktEmail: t.kontakt_email ?? '',
   };
 }
 
@@ -481,6 +489,11 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         protokoll_art: draft.protokollArt,
         schriftliches_protokoll_id: nextSchriftlichesId,
         greimel_zugang_id: nextGreimelId,
+        app_notiz: draft.protokollArt === 'app' && draft.appNotiz.trim()
+          ? draft.appNotiz.trim() : null,
+        kontakt_name:    draft.kontaktName.trim()    || null,
+        kontakt_telefon: draft.kontaktTelefon.trim() || null,
+        kontakt_email:   draft.kontaktEmail.trim()   || null,
       })
       .eq('id', tour.id);
     if (err) { setSaving(false); setStatusMsg({ kind: 'err', text: err.message }); return; }
@@ -830,6 +843,24 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         </div>
       )}
 
+      {/* Bereich 6: Fahrzeug & Adressen */}
+      <div className="mt-6 space-y-4">
+        <h3 className="border-b border-maja-navy/10 pb-2 text-base font-semibold text-maja-navy">
+          Fahrzeug & Adressen
+        </h3>
+        {!editing || !draft ? (
+          <VehicleAndAddressView
+            tour={tour}
+            hatRueckfuehrung={hatRueckfuehrung}
+          />
+        ) : (
+          <VehicleAndAddressEdit
+            draft={draft}
+            patchDraft={patchDraft}
+          />
+        )}
+      </div>
+
       {/* Footer */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 pt-4">
         {isAdmin && !editing && (
@@ -926,31 +957,55 @@ interface ViewModeProps {
 function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isAdmin, viewBreakdown }: ViewModeProps) {
   const linkedTemplate = templates.find((t) => t.id === tour.schriftliches_protokoll_id) ?? null;
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
-  const dateRange = (() => {
-    if (!tour.startdatum && !tour.enddatum) return '—';
-    const a = formatDateTime(tour.startdatum);
-    const b = formatDateTime(tour.enddatum);
-    if (tour.startdatum && tour.enddatum) return `${a} – ${b}`;
-    return tour.startdatum ? a : b;
-  })();
-
   const computedStatus = computeTourStatus(tour.startdatum);
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
+      {/* Bereich 1: Status */}
+      <SectionHeader title="Status" />
+      <div>
+        <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${STATUS_BADGE[computedStatus]}`}>
+          {STATUS_LABEL[computedStatus]}
+        </span>
+        <span className="ml-2 text-xs text-maja-muted">(automatisch nach Datum)</span>
+      </div>
+
+      {/* Bereich 2: Kerndaten */}
+      <SectionHeader title="Kerndaten" />
       <div className="grid gap-4 sm:grid-cols-2">
-        <DetailItem label="Status">
-          <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${STATUS_BADGE[computedStatus]}`}>
-            {STATUS_LABEL[computedStatus]}
-          </span>
-          <span className="ml-2 text-xs text-maja-muted">(automatisch nach Datum)</span>
-        </DetailItem>
-        <DetailItem label="Fahrer">{fahrerName}</DetailItem>
         <DetailItem label="Auftraggeber">
           {tour.auftraggeber ? (
-            <span className="block">{tour.auftraggeber.name}</span>
+            <>
+              <span className="block">{tour.auftraggeber.name}</span>
+              {tour.auftraggeber.kontakt && (
+                <span className="block text-xs text-maja-muted">{tour.auftraggeber.kontakt}</span>
+              )}
+            </>
           ) : '—'}
         </DetailItem>
-        <DetailItem label="Ansprechpartner">
+        <DetailItem label="Fahrer">{fahrerName}</DetailItem>
+        <DetailItem label="Startdatum + Uhrzeit">{formatDateTime(tour.startdatum)}</DetailItem>
+        <DetailItem label="Enddatum + Uhrzeit">{formatDateTime(tour.enddatum)}</DetailItem>
+        {isAdmin && (
+          tour.tourenart === 'ABA' ? (
+            <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+          ) : (
+            <>
+              <DetailItem label="km Gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
+              <DetailItem label="km Hin">{formatKm(tour.km_hin)}</DetailItem>
+              {hatRueckfuehrung && <DetailItem label="km Rück">{formatKm(tour.km_rueck)}</DetailItem>}
+            </>
+          )
+        )}
+        <DetailItem label="Tourenart">
+          {tour.tourenart ?? '—'}
+          {tour.ist_e_fahrzeug && (
+            <span className="ml-2 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+              E-Fahrzeug
+            </span>
+          )}
+        </DetailItem>
+        <DetailItem label="Rechnungsempfänger">
           {tour.kontakt ? (
             <>
               <span className="block">{tour.kontakt.name}</span>
@@ -966,15 +1021,18 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
           ) : '—'}
         </DetailItem>
         <DetailItem label="Kundenname">{tour.kundenname || '—'}</DetailItem>
-        <DetailItem label="Tourenart">
-          {tour.tourenart ?? '—'}
-          {tour.ist_e_fahrzeug && (
-            <span className="ml-2 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-              E-Fahrzeug
-            </span>
-          )}
-        </DetailItem>
-        <DetailItem label="FIN">{tour.fin || '—'}</DetailItem>
+        {isAdmin && (
+          <DetailItem label="Sondervereinbarung" full>
+            {tour.ist_sondervereinbarung ? (
+              <>
+                <span className="font-medium text-maja-navy">Ja</span>
+                {tour.sondervereinbarung && (
+                  <span className="ml-2 text-maja-muted">— {tour.sondervereinbarung}</span>
+                )}
+              </>
+            ) : 'Nein'}
+          </DetailItem>
+        )}
         {isAdmin && (
           <DetailItem label="Vergütung" full>
             <span className="text-base font-semibold text-maja-navy">{formatEuro(tour.verguetung)}</span>
@@ -996,93 +1054,55 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
             )}
           </DetailItem>
         )}
-        <DetailItem label="Startdatum + Uhrzeit">{formatDateTime(tour.startdatum)}</DetailItem>
-        <DetailItem label="Enddatum + Uhrzeit">{formatDateTime(tour.enddatum)}</DetailItem>
-        {isAdmin && (
-          tour.tourenart === 'ABA' ? (
-            <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
-          ) : (
-            <>
-              <DetailItem label="km Hin">{formatKm(tour.km_hin)}</DetailItem>
-              {hatRueckfuehrung && <DetailItem label="km Rück">{formatKm(tour.km_rueck)}</DetailItem>}
-              <DetailItem label="km Gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
-            </>
-          )
-        )}
-        <DetailItem label={hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}>
-          {tour.kennzeichen?.[0] ?? '—'}
-        </DetailItem>
-        {hatRueckfuehrung && (
-          <DetailItem label="Kennzeichen Rück">{tour.kennzeichen?.[1] ?? '—'}</DetailItem>
-        )}
-        {isAdmin && (
-          <DetailItem label="Sondervereinbarung" full>
-            {tour.ist_sondervereinbarung ? (
-              <>
-                <span className="font-medium text-maja-navy">Ja</span>
-                {tour.sondervereinbarung && (
-                  <span className="ml-2 text-maja-muted">— {tour.sondervereinbarung}</span>
-                )}
-              </>
-            ) : 'Nein'}
-          </DetailItem>
-        )}
-        {isAdmin && (
+        {isAdmin && tour.info && (
           <DetailItem label="Info" full>
-            {tour.info ? <span className="whitespace-pre-wrap">{tour.info}</span> : '—'}
+            <span className="whitespace-pre-wrap">{tour.info}</span>
           </DetailItem>
         )}
-        {/* Datum-Bereich (Komfort-Anzeige) */}
-        <DetailItem label="Zeitraum" full>{dateRange}</DetailItem>
       </div>
 
-      {/* Protokoll */}
-      <div>
-        <h3 className="mb-2 text-base font-semibold text-maja-navy">Protokoll</h3>
-        <div className="rounded-lg border border-maja-navy/10 p-3 text-sm text-maja-ink">
-          {tour.protokoll_art == null ? (
-            <span className="text-maja-muted">Noch nicht festgelegt.</span>
-          ) : tour.protokoll_art === 'app' ? (
-            <div className="space-y-2">
-              <div>
-                <span className="font-medium">App.</span>{' '}
-                <span className="text-maja-muted">Die Protokollierung erfolgt über die App.</span>
-              </div>
-              {linkedZugang && (
-                <div className="rounded-md bg-maja-light/60 p-2">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
-                    Greimel Zugang
-                  </div>
-                  <div className="mt-0.5 font-medium text-maja-ink">{linkedZugang.titel}</div>
-                  <div className="text-xs text-maja-muted">{linkedZugang.benutzername}</div>
+      {/* Bereich 3: Protokoll */}
+      <SectionHeader title="Protokoll" />
+      <div className="rounded-lg border border-maja-navy/10 p-3 text-sm text-maja-ink">
+        {tour.protokoll_art == null ? (
+          <span className="text-maja-muted">Noch nicht festgelegt.</span>
+        ) : tour.protokoll_art === 'app' ? (
+          <div className="space-y-2">
+            <div className="font-medium">App</div>
+            {tour.app_notiz && (
+              <div className="whitespace-pre-wrap text-sm text-maja-ink">{tour.app_notiz}</div>
+            )}
+            {linkedZugang && (
+              <div className="rounded-md bg-maja-light/60 p-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
+                  Greimel Zugang
                 </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-1">
-              <div className="font-medium">Schriftlich.</div>
-              <div className="text-maja-muted">
-                {linkedTemplate
-                  ? <>Verknüpft: <span className="font-medium text-maja-ink">{linkedTemplate.name}</span></>
-                  : 'Noch kein Protokoll verknüpft.'}
+                <div className="mt-0.5 font-medium text-maja-ink">{linkedZugang.titel}</div>
+                <div className="text-xs text-maja-muted">{linkedZugang.benutzername}</div>
               </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="font-medium">Schriftlich</div>
+            <div className="text-maja-muted">
+              {linkedTemplate
+                ? <>Verknüpft: <span className="font-medium text-maja-ink">{linkedTemplate.name}</span></>
+                : 'Noch kein Protokoll verknüpft.'}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* Adressen */}
-      <div>
-        <h3 className="mb-2 text-base font-semibold text-maja-navy">Adressen</h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <AddressItem stadt={tour.start_stadt} adresse={tour.adresse_start} />
-          <AddressItem stadt={tour.ziel_stadt} adresse={tour.adresse_ziel} />
-          {hatRueckfuehrung && tour.rueckfuehrung_stadt && (
-            <AddressItem stadt={tour.rueckfuehrung_stadt} adresse={tour.adresse_rueckfuehrung} />
-          )}
-        </div>
-      </div>
     </div>
+  );
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <h3 className="border-b border-maja-navy/10 pb-2 text-base font-semibold text-maja-navy">
+      {title}
+    </h3>
   );
 }
 
@@ -1172,10 +1192,10 @@ function EditMode(p: EditModeProps) {
         </div>
         {draft.auftraggeberId && kontakte.length > 0 && (
           <div className="sm:col-span-2">
-            <label className="label">Ansprechpartner</label>
+            <label className="label">Rechnungsempfänger</label>
             <select className="input" value={draft.kontaktId}
                     onChange={(e) => patchDraft({ kontaktId: e.target.value })}>
-              <option value="">— kein Ansprechpartner —</option>
+              <option value="">— kein Rechnungsempfänger —</option>
               {kontakte.map((k) => (
                 <option key={k.id} value={k.id}>
                   {k.name}{k.position ? ` · ${k.position}` : ''}
@@ -1272,38 +1292,18 @@ function EditMode(p: EditModeProps) {
         </div>
       </div>
 
-      {/* Kennzeichen */}
-      {!draft.hatRueckfuehrung ? (
-        <div>
-          <label className="label">Kennzeichen</label>
-          <input className="input" value={draft.kennzeichenHin}
-                 onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="label">Kennzeichen Hin</label>
-            <input className="input" value={draft.kennzeichenHin}
-                   onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
-          </div>
-          <div>
-            <label className="label">Kennzeichen Rück</label>
-            <input className="input" value={draft.kennzeichenRueck}
-                   onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
-          </div>
-        </div>
-      )}
-
       {/* Protokoll */}
       <ProtokollSection
         protokollArt={draft.protokollArt}
         schriftlichesProtokollId={draft.schriftlichesProtokollId}
         greimelZugangId={draft.greimelZugangId}
+        appNotiz={draft.appNotiz}
         onChange={(p) => {
           const patch: Partial<EditDraft> = {};
           if ('protokoll_art' in p) patch.protokollArt = p.protokoll_art ?? null;
           if ('schriftliches_protokoll_id' in p) patch.schriftlichesProtokollId = p.schriftliches_protokoll_id ?? null;
           if ('greimel_zugang_id' in p) patch.greimelZugangId = p.greimel_zugang_id ?? null;
+          if ('app_notiz' in p) patch.appNotiz = p.app_notiz ?? '';
           patchDraft(patch);
         }}
         isGreimel={isGreimel}
@@ -1312,24 +1312,16 @@ function EditMode(p: EditModeProps) {
         zugaenge={zugaenge}
       />
 
-      {/* E-Fahrzeug + FIN */}
-      <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
-        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-            checked={draft.istEFahrzeug}
-            onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
-          />
-          E-Fahrzeug
-        </label>
-        <div>
-          <label className="label">FIN</label>
-          <input className="input"
-                 value={draft.fin}
-                 onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
-        </div>
-      </div>
+      {/* E-Fahrzeug-Checkbox (FIN, Kennzeichen, Adressen sind in Bereich 6) */}
+      <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+          checked={draft.istEFahrzeug}
+          onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
+        />
+        E-Fahrzeug
+      </label>
 
       {/* Sondervereinbarung */}
       <div className="space-y-2">
@@ -1412,47 +1404,8 @@ function EditMode(p: EditModeProps) {
                   onChange={(e) => patchDraft({ info: e.target.value })} />
       </div>
 
-      {/* Adressen */}
-      <div>
-        <h3 className="mb-2 text-base font-semibold text-maja-navy">Adressen</h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-              {draft.startStadt || '—'}
-            </div>
-            <textarea
-              className="input mt-1 min-h-[4rem]"
-              placeholder="Adresse Start"
-              value={draft.adresseStart}
-              onChange={(e) => patchDraft({ adresseStart: e.target.value })}
-            />
-          </div>
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-              {draft.zielStadt || '—'}
-            </div>
-            <textarea
-              className="input mt-1 min-h-[4rem]"
-              placeholder="Adresse Ziel"
-              value={draft.adresseZiel}
-              onChange={(e) => patchDraft({ adresseZiel: e.target.value })}
-            />
-          </div>
-          {draft.hatRueckfuehrung && (
-            <div className="sm:col-span-2">
-              <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-                {draft.rueckfuehrungStadt || '—'}
-              </div>
-              <textarea
-                className="input mt-1 min-h-[4rem]"
-                placeholder="Adresse Rückführung"
-                value={draft.adresseRueckfuehrung}
-                onChange={(e) => patchDraft({ adresseRueckfuehrung: e.target.value })}
-              />
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Bereich 6 (Fahrzeug & Adressen) wird vom Eltern-Component nach
+          Sektion 4 + 5 inline gerendert — siehe TourDetailDialog. */}
     </div>
   );
 }
@@ -1486,6 +1439,141 @@ function FinanceField({ label, value, onChange, onCommit, readOnly }: FinanceFie
         <span className="text-sm text-maja-muted">€</span>
       </div>
     </div>
+  );
+}
+
+// ---------- Bereich 6: Fahrzeug & Adressen ----------
+
+function VehicleAndAddressView({
+  tour, hatRueckfuehrung,
+}: { tour: FullTour; hatRueckfuehrung: boolean }) {
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DetailItem label={hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}>
+          {tour.kennzeichen?.[0] ?? '—'}
+        </DetailItem>
+        {hatRueckfuehrung && (
+          <DetailItem label="Kennzeichen Rück">{tour.kennzeichen?.[1] ?? '—'}</DetailItem>
+        )}
+        <DetailItem label="FIN">{tour.fin || '—'}</DetailItem>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <AddressItem stadt={tour.start_stadt} adresse={tour.adresse_start} />
+        <AddressItem stadt={tour.ziel_stadt} adresse={tour.adresse_ziel} />
+        {hatRueckfuehrung && tour.rueckfuehrung_stadt && (
+          <AddressItem stadt={tour.rueckfuehrung_stadt} adresse={tour.adresse_rueckfuehrung} />
+        )}
+      </div>
+      <div>
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-maja-muted">
+          Kontaktperson vor Ort
+        </div>
+        <div className="grid gap-2 rounded-lg border border-maja-navy/10 p-3 sm:grid-cols-3">
+          <DetailItem label="Name">{tour.kontakt_name || '—'}</DetailItem>
+          <DetailItem label="Telefon">{tour.kontakt_telefon || '—'}</DetailItem>
+          <DetailItem label="E-Mail">{tour.kontakt_email || '—'}</DetailItem>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function VehicleAndAddressEdit({
+  draft, patchDraft,
+}: { draft: EditDraft; patchDraft: (p: Partial<EditDraft>) => void }) {
+  return (
+    <>
+      {/* Kennzeichen */}
+      {!draft.hatRueckfuehrung ? (
+        <div>
+          <label className="label">Kennzeichen</label>
+          <input className="input" value={draft.kennzeichenHin}
+                 onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Kennzeichen Hin</label>
+            <input className="input" value={draft.kennzeichenHin}
+                   onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Kennzeichen Rück</label>
+            <input className="input" value={draft.kennzeichenRueck}
+                   onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
+          </div>
+        </div>
+      )}
+      {/* FIN */}
+      <div>
+        <label className="label">FIN</label>
+        <input className="input"
+               value={draft.fin}
+               onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
+      </div>
+      {/* Adressen */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+            {draft.startStadt || '—'}
+          </div>
+          <textarea
+            className="input mt-1 min-h-[4rem]"
+            placeholder="Adresse Start"
+            value={draft.adresseStart}
+            onChange={(e) => patchDraft({ adresseStart: e.target.value })}
+          />
+        </div>
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+            {draft.zielStadt || '—'}
+          </div>
+          <textarea
+            className="input mt-1 min-h-[4rem]"
+            placeholder="Adresse Ziel"
+            value={draft.adresseZiel}
+            onChange={(e) => patchDraft({ adresseZiel: e.target.value })}
+          />
+        </div>
+        {draft.hatRueckfuehrung && (
+          <div className="sm:col-span-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+              {draft.rueckfuehrungStadt || '—'}
+            </div>
+            <textarea
+              className="input mt-1 min-h-[4rem]"
+              placeholder="Adresse Rückführung"
+              value={draft.adresseRueckfuehrung}
+              onChange={(e) => patchDraft({ adresseRueckfuehrung: e.target.value })}
+            />
+          </div>
+        )}
+      </div>
+      {/* Kontaktperson vor Ort */}
+      <div>
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-maja-muted">
+          Kontaktperson vor Ort
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div>
+            <label className="label">Name</label>
+            <input className="input" value={draft.kontaktName}
+                   onChange={(e) => patchDraft({ kontaktName: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Telefon</label>
+            <input className="input" type="tel" value={draft.kontaktTelefon}
+                   onChange={(e) => patchDraft({ kontaktTelefon: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">E-Mail</label>
+            <input className="input" type="email" value={draft.kontaktEmail}
+                   onChange={(e) => patchDraft({ kontaktEmail: e.target.value })} />
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 

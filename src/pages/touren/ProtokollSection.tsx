@@ -6,10 +6,13 @@ interface Props {
   protokollArt: ProtokollArt | null;
   schriftlichesProtokollId: string | null;
   greimelZugangId: string | null;
+  /** Freitext-Notiz, die bei Protokoll-Art "App" angezeigt wird. */
+  appNotiz: string;
   onChange: (patch: {
     protokoll_art?: ProtokollArt | null;
     schriftliches_protokoll_id?: string | null;
     greimel_zugang_id?: string | null;
+    app_notiz?: string;
   }) => void;
   /** Auftraggeber dieser Tour ist ein Greimel-Konto (case-insensitive Name-Match). */
   isGreimel: boolean;
@@ -20,7 +23,7 @@ interface Props {
 }
 
 export function ProtokollSection({
-  protokollArt, schriftlichesProtokollId, greimelZugangId,
+  protokollArt, schriftlichesProtokollId, greimelZugangId, appNotiz,
   onChange, isGreimel, fahrerId, templates, zugaenge,
 }: Props) {
   const availableZugaenge = useMemo(
@@ -68,9 +71,16 @@ export function ProtokollSection({
       {/* App-Bereich */}
       {protokollArt === 'app' && (
         <div className="space-y-3">
-          <p className="text-sm text-maja-ink">
-            Die Protokollierung erfolgt über die App.
-          </p>
+          <div>
+            <label className="label" htmlFor="t-app-notiz">Notiz</label>
+            <textarea
+              id="t-app-notiz"
+              className="input min-h-[3.5rem]"
+              placeholder="Freitext zur App-Protokollierung (optional)"
+              value={appNotiz}
+              onChange={(e) => onChange({ app_notiz: e.target.value })}
+            />
+          </div>
 
           {isGreimel && (
             <div className="space-y-2 rounded-md bg-maja-light/50 p-3">

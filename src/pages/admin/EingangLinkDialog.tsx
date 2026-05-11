@@ -9,6 +9,7 @@ import type {
 import type { Database } from '../../types/supabase';
 
 type TourInsert = Database['public']['Tables']['touren']['Insert'];
+type TourUpdate = Database['public']['Tables']['touren']['Update'];
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
 
@@ -21,7 +22,12 @@ interface Props {
   formular: AusgefuelltesFormular;
   template: Pick<FormularTemplate, 'id' | 'name' | 'auftraggeber_id'> | null;
   onClose: () => void;
-  onLinked: () => void;
+  /**
+   * Wird nach erfolgreicher Verknüpfung aufgerufen. `filledFields` enthält
+   * die Tour-Spalten, die aus dem Eingang übernommen wurden — der
+   * Aufrufer kann daraus eine Toast-Meldung bauen.
+   */
+  onLinked: (filledFields: string[]) => void;
 }
 
 type Tab = 'existing' | 'new';
@@ -76,13 +82,35 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
   async function linkExisting(tour: TourRow) {
     setLinking(true);
     setError(null);
+    // Bei einer bestehenden Tour: nur leere Felder aus dem Eingang nachfüllen.
+    // Bereits eingetragene Tour-Werte werden NICHT überschrieben.
+    const patch: TourUpdate = { eingang_id: formular.id };
+    const filled: string[] = [];
+    function maybe(key: keyof TourUpdate, label: string, current: unknown, next: unknown) {
+      const isEmpty = current == null
+        || (typeof current === 'string' && current.trim() === '')
+        || (Array.isArray(current) && current.length === 0);
+      if (isEmpty && next != null && next !== '' && !(Array.isArray(next) && next.length === 0)) {
+        (patch as Record<string, unknown>)[key as string] = next;
+        filled.push(label);
+      }
+    }
+    maybe('fin', 'FIN', tour.fin, summary.fin);
+    maybe('kennzeichen', 'Kennzeichen', tour.kennzeichen, summary.kennzeichen ? [summary.kennzeichen.toUpperCase()] : null);
+    maybe('adresse_start', 'Adresse Übernahme', tour.adresse_start, summary.adresseUebernahme);
+    maybe('adresse_ziel', 'Adresse Übergabe', tour.adresse_ziel, summary.adresseUebergabe);
+    maybe('kundenname', 'Kundenname', tour.kundenname, summary.kundenname);
+    maybe('kontakt_name', 'Kontakt-Name', tour.kontakt_name, summary.kontaktName);
+    maybe('kontakt_telefon', 'Telefon', tour.kontakt_telefon, summary.kontaktTelefon);
+    maybe('kontakt_email', 'E-Mail', tour.kontakt_email, summary.kontaktEmail);
+
     const { error: err } = await supabase
       .from('touren')
-      .update({ eingang_id: formular.id })
+      .update(patch)
       .eq('id', tour.id);
     setLinking(false);
     if (err) { setError(err.message); return; }
-    onLinked();
+    onLinked(filled);
   }
 
   async function createAndLink() {
@@ -92,7 +120,17 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
     const { error: err } = await supabase.from('touren').insert(payload);
     setLinking(false);
     if (err) { setError(err.message); return; }
-    onLinked();
+    // Bei neuer Tour werden ALLE Felder direkt aus dem Eingang gesetzt.
+    onLinked([
+      summary.fin && 'FIN',
+      summary.kennzeichen && 'Kennzeichen',
+      summary.adresseUebernahme && 'Adresse Übernahme',
+      summary.adresseUebergabe && 'Adresse Übergabe',
+      summary.kundenname && 'Kundenname',
+      summary.kontaktName && 'Kontakt-Name',
+      summary.kontaktTelefon && 'Telefon',
+      summary.kontaktEmail && 'E-Mail',
+    ].filter((s): s is string => !!s));
   }
 
   return (
@@ -273,6 +311,9 @@ function buildTourPayload(
     startdatum: s.datum,
     adresse_start: s.adresseUebernahme,
     adresse_ziel: s.adresseUebergabe,
+    kontakt_name: s.kontaktName,
+    kontakt_telefon: s.kontaktTelefon,
+    kontakt_email: s.kontaktEmail,
     eingang_id: eingangId,
   };
 }

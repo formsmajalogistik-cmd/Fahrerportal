@@ -197,6 +197,10 @@ export type Database = {
           fin: string | null;
           kontakt_id: string | null;
           eingang_id: string | null;
+          kontakt_name: string | null;
+          kontakt_telefon: string | null;
+          kontakt_email: string | null;
+          app_notiz: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -233,6 +237,10 @@ export type Database = {
           fin?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
+          kontakt_name?: string | null;
+          kontakt_telefon?: string | null;
+          kontakt_email?: string | null;
+          app_notiz?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -269,6 +277,10 @@ export type Database = {
           fin?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
+          kontakt_name?: string | null;
+          kontakt_telefon?: string | null;
+          kontakt_email?: string | null;
+          app_notiz?: string | null;
           created_at?: string;
           updated_at?: string;
         };

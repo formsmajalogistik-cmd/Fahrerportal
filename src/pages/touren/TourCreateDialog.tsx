@@ -78,6 +78,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [protokollArt, setProtokollArt] = useState<ProtokollArt | null>(null);
   const [schriftlichesProtokollId, setSchriftlichesProtokollId] = useState<string | null>(null);
   const [greimelZugangId, setGreimelZugangId] = useState<string | null>(null);
+  const [appNotiz, setAppNotiz] = useState('');
   const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
   const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
 
@@ -258,6 +259,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       protokoll_art: protokollArt,
       schriftliches_protokoll_id: schriftlichEffective,
       greimel_zugang_id: greimelEffective,
+      app_notiz: protokollArt === 'app' && appNotiz.trim() ? appNotiz.trim() : null,
     };
 
     const { error: err } = await supabase.from('touren').insert(payload);
@@ -396,11 +398,11 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
           {/* Kontakt-Dropdown (nur wenn Auftraggeber + Kontakte vorhanden) */}
           {auftraggeberId && kontakte.length > 0 && (
             <div>
-              <label htmlFor="t-kontakt" className="label">Ansprechpartner</label>
+              <label htmlFor="t-kontakt" className="label">Rechnungsempfänger</label>
               <select id="t-kontakt" className="input"
                       value={kontaktId}
                       onChange={(e) => setKontaktId(e.target.value)}>
-                <option value="">— kein Ansprechpartner —</option>
+                <option value="">— kein Rechnungsempfänger —</option>
                 {kontakte.map((k) => (
                   <option key={k.id} value={k.id}>
                     {k.name}{k.position ? ` · ${k.position}` : ''}
@@ -465,10 +467,12 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             protokollArt={protokollArt}
             schriftlichesProtokollId={schriftlichesProtokollId}
             greimelZugangId={greimelZugangId}
+            appNotiz={appNotiz}
             onChange={(p) => {
               if ('protokoll_art' in p) setProtokollArt(p.protokoll_art ?? null);
               if ('schriftliches_protokoll_id' in p) setSchriftlichesProtokollId(p.schriftliches_protokoll_id ?? null);
               if ('greimel_zugang_id' in p) setGreimelZugangId(p.greimel_zugang_id ?? null);
+              if ('app_notiz' in p) setAppNotiz(p.app_notiz ?? '');
             }}
             isGreimel={isGreimelAuftraggeber(selectedAg)}
             fahrerId={fahrerId || null}

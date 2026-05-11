@@ -38,6 +38,7 @@ export function EingaengePage() {
   const [regen, setRegen] = useState<string | null>(null);
   const [linking, setLinking] = useState<Row | null>(null);
   const [hideLinked, setHideLinked] = useState(true);
+  const [linkToast, setLinkToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,8 +159,23 @@ export function EingaengePage() {
             auftraggeber_id: linking.template.auftraggeber_id ?? null,
           } : null}
           onClose={() => setLinking(null)}
-          onLinked={() => { setLinking(null); void load(); }}
+          onLinked={(filled) => {
+            setLinking(null);
+            void load();
+            if (filled.length > 0) {
+              setLinkToast(`${filled.join(' & ')} aus Protokoll übernommen.`);
+            } else {
+              setLinkToast('Tour verknüpft.');
+            }
+            window.setTimeout(() => setLinkToast(null), 4000);
+          }}
         />
+      )}
+
+      {linkToast && (
+        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {linkToast}
+        </div>
       )}
     </div>
   );
