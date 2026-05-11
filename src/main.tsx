@@ -1,11 +1,16 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { registerSW } from 'virtual:pwa-register';
 import { AuthProvider } from './auth/AuthContext';
 import { FahrerProvider } from './auth/FahrerContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 import './index.css';
+
+// PWA-Service-Worker registrieren (autoUpdate, siehe vite.config.ts).
+// Der SW wird im Production-Build erzeugt; im Dev-Modus ist er deaktiviert.
+registerSW({ immediate: true });
 
 // Globale Error-Listener: zeigen unhandled JS-Fehler & abgelehnte Promises
 // in der Browser-Konsole, damit sie diagnostizierbar sind, statt die App
