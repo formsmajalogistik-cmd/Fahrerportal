@@ -52,12 +52,15 @@ export function FahrerDashboard() {
     if (fahrerErr) { setError(fahrerErr.message); setLoading(false); return; }
     setFahrer(fahrerRow);
 
-    // Zugewiesene Templates: RLS sorgt dafür, dass der Fahrer nur Templates
-    // sieht, für die er eine Zuweisung hat.
-    const tplPromise = supabase
+    // Templates: Admin sieht alle (inkl. versteckte mit Badge),
+    // Fahrer nur sichtbar=true. Tour-verknüpfte versteckte Templates
+    // werden für Fahrer separat als Tour-Protokoll-Karte gerendert.
+    const isAdminView = profile?.role === 'admin';
+    let tplQuery = supabase
       .from('formular_templates')
-      .select('*, auftraggeber:auftraggeber_id (name, kontakt)')
-      .order('name');
+      .select('*, auftraggeber:auftraggeber_id (name, kontakt)');
+    if (!isAdminView) tplQuery = tplQuery.eq('sichtbar', true);
+    const tplPromise = tplQuery.order('name');
 
     // Drafts dieses Fahrers
     const draftPromise = fahrerRow
@@ -117,7 +120,7 @@ export function FahrerDashboard() {
     setTourProtokolle(filtered);
 
     setLoading(false);
-  }, [session]);
+  }, [session, profile?.role]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -167,7 +170,7 @@ export function FahrerDashboard() {
         </h2>
         <p className="text-sm text-maja-muted">
           {isAdmin
-            ? 'Damit auch Admins Formulare ausfüllen können, brauchst du ein eigenes Profil. Lege es unter „Fahrer" an und ordne dort dein Admin-Konto zu — anschließend erscheinen hier deine Zuweisungen.'
+            ? 'Damit auch Admins Formulare ausfüllen können, brauchst du ein eigenes Profil. Lege es unter „Einstellungen → Fahrer" an und ordne dort dein Admin-Konto zu — anschließend erscheinen hier die verfügbaren Vorlagen.'
             : 'Dein Account ist angemeldet, aber es ist noch kein Profil verknüpft. Bitte wende dich an die Administration.'}
         </p>
       </div>
@@ -179,7 +182,7 @@ export function FahrerDashboard() {
       <div>
         <h1 className="text-2xl font-semibold text-maja-navy">Formulare</h1>
         <p className="text-sm text-maja-muted">
-          Begonnene Entwürfe, anstehende Tour-Protokolle und zugewiesene Vorlagen.
+          Begonnene Entwürfe, anstehende Tour-Protokolle und verfügbare Vorlagen.
         </p>
       </div>
 
@@ -222,14 +225,14 @@ export function FahrerDashboard() {
         </section>
       )}
 
-      {/* Zugewiesene Formulare */}
+      {/* Verfügbare Vorlagen */}
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
-          Zugewiesene Vorlagen
+          Verfügbare Vorlagen
         </h2>
         {templates.length === 0 ? (
           <div className="card p-6 text-sm text-maja-muted">
-            Dir sind aktuell keine Formular-Vorlagen zugewiesen.
+            Es sind aktuell keine Formular-Vorlagen verfügbar.
           </div>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2">
@@ -354,9 +357,16 @@ function AssignedCard({
   template, opening, onStart,
 }: { template: AssignedTemplate; opening: boolean; onStart: () => void }) {
   return (
-    <li className="card flex flex-col p-5 transition hover:shadow-lg">
-      <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
-        {template.auftraggeber?.name ?? 'Maja-Logistik'}
+    <li className={`card flex flex-col p-5 transition hover:shadow-lg ${template.sichtbar ? '' : 'opacity-60'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
+          {template.auftraggeber?.name ?? 'Maja-Logistik'}
+        </div>
+        {!template.sichtbar && (
+          <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-700">
+            Versteckt
+          </span>
+        )}
       </div>
       {template.auftraggeber?.kontakt && (
         <div className="text-xs text-maja-muted">{template.auftraggeber.kontakt}</div>

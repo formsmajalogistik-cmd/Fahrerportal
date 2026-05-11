@@ -28,8 +28,6 @@ export type Tour = Database['public']['Tables']['touren']['Row'];
 export type TourZusatz = Database['public']['Tables']['tour_zusaetze']['Row'];
 export type GreimelZugang = Database['public']['Tables']['greimel_zugaenge']['Row'];
 export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
-export type FormularZuweisung =
-  Database['public']['Tables']['formular_zuweisungen']['Row'];
 
 // ---- Templates: schema und pdfs sind in der DB jsonb.
 // Wir casten im Frontend auf spezifische Strukturen.

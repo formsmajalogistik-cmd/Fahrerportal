@@ -454,6 +454,7 @@ export type Database = {
           schema: Json;
           pdfs: Json;
           email_config: Json | null;
+          sichtbar: boolean;
         };
         Insert: {
           id?: string;
@@ -462,6 +463,7 @@ export type Database = {
           schema: Json;
           pdfs?: Json;
           email_config?: Json | null;
+          sichtbar?: boolean;
         };
         Update: {
           id?: string;
@@ -470,43 +472,13 @@ export type Database = {
           schema?: Json;
           pdfs?: Json;
           email_config?: Json | null;
+          sichtbar?: boolean;
         };
         Relationships: [
           {
             foreignKeyName: 'formular_templates_auftraggeber_id_fkey';
             columns: ['auftraggeber_id'];
             referencedRelation: 'auftraggeber';
-            referencedColumns: ['id'];
-          },
-        ];
-      };
-      formular_zuweisungen: {
-        Row: {
-          id: string;
-          fahrer_id: string;
-          template_id: string;
-        };
-        Insert: {
-          id?: string;
-          fahrer_id: string;
-          template_id: string;
-        };
-        Update: {
-          id?: string;
-          fahrer_id?: string;
-          template_id?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: 'formular_zuweisungen_fahrer_id_fkey';
-            columns: ['fahrer_id'];
-            referencedRelation: 'fahrer';
-            referencedColumns: ['id'];
-          },
-          {
-            foreignKeyName: 'formular_zuweisungen_template_id_fkey';
-            columns: ['template_id'];
-            referencedRelation: 'formular_templates';
             referencedColumns: ['id'];
           },
         ];

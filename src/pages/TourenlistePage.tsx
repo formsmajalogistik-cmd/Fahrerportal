@@ -573,6 +573,7 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
     (acc, z) => acc + (Number(z.anzahl) || 1) * Number(z.betrag ?? 0),
     0,
   );
+  const [zusaetzeOpen, setZusaetzeOpen] = useState(false);
 
   return (
     <li>
@@ -672,32 +673,53 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
       </button>
       {hasZusaetze && (
         <div
-          className="rounded-b-xl border-t border-maja-navy/10 px-5 py-3 text-sm text-maja-ink"
+          className={`border-t border-maja-navy/10 text-sm text-maja-ink ${
+            zusaetzeOpen ? '' : 'rounded-b-xl'
+          }`}
           style={{ backgroundColor: '#E8F0F8' }}
         >
-          <ul className="space-y-1">
-            {zusaetze.map((z) => {
-              const anzahl = Math.max(1, Number(z.anzahl) || 1);
-              const betrag = Number(z.betrag ?? 0);
-              const gesamt = anzahl * betrag;
-              return (
-                <li key={z.id} className="flex flex-wrap items-baseline gap-x-1">
-                  <span className="font-medium">{z.kategorie}:</span>
-                  {anzahl > 1 ? (
-                    <span>
-                      {anzahl} × {formatEuro(betrag)} = {formatEuro(gesamt)}
-                    </span>
-                  ) : (
-                    <span>{formatEuro(betrag)}</span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          <div className="mt-2 flex justify-between border-t border-maja-navy/10 pt-2 text-sm font-semibold text-maja-navy">
-            <span>Zusätze gesamt</span>
-            <span>{formatEuro(zusaetzeSumme)}</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => setZusaetzeOpen((v) => !v)}
+            aria-expanded={zusaetzeOpen}
+            className={`flex w-full items-center justify-between gap-3 px-5 py-2 text-left text-sm font-medium text-maja-navy transition hover:bg-maja-navy/5 ${
+              zusaetzeOpen ? '' : 'rounded-b-xl'
+            }`}
+          >
+            <span>
+              Zusätze ({zusaetze.length}) · {formatEuro(zusaetzeSumme)}
+            </span>
+            <span aria-hidden="true" className="text-xs">
+              {zusaetzeOpen ? '▲' : '▼'}
+            </span>
+          </button>
+          {zusaetzeOpen && (
+            <div className="rounded-b-xl border-t border-maja-navy/10 px-5 py-3">
+              <ul className="space-y-1">
+                {zusaetze.map((z) => {
+                  const anzahl = Math.max(1, Number(z.anzahl) || 1);
+                  const betrag = Number(z.betrag ?? 0);
+                  const gesamt = anzahl * betrag;
+                  return (
+                    <li key={z.id} className="flex flex-wrap items-baseline gap-x-1">
+                      <span className="font-medium">{z.kategorie}:</span>
+                      {anzahl > 1 ? (
+                        <span>
+                          {anzahl} × {formatEuro(betrag)} = {formatEuro(gesamt)}
+                        </span>
+                      ) : (
+                        <span>{formatEuro(betrag)}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="mt-2 flex justify-between border-t border-maja-navy/10 pt-2 text-sm font-semibold text-maja-navy">
+                <span>Zusätze gesamt</span>
+                <span>{formatEuro(zusaetzeSumme)}</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </li>

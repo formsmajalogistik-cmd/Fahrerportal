@@ -1742,6 +1742,7 @@ function EingangPdfDownloads({
     schema: (template.schema as FormularTemplate['schema']) ?? { sections: [] },
     pdfs: template.pdfs ?? [],
     email_config: null,
+    sichtbar: true,
   };
   if (!tpl.pdfs || tpl.pdfs.length === 0) {
     return <span className="text-xs text-maja-muted">keine PDF-Vorlagen</span>;

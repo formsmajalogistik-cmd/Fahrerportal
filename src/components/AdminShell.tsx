@@ -7,14 +7,12 @@ import { MajaLogo } from './Brand';
 interface NavItem { to: string; label: string; end?: boolean }
 
 const adminNav: NavItem[] = [
-  { to: '/',                 label: 'Übersicht', end: true },
-  { to: '/meine-formulare',  label: 'Formulare' },
   { to: '/touren',           label: 'Tourenliste' },
-  { to: '/templates',        label: 'Templates' },
-  { to: '/zuweisungen',      label: 'Zuweisungen' },
-  { to: '/eingaenge',        label: 'Eingänge' },
-  { to: '/einstellungen',    label: 'Einstellungen' },
+  { to: '/meine-formulare',  label: 'Formulare' },
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
+  { to: '/eingaenge',        label: 'Eingänge' },
+  { to: '/templates',        label: 'Templates' },
+  { to: '/einstellungen',    label: 'Einstellungen' },
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {

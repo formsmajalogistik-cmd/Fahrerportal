@@ -91,6 +91,7 @@ export function EingaengePage() {
         schema: (r.template.schema as FormularTemplate['schema']) ?? { sections: [] },
         pdfs: r.template.pdfs ?? [],
         email_config: null,
+        sichtbar: true,
       };
       await generateAndUploadFormPdfs(tpl, r);
     } finally {
@@ -200,6 +201,7 @@ function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink }: CardProp
     schema: (row.template.schema as FormularTemplate['schema']) ?? { sections: [] },
     pdfs: row.template.pdfs ?? [],
     email_config: null,
+    sichtbar: true,
   } : null;
 
   return (

@@ -55,6 +55,19 @@ export function TemplatesListPage() {
     navigate(`/templates/${data.id}`);
   }
 
+  async function handleToggleSichtbar(t: Row) {
+    const next = !t.sichtbar;
+    setRows((prev) => prev.map((r) => (r.id === t.id ? { ...r, sichtbar: next } : r)));
+    const { error: err } = await supabase
+      .from('formular_templates')
+      .update({ sichtbar: next })
+      .eq('id', t.id);
+    if (err) {
+      setError(err.message);
+      setRows((prev) => prev.map((r) => (r.id === t.id ? { ...r, sichtbar: t.sichtbar } : r)));
+    }
+  }
+
   if (loading) return <Spinner label="Templates werden geladen …" />;
   if (error) {
     return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -92,9 +105,19 @@ export function TemplatesListPage() {
               (acc, s) => acc + (s.fields?.length ?? 0), 0,
             );
             return (
-              <li key={t.id} className="card flex flex-col p-5">
-                <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
-                  {t.auftraggeber?.name ?? 'ohne Auftraggeber'}
+              <li
+                key={t.id}
+                className={`card flex flex-col p-5 ${t.sichtbar ? '' : 'opacity-60'}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
+                    {t.auftraggeber?.name ?? 'ohne Auftraggeber'}
+                  </div>
+                  {!t.sichtbar && (
+                    <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-700">
+                      Versteckt
+                    </span>
+                  )}
                 </div>
                 {t.auftraggeber?.kontakt && (
                   <div className="text-xs text-maja-muted">{t.auftraggeber.kontakt}</div>
@@ -116,6 +139,15 @@ export function TemplatesListPage() {
                     ))}
                   </div>
                 )}
+                <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-maja-ink">
+                  <input
+                    type="checkbox"
+                    checked={t.sichtbar}
+                    onChange={() => void handleToggleSichtbar(t)}
+                    className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-navy"
+                  />
+                  <span>Für Fahrer sichtbar</span>
+                </label>
                 <div className="mt-4 flex justify-between gap-2 pt-2 border-t border-maja-navy/10">
                   <Link
                     to={`/templates/${t.id}`}
@@ -145,7 +177,6 @@ export function TemplatesListPage() {
           message={
             <>
               Soll das Template „<strong>{deleting.name}</strong>" gelöscht werden?
-              Bestehende Zuweisungen werden automatisch entfernt.
               Protokolle, die mit diesem Template ausgefüllt wurden, verhindern das Löschen.
             </>
           }
