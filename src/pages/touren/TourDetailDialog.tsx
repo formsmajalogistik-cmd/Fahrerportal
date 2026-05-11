@@ -123,9 +123,16 @@ interface EditDraft {
   fin: string;
   kontaktId: string;
   appNotiz: string;
-  kontaktName: string;
-  kontaktTelefon: string;
-  kontaktEmail: string;
+  // Kontakt pro Adresse (Start / Ziel / Rückführung)
+  kontaktStartName: string;
+  kontaktStartTelefon: string;
+  kontaktStartEmail: string;
+  kontaktZielName: string;
+  kontaktZielTelefon: string;
+  kontaktZielEmail: string;
+  kontaktRueckName: string;
+  kontaktRueckTelefon: string;
+  kontaktRueckEmail: string;
 }
 
 function draftFromTour(t: FullTour): EditDraft {
@@ -163,10 +170,32 @@ function draftFromTour(t: FullTour): EditDraft {
     fin: t.fin ?? '',
     kontaktId: t.kontakt_id ?? '',
     appNotiz: t.app_notiz ?? '',
-    kontaktName: t.kontakt_name ?? '',
-    kontaktTelefon: t.kontakt_telefon ?? '',
-    kontaktEmail: t.kontakt_email ?? '',
+    kontaktStartName:    readKontaktField(t.kontakt_start, 'name'),
+    kontaktStartTelefon: readKontaktField(t.kontakt_start, 'telefon'),
+    kontaktStartEmail:   readKontaktField(t.kontakt_start, 'email'),
+    kontaktZielName:     readKontaktField(t.kontakt_ziel, 'name'),
+    kontaktZielTelefon:  readKontaktField(t.kontakt_ziel, 'telefon'),
+    kontaktZielEmail:    readKontaktField(t.kontakt_ziel, 'email'),
+    kontaktRueckName:    readKontaktField(t.kontakt_rueckfuehrung, 'name'),
+    kontaktRueckTelefon: readKontaktField(t.kontakt_rueckfuehrung, 'telefon'),
+    kontaktRueckEmail:   readKontaktField(t.kontakt_rueckfuehrung, 'email'),
   };
+}
+
+function readKontaktField(raw: unknown, key: 'name' | 'telefon' | 'email'): string {
+  if (raw && typeof raw === 'object') {
+    const v = (raw as Record<string, unknown>)[key];
+    if (typeof v === 'string') return v;
+  }
+  return '';
+}
+
+function kontaktFromDraft(
+  name: string, telefon: string, email: string,
+): { name: string; telefon: string; email: string } | null {
+  const n = name.trim(); const t = telefon.trim(); const e = email.trim();
+  if (!n && !t && !e) return null;
+  return { name: n, telefon: t, email: e };
 }
 
 // ---------- Component ----------
@@ -440,7 +469,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     // Status wird live aus dem Datum berechnet — Greimel-Zugang wird nur
     // gehalten, solange die Tour nicht "abgeschlossen" ist.
     const draftIsoStart = draft.startdatum ? new Date(draft.startdatum).toISOString() : null;
-    const willComplete = computeTourStatus(draftIsoStart) === 'abgeschlossen';
+    const draftIsoEnd   = draft.enddatum   ? new Date(draft.enddatum).toISOString()   : null;
+    const willComplete = computeTourStatus(draftIsoStart, draftIsoEnd) === 'abgeschlossen';
 
     let nextGreimelId: string | null = null;
     if (draft.protokollArt === 'app' && isGreimelTour && !willComplete) {
@@ -491,9 +521,17 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         greimel_zugang_id: nextGreimelId,
         app_notiz: draft.protokollArt === 'app' && draft.appNotiz.trim()
           ? draft.appNotiz.trim() : null,
-        kontakt_name:    draft.kontaktName.trim()    || null,
-        kontakt_telefon: draft.kontaktTelefon.trim() || null,
-        kontakt_email:   draft.kontaktEmail.trim()   || null,
+        kontakt_start: kontaktFromDraft(
+          draft.kontaktStartName, draft.kontaktStartTelefon, draft.kontaktStartEmail,
+        ),
+        kontakt_ziel: kontaktFromDraft(
+          draft.kontaktZielName, draft.kontaktZielTelefon, draft.kontaktZielEmail,
+        ),
+        kontakt_rueckfuehrung: draft.hatRueckfuehrung
+          ? kontaktFromDraft(
+            draft.kontaktRueckName, draft.kontaktRueckTelefon, draft.kontaktRueckEmail,
+          )
+          : null,
       })
       .eq('id', tour.id);
     if (err) { setSaving(false); setStatusMsg({ kind: 'err', text: err.message }); return; }
@@ -957,7 +995,7 @@ interface ViewModeProps {
 function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isAdmin, viewBreakdown }: ViewModeProps) {
   const linkedTemplate = templates.find((t) => t.id === tour.schriftliches_protokoll_id) ?? null;
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
-  const computedStatus = computeTourStatus(tour.startdatum);
+  const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
 
   return (
     <div className="space-y-6">
@@ -1106,16 +1144,6 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-function AddressItem({ stadt, adresse }: { stadt: string; adresse: string | null }) {
-  return (
-    <div className="rounded-lg border border-maja-navy/10 p-3">
-      <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">{stadt}</div>
-      <div className="mt-1 whitespace-pre-wrap text-sm text-maja-ink">
-        {adresse || '—'}
-      </div>
-    </div>
-  );
-}
 
 function DetailItem({
   label, children, full,
@@ -1150,7 +1178,8 @@ function EditMode(p: EditModeProps) {
   const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
   // Live-Status aus dem Datum (analog zur Anzeige in der Liste).
   const draftIsoStart = draft.startdatum ? new Date(draft.startdatum).toISOString() : null;
-  const computedStatus = computeTourStatus(draftIsoStart);
+  const draftIsoEnd   = draft.enddatum   ? new Date(draft.enddatum).toISOString()   : null;
+  const computedStatus = computeTourStatus(draftIsoStart, draftIsoEnd);
   return (
     <div className="space-y-5">
       <div className="rounded-md bg-maja-light/60 p-3 text-xs text-maja-muted">
@@ -1459,23 +1488,72 @@ function VehicleAndAddressView({
         <DetailItem label="FIN">{tour.fin || '—'}</DetailItem>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <AddressItem stadt={tour.start_stadt} adresse={tour.adresse_start} />
-        <AddressItem stadt={tour.ziel_stadt} adresse={tour.adresse_ziel} />
+        <AddressBlockView
+          stadt={tour.start_stadt}
+          adresse={tour.adresse_start}
+          kontakt={tour.kontakt_start}
+        />
+        <AddressBlockView
+          stadt={tour.ziel_stadt}
+          adresse={tour.adresse_ziel}
+          kontakt={tour.kontakt_ziel}
+        />
         {hatRueckfuehrung && tour.rueckfuehrung_stadt && (
-          <AddressItem stadt={tour.rueckfuehrung_stadt} adresse={tour.adresse_rueckfuehrung} />
+          <AddressBlockView
+            stadt={tour.rueckfuehrung_stadt}
+            adresse={tour.adresse_rueckfuehrung}
+            kontakt={tour.kontakt_rueckfuehrung}
+          />
         )}
       </div>
-      <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-maja-muted">
-          Kontaktperson vor Ort
-        </div>
-        <div className="grid gap-2 rounded-lg border border-maja-navy/10 p-3 sm:grid-cols-3">
-          <DetailItem label="Name">{tour.kontakt_name || '—'}</DetailItem>
-          <DetailItem label="Telefon">{tour.kontakt_telefon || '—'}</DetailItem>
-          <DetailItem label="E-Mail">{tour.kontakt_email || '—'}</DetailItem>
-        </div>
-      </div>
     </>
+  );
+}
+
+function AddressBlockView({
+  stadt, adresse, kontakt,
+}: {
+  stadt: string;
+  adresse: string | null;
+  kontakt: unknown;
+}) {
+  const k = (kontakt && typeof kontakt === 'object'
+    ? kontakt as { name?: unknown; telefon?: unknown; email?: unknown }
+    : {} as { name?: unknown; telefon?: unknown; email?: unknown });
+  const name = typeof k.name === 'string' ? k.name : '';
+  const tel  = typeof k.telefon === 'string' ? k.telefon : '';
+  const mail = typeof k.email === 'string' ? k.email : '';
+  const hasContact = !!(name || tel || mail);
+  return (
+    <div className="rounded-lg border border-maja-navy/10 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
+        {stadt}
+      </div>
+      <div className="mt-1 whitespace-pre-wrap text-sm text-maja-ink">
+        {adresse || '—'}
+      </div>
+      <div className="mt-2 border-t border-maja-navy/10 pt-2">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-maja-muted">
+          Kontakt vor Ort
+        </div>
+        {hasContact ? (
+          <div className="mt-1 text-sm text-maja-ink">
+            <div>{name || '—'}</div>
+            <div className="text-xs text-maja-muted">
+              {tel ? (
+                <a href={`tel:${tel}`} className="text-maja-accent hover:underline">{tel}</a>
+              ) : '—'}
+              {' · '}
+              {mail ? (
+                <a href={`mailto:${mail}`} className="text-maja-accent hover:underline">{mail}</a>
+              ) : '—'}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-1 text-xs text-maja-muted">—</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1512,68 +1590,94 @@ function VehicleAndAddressEdit({
                value={draft.fin}
                onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
       </div>
-      {/* Adressen */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-            {draft.startStadt || '—'}
-          </div>
-          <textarea
-            className="input mt-1 min-h-[4rem]"
-            placeholder="Adresse Start"
-            value={draft.adresseStart}
-            onChange={(e) => patchDraft({ adresseStart: e.target.value })}
-          />
-        </div>
-        <div>
-          <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-            {draft.zielStadt || '—'}
-          </div>
-          <textarea
-            className="input mt-1 min-h-[4rem]"
-            placeholder="Adresse Ziel"
-            value={draft.adresseZiel}
-            onChange={(e) => patchDraft({ adresseZiel: e.target.value })}
-          />
-        </div>
-        {draft.hatRueckfuehrung && (
-          <div className="sm:col-span-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
-              {draft.rueckfuehrungStadt || '—'}
-            </div>
-            <textarea
-              className="input mt-1 min-h-[4rem]"
-              placeholder="Adresse Rückführung"
-              value={draft.adresseRueckfuehrung}
-              onChange={(e) => patchDraft({ adresseRueckfuehrung: e.target.value })}
-            />
-          </div>
-        )}
+
+      {/* Adresse + Kontakt pro Stadt */}
+      <AddressBlockEdit
+        stadt={draft.startStadt}
+        adresseValue={draft.adresseStart}
+        onAdresse={(v) => patchDraft({ adresseStart: v })}
+        name={draft.kontaktStartName}
+        onName={(v) => patchDraft({ kontaktStartName: v })}
+        telefon={draft.kontaktStartTelefon}
+        onTelefon={(v) => patchDraft({ kontaktStartTelefon: v })}
+        email={draft.kontaktStartEmail}
+        onEmail={(v) => patchDraft({ kontaktStartEmail: v })}
+      />
+      <AddressBlockEdit
+        stadt={draft.zielStadt}
+        adresseValue={draft.adresseZiel}
+        onAdresse={(v) => patchDraft({ adresseZiel: v })}
+        name={draft.kontaktZielName}
+        onName={(v) => patchDraft({ kontaktZielName: v })}
+        telefon={draft.kontaktZielTelefon}
+        onTelefon={(v) => patchDraft({ kontaktZielTelefon: v })}
+        email={draft.kontaktZielEmail}
+        onEmail={(v) => patchDraft({ kontaktZielEmail: v })}
+      />
+      {draft.hatRueckfuehrung && (
+        <AddressBlockEdit
+          stadt={draft.rueckfuehrungStadt}
+          adresseValue={draft.adresseRueckfuehrung}
+          onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
+          name={draft.kontaktRueckName}
+          onName={(v) => patchDraft({ kontaktRueckName: v })}
+          telefon={draft.kontaktRueckTelefon}
+          onTelefon={(v) => patchDraft({ kontaktRueckTelefon: v })}
+          email={draft.kontaktRueckEmail}
+          onEmail={(v) => patchDraft({ kontaktRueckEmail: v })}
+        />
+      )}
+    </>
+  );
+}
+
+interface AddressBlockEditProps {
+  stadt: string;
+  adresseValue: string;
+  onAdresse: (v: string) => void;
+  name: string;
+  onName: (v: string) => void;
+  telefon: string;
+  onTelefon: (v: string) => void;
+  email: string;
+  onEmail: (v: string) => void;
+}
+
+function AddressBlockEdit(p: AddressBlockEditProps) {
+  return (
+    <div className="rounded-lg border border-maja-navy/10 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
+        {p.stadt || '—'}
       </div>
-      {/* Kontaktperson vor Ort */}
-      <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-maja-muted">
-          Kontaktperson vor Ort
+      <textarea
+        className="input mt-1 min-h-[4rem]"
+        placeholder="Adresse"
+        value={p.adresseValue}
+        onChange={(e) => p.onAdresse(e.target.value)}
+      />
+      <div className="mt-3 border-t border-maja-navy/10 pt-3">
+        <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-maja-muted">
+          Kontakt vor Ort
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           <div>
             <label className="label">Name</label>
-            <input className="input" value={draft.kontaktName}
-                   onChange={(e) => patchDraft({ kontaktName: e.target.value })} />
+            <input className="input" value={p.name}
+                   onChange={(e) => p.onName(e.target.value)} />
           </div>
           <div>
             <label className="label">Telefon</label>
-            <input className="input" type="tel" value={draft.kontaktTelefon}
-                   onChange={(e) => patchDraft({ kontaktTelefon: e.target.value })} />
+            <input className="input" type="tel" value={p.telefon}
+                   onChange={(e) => p.onTelefon(e.target.value)} />
           </div>
           <div>
             <label className="label">E-Mail</label>
-            <input className="input" type="email" value={draft.kontaktEmail}
-                   onChange={(e) => patchDraft({ kontaktEmail: e.target.value })} />
+            <input className="input" type="email" value={p.email}
+                   onChange={(e) => p.onEmail(e.target.value)} />
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

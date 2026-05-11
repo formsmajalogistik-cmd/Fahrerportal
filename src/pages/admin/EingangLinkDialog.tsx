@@ -100,9 +100,19 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
     maybe('adresse_start', 'Adresse Übernahme', tour.adresse_start, summary.adresseUebernahme);
     maybe('adresse_ziel', 'Adresse Übergabe', tour.adresse_ziel, summary.adresseUebergabe);
     maybe('kundenname', 'Kundenname', tour.kundenname, summary.kundenname);
-    maybe('kontakt_name', 'Kontakt-Name', tour.kontakt_name, summary.kontaktName);
-    maybe('kontakt_telefon', 'Telefon', tour.kontakt_telefon, summary.kontaktTelefon);
-    maybe('kontakt_email', 'E-Mail', tour.kontakt_email, summary.kontaktEmail);
+    // Kontakt-Daten landen in den per-Adresse-Feldern. Wir packen einmal
+    // Übernahme→kontakt_start und Übergabe→kontakt_ziel ein; Rückführung
+    // bleibt leer, weil das Protokoll dafür typischerweise keine eigene
+    // Kontaktperson erfasst.
+    const kontaktPayload = (summary.kontaktName || summary.kontaktTelefon || summary.kontaktEmail) ? {
+      name: summary.kontaktName ?? '',
+      telefon: summary.kontaktTelefon ?? '',
+      email: summary.kontaktEmail ?? '',
+    } : null;
+    if (kontaktPayload) {
+      maybe('kontakt_start', 'Kontakt Übernahme', tour.kontakt_start, kontaktPayload);
+      maybe('kontakt_ziel',  'Kontakt Übergabe',  tour.kontakt_ziel,  kontaktPayload);
+    }
 
     const { error: err } = await supabase
       .from('touren')
@@ -127,9 +137,7 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
       summary.adresseUebernahme && 'Adresse Übernahme',
       summary.adresseUebergabe && 'Adresse Übergabe',
       summary.kundenname && 'Kundenname',
-      summary.kontaktName && 'Kontakt-Name',
-      summary.kontaktTelefon && 'Telefon',
-      summary.kontaktEmail && 'E-Mail',
+      (summary.kontaktName || summary.kontaktTelefon || summary.kontaktEmail) && 'Kontakt vor Ort',
     ].filter((s): s is string => !!s));
   }
 
@@ -181,7 +189,7 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
             ) : (
               <ul className="max-h-96 space-y-1 overflow-auto">
                 {filteredTouren.map((t) => {
-                  const status = computeTourStatus(t.startdatum);
+                  const status = computeTourStatus(t.startdatum, t.enddatum);
                   return (
                     <li key={t.id}>
                       <button
@@ -311,9 +319,20 @@ function buildTourPayload(
     startdatum: s.datum,
     adresse_start: s.adresseUebernahme,
     adresse_ziel: s.adresseUebergabe,
-    kontakt_name: s.kontaktName,
-    kontakt_telefon: s.kontaktTelefon,
-    kontakt_email: s.kontaktEmail,
+    kontakt_start: (s.kontaktName || s.kontaktTelefon || s.kontaktEmail)
+      ? {
+          name: s.kontaktName ?? '',
+          telefon: s.kontaktTelefon ?? '',
+          email: s.kontaktEmail ?? '',
+        }
+      : null,
+    kontakt_ziel: (s.kontaktName || s.kontaktTelefon || s.kontaktEmail)
+      ? {
+          name: s.kontaktName ?? '',
+          telefon: s.kontaktTelefon ?? '',
+          email: s.kontaktEmail ?? '',
+        }
+      : null,
     eingang_id: eingangId,
   };
 }

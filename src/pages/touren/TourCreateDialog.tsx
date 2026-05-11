@@ -227,7 +227,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     // wird der Greimel-Zugang nicht zugewiesen, weil die Tour als
     // "abgeschlossen" gilt.
     const isoStart = startdatum ? new Date(startdatum).toISOString() : null;
-    const willBeCompleted = computeTourStatus(isoStart) === 'abgeschlossen';
+    const isoEnd = enddatum ? new Date(enddatum).toISOString() : null;
+    const willBeCompleted = computeTourStatus(isoStart, isoEnd) === 'abgeschlossen';
     const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app' && !willBeCompleted
       ? greimelZugangId
       : null;
@@ -245,7 +246,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       kontakt_id: kontaktId || null,
       tourenart: tourenart || null,
       startdatum: isoStart,
-      enddatum: enddatum ? new Date(enddatum).toISOString() : null,
+      enddatum: isoEnd,
       ist_sondervereinbarung: istSondervereinbarung,
       sondervereinbarung: istSondervereinbarung
         ? (sondervereinbarung.trim() || null)

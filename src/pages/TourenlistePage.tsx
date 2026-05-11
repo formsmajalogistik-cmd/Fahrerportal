@@ -105,6 +105,8 @@ export function TourenlistePage() {
   const [dateFrom, setDateFrom] = useState<string>(ymd(monthStart));
   const [dateTo, setDateTo]     = useState<string>(ymd(monthEnd));
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('alle');
+  const [auftraggeberFilter, setAuftraggeberFilter] = useState<string>('');
+  const [fahrerFilter, setFahrerFilter]             = useState<string>('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
@@ -155,15 +157,54 @@ export function TourenlistePage() {
   useEffect(() => { void load(); }, [load]);
 
   // Reset Pagination wenn Filter sich ändern
-  useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search]);
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter]);
+
+  // Lookup-Listen für die Filter-Dropdowns (eigene Queries, damit auch
+  // Auftraggeber / Fahrer angezeigt werden, deren Touren noch nicht im
+  // aktuellen Zeitraum liegen).
+  const [auftraggeberOptions, setAuftraggeberOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [fahrerOptions, setFahrerOptions] = useState<Array<{ id: string; label: string }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [agRes, faRes] = await Promise.all([
+        supabase.from('auftraggeber').select('id, name').order('name'),
+        supabase
+          .from('fahrer')
+          .select('id, user:user_id (email, vorname, nachname)')
+          .eq('aktiv', true),
+      ]);
+      if (cancelled) return;
+      setAuftraggeberOptions(Array.isArray(agRes.data) ? agRes.data : []);
+      const fa = (Array.isArray(faRes.data) ? faRes.data : [])
+        .map((f) => {
+          const user = (f as { user?: unknown }).user;
+          const u = user && typeof user === 'object' ? user as { email?: unknown; vorname?: unknown; nachname?: unknown } : null;
+          const safeUser = u ? {
+            email:    typeof u.email === 'string' ? u.email : '',
+            vorname:  typeof u.vorname === 'string' ? u.vorname : null,
+            nachname: typeof u.nachname === 'string' ? u.nachname : null,
+          } : null;
+          return {
+            id: (f as { id: string }).id,
+            label: displayName(safeUser) || '—',
+          };
+        })
+        .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+      setFahrerOptions(fa);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ---- Touren im gewählten Datums-Bereich ----
+  // Maßgeblich ist das ENDDATUM (Fallback auf startdatum, falls noch
+  // kein Enddatum gesetzt ist) — eine Tour mit enddatum im Januar 2026
+  // gehört damit zum Januar 2026.
   const rangeRows = useMemo(() => {
-    // Vergleich auf Tagesebene mit YMD-Schlüssel.
     const fromKey = dateFrom.replace(/-/g, '');
     const toKey   = dateTo.replace(/-/g, '');
     return (rows ?? []).filter((t) => {
-      const ref = t?.startdatum;
+      const ref = t?.enddatum ?? t?.startdatum;
       if (!ref) return false;
       const d = new Date(ref);
       if (isNaN(d.getTime())) return false;
@@ -177,7 +218,9 @@ export function TourenlistePage() {
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (rangeRows ?? []).filter((t) => {
-      if (statusFilter !== 'alle' && computeTourStatus(t.startdatum) !== statusFilter) return false;
+      if (statusFilter !== 'alle' && computeTourStatus(t.startdatum, t.enddatum) !== statusFilter) return false;
+      if (auftraggeberFilter && t.auftraggeber_id !== auftraggeberFilter) return false;
+      if (fahrerFilter && t.fahrer_id !== fahrerFilter) return false;
       if (!q) return true;
       const fahrerName = displayName(t.fahrer?.user ?? null).toLowerCase();
       const haystack = [
@@ -192,25 +235,38 @@ export function TourenlistePage() {
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rangeRows, statusFilter, search]);
+  }, [rangeRows, statusFilter, search, auftraggeberFilter, fahrerFilter]);
 
-  // ---- KPI-Daten (basieren auf rangeRows / filteredRows + computed status) ----
+  // ---- KPI-Daten ----
+  // Alle KPIs respektieren Auftraggeber- und Fahrer-Filter (siehe Spec:
+  // "wenn ich nach Auftraggeber filtere, zeigen die KPIs nur die Werte
+  // des gefilterten Auftraggebers"). Aktiv/Geplant ignorieren bewusst
+  // den Status-Filter, damit die Zahlen beim Wechsel der Status-Pills
+  // stabil bleiben.
+  const kpiRangeRows = useMemo(() => {
+    return (rangeRows ?? []).filter((t) => {
+      if (auftraggeberFilter && t.auftraggeber_id !== auftraggeberFilter) return false;
+      if (fahrerFilter && t.fahrer_id !== fahrerFilter) return false;
+      return true;
+    });
+  }, [rangeRows, auftraggeberFilter, fahrerFilter]);
+
   const kpi = useMemo(() => {
     const sum = (filteredRows ?? []).reduce((acc, t) => acc + Number(t.verguetung ?? 0), 0);
     let aktiv = 0;
     let geplant = 0;
-    for (const t of rangeRows ?? []) {
-      const s = computeTourStatus(t.startdatum);
+    for (const t of kpiRangeRows) {
+      const s = computeTourStatus(t.startdatum, t.enddatum);
       if (s === 'aktiv') aktiv += 1;
       if (s === 'geplant') geplant += 1;
     }
     return {
-      total: (rangeRows ?? []).length,
+      total: kpiRangeRows.length,
       sum,
       sumCount: (filteredRows ?? []).length,
       aktiv, geplant,
     };
-  }, [rangeRows, filteredRows]);
+  }, [kpiRangeRows, filteredRows]);
 
   // ---- Pagination ----
   const totalPages = Math.max(1, Math.ceil((filteredRows ?? []).length / PAGE_SIZE));
@@ -341,6 +397,51 @@ export function TourenlistePage() {
         </div>
       </div>
 
+      {/* Auftraggeber + Fahrer Filter */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-1 min-w-[12rem] flex-col">
+          <label htmlFor="t-ag-filter" className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+            Auftraggeber
+          </label>
+          <select
+            id="t-ag-filter"
+            className="input"
+            value={auftraggeberFilter}
+            onChange={(e) => setAuftraggeberFilter(e.target.value)}
+          >
+            <option value="">Alle Auftraggeber</option>
+            {auftraggeberOptions.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-1 min-w-[12rem] flex-col">
+          <label htmlFor="t-fa-filter" className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+            Fahrer
+          </label>
+          <select
+            id="t-fa-filter"
+            className="input"
+            value={fahrerFilter}
+            onChange={(e) => setFahrerFilter(e.target.value)}
+          >
+            <option value="">Alle Fahrer</option>
+            {fahrerOptions.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </div>
+        {(auftraggeberFilter || fahrerFilter) && (
+          <button
+            type="button"
+            className="btn-secondary self-end px-3 py-2 text-sm"
+            onClick={() => { setAuftraggeberFilter(''); setFahrerFilter(''); }}
+          >
+            Filter zurücksetzen
+          </button>
+        )}
+      </div>
+
       {/* Tourenliste */}
       {(pageRows ?? []).length === 0 ? (
         <div className="card p-8 text-center text-sm text-maja-muted">
@@ -438,7 +539,7 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
   const protokollName = tour.schriftliches_protokoll?.name ?? null;
   const hasSchriftlich = tour.protokoll_art === 'schriftlich' && !!tour.schriftliches_protokoll_id;
   const fahrerName = displayName(tour.fahrer?.user ?? null) || '— kein Fahrer —';
-  const computedStatus = computeTourStatus(tour.startdatum);
+  const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
     if (tour.startdatum && tour.enddatum) {

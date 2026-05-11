@@ -122,25 +122,50 @@ export async function fetchTourPriceBreakdown(args: {
   return { base, abaAufschlag, eAufschlag, total };
 }
 
+function ymdKey(d: Date): number {
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+
+function parseYmd(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return ymdKey(d);
+}
+
 /**
- * Berechnet den Status einer Tour live aus dem Startdatum:
- *  - Datum noch in Zukunft → 'geplant'
- *  - Datum heute            → 'aktiv'
- *  - Datum in Vergangenheit → 'abgeschlossen'
+ * Berechnet den Status einer Tour live aus dem Enddatum (mit Startdatum
+ * als Fallback bei laufenden Touren):
+ *  - 'abgeschlossen': Enddatum liegt in der Vergangenheit
+ *  - 'aktiv':         Enddatum ist heute, ODER Startdatum liegt
+ *                     in der Vergangenheit/heute und Enddatum ist
+ *                     gesetzt aber noch nicht erreicht (Tour läuft)
+ *  - 'geplant':       Enddatum liegt in der Zukunft und Startdatum
+ *                     ist noch nicht erreicht (oder beide ungesetzt)
  *
- * Wenn kein Startdatum gesetzt ist, wird 'geplant' als Default zurückgegeben.
  * Verglichen wird auf Tagesebene (Lokalzeit).
  */
-export function computeTourStatus(startdatum: string | null | undefined): TourStatus {
-  if (!startdatum) return 'geplant';
-  const d = new Date(startdatum);
-  if (isNaN(d.getTime())) return 'geplant';
-  const today = new Date();
-  const ymdToday = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
-  const ymdTour = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-  if (ymdTour > ymdToday) return 'geplant';
-  if (ymdTour < ymdToday) return 'abgeschlossen';
-  return 'aktiv';
+export function computeTourStatus(
+  startdatum: string | null | undefined,
+  enddatum?: string | null | undefined,
+): TourStatus {
+  const today = ymdKey(new Date());
+  const start = parseYmd(startdatum);
+  const end = parseYmd(enddatum);
+  if (start == null && end == null) return 'geplant';
+  // Enddatum vorhanden — primäre Entscheidung danach.
+  if (end != null) {
+    if (end < today) return 'abgeschlossen';
+    if (end === today) return 'aktiv';
+    // end liegt in der Zukunft: wenn die Tour schon begonnen hat, läuft sie noch.
+    if (start != null && start <= today) return 'aktiv';
+    return 'geplant';
+  }
+  // Kein Enddatum gesetzt — Status anhand des Startdatums.
+  if (start == null) return 'geplant';
+  if (start < today) return 'aktiv'; // läuft noch, kein Enddatum
+  if (start === today) return 'aktiv';
+  return 'geplant';
 }
 
 /** Baut den Routen-Titel: "Start → Ziel" bzw. "Start → Ziel → Rückführung". */
