@@ -14,6 +14,10 @@ const DATETIME = new Intl.DateTimeFormat('de-DE', {
   hour: '2-digit', minute: '2-digit',
 });
 
+const DATE = new Intl.DateTimeFormat('de-DE', {
+  day: '2-digit', month: '2-digit', year: 'numeric',
+});
+
 export function formatEuro(value: number | null | undefined): string {
   if (value == null) return '—';
   return EUR.format(Number(value));
@@ -29,6 +33,14 @@ export function formatDateTime(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '—';
   return DATETIME.format(d);
+}
+
+/** Datum ohne Uhrzeit ("dd.mm.yyyy"). Akzeptiert ISO-Date oder Timestamp. */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return DATE.format(d);
 }
 
 /** Berechnet die Gesamtstrecke aus km_hin und km_rueck. */
@@ -134,38 +146,27 @@ function parseYmd(iso: string | null | undefined): number | null {
 }
 
 /**
- * Berechnet den Status einer Tour live aus dem Enddatum (mit Startdatum
- * als Fallback bei laufenden Touren):
- *  - 'abgeschlossen': Enddatum liegt in der Vergangenheit
- *  - 'aktiv':         Enddatum ist heute, ODER Startdatum liegt
- *                     in der Vergangenheit/heute und Enddatum ist
- *                     gesetzt aber noch nicht erreicht (Tour läuft)
- *  - 'geplant':       Enddatum liegt in der Zukunft und Startdatum
- *                     ist noch nicht erreicht (oder beide ungesetzt)
+ * Berechnet den Tour-Status — vereinfachte Regel:
+ *   - 'aktiv':         Enddatum ist heute
+ *   - 'abgeschlossen': Enddatum liegt in der Vergangenheit
+ *   - 'geplant':       Enddatum liegt in der Zukunft ODER ist nicht gesetzt
  *
- * Verglichen wird auf Tagesebene (Lokalzeit).
+ * Das Startdatum spielt keine Rolle. Verglichen wird auf Tagesebene.
+ *
+ * Das 1. Argument bleibt aus historischen Gründen `startdatum`, wird
+ * aber nicht mehr ausgewertet — Aufrufer müssen das 2. Argument
+ * (enddatum) übergeben.
  */
 export function computeTourStatus(
-  startdatum: string | null | undefined,
+  _startdatum: string | null | undefined,
   enddatum?: string | null | undefined,
 ): TourStatus {
-  const today = ymdKey(new Date());
-  const start = parseYmd(startdatum);
   const end = parseYmd(enddatum);
-  if (start == null && end == null) return 'geplant';
-  // Enddatum vorhanden — primäre Entscheidung danach.
-  if (end != null) {
-    if (end < today) return 'abgeschlossen';
-    if (end === today) return 'aktiv';
-    // end liegt in der Zukunft: wenn die Tour schon begonnen hat, läuft sie noch.
-    if (start != null && start <= today) return 'aktiv';
-    return 'geplant';
-  }
-  // Kein Enddatum gesetzt — Status anhand des Startdatums.
-  if (start == null) return 'geplant';
-  if (start < today) return 'aktiv'; // läuft noch, kein Enddatum
-  if (start === today) return 'aktiv';
-  return 'geplant';
+  if (end == null) return 'geplant';
+  const today = ymdKey(new Date());
+  if (end < today) return 'abgeschlossen';
+  if (end > today) return 'geplant';
+  return 'aktiv';
 }
 
 /** Baut den Routen-Titel: "Start → Ziel" bzw. "Start → Ziel → Rückführung". */

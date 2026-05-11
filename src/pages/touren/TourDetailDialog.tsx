@@ -8,7 +8,7 @@ import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { displayName } from '../../lib/names';
 import {
   computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
-  formatDateTime, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
+  formatDate, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
 } from '../../lib/touren';
 import {
   downloadFormPdf, expectedOneDrivePath, resolveFilename,
@@ -83,11 +83,13 @@ function intToInput(value: number | null | undefined): string {
 
 function isoToLocalInput(iso: string | null | undefined): string {
   if (!iso) return '';
+  // <input type="date"> erwartet "YYYY-MM-DD" — direkt aus der Postgres-
+  // date-Spalte oder als Substring eines Timestamps.
+  if (/^\d{4}-\d{2}-\d{2}/.test(iso)) return iso.slice(0, 10);
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
-  // datetime-local erwartet "YYYY-MM-DDTHH:mm" in lokaler Zeit
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 // ---------- Edit-Form-Draft ----------
@@ -468,9 +470,11 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     const isGreimelTour = isGreimelAuftraggeber(draftAg);
     // Status wird live aus dem Datum berechnet — Greimel-Zugang wird nur
     // gehalten, solange die Tour nicht "abgeschlossen" ist.
-    const draftIsoStart = draft.startdatum ? new Date(draft.startdatum).toISOString() : null;
-    const draftIsoEnd   = draft.enddatum   ? new Date(draft.enddatum).toISOString()   : null;
-    const willComplete = computeTourStatus(draftIsoStart, draftIsoEnd) === 'abgeschlossen';
+    // <input type="date"> liefert "YYYY-MM-DD" — Postgres-date-Spalte
+    // erwartet genau das, keine Timezone-Umrechnung nötig.
+    const draftDateStart = draft.startdatum || null;
+    const draftDateEnd   = draft.enddatum   || null;
+    const willComplete = computeTourStatus(draftDateStart, draftDateEnd) === 'abgeschlossen';
 
     let nextGreimelId: string | null = null;
     if (draft.protokollArt === 'app' && isGreimelTour && !willComplete) {
@@ -499,8 +503,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         km_hin,
         km_rueck,
         km_gesamt: liveKmGesamt,
-        startdatum: draftIsoStart,
-        enddatum: draft.enddatum ? new Date(draft.enddatum).toISOString() : null,
+        startdatum: draftDateStart,
+        enddatum: draftDateEnd,
         kennzeichen,
         ist_sondervereinbarung: draft.istSondervereinbarung,
         sondervereinbarung: draft.istSondervereinbarung
@@ -1022,8 +1026,8 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
           ) : '—'}
         </DetailItem>
         <DetailItem label="Fahrer">{fahrerName}</DetailItem>
-        <DetailItem label="Startdatum + Uhrzeit">{formatDateTime(tour.startdatum)}</DetailItem>
-        <DetailItem label="Enddatum + Uhrzeit">{formatDateTime(tour.enddatum)}</DetailItem>
+        <DetailItem label="Startdatum">{formatDate(tour.startdatum)}</DetailItem>
+        <DetailItem label="Enddatum">{formatDate(tour.enddatum)}</DetailItem>
         {isAdmin && (
           tour.tourenart === 'ABA' ? (
             <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
@@ -1177,9 +1181,7 @@ function EditMode(p: EditModeProps) {
   const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, breakdown, pricing, templates, zugaenge, kontakte } = p;
   const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
   // Live-Status aus dem Datum (analog zur Anzeige in der Liste).
-  const draftIsoStart = draft.startdatum ? new Date(draft.startdatum).toISOString() : null;
-  const draftIsoEnd   = draft.enddatum   ? new Date(draft.enddatum).toISOString()   : null;
-  const computedStatus = computeTourStatus(draftIsoStart, draftIsoEnd);
+  const computedStatus = computeTourStatus(draft.startdatum || null, draft.enddatum || null);
   return (
     <div className="space-y-5">
       <div className="rounded-md bg-maja-light/60 p-3 text-xs text-maja-muted">
@@ -1307,16 +1309,16 @@ function EditMode(p: EditModeProps) {
         </div>
       )}
 
-      {/* Zeit */}
+      {/* Datum */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="label">Startdatum + Uhrzeit</label>
-          <input type="datetime-local" className="input" value={draft.startdatum}
+          <label className="label">Startdatum</label>
+          <input type="date" className="input" value={draft.startdatum}
                  onChange={(e) => patchDraft({ startdatum: e.target.value })} />
         </div>
         <div>
-          <label className="label">Enddatum + Uhrzeit</label>
-          <input type="datetime-local" className="input" value={draft.enddatum}
+          <label className="label">Enddatum</label>
+          <input type="date" className="input" value={draft.enddatum}
                  onChange={(e) => patchDraft({ enddatum: e.target.value })} />
         </div>
       </div>

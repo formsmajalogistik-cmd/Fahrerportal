@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
-import { computeTourStatus, formatDateTime, formatKm, tourTitel } from '../../lib/touren';
+import { computeTourStatus, formatDate, formatKm, tourTitel } from '../../lib/touren';
 import { summarizeEingang, type EingangSummary } from '../../lib/eingangData';
 import type {
   AppUser, Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
@@ -209,7 +209,7 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
                           </div>
                           <div className="mt-1 text-xs text-maja-muted">
                             {displayName(t.fahrer?.user ?? null) || '—'}
-                            {t.startdatum && <> · {formatDateTime(t.startdatum)}</>}
+                            {t.startdatum && <> · {formatDate(t.startdatum)}</>}
                             {t.km_gesamt != null && <> · {formatKm(t.km_gesamt)}</>}
                             {(t.kennzeichen ?? []).length > 0 && <> · {(t.kennzeichen ?? []).join(', ')}</>}
                           </div>

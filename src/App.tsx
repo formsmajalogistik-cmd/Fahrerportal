@@ -7,7 +7,6 @@ import { LoginPage } from './pages/LoginPage';
 import { PasswordResetPage } from './pages/PasswordResetPage';
 import { PasswordNewPage } from './pages/PasswordNewPage';
 import { FahrerDashboard } from './pages/FahrerDashboard';
-import { OffeneFormularePage } from './pages/OffeneFormularePage';
 import { FormularPage } from './pages/FormularPage';
 import { ProfilPage } from './pages/ProfilPage';
 import { AdminDashboard } from './pages/AdminDashboard';
@@ -49,7 +48,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<AdminDashboard />} />
           <Route path="/meine-formulare" element={<FahrerDashboard />} />
-          <Route path="/meine-drafts" element={<OffeneFormularePage />} />
+          {/* Alias auf /meine-formulare — alte Bookmark-URLs umleiten. */}
+          <Route path="/meine-drafts" element={<Navigate to="/meine-formulare" replace />} />
           <Route path="/fahrer" element={<FahrerListPage />} />
           <Route path="/auftraggeber" element={<AuftraggeberListPage />} />
           <Route path="/preisliste" element={<PreislistePage />} />
@@ -72,7 +72,8 @@ export default function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<FahrerDashboard />} />
-        <Route path="/offen" element={<OffeneFormularePage />} />
+        {/* Alias auf / — alte Bookmark-URLs umleiten. */}
+        <Route path="/offen" element={<Navigate to="/" replace />} />
         <Route path="/eingaenge" element={<EingaengePage />} />
         <Route path="/touren" element={<TourenlistePage />} />
         <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />

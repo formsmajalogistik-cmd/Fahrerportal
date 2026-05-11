@@ -8,8 +8,7 @@ interface NavItem { to: string; label: string }
 
 const adminNav: NavItem[] = [
   { to: '/',                label: 'Übersicht' },
-  { to: '/meine-formulare', label: 'Meine Formulare' },
-  { to: '/meine-drafts',    label: 'Begonnen' },
+  { to: '/meine-formulare', label: 'Formulare' },
   { to: '/fahrer',          label: 'Fahrer' },
   { to: '/auftraggeber',    label: 'Auftraggeber' },
   { to: '/preisliste',      label: 'Preisliste' },

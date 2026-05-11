@@ -7,8 +7,7 @@ import { MajaLogo } from './Brand';
 interface NavItem { to: string; label: string }
 
 const fahrerNav: NavItem[] = [
-  { to: '/', label: 'Meine Formulare' },
-  { to: '/offen', label: 'Begonnen' },
+  { to: '/', label: 'Formulare' },
   { to: '/eingaenge', label: 'Eingänge' },
   { to: '/touren', label: 'Tourenliste' },
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },

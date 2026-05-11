@@ -226,9 +226,11 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     // Bei einer rückwirkend angelegten Tour (Datum bereits in der Vergangenheit)
     // wird der Greimel-Zugang nicht zugewiesen, weil die Tour als
     // "abgeschlossen" gilt.
-    const isoStart = startdatum ? new Date(startdatum).toISOString() : null;
-    const isoEnd = enddatum ? new Date(enddatum).toISOString() : null;
-    const willBeCompleted = computeTourStatus(isoStart, isoEnd) === 'abgeschlossen';
+    // <input type="date"> liefert direkt "YYYY-MM-DD" — exakt das Format,
+    // das eine Postgres-date-Spalte erwartet. Keine Timezone-Umrechnung.
+    const dateStart = startdatum || null;
+    const dateEnd   = enddatum   || null;
+    const willBeCompleted = computeTourStatus(dateStart, dateEnd) === 'abgeschlossen';
     const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app' && !willBeCompleted
       ? greimelZugangId
       : null;
@@ -245,8 +247,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       fahrer_id: fahrerId || null,
       kontakt_id: kontaktId || null,
       tourenart: tourenart || null,
-      startdatum: isoStart,
-      enddatum: isoEnd,
+      startdatum: dateStart,
+      enddatum: dateEnd,
       ist_sondervereinbarung: istSondervereinbarung,
       sondervereinbarung: istSondervereinbarung
         ? (sondervereinbarung.trim() || null)
@@ -427,13 +429,13 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
               </select>
             </div>
             <div>
-              <label htmlFor="t-start-dt" className="label">Startdatum + Uhrzeit</label>
-              <input id="t-start-dt" type="datetime-local" className="input"
+              <label htmlFor="t-start-dt" className="label">Startdatum</label>
+              <input id="t-start-dt" type="date" className="input"
                      value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
             </div>
             <div>
-              <label htmlFor="t-end-dt" className="label">Enddatum + Uhrzeit</label>
-              <input id="t-end-dt" type="datetime-local" className="input"
+              <label htmlFor="t-end-dt" className="label">Enddatum</label>
+              <input id="t-end-dt" type="date" className="input"
                      value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
             </div>
           </div>

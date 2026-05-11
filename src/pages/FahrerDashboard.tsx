@@ -1,22 +1,43 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { Spinner } from '../components/Spinner';
-import type { Auftraggeber, Fahrer, FormularTemplate } from '../types/db';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { summarizeEingang } from '../lib/eingangData';
+import { computeTourStatus, formatDate, tourTitel } from '../lib/touren';
+import type {
+  Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
+} from '../types/db';
 
-interface TemplateRow extends FormularTemplate {
+interface AssignedTemplate extends FormularTemplate {
   auftraggeber?: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
+}
+
+interface DraftRow extends AusgefuelltesFormular {
+  template?: Pick<FormularTemplate, 'id' | 'name'> | null;
+}
+
+interface TourProtokoll {
+  tour: Pick<Tour,
+    | 'id' | 'tour_id' | 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt'
+    | 'startdatum' | 'enddatum' | 'fahrer_id'
+    | 'schriftliches_protokoll_id' | 'protokoll_art'>;
+  template: Pick<FormularTemplate, 'id' | 'name'>;
+  auftraggeber: Pick<Auftraggeber, 'name'> | null;
 }
 
 export function FahrerDashboard() {
   const { session, profile } = useAuth();
   const navigate = useNavigate();
   const [fahrer, setFahrer] = useState<Fahrer | null>(null);
-  const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [templates, setTemplates] = useState<AssignedTemplate[]>([]);
+  const [drafts, setDrafts] = useState<DraftRow[]>([]);
+  const [tourProtokolle, setTourProtokolle] = useState<TourProtokoll[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState<string | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+  const [deletingDraft, setDeletingDraft] = useState<DraftRow | null>(null);
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -29,31 +50,109 @@ export function FahrerDashboard() {
       .eq('user_id', session.user.id)
       .maybeSingle();
     if (fahrerErr) { setError(fahrerErr.message); setLoading(false); return; }
+    setFahrer(fahrerRow);
 
-    // RLS liefert uns ohnehin nur zugewiesene Templates
-    const { data: tpls, error: tplErr } = await supabase
+    // Zugewiesene Templates: RLS sorgt dafür, dass der Fahrer nur Templates
+    // sieht, für die er eine Zuweisung hat.
+    const tplPromise = supabase
       .from('formular_templates')
       .select('*, auftraggeber:auftraggeber_id (name, kontakt)')
       .order('name');
-    if (tplErr) setError(tplErr.message);
-    else setTemplates((tpls as unknown as TemplateRow[]) ?? []);
-    setFahrer(fahrerRow);
+
+    // Drafts dieses Fahrers
+    const draftPromise = fahrerRow
+      ? supabase
+          .from('ausgefuellte_formulare')
+          .select('*, template:template_id (id, name)')
+          .eq('fahrer_id', fahrerRow.id)
+          .eq('status', 'draft')
+          .order('created_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
+
+    // Tour-Protokolle: schriftliche Protokolle aus Touren, die diesem Fahrer
+    // zugewiesen sind und (computed) den Status geplant/aktiv haben.
+    const tourPromise = fahrerRow
+      ? supabase
+          .from('touren')
+          .select(`
+            id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+            startdatum, enddatum, fahrer_id, protokoll_art,
+            schriftliches_protokoll_id,
+            template:schriftliches_protokoll_id (id, name),
+            auftraggeber:auftraggeber_id (name)
+          `)
+          .eq('fahrer_id', fahrerRow.id)
+          .eq('protokoll_art', 'schriftlich')
+          .not('schriftliches_protokoll_id', 'is', null)
+      : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
+
+    const [tplRes, draftRes, tourRes] = await Promise.all([tplPromise, draftPromise, tourPromise]);
+    if (tplRes.error) setError(tplRes.error.message);
+    setTemplates((Array.isArray(tplRes.data) ? tplRes.data : []) as unknown as AssignedTemplate[]);
+    setDrafts((Array.isArray(draftRes.data) ? draftRes.data : []) as unknown as DraftRow[]);
+
+    // Tour-Protokolle clientseitig auf Status filtern.
+    type RawTour = {
+      id: string; tour_id: string | null;
+      start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
+      startdatum: string | null; enddatum: string | null;
+      fahrer_id: string | null;
+      protokoll_art: string | null;
+      schriftliches_protokoll_id: string | null;
+      template: Pick<FormularTemplate, 'id' | 'name'> | null;
+      auftraggeber: Pick<Auftraggeber, 'name'> | null;
+    };
+    const tourList: RawTour[] = (Array.isArray(tourRes.data) ? tourRes.data : []) as unknown as RawTour[];
+    const filtered: TourProtokoll[] = [];
+    for (const t of tourList) {
+      if (!t.template || !t.schriftliches_protokoll_id) continue;
+      const s = computeTourStatus(t.startdatum, t.enddatum);
+      if (s !== 'geplant' && s !== 'aktiv') continue;
+      filtered.push({
+        tour: t as unknown as TourProtokoll['tour'],
+        template: t.template,
+        auftraggeber: t.auftraggeber,
+      });
+    }
+    setTourProtokolle(filtered);
+
     setLoading(false);
   }, [session]);
 
   useEffect(() => { void load(); }, [load]);
 
-  async function startNew(template: TemplateRow) {
+  /**
+   * Findet einen vorhandenen Draft des Fahrers für das Template oder legt
+   * einen neuen an. Navigiert dann zum Formular.
+   */
+  async function openOrStart(templateId: string, busyKey: string) {
     if (!fahrer) return;
-    setStarting(template.id);
-    const { data, error: err } = await supabase
-      .from('ausgefuellte_formulare')
-      .insert({ fahrer_id: fahrer.id, template_id: template.id, daten: {} })
-      .select('id')
-      .single();
-    setStarting(null);
-    if (err || !data) { setError(err?.message ?? 'Anlegen fehlgeschlagen'); return; }
-    navigate(`/formular/${data.id}`);
+    setOpening(busyKey);
+    try {
+      // Bestehender Draft hat Vorrang.
+      const existing = drafts.find((d) => d.template_id === templateId);
+      if (existing) {
+        navigate(`/formular/${existing.id}`);
+        return;
+      }
+      const { data, error: err } = await supabase
+        .from('ausgefuellte_formulare')
+        .insert({ fahrer_id: fahrer.id, template_id: templateId, daten: {} })
+        .select('id')
+        .single();
+      if (err || !data) { setError(err?.message ?? 'Anlegen fehlgeschlagen'); return; }
+      navigate(`/formular/${data.id}`);
+    } finally {
+      setOpening(null);
+    }
+  }
+
+  async function handleDeleteDraft(r: DraftRow) {
+    const { error: err } = await supabase
+      .from('ausgefuellte_formulare').delete().eq('id', r.id);
+    if (err) throw err;
+    setDeletingDraft(null);
+    void load();
   }
 
   if (loading) return <Spinner label="Formulare werden geladen …" />;
@@ -76,45 +175,201 @@ export function FahrerDashboard() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-maja-navy">Meine Formulare</h1>
+        <h1 className="text-2xl font-semibold text-maja-navy">Formulare</h1>
         <p className="text-sm text-maja-muted">
-          Zugewiesene Protokolle, die du ausfüllen kannst.
+          Begonnene Entwürfe, anstehende Tour-Protokolle und zugewiesene Vorlagen.
         </p>
       </div>
 
-      {templates.length === 0 ? (
-        <div className="card p-6 text-sm text-maja-muted">
-          Dir sind aktuell keine Formulare zugewiesen.
-        </div>
-      ) : (
-        <ul className="grid gap-3 sm:grid-cols-2">
-          {templates.map((t) => (
-            <li key={t.id} className="card p-5 transition hover:shadow-lg">
-              <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
-                {t.auftraggeber?.name ?? 'Maja-Logistik'}
-              </div>
-              {t.auftraggeber?.kontakt && (
-                <div className="text-xs text-maja-muted">{t.auftraggeber.kontakt}</div>
+      {/* Begonnene Formulare */}
+      {drafts.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
+            In Bearbeitung
+          </h2>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {drafts.map((d) => (
+              <DraftCard
+                key={d.id}
+                draft={d}
+                opening={opening === `draft:${d.id}`}
+                onOpen={() => navigate(`/formular/${d.id}`)}
+                onDelete={() => setDeletingDraft(d)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Tour-Protokolle */}
+      {tourProtokolle.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
+            Tour-Protokolle
+          </h2>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {tourProtokolle.map((tp) => (
+              <TourProtokollCard
+                key={tp.tour.id}
+                item={tp}
+                opening={opening === `tour:${tp.tour.id}`}
+                onOpen={() => void openOrStart(tp.template.id, `tour:${tp.tour.id}`)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Zugewiesene Formulare */}
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
+          Zugewiesene Vorlagen
+        </h2>
+        {templates.length === 0 ? (
+          <div className="card p-6 text-sm text-maja-muted">
+            Dir sind aktuell keine Formular-Vorlagen zugewiesen.
+          </div>
+        ) : (
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {templates.map((t) => (
+              <AssignedCard
+                key={t.id}
+                template={t}
+                opening={opening === `tpl:${t.id}`}
+                onStart={() => void openOrStart(t.id, `tpl:${t.id}`)}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {deletingDraft && (
+        <ConfirmDialog
+          title="Entwurf löschen?"
+          message={
+            <>
+              Möchten Sie diesen Entwurf wirklich löschen? Alle eingegebenen
+              Daten gehen verloren.
+              {deletingDraft.template?.name && (
+                <div className="mt-2 text-xs text-maja-muted">
+                  Template: {deletingDraft.template.name}
+                </div>
               )}
-              <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
-              <div className="mt-1 text-xs text-maja-muted">
-                {(t.schema?.sections ?? []).length} Sektionen
-              </div>
-              <div className="mt-4">
-                <button
-                  className="btn-primary w-full"
-                  onClick={() => startNew(t)}
-                  disabled={starting === t.id}
-                >
-                  {starting === t.id ? 'Wird angelegt …' : 'Protokoll starten'}
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+            </>
+          }
+          confirmLabel="Löschen"
+          destructive
+          onConfirm={() => handleDeleteDraft(deletingDraft)}
+          onClose={() => setDeletingDraft(null)}
+        />
       )}
     </div>
+  );
+}
+
+// ---------- Cards ----------
+
+function DraftCard({
+  draft, opening, onOpen, onDelete,
+}: {
+  draft: DraftRow;
+  opening: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const summary = useMemo(() => summarizeEingang(draft), [draft]);
+  return (
+    <li className="card flex flex-col p-5">
+      <div className="flex items-start justify-between gap-2">
+        <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+          In Bearbeitung
+        </span>
+        <span className="text-xs text-maja-muted">
+          {formatDate(draft.created_at)}
+        </span>
+      </div>
+      <h3 className="mt-2 text-base font-semibold text-maja-navy">
+        {draft.template?.name ?? 'Formular'}
+      </h3>
+      {(summary.kennzeichen || summary.adresseUebernahme || summary.adresseUebergabe) && (
+        <div className="mt-1 text-xs text-maja-muted space-y-0.5">
+          {summary.kennzeichen && <div>Kennzeichen: {summary.kennzeichen}</div>}
+          {summary.adresseUebernahme && <div>Übernahme: {summary.adresseUebernahme}</div>}
+          {summary.adresseUebergabe && <div>Übergabe: {summary.adresseUebergabe}</div>}
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button onClick={onOpen} disabled={opening} className="btn-primary flex-1">
+          {opening ? 'Öffne …' : 'Fortsetzen'}
+        </button>
+        <button onClick={onDelete} className="text-sm font-medium text-red-600 hover:underline">
+          Löschen
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function TourProtokollCard({
+  item, opening, onOpen,
+}: { item: TourProtokoll; opening: boolean; onOpen: () => void }) {
+  const titel = tourTitel({
+    start_stadt: item.tour.start_stadt,
+    ziel_stadt: item.tour.ziel_stadt,
+    rueckfuehrung_stadt: item.tour.rueckfuehrung_stadt,
+  });
+  const dateRange = item.tour.startdatum || item.tour.enddatum
+    ? `${formatDate(item.tour.startdatum)} – ${formatDate(item.tour.enddatum)}`
+    : null;
+  return (
+    <li className="card flex flex-col p-5">
+      <div className="flex items-start justify-between gap-2">
+        <span className="inline-block rounded-full bg-maja-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-maja-accent">
+          Tour-Protokoll
+        </span>
+        {item.tour.tour_id && (
+          <span className="text-xs font-semibold text-maja-muted">{item.tour.tour_id}</span>
+        )}
+      </div>
+      <h3 className="mt-2 text-base font-semibold text-maja-navy">
+        {item.template.name}
+      </h3>
+      <div className="mt-1 text-xs text-maja-ink space-y-0.5">
+        <div className="font-medium">{titel}</div>
+        {item.auftraggeber && <div className="text-maja-muted">{item.auftraggeber.name}</div>}
+        {dateRange && <div className="text-maja-muted">{dateRange}</div>}
+      </div>
+      <div className="mt-4">
+        <button onClick={onOpen} disabled={opening} className="btn-primary w-full">
+          {opening ? 'Öffne …' : 'Protokoll öffnen'}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function AssignedCard({
+  template, opening, onStart,
+}: { template: AssignedTemplate; opening: boolean; onStart: () => void }) {
+  return (
+    <li className="card flex flex-col p-5 transition hover:shadow-lg">
+      <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
+        {template.auftraggeber?.name ?? 'Maja-Logistik'}
+      </div>
+      {template.auftraggeber?.kontakt && (
+        <div className="text-xs text-maja-muted">{template.auftraggeber.kontakt}</div>
+      )}
+      <h3 className="mt-1 text-base font-semibold text-maja-navy">{template.name}</h3>
+      <div className="mt-1 text-xs text-maja-muted">
+        {(template.schema?.sections ?? []).length} Sektionen
+      </div>
+      <div className="mt-4">
+        <button onClick={onStart} disabled={opening} className="btn-primary w-full">
+          {opening ? 'Wird angelegt …' : 'Protokoll starten'}
+        </button>
+      </div>
+    </li>
   );
 }

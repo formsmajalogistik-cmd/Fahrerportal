@@ -8,7 +8,7 @@ import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
 import { displayName } from '../lib/names';
 import {
-  computeTourStatus, formatDateTime, formatEuro, formatKm, tourTitel,
+  computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
@@ -543,9 +543,9 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
     if (tour.startdatum && tour.enddatum) {
-      return `${formatDateTime(tour.startdatum)} – ${formatDateTime(tour.enddatum)}`;
+      return `${formatDate(tour.startdatum)} – ${formatDate(tour.enddatum)}`;
     }
-    return formatDateTime(tour.startdatum ?? tour.enddatum);
+    return formatDate(tour.startdatum ?? tour.enddatum);
   })();
 
   return (

@@ -462,7 +462,7 @@ export function FormularPage() {
             disabled={saving !== 'idle'}
             title="Vorschau der gefüllten PDF anzeigen"
           >
-            👁 PDF-Vorschau
+            PDF-Vorschau
           </button>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => void saveDraft().catch(() => {})} className="btn-secondary" disabled={saving !== 'idle'}>

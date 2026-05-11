@@ -30,7 +30,7 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
           <img src={dataUrl} alt={field.label} className="block max-h-32 w-full object-contain p-2" />
         ) : (
           <div className="flex h-24 items-center justify-center text-sm font-medium text-maja-accent">
-            ✍ Unterschrift erfassen
+            Unterschrift erfassen
           </div>
         )}
       </button>
