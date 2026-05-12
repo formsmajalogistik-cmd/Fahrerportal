@@ -15,10 +15,12 @@
     "@supabase/supabase-js": "^2.45.4",
     "browser-image-compression": "^2.0.2",
     "clsx": "^2.1.1",
+    "heic2any": "^0.0.4",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-easy-crop": "^5.5.7",
     "react-router-dom": "^7.14.0",
     "react-signature-canvas": "^1.0.6",
     "xlsx": "^0.18.5"

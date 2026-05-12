@@ -10,6 +10,7 @@ const adminNav: NavItem[] = [
   { to: '/meine-formulare',  label: 'Formulare' },
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
   { to: '/eingaenge',        label: 'Eingänge' },
+  { to: '/belege',           label: 'Belege' },
   { to: '/templates',        label: 'Templates' },
   { to: '/einstellungen',    label: 'Einstellungen' },
 ];

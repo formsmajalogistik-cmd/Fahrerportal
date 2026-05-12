@@ -19,6 +19,7 @@ import { EinstellungenPage } from './pages/admin/EinstellungenPage';
 import { TemplatesListPage } from './pages/admin/TemplatesListPage';
 import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { EingaengePage } from './pages/admin/EingaengePage';
+import { BelegePage } from './pages/admin/BelegePage';
 import { TourenlistePage } from './pages/TourenlistePage';
 import { GreimelZugaengePage } from './pages/GreimelZugaengePage';
 
@@ -69,6 +70,7 @@ export default function App() {
           <Route path="/meine-drafts" element={<Navigate to="/meine-formulare" replace />} />
           <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
           <Route path="/eingaenge" element={<EingaengePage />} />
+          <Route path="/belege" element={<BelegePage />} />
           <Route path="/templates" element={<TemplatesListPage />} />
           <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/einstellungen" element={<EinstellungenPage />}>
