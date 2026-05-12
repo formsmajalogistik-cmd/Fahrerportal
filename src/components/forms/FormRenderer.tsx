@@ -28,45 +28,75 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
   const visible = sections ?? schema.sections ?? [];
   return (
     <div className="space-y-6">
-      {visible.map((section) => (
-        <section key={section.id} className="card p-6">
-          <h2 className="mb-4 text-lg font-semibold text-maja-navy">{section.title}</h2>
-          <div className="space-y-5">
-            {(section.fields ?? []).map((field) => {
-              if (!field || typeof field !== 'object' || !field.id || !field.type) {
-                console.warn('[FormRenderer] Ungültiges Feld übersprungen:', field);
-                return null;
-              }
-              return (
-                <ErrorBoundary
-                  key={field.id}
-                  fallback={({ error, reset }) => (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                      <div className="font-medium">
-                        Feld „{field.label}" konnte nicht gerendert werden
-                      </div>
-                      <div className="mt-1 text-xs">{error.message}</div>
-                      <button onClick={reset}
-                              className="mt-2 text-xs font-medium text-maja-accent hover:underline">
-                        Erneut versuchen
-                      </button>
-                    </div>
-                  )}
-                >
-                  <FieldSwitch
-                    field={field}
-                    value={data[field.id]}
-                    onChange={(v) => onChange(field.id, v)}
-                    disabled={disabled}
-                    oneDriveFolder={oneDriveFolder}
-                  />
-                </ErrorBoundary>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+      {visible.map((section) => {
+        // Aufeinanderfolgende Photo-Felder werden zu einer Gruppe gebündelt
+        // und gemeinsam in einem 2-Spalten-Grid gerendert. Alle anderen
+        // Feldtypen bleiben einspaltig.
+        const groups: Array<{ kind: 'photos' | 'other'; fields: FormField[] }> = [];
+        for (const f of section.fields ?? []) {
+          if (!f || typeof f !== 'object' || !f.id || !f.type) continue;
+          const kind = f.type === 'photo' ? 'photos' : 'other';
+          const last = groups[groups.length - 1];
+          if (last && last.kind === kind) last.fields.push(f);
+          else groups.push({ kind, fields: [f] });
+        }
+        return (
+          <section key={section.id} className="card p-6">
+            <h2 className="mb-4 text-lg font-semibold text-maja-navy">{section.title}</h2>
+            <div className="space-y-5">
+              {groups.map((g, gi) => g.kind === 'photos' ? (
+                <div key={gi} className="grid grid-cols-2 gap-3">
+                  {g.fields.map((field) => (
+                    <FieldErrorWrapper key={field.id} field={field}>
+                      <FieldSwitch
+                        field={field}
+                        value={data[field.id]}
+                        onChange={(v) => onChange(field.id, v)}
+                        disabled={disabled}
+                        oneDriveFolder={oneDriveFolder}
+                      />
+                    </FieldErrorWrapper>
+                  ))}
+                </div>
+              ) : (
+                g.fields.map((field) => (
+                  <FieldErrorWrapper key={field.id} field={field}>
+                    <FieldSwitch
+                      field={field}
+                      value={data[field.id]}
+                      onChange={(v) => onChange(field.id, v)}
+                      disabled={disabled}
+                      oneDriveFolder={oneDriveFolder}
+                    />
+                  </FieldErrorWrapper>
+                ))
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
+  );
+}
+
+function FieldErrorWrapper({ field, children }: { field: FormField; children: React.ReactNode }) {
+  return (
+    <ErrorBoundary
+      fallback={({ error, reset }) => (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <div className="font-medium">
+            Feld „{field.label}" konnte nicht gerendert werden
+          </div>
+          <div className="mt-1 text-xs">{error.message}</div>
+          <button onClick={reset}
+                  className="mt-2 text-xs font-medium text-maja-accent hover:underline">
+            Erneut versuchen
+          </button>
+        </div>
+      )}
+    >
+      {children}
+    </ErrorBoundary>
   );
 }
 
