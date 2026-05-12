@@ -94,10 +94,20 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
   const hasPhoto = !!previewUrl;
 
   // Tap → "Hinzufügen"-Sheet (nur wenn leer). Long-Press → Edit-Sheet.
-  const longPress = useLongPress(
-    () => { if (!disabled && hasPhoto) setSheetOpen('edit'); },
-    () => { if (!disabled && !hasPhoto) setSheetOpen('add'); },
-  );
+  // onClick übernimmt der Browser zuverlässig (auch die Scroll-vs-Tap-
+  // Unterscheidung); wir steuern nur den Long-Press-Timer.
+  const longPress = useLongPress({
+    onLongPress: () => {
+      if (disabled || !hasPhoto) return;
+      setSheetOpen('edit');
+    },
+    onClick: () => {
+      if (disabled) return;
+      // Vorhandenes Bild: Tap macht nichts (Edit ist Long-Press); leeres
+      // Feld: Tap öffnet das Hinzufügen-Sheet.
+      if (!hasPhoto) setSheetOpen('add');
+    },
+  });
 
   return (
     <div>
@@ -119,7 +129,8 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
             setSheetOpen(hasPhoto ? 'edit' : 'add');
           }
         }}
-        {...longPress.handlers}
+        {...longPress.bind}
+        style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
         className={`relative flex aspect-[4/3] w-full select-none items-center justify-center overflow-hidden rounded-lg border bg-maja-light transition ${
           hasPhoto ? 'border-maja-navy/20' : 'border-2 border-dashed border-maja-navy/30'
         } ${disabled ? 'opacity-60' : 'cursor-pointer'} ${longPress.pressing ? 'scale-[0.97] opacity-80' : ''}`}
