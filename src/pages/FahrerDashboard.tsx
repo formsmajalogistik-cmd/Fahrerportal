@@ -134,19 +134,17 @@ export function FahrerDashboard() {
   useEffect(() => { void load(); }, [load]);
 
   /**
-   * Findet einen vorhandenen Draft des Fahrers für das Template oder legt
-   * einen neuen an. Navigiert dann zum Formular.
+   * Legt für das gewählte Template IMMER eine neue Formular-Instanz an
+   * und navigiert dorthin. Bestehende Entwürfe werden NICHT automatisch
+   * wieder geöffnet — der Fahrer kann mehrere parallele Drafts desselben
+   * Templates haben (z.B. zwei Übernahme-Protokolle am gleichen Tag).
+   * Vorhandene Drafts werden weiterhin im "In Bearbeitung"-Bereich
+   * separat aufgelistet.
    */
   async function openOrStart(templateId: string, busyKey: string) {
     if (!fahrer) return;
     setOpening(busyKey);
     try {
-      // Bestehender Draft hat Vorrang.
-      const existing = drafts.find((d) => d.template_id === templateId);
-      if (existing) {
-        navigate(`/formular/${existing.id}`);
-        return;
-      }
       const { data, error: err } = await supabase
         .from('ausgefuellte_formulare')
         .insert({ fahrer_id: fahrer.id, template_id: templateId, daten: {} })

@@ -72,6 +72,12 @@ export function TourenlistePage() {
    * Sucht einen vorhandenen Draft (fahrer + template) — falls keiner existiert,
    * wird ein neuer angelegt. Anschließend Navigation auf /formular/<id>.
    */
+  /**
+   * Legt für den aktuellen Fahrer immer eine NEUE Formular-Instanz des
+   * Tour-Protokolls an und navigiert dorthin. Frühere Drafts bleiben
+   * unverändert im Formulare-Reiter sichtbar und können dort einzeln
+   * fortgesetzt oder gelöscht werden.
+   */
   async function openSchriftlichesProtokoll(t: TourRow) {
     const tplId = t.schriftliches_protokoll?.id ?? t.schriftliches_protokoll_id;
     if (!tplId || !session) return;
@@ -82,19 +88,6 @@ export function TourenlistePage() {
       if (!fahrerRow?.id) {
         // Kein Fahrer-Profil → fallback: nichts tun
         setOpeningProtokoll(null);
-        return;
-      }
-      const { data: existing } = await supabase
-        .from('ausgefuellte_formulare')
-        .select('id')
-        .eq('fahrer_id', fahrerRow.id)
-        .eq('template_id', tplId)
-        .eq('status', 'draft')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (existing?.id) {
-        navigate(`/formular/${existing.id}`);
         return;
       }
       const { data: created, error } = await supabase
