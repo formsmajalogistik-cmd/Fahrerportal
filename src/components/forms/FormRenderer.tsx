@@ -45,7 +45,7 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
             <h2 className="mb-4 text-lg font-semibold text-maja-navy">{section.title}</h2>
             <div className="space-y-5">
               {groups.map((g, gi) => g.kind === 'photos' ? (
-                <div key={gi} className="grid grid-cols-2 gap-3">
+                <div key={gi} className="grid grid-cols-2 items-start gap-3">
                   {g.fields.map((field) => (
                     <FieldErrorWrapper key={field.id} field={field}>
                       <FieldSwitch

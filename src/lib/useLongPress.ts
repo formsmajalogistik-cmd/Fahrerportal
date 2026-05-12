@@ -34,6 +34,10 @@ export function useLongPress(
   const timerRef = useRef<number | null>(null);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
   const firedLongRef = useRef(false);
+  // Wird true, sobald der Finger die Drift-Toleranz überschreitet —
+  // dann gilt der Gesture als Scroll, weder Long-Press noch Short-Click
+  // wird ausgelöst.
+  const cancelledRef = useRef(false);
   const [pressing, setPressing] = useState(false);
 
   const clear = useCallback(() => {
@@ -46,6 +50,7 @@ export function useLongPress(
 
   const start = useCallback((x: number, y: number) => {
     firedLongRef.current = false;
+    cancelledRef.current = false;
     setPressing(true);
     startPosRef.current = { x, y };
     timerRef.current = window.setTimeout(() => {
@@ -60,13 +65,18 @@ export function useLongPress(
     if (!s) return;
     const dx = x - s.x;
     const dy = y - s.y;
-    if (dx * dx + dy * dy > moveTolerancePx * moveTolerancePx) clear();
+    if (dx * dx + dy * dy > moveTolerancePx * moveTolerancePx) {
+      // Gesture wurde zum Scroll — short-click bei touchend unterdrücken.
+      cancelledRef.current = true;
+      clear();
+    }
   }, [moveTolerancePx, clear]);
 
   const end = useCallback(() => {
     const wasLong = firedLongRef.current;
+    const cancelled = cancelledRef.current;
     clear();
-    if (!wasLong && onShortClick) onShortClick();
+    if (!wasLong && !cancelled && onShortClick) onShortClick();
   }, [clear, onShortClick]);
 
   return {

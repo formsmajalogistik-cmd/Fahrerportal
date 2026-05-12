@@ -101,7 +101,10 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
 
   return (
     <div>
-      <label className="label">
+      {/* Label-Bereich mit fixer Mindesthöhe (≈ 2 Zeilen), damit im
+          2-Spalten-Grid die Bild-Boxen unabhängig von der Label-Länge
+          immer auf gleicher vertikaler Position starten. */}
+      <label className="label min-h-[2.5rem] leading-tight">
         {field.label}{field.required && <span className="text-red-600"> *</span>}
       </label>
       <div
