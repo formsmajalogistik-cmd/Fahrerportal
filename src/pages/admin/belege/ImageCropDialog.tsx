@@ -53,7 +53,21 @@ export function ImageCropDialog({ imageUrl, onCancel, onApply }: Props) {
           crop={crop}
           zoom={zoom}
           rotation={rotation}
-          aspect={undefined}
+          // Festes Hochformat-Verhältnis — der Crop-Rahmen kann nicht
+          // resized werden, das Bild wird mit Pan + Zoom innerhalb des
+          // Rahmens positioniert. Bild-Bereiche außerhalb werden beim
+          // Export weiß (PDF-Zelle ist weiß hinterlegt).
+          aspect={3 / 4}
+          // Zoom-Bereich deutlich erweitert: bis 0.3 herunter, damit auch
+          // ein quer fotografierter Beleg komplett in den Crop-Bereich
+          // passt (mit weißen Rändern).
+          minZoom={0.3}
+          maxZoom={3}
+          // Mit "contain" startet das Bild komplett sichtbar in der
+          // Vorschau; "cover" hätte initial schon zugeschnitten.
+          objectFit="contain"
+          // Bild darf über die Crop-Grenzen hinaus geschoben werden —
+          // notwendig, wenn das Bild kleiner als der Rahmen ist (Zoom<1).
           restrictPosition={false}
           onCropChange={setCrop}
           onZoomChange={setZoom}
@@ -70,8 +84,8 @@ export function ImageCropDialog({ imageUrl, onCancel, onApply }: Props) {
           <input
             id="zoom"
             type="range"
-            min={1}
-            max={4}
+            min={0.3}
+            max={3}
             step={0.05}
             value={zoom}
             onChange={(e) => setZoom(Number(e.target.value))}
@@ -143,11 +157,34 @@ async function cropImageToJpeg(url: string, area: Area, rotation: number): Promi
   sctx.drawImage(img, -img.width / 2, -img.height / 2);
 
   const out = document.createElement('canvas');
-  out.width = Math.round(area.width);
-  out.height = Math.round(area.height);
+  out.width = Math.max(1, Math.round(area.width));
+  out.height = Math.max(1, Math.round(area.height));
   const octx = out.getContext('2d');
   if (!octx) throw new Error('Canvas-Kontext nicht verfügbar');
-  octx.drawImage(stage, area.x, area.y, area.width, area.height, 0, 0, out.width, out.height);
+  // Hintergrund weiß füllen — bei Zoom < 1 oder verschobenem Bild kann
+  // der Crop-Bereich über das tatsächliche Bild hinaus reichen; die
+  // freien Stellen sollen weiß bleiben (passt zur weißen PDF-Zelle).
+  octx.fillStyle = '#ffffff';
+  octx.fillRect(0, 0, out.width, out.height);
+
+  // Quell-Rechteck auf das verfügbare rotierte Bild beschneiden, damit
+  // drawImage nicht mit Out-of-Bounds-Koordinaten arbeitet (Browser
+  // werfen sonst Fehler bzw. liefern undefiniertes Verhalten).
+  const sx = Math.max(0, area.x);
+  const sy = Math.max(0, area.y);
+  const ex = Math.min(stage.width, area.x + area.width);
+  const ey = Math.min(stage.height, area.y + area.height);
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw > 0 && sh > 0) {
+    const scaleX = out.width / area.width;
+    const scaleY = out.height / area.height;
+    const dx = (sx - area.x) * scaleX;
+    const dy = (sy - area.y) * scaleY;
+    const dw = sw * scaleX;
+    const dh = sh * scaleY;
+    octx.drawImage(stage, sx, sy, sw, sh, dx, dy, dw, dh);
+  }
 
   return await new Promise<Blob>((resolve, reject) => {
     out.toBlob(
