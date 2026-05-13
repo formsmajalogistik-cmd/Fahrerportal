@@ -61,6 +61,33 @@ const ZUSATZ_KATEGORIEN = [
   'Tank und Waschauslagen', 'Lade und Waschauslagen', 'Taxiauslagen',
 ];
 
+// Lesbare Labels für die Tour-Spalten, die durch ein Protokoll befüllt
+// werden können — werden im "Verknüpfung lösen"-Dialog angezeigt.
+const PROTOKOLL_FELD_LABEL: Record<string, string> = {
+  fin: 'FIN',
+  kennzeichen: 'Kennzeichen',
+  adresse_start: 'Adresse Übernahme',
+  adresse_ziel: 'Adresse Übergabe',
+  adresse_rueckfuehrung: 'Adresse Rückführung',
+  kontakt_start: 'Kontakt Übernahme',
+  kontakt_ziel: 'Kontakt Übergabe',
+  kontakt_rueckfuehrung: 'Kontakt Rückführung',
+  kundenname: 'Kundenname',
+  km_hin: 'KM hin',
+  km_gesamt: 'KM gesamt',
+  startdatum: 'Startdatum',
+};
+
+// Fallback für Touren, die vor Migration 026 verknüpft wurden und für
+// die wir nicht wissen, welche Felder konkret aus dem Protokoll kamen.
+const DEFAULT_PROTOKOLL_FIELDS: string[] = [
+  'fin', 'kennzeichen',
+  'adresse_start', 'adresse_ziel',
+  'kontakt_start', 'kontakt_ziel',
+  'kundenname',
+  'km_hin', 'km_gesamt',
+];
+
 // ---------- Helpers ----------
 
 function parseInteger(v: string): number | null {
@@ -236,6 +263,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [unlinkBusy, setUnlinkBusy] = useState(false);
 
   // Barauslagen / Fahrer-Honorar (separate Auto-Save Felder)
   const [barauslagenInput, setBarauslagenInput] = useState('');
@@ -667,6 +696,49 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     onDeleted();
   }
 
+  // ----- Protokoll-Verknüpfung lösen -----
+
+  /**
+   * Löst die Verknüpfung Tour ↔ Eingang/Protokoll und setzt — auf Wunsch —
+   * die durch das Protokoll befüllten Felder zurück.
+   *
+   * resetFields=true:  Felder aus protokoll_daten_felder zurücksetzen
+   *                    (oder bei Legacy-Touren ohne Tracking: die
+   *                    Standard-Protokoll-Felder).
+   * resetFields=false: nur eingang_id auf null, Daten bleiben stehen.
+   */
+  async function handleUnlinkProtokoll(resetFields: boolean) {
+    if (!tour || !isAdmin) return;
+    setUnlinkBusy(true);
+    setError(null);
+    const tracked = tour.protokoll_daten_felder ?? [];
+    const fieldsToReset = resetFields
+      ? (tracked.length > 0 ? tracked : DEFAULT_PROTOKOLL_FIELDS)
+      : [];
+    const patch: Record<string, unknown> = {
+      eingang_id: null,
+      protokoll_daten_felder: [],
+    };
+    for (const f of fieldsToReset) {
+      patch[f] = f === 'kennzeichen' ? [] : null;
+    }
+    const { error: err } = await supabase
+      .from('touren')
+      .update(patch as never)
+      .eq('id', tour.id);
+    setUnlinkBusy(false);
+    if (err) { setError(err.message); return; }
+    setUnlinkOpen(false);
+    setStatusMsg({
+      kind: 'ok',
+      text: resetFields
+        ? `Verknüpfung gelöst, ${fieldsToReset.length} ${fieldsToReset.length === 1 ? 'Feld' : 'Felder'} zurückgesetzt.`
+        : 'Verknüpfung gelöst, Daten beibehalten.',
+    });
+    await load();
+    onChanged();
+  }
+
   // ----- Render -----
 
   if (loading) {
@@ -763,7 +835,18 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       {/* Verknüpfter Eingang — PDF-Downloads */}
       {eingang && (
         <div className="mt-6">
-          <h3 className="mb-2 text-base font-semibold text-maja-navy">Verknüpfter Eingang</h3>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-base font-semibold text-maja-navy">Verknüpfter Eingang</h3>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setUnlinkOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+              >
+                ✕ Verknüpfung lösen
+              </button>
+            )}
+          </div>
           <div className="rounded-lg border border-maja-navy/10 bg-white p-3 text-sm">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
@@ -1018,7 +1101,88 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           onClose={() => setConfirmDelete(false)}
         />
       )}
+
+      {unlinkOpen && (
+        <UnlinkProtokollDialog
+          fields={tour.protokoll_daten_felder ?? []}
+          busy={unlinkBusy}
+          onConfirm={(reset) => void handleUnlinkProtokoll(reset)}
+          onClose={() => setUnlinkOpen(false)}
+        />
+      )}
     </Shell>
+  );
+}
+
+// ---------- Unlink-Protokoll-Dialog ----------
+
+interface UnlinkProps {
+  fields: string[];
+  busy: boolean;
+  onConfirm: (resetFields: boolean) => void;
+  onClose: () => void;
+}
+
+/**
+ * Zwei-Pfad-Bestätigung:
+ *  - Wenn das Tracking (protokoll_daten_felder) vorhanden ist: zeigt die
+ *    konkrete Liste und bietet einen einzelnen "Verknüpfung lösen"-Button,
+ *    der die Felder zurücksetzt.
+ *  - Für Legacy-Touren ohne Tracking: bietet zwei Aktionen
+ *    ("Alle Protokoll-Felder zurücksetzen" vs. "Nur Verknüpfung lösen").
+ */
+function UnlinkProtokollDialog({ fields, busy, onConfirm, onClose }: UnlinkProps) {
+  const hasTracking = fields.length > 0;
+  const display = hasTracking ? fields : DEFAULT_PROTOKOLL_FIELDS;
+  return (
+    <div role="dialog" aria-modal="true"
+         className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 p-4"
+         onClick={onClose}>
+      <div className="card w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold text-maja-navy">Protokoll-Verknüpfung lösen?</h2>
+        {hasTracking ? (
+          <p className="mt-2 text-sm text-maja-ink">
+            Folgende automatisch übernommene Daten werden entfernt:
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-amber-800">
+            <strong>Achtung:</strong> Es kann nicht festgestellt werden, welche Daten
+            automatisch übernommen wurden. Du kannst entweder alle Protokoll-typischen
+            Felder zurücksetzen oder nur die Verknüpfung lösen und die Daten beibehalten.
+          </p>
+        )}
+        <ul className="mt-3 list-inside list-disc rounded-lg bg-maja-light/40 px-4 py-2 text-sm text-maja-ink">
+          {display.map((f) => (
+            <li key={f}>{PROTOKOLL_FELD_LABEL[f] ?? f}</li>
+          ))}
+        </ul>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>
+            Abbrechen
+          </button>
+          {!hasTracking && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => onConfirm(false)}
+              disabled={busy}
+            >
+              Nur Verknüpfung lösen
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-primary bg-red-600 hover:bg-red-700"
+            onClick={() => onConfirm(true)}
+            disabled={busy}
+          >
+            {busy
+              ? 'Wird gelöst …'
+              : hasTracking ? 'Verknüpfung lösen' : 'Alle Protokoll-Felder zurücksetzen'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

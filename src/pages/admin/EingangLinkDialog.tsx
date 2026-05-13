@@ -86,6 +86,7 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
     // Bereits eingetragene Tour-Werte werden NICHT überschrieben.
     const patch: TourUpdate = { eingang_id: formular.id };
     const filled: string[] = [];
+    const fieldKeys: string[] = [];
     function maybe(key: keyof TourUpdate, label: string, current: unknown, next: unknown) {
       const isEmpty = current == null
         || (typeof current === 'string' && current.trim() === '')
@@ -93,6 +94,7 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
       if (isEmpty && next != null && next !== '' && !(Array.isArray(next) && next.length === 0)) {
         (patch as Record<string, unknown>)[key as string] = next;
         filled.push(label);
+        fieldKeys.push(key as string);
       }
     }
     maybe('fin', 'FIN', tour.fin, summary.fin);
@@ -112,6 +114,12 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
     if (kontaktPayload) {
       maybe('kontakt_start', 'Kontakt Übernahme', tour.kontakt_start, kontaktPayload);
       maybe('kontakt_ziel',  'Kontakt Übergabe',  tour.kontakt_ziel,  kontaktPayload);
+    }
+
+    // Liste der durch das Protokoll befüllten Spalten persistieren —
+    // wird beim "Verknüpfung lösen" wieder gezielt zurückgesetzt.
+    if (fieldKeys.length > 0) {
+      (patch as Record<string, unknown>).protokoll_daten_felder = fieldKeys;
     }
 
     const { error: err } = await supabase
@@ -307,6 +315,22 @@ function buildTourPayload(
   const start = firstCity(s.adresseUebernahme) || 'Übernahme';
   const ziel  = firstCity(s.adresseUebergabe) || 'Übergabe';
   const kennzeichen = s.kennzeichen ? [s.kennzeichen.toUpperCase()] : [];
+  const kontakt = (s.kontaktName || s.kontaktTelefon || s.kontaktEmail)
+    ? { name: s.kontaktName ?? '', telefon: s.kontaktTelefon ?? '', email: s.kontaktEmail ?? '' }
+    : null;
+  // Bei neuer Tour: alle Spalten, die durch das Protokoll Werte erhalten,
+  // im protokoll_daten_felder-Array merken. Damit kann der Admin später
+  // gezielt nur diese Felder zurücksetzen.
+  const protokollFelder: string[] = [];
+  if (s.fin) protokollFelder.push('fin');
+  if (kennzeichen.length > 0) protokollFelder.push('kennzeichen');
+  if (s.adresseUebernahme) protokollFelder.push('adresse_start');
+  if (s.adresseUebergabe) protokollFelder.push('adresse_ziel');
+  if (s.kundenname) protokollFelder.push('kundenname');
+  if (s.kmGesamt != null) protokollFelder.push('km_hin', 'km_gesamt');
+  if (s.datum) protokollFelder.push('startdatum');
+  if (kontakt) protokollFelder.push('kontakt_start', 'kontakt_ziel');
+
   return {
     start_stadt: start,
     ziel_stadt: ziel,
@@ -319,20 +343,9 @@ function buildTourPayload(
     startdatum: s.datum,
     adresse_start: s.adresseUebernahme,
     adresse_ziel: s.adresseUebergabe,
-    kontakt_start: (s.kontaktName || s.kontaktTelefon || s.kontaktEmail)
-      ? {
-          name: s.kontaktName ?? '',
-          telefon: s.kontaktTelefon ?? '',
-          email: s.kontaktEmail ?? '',
-        }
-      : null,
-    kontakt_ziel: (s.kontaktName || s.kontaktTelefon || s.kontaktEmail)
-      ? {
-          name: s.kontaktName ?? '',
-          telefon: s.kontaktTelefon ?? '',
-          email: s.kontaktEmail ?? '',
-        }
-      : null,
+    kontakt_start: kontakt,
+    kontakt_ziel: kontakt,
     eingang_id: eingangId,
+    protokoll_daten_felder: protokollFelder,
   };
 }

@@ -201,6 +201,7 @@ export type Database = {
           kontakt_ziel: Json | null;
           kontakt_rueckfuehrung: Json | null;
           app_notiz: string | null;
+          protokoll_daten_felder: string[];
           created_at: string;
           updated_at: string;
         };
@@ -241,6 +242,7 @@ export type Database = {
           kontakt_ziel?: Json | null;
           kontakt_rueckfuehrung?: Json | null;
           app_notiz?: string | null;
+          protokoll_daten_felder?: string[];
           created_at?: string;
           updated_at?: string;
         };
@@ -281,6 +283,7 @@ export type Database = {
           kontakt_ziel?: Json | null;
           kontakt_rueckfuehrung?: Json | null;
           app_notiz?: string | null;
+          protokoll_daten_felder?: string[];
           created_at?: string;
           updated_at?: string;
         };
