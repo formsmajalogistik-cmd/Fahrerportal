@@ -182,9 +182,12 @@ export type AusgefuelltesFormular = Omit<AfRow, 'daten'> & {
   daten: Record<string, unknown>;
 };
 
-// Foto-Werte im daten-JSON: { storage_path, mime_type?, size_bytes? }
+// Foto-Werte im daten-JSON.
+// Nach erfolgreichem Upload: storage_path gesetzt.
+// Offline / Upload-Queue: pending_id gesetzt — der Blob liegt in IDB.
 export interface PhotoValue {
-  storage_path: string;
+  storage_path?: string;
+  pending_id?: string;
   mime_type?: string;
   size_bytes?: number;
 }

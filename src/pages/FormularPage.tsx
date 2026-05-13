@@ -10,8 +10,19 @@ import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { generateAndUploadFormPdfs, sendTemplateEmail } from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
+import {
+  deleteFormDraft, enqueueSubmission, getFormDraft, getUploadsForFormular,
+  saveFormDraft,
+} from '../lib/offlineDb';
+import { useSync } from '../sync/SyncContext';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
+
+function parseTime(s: string | null | undefined): number {
+  if (!s) return 0;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : 0;
+}
 
 function parseSchema(raw: unknown): FormSchema {
   let value: unknown = raw;
@@ -37,6 +48,9 @@ export function FormularPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<'idle' | 'draft' | 'submit'>('idle');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  // Kurzer Auto-Save-Hinweis ("Automatisch gespeichert"), verschwindet nach 3s.
+  const [autoSaveHint, setAutoSaveHint] = useState<string | null>(null);
+  const { triggerSync } = useSync();
 
   // ---- Dirty-Tracking + Unsaved-Warnung ----
   const [savedDataJson, setSavedDataJson] = useState<string>('{}');
@@ -105,23 +119,33 @@ export function FormularPage() {
       setFormular(af as unknown as AusgefuelltesFormular);
       setTemplate(normalizedTpl);
 
-      const localKey = `formular-draft-${af.id}`;
-      let nextData = (af.daten as unknown as Record<string, unknown>) ?? {};
+      // Lokalen Entwurf aus IndexedDB einlesen. Wenn er neuer ist als der
+      // Server-Stand (oder der Server gar kein updated_at hat), nehmen wir
+      // den lokalen Stand — der Fahrer hat zuletzt daran gearbeitet.
+      const serverData = (af.daten as unknown as Record<string, unknown>) ?? {};
+      const serverTime = parseTime(af.created_at);
+      let nextData = serverData;
+      let restoredFromLocal = false;
       try {
-        const cached = sessionStorage.getItem(localKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed && typeof parsed === 'object') {
-            nextData = { ...nextData, ...parsed };
-          }
+        const local = await getFormDraft(af.id);
+        if (local && local.savedAt > serverTime) {
+          nextData = local.data;
+          restoredFromLocal = true;
         }
       } catch (err) {
-        console.warn('[FormularPage] sessionStorage-Lesen fehlgeschlagen', err);
+        console.warn('[FormularPage] IDB-Lesen fehlgeschlagen', err);
       }
+      // Legacy: alten sessionStorage-Eintrag — falls vorhanden — räumen.
+      try { sessionStorage.removeItem(`formular-draft-${af.id}`); } catch { /* ignore */ }
+
       setData(nextData);
       // Saved-State spiegelt das, was tatsächlich in der DB liegt.
-      setSavedDataJson(JSON.stringify((af.daten as unknown as Record<string, unknown>) ?? {}));
+      setSavedDataJson(JSON.stringify(serverData));
       setLoading(false);
+      if (restoredFromLocal) {
+        setAutoSaveHint('Daten wiederhergestellt');
+        window.setTimeout(() => setAutoSaveHint((h) => h === 'Daten wiederhergestellt' ? null : h), 3000);
+      }
     })();
     return () => { cancelled = true; };
   }, [id]);
@@ -129,19 +153,55 @@ export function FormularPage() {
   const readonly = formular?.status === 'submitted';
 
   const handleChange = useCallback((fieldId: string, value: unknown) => {
-    setData((prev) => {
-      const next = { ...prev, [fieldId]: value };
-      if (id) {
-        try { sessionStorage.setItem(`formular-draft-${id}`, JSON.stringify(next)); }
-        catch {/* QuotaExceeded etc. ignorieren */}
-      }
-      return next;
-    });
-  }, [id]);
+    setData((prev) => ({ ...prev, [fieldId]: value }));
+  }, []);
 
-  function clearLocalDraft() {
+  // Auto-Save: debounced 2 s nach der letzten Änderung in IndexedDB.
+  // Damit gehen Daten bei App-Wechsel / schwarzem Bildschirm nicht verloren.
+  const autoSaveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!formular || readonly) return;
+    if (!dirty) return; // nichts zu sichern
+    if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      void saveFormDraft({
+        id: formular.id,
+        data,
+        serverUpdatedAt: formular.created_at ?? null,
+        savedAt: Date.now(),
+      }).then(() => {
+        setAutoSaveHint('Automatisch gespeichert');
+        window.setTimeout(() => setAutoSaveHint((h) => h === 'Automatisch gespeichert' ? null : h), 3000);
+      }).catch((err) => {
+        console.warn('[FormularPage] Auto-Save fehlgeschlagen', err);
+      });
+    }, 2000);
+    return () => {
+      if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+    };
+  // formular?.updated_at sich zu merken ist OK — verhindert Stale-Closure.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, dirty, readonly, formular?.id]);
+
+  // Wenn der Sync-Drainer einen Upload abgeschlossen hat, ist der Entwurf
+  // in IDB jetzt aktueller (Photo-Feld zeigt jetzt storage_path). Wir laden
+  // den Stand neu und übernehmen ihn ins UI.
+  useEffect(() => {
+    if (!formular) return;
+    function handler(e: Event) {
+      const ev = e as CustomEvent<{ formularId: string }>;
+      if (ev.detail?.formularId !== formular?.id) return;
+      void getFormDraft(formular!.id).then((d) => {
+        if (d) setData(d.data);
+      });
+    }
+    window.addEventListener('maja:draft-updated', handler as EventListener);
+    return () => window.removeEventListener('maja:draft-updated', handler as EventListener);
+  }, [formular]);
+
+  async function clearLocalDraft() {
     if (!id) return;
-    try { sessionStorage.removeItem(`formular-draft-${id}`); } catch {/* ignore */}
+    try { await deleteFormDraft(id); } catch { /* ignore */ }
   }
 
   async function saveDraft(): Promise<void> {
@@ -154,7 +214,7 @@ export function FormularPage() {
       .eq('id', formular.id);
     setSaving('idle');
     if (err) { setError(err.message); throw new Error(err.message); }
-    clearLocalDraft();
+    await clearLocalDraft();
     setStatusMsg('Entwurf gespeichert.');
     setSavedDataJson(JSON.stringify(data));
   }
@@ -168,12 +228,63 @@ export function FormularPage() {
     }
     setSaving('submit');
     setError(null);
+
+    // Wenn offline ODER noch Photo-Uploads anhängig sind: in IDB als
+    // pending-submission ablegen und User informieren. Der Sync-Drainer
+    // reicht das Formular nach, sobald wieder Empfang da ist und die
+    // Upload-Queue für dieses Formular leer ist.
+    const pendingUploads = await getUploadsForFormular(formular.id).catch(() => []);
+    if (!navigator.onLine || pendingUploads.length > 0) {
+      await enqueueSubmission({
+        formularId: formular.id,
+        data,
+        queuedAt: Date.now(),
+        attempts: 0,
+        lastError: null,
+      });
+      // Den Entwurf NICHT löschen — falls noch Edits nötig werden.
+      await saveFormDraft({
+        id: formular.id, data,
+        serverUpdatedAt: formular.created_at ?? null,
+        savedAt: Date.now(),
+      });
+      setSaving('idle');
+      triggerSync();
+      setSubmittedSummary(
+        navigator.onLine
+          ? 'Formular gespeichert — wird automatisch eingereicht, sobald alle Bilder hochgeladen sind.'
+          : 'Formular gespeichert — wird automatisch eingereicht, sobald du wieder online bist.',
+      );
+      setRedirectIn(REDIRECT_AFTER_SUBMIT_MS);
+      if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+      redirectTimerRef.current = window.setTimeout(() => navigate('/touren'), REDIRECT_AFTER_SUBMIT_MS);
+      return;
+    }
+
     const { error: err } = await supabase
       .from('ausgefuellte_formulare')
       .update({ daten: data as Json, status: 'submitted' })
       .eq('id', formular.id);
-    if (err) { setSaving('idle'); setError(err.message); return; }
-    clearLocalDraft();
+    if (err) {
+      // Netzwerk-Fehler trotz online=true → wie Offline behandeln.
+      await enqueueSubmission({
+        formularId: formular.id, data, queuedAt: Date.now(), attempts: 0,
+        lastError: err.message,
+      });
+      await saveFormDraft({
+        id: formular.id, data,
+        serverUpdatedAt: formular.created_at ?? null,
+        savedAt: Date.now(),
+      });
+      setSaving('idle');
+      triggerSync();
+      setSubmittedSummary('Formular gespeichert — wird automatisch eingereicht, sobald die Verbindung wieder funktioniert.');
+      setRedirectIn(REDIRECT_AFTER_SUBMIT_MS);
+      if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+      redirectTimerRef.current = window.setTimeout(() => navigate('/touren'), REDIRECT_AFTER_SUBMIT_MS);
+      return;
+    }
+    await clearLocalDraft();
     const submitted = { ...formular, daten: data, status: 'submitted' as const };
     setFormular(submitted);
     setSavedDataJson(JSON.stringify(data));
@@ -406,6 +517,7 @@ export function FormularPage() {
           onChange={handleChange}
           disabled={readonly}
           oneDriveFolder={oneDriveFolder}
+          formularId={formular.id}
         />
       </ErrorBoundary>
 
@@ -450,6 +562,11 @@ export function FormularPage() {
       {statusMsg && (
         <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
           {statusMsg}
+        </div>
+      )}
+      {autoSaveHint && (
+        <div className="pointer-events-none fixed bottom-20 left-1/2 z-30 -translate-x-1/2 rounded-full bg-maja-navy/90 px-3 py-1 text-xs font-medium text-white shadow">
+          {autoSaveHint}
         </div>
       )}
 

@@ -312,7 +312,7 @@ export async function fillPdf(
       // photo
       if (entry.type === 'photo') {
         const photo = asPhoto(value);
-        if (!photo) continue;
+        if (!photo || !photo.storage_path) continue;
         const bytes = await fetchSubmittedPhotoBytes(photo.storage_path);
         if (!bytes) continue;
         try {
@@ -362,6 +362,7 @@ export async function fillPdf(
       for (let i = 0; i < photos.length; i += 1) {
         const slot = slots[i];
         const photo = photos[i];
+        if (!photo.storage_path) continue;
         const bytes = await fetchSubmittedPhotoBytes(photo.storage_path);
         if (!bytes) continue;
         try {

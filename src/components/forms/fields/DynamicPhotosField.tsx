@@ -165,6 +165,7 @@ function DynamicPhotoTile({
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
+    if (!photo.storage_path) { setUrl(null); return; }
     getPhotoUrl(photo.storage_path).then((u) => {
       if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
       createdUrl = u; setUrl(u);

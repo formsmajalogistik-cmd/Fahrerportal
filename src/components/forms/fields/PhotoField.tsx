@@ -3,6 +3,11 @@ import { compressImage, downloadFile, getPhotoUrl, uploadPhotoToOneDrive } from 
 import { useAuth } from '../../../auth/AuthContext';
 import { ActionSheet } from '../../ActionSheet';
 import { useLongPress } from '../../../lib/useLongPress';
+import {
+  enqueueUpload, getUploadQueue, removeFromUploadQueue,
+  type UploadQueueItem,
+} from '../../../lib/offlineDb';
+import { useSync } from '../../../sync/SyncContext';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
@@ -10,37 +15,46 @@ interface Props {
   value: unknown;
   /** OneDrive-Ordner des Formulars (z.B. "Maja-Logistik/Formulare/2026-05/…"). */
   oneDriveFolder: string;
+  /** Formular-Instanz-ID — Upload-Queue-Einträge werden darüber zugeordnet. */
+  formularId?: string;
   onChange: (v: PhotoValue | null) => void;
   disabled?: boolean;
 }
 
 function asPhoto(v: unknown): PhotoValue | null {
-  if (v && typeof v === 'object' && 'storage_path' in v) return v as PhotoValue;
+  if (v && typeof v === 'object' && ('storage_path' in v || 'pending_id' in v)) {
+    return v as PhotoValue;
+  }
   return null;
 }
 
-export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }: Props) {
+function makeUploadId(formularId: string, fieldId: string): string {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${formularId}:${fieldId}:${Date.now().toString(36)}-${rand}`;
+}
+
+export function PhotoField({ field, value, oneDriveFolder, formularId, onChange, disabled }: Props) {
   const { profile } = useAuth();
+  const { triggerSync, online } = useSync();
   const current = asPhoto(value);
+  const isPending = !!current?.pending_id;
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Local-Preview (objectURL) zeigt das Foto sofort an, noch während im
-  // Hintergrund komprimiert + hochgeladen wird.
+  // Local-Preview (objectURL) — sofortige Vorschau aus dem aufgenommenen
+  // bzw. aus IDB nachgeladenen Blob.
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState<'add' | 'edit' | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
+  // Online-Bild laden, wenn storage_path gesetzt ist.
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
     if (current?.storage_path) {
       getPhotoUrl(current.storage_path).then((u) => {
-        if (cancelled) {
-          if (u) URL.revokeObjectURL(u);
-          return;
-        }
+        if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
         createdUrl = u;
         setSignedUrl(u);
       });
@@ -53,6 +67,28 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
     };
   }, [current?.storage_path]);
 
+  // Pending-Bild aus IDB nachladen — Preview-Blob für Felder, deren
+  // Upload noch in der Queue steht (z.B. nach App-Restart, schwarzer
+  // Bildschirm-Recovery).
+  useEffect(() => {
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    if (current?.pending_id) {
+      void getUploadQueue().then((items) => {
+        if (cancelled) return;
+        const item = items.find((i) => i.id === current.pending_id);
+        if (item) {
+          createdUrl = URL.createObjectURL(item.blob);
+          setLocalPreviewUrl(createdUrl);
+        }
+      });
+    }
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [current?.pending_id]);
+
   // ObjectURL nach Wechsel wieder freigeben
   useEffect(() => {
     return () => {
@@ -62,40 +98,72 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
 
   async function handleFile(file: File, fromCamera: boolean) {
     setError(null);
-    // Sofortige lokale Vorschau aus dem Original — der User sieht sein Foto,
-    // bevor Komprimierung und Upload abgeschlossen sind.
+    // Sofortige lokale Vorschau aus dem Original.
     const localUrl = URL.createObjectURL(file);
     setLocalPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return localUrl; });
 
     setUploading(true);
+    let compressed: File;
     try {
-      const compressed = await compressImage(file);
-      if (fromCamera && profile?.save_to_gallery) {
-        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-        await downloadFile(compressed, `${field.id}_${ts}.jpg`);
-      }
-      const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
-      const filename = `${field.id}.${ext}`;
-      const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
-      onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');
-    } finally {
-      setUploading(false);
+      compressed = await compressImage(file);
+    } catch {
+      compressed = file;
     }
+    if (fromCamera && profile?.save_to_gallery) {
+      const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+      try { await downloadFile(compressed, `${field.id}_${ts}.jpg`); } catch { /* ignore */ }
+    }
+    const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
+    const filename = `${field.id}.${ext}`;
+
+    // Online + Verbindung intakt → direkter Upload.
+    if (navigator.onLine) {
+      try {
+        const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
+        onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
+        setUploading(false);
+        return;
+      } catch (err) {
+        console.warn('[PhotoField] Direkter Upload fehlgeschlagen — gehe in Queue', err);
+      }
+    }
+
+    // Offline oder Upload fehlgeschlagen → in IDB-Queue legen.
+    if (formularId) {
+      const id = makeUploadId(formularId, field.id);
+      const item: UploadQueueItem = {
+        id, formularId, fieldId: field.id,
+        folder: oneDriveFolder, filename, blob: compressed,
+        attempts: 0, nextRetryAt: 0, lastError: null,
+      };
+      try {
+        await enqueueUpload(item);
+        onChange({
+          pending_id: id,
+          mime_type: compressed.type,
+          size_bytes: compressed.size,
+        });
+        triggerSync();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Konnte Bild lokal nicht speichern');
+      }
+    } else {
+      setError('Upload nicht möglich (keine Formular-ID).');
+    }
+    setUploading(false);
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (localPreviewUrl) { URL.revokeObjectURL(localPreviewUrl); setLocalPreviewUrl(null); }
+    if (current?.pending_id) {
+      try { await removeFromUploadQueue(current.pending_id); } catch { /* ignore */ }
+    }
     onChange(null);
   }
 
   const previewUrl = localPreviewUrl ?? signedUrl;
   const hasPhoto = !!previewUrl;
 
-  // Tap → "Hinzufügen"-Sheet (nur wenn leer). Long-Press → Edit-Sheet.
-  // onClick übernimmt der Browser zuverlässig (auch die Scroll-vs-Tap-
-  // Unterscheidung); wir steuern nur den Long-Press-Timer.
   const longPress = useLongPress({
     onLongPress: () => {
       if (disabled || !hasPhoto) return;
@@ -103,17 +171,12 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
     },
     onClick: () => {
       if (disabled) return;
-      // Vorhandenes Bild: Tap macht nichts (Edit ist Long-Press); leeres
-      // Feld: Tap öffnet das Hinzufügen-Sheet.
       if (!hasPhoto) setSheetOpen('add');
     },
   });
 
   return (
     <div>
-      {/* Label-Bereich mit fixer Mindesthöhe (≈ 2 Zeilen), damit im
-          2-Spalten-Grid die Bild-Boxen unabhängig von der Label-Länge
-          immer auf gleicher vertikaler Position starten. */}
       <label className="label min-h-[2.5rem] leading-tight">
         {field.label}{field.required && <span className="text-red-600"> *</span>}
       </label>
@@ -143,10 +206,14 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
             <span className="text-xs font-medium">Foto hinzufügen</span>
           </div>
         )}
-        {uploading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs font-medium text-maja-navy">
-            Hochladen …
-          </div>
+        {/* Upload-Status-Indikator unten rechts */}
+        {hasPhoto && (
+          <UploadBadge
+            uploading={uploading}
+            pending={isPending}
+            online={online}
+            uploaded={!!current?.storage_path && !isPending}
+          />
         )}
       </div>
 
@@ -194,11 +261,41 @@ export function PhotoField({ field, value, oneDriveFolder, onChange, disabled }:
         actions={[
           { label: 'Foto ersetzen', onClick: () => cameraRef.current?.click(), icon: <IconCamera /> },
           { label: 'Aus Galerie wählen', onClick: () => galleryRef.current?.click(), icon: <IconImage /> },
-          { label: 'Foto löschen', onClick: handleDelete, destructive: true, icon: <IconTrash /> },
+          { label: 'Foto löschen', onClick: () => void handleDelete(), destructive: true, icon: <IconTrash /> },
         ]}
       />
     </div>
   );
+}
+
+function UploadBadge({ uploading, pending, uploaded, online }: {
+  uploading: boolean; pending: boolean; uploaded: boolean; online: boolean;
+}) {
+  if (uploading) {
+    return (
+      <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-maja-navy shadow">
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+        Upload läuft
+      </span>
+    );
+  }
+  if (pending) {
+    return (
+      <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-maja-navy shadow">
+        <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+        {online ? 'Warte auf Upload' : 'Offline'}
+      </span>
+    );
+  }
+  if (uploaded) {
+    return (
+      <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-maja-navy shadow">
+        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        Hochgeladen
+      </span>
+    );
+  }
+  return null;
 }
 
 function IconCamera() {

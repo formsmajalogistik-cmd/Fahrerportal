@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import { AuthProvider } from './auth/AuthContext';
 import { FahrerProvider } from './auth/FahrerContext';
+import { SyncProvider } from './sync/SyncContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 import './index.css';
@@ -54,7 +55,9 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <AuthProvider>
           <FahrerProvider>
-            <App />
+            <SyncProvider>
+              <App />
+            </SyncProvider>
           </FahrerProvider>
         </AuthProvider>
       </BrowserRouter>

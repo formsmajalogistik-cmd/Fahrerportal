@@ -20,11 +20,14 @@ interface Props {
   disabled?: boolean;
   /** OneDrive-Ordner des Formulars — Photos landen unter <folder>/Fotos/ */
   oneDriveFolder: string;
+  /** ID der Formular-Instanz (ausgefuellte_formulare.id) — Photo-Felder
+   *  brauchen sie für die Upload-Queue. */
+  formularId?: string;
   /** Optional: nur diese Sections rendern (für Seitenfilterung). */
   sections?: FormSection[];
 }
 
-export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder, sections }: Props) {
+export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder, formularId, sections }: Props) {
   const visible = sections ?? schema.sections ?? [];
   return (
     <div className="space-y-6">
@@ -54,6 +57,7 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
                         onChange={(v) => onChange(field.id, v)}
                         disabled={disabled}
                         oneDriveFolder={oneDriveFolder}
+                        formularId={formularId}
                       />
                     </FieldErrorWrapper>
                   ))}
@@ -106,9 +110,10 @@ interface FieldProps {
   onChange: (v: unknown) => void;
   disabled?: boolean;
   oneDriveFolder: string;
+  formularId?: string;
 }
 
-function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder }: FieldProps) {
+function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder, formularId }: FieldProps) {
   switch (field.type) {
     case 'text':
       return <TextField field={field} value={value} onChange={onChange} disabled={disabled} />;
@@ -129,6 +134,7 @@ function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder }: Field
         <PhotoField
           field={field} value={value}
           oneDriveFolder={oneDriveFolder}
+          formularId={formularId}
           onChange={onChange} disabled={disabled}
         />
       );

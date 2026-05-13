@@ -2,6 +2,7 @@ import { type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
+import { OfflineBanner } from './OfflineBanner';
 
 interface NavItem { to: string; label: string }
 
@@ -17,6 +18,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-maja-light">
+      <OfflineBanner />
       <header className="sticky top-0 z-10 border-b border-maja-navy/10 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <MajaLogo className="h-9" />
