@@ -19,7 +19,11 @@ function asArray(v: unknown): PhotoValue[] {
   );
 }
 
-const MAX_DYNAMIC_PHOTOS = 8;
+// Sehr hohes Limit — die einzelne PDF-Seite wird beim Export automatisch
+// dupliziert, sobald die konfigurierten Slot-Plätze auf einer Seite
+// überlaufen. 100 deckt alle realistischen Anwendungsfälle ab und schützt
+// trotzdem vor versehentlichen Massen-Uploads.
+const MAX_DYNAMIC_PHOTOS = 100;
 
 export function DynamicPhotosField({
   field, value, oneDriveFolder, onChange, disabled,
@@ -75,7 +79,8 @@ export function DynamicPhotosField({
       <p className="mb-2 text-xs text-maja-muted">
         Klicke auf einen der Buttons, um beliebig viele Fotos zu erfassen.
         Die Fotos werden im PDF der Reihe nach in die vorgesehenen Platzhalter
-        eingesetzt.
+        eingesetzt. Bei mehr Fotos als Slots auf der PDF-Seite wird die Seite
+        beim Export automatisch dupliziert.
       </p>
 
       {items.length > 0 && (

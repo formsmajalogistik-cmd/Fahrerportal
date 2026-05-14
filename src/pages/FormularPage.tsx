@@ -14,6 +14,7 @@ import {
   deleteFormDraft, enqueueSubmission, getFormDraft, getUploadsForFormular,
   saveFormDraft,
 } from '../lib/offlineDb';
+import { useAuth } from '../auth/AuthContext';
 import { useSync } from '../sync/SyncContext';
 import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
 import type { Json } from '../types/supabase';
@@ -51,6 +52,10 @@ export function FormularPage() {
   // Kurzer Auto-Save-Hinweis ("Automatisch gespeichert"), verschwindet nach 3s.
   const [autoSaveHint, setAutoSaveHint] = useState<string | null>(null);
   const { triggerSync } = useSync();
+  const { session } = useAuth();
+  // E-Mail des aktuell eingeloggten Nutzers — bekommt automatisch eine
+  // Kopie jeder Submission als CC.
+  const submitterEmail = session?.user?.email ?? null;
 
   // ---- Dirty-Tracking + Unsaved-Warnung ----
   const [savedDataJson, setSavedDataJson] = useState<string>('{}');
@@ -241,6 +246,7 @@ export function FormularPage() {
         queuedAt: Date.now(),
         attempts: 0,
         lastError: null,
+        submitterEmail,
       });
       // Den Entwurf NICHT löschen — falls noch Edits nötig werden.
       await saveFormDraft({
@@ -269,7 +275,7 @@ export function FormularPage() {
       // Netzwerk-Fehler trotz online=true → wie Offline behandeln.
       await enqueueSubmission({
         formularId: formular.id, data, queuedAt: Date.now(), attempts: 0,
-        lastError: err.message,
+        lastError: err.message, submitterEmail,
       });
       await saveFormDraft({
         id: formular.id, data,
@@ -297,7 +303,7 @@ export function FormularPage() {
         ? `Formular erfolgreich eingereicht — ${generated.length} PDF${generated.length === 1 ? '' : 's'} wurden generiert und in OneDrive abgelegt.`
         : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
       try {
-        const r = await sendTemplateEmail(template, submitted, generated);
+        const r = await sendTemplateEmail(template, submitted, generated, submitterEmail);
         if (r.sent) summary += ' Email versendet.';
       } catch (emailErr) {
         console.warn('[FormularPage] Email-Versand fehlgeschlagen', emailErr);

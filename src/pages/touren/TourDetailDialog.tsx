@@ -1917,7 +1917,6 @@ function EingangPdfDownloads({
   const tpl: FormularTemplate = {
     id: template.id,
     name: template.name,
-    auftraggeber_id: null,
     schema: (template.schema as FormularTemplate['schema']) ?? { sections: [] },
     pdfs: template.pdfs ?? [],
     email_config: null,

@@ -235,7 +235,7 @@ async function processPendingSubmissions(): Promise<void> {
       const formularStub = { id: sub.formularId, daten: sub.data } as never;
       try {
         const generated = await generateAndUploadFormPdfs(template, formularStub);
-        await sendTemplateEmail(template, formularStub, generated);
+        await sendTemplateEmail(template, formularStub, generated, sub.submitterEmail ?? null);
       } catch (postErr) {
         // PDF/Email-Fehler nach erfolgtem Submit nur loggen — Status
         // ist bereits "submitted", Admin kann manuell nachsenden.

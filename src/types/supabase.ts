@@ -471,7 +471,6 @@ export type Database = {
         Row: {
           id: string;
           name: string;
-          auftraggeber_id: string | null;
           schema: Json;
           pdfs: Json;
           email_config: Json | null;
@@ -480,7 +479,6 @@ export type Database = {
         Insert: {
           id?: string;
           name: string;
-          auftraggeber_id?: string | null;
           schema: Json;
           pdfs?: Json;
           email_config?: Json | null;
@@ -489,20 +487,12 @@ export type Database = {
         Update: {
           id?: string;
           name?: string;
-          auftraggeber_id?: string | null;
           schema?: Json;
           pdfs?: Json;
           email_config?: Json | null;
           sichtbar?: boolean;
         };
-        Relationships: [
-          {
-            foreignKeyName: 'formular_templates_auftraggeber_id_fkey';
-            columns: ['auftraggeber_id'];
-            referencedRelation: 'auftraggeber';
-            referencedColumns: ['id'];
-          },
-        ];
+        Relationships: [];
       };
       ausgefuellte_formulare: {
         Row: {

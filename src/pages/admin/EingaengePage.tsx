@@ -9,7 +9,7 @@ import {
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { EingangLinkDialog } from './EingangLinkDialog';
 import type {
-  AppUser, Auftraggeber, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
+  AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
 } from '../../types/db';
 
 interface Row extends AusgefuelltesFormular {
@@ -18,12 +18,8 @@ interface Row extends AusgefuelltesFormular {
     user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
   } | null;
   template?:
-    & Pick<FormularTemplate, 'id' | 'name' | 'auftraggeber_id'>
-    & {
-      pdfs: TemplatePdf[];
-      schema: unknown;
-      auftraggeber?: Pick<Auftraggeber, 'name'> | null;
-    }
+    & Pick<FormularTemplate, 'id' | 'name'>
+    & { pdfs: TemplatePdf[]; schema: unknown }
     | null;
   /** Verknüpfte Tour (oder null). */
   tour?: { id: string; tour_id: string | null } | null;
@@ -43,16 +39,13 @@ export function EingaengePage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    // 1. Eingänge laden inkl. Template + Auftraggeber-Name
+    // 1. Eingänge laden inkl. Template-Stammdaten
     const { data, error: err } = await supabase
       .from('ausgefuellte_formulare')
       .select(`
         *,
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
-        template:template_id (
-          id, name, pdfs, schema, auftraggeber_id,
-          auftraggeber:auftraggeber_id (name)
-        )
+        template:template_id (id, name, pdfs, schema)
       `)
       .order('created_at', { ascending: false })
       .limit(200);
@@ -87,7 +80,6 @@ export function EingaengePage() {
       const tpl: FormularTemplate = {
         id: r.template_id,
         name: r.template.name ?? '',
-        auftraggeber_id: null,
         schema: (r.template.schema as FormularTemplate['schema']) ?? { sections: [] },
         pdfs: r.template.pdfs ?? [],
         email_config: null,
@@ -157,7 +149,6 @@ export function EingaengePage() {
           template={linking.template ? {
             id: linking.template.id,
             name: linking.template.name,
-            auftraggeber_id: linking.template.auftraggeber_id ?? null,
           } : null}
           onClose={() => setLinking(null)}
           onLinked={(filled) => {
@@ -193,11 +184,9 @@ interface CardProps {
 function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
-  const auftraggeber = row.template?.auftraggeber?.name ?? null;
   const tpl: FormularTemplate | null = row.template ? {
     id: row.template_id,
     name: row.template.name ?? '',
-    auftraggeber_id: null,
     schema: (row.template.schema as FormularTemplate['schema']) ?? { sections: [] },
     pdfs: row.template.pdfs ?? [],
     email_config: null,
@@ -233,7 +222,6 @@ function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink }: CardProp
 
           <dl className="mt-3 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
             <Detail label="Fahrer">{fahrer}</Detail>
-            {auftraggeber && <Detail label="Auftraggeber">{auftraggeber}</Detail>}
             {summary.kundenname && <Detail label="Kunde">{summary.kundenname}</Detail>}
             {summary.fin && <Detail label="FIN" mono>{summary.fin}</Detail>}
             {summary.adresseUebernahme && (

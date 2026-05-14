@@ -53,6 +53,8 @@ export interface PendingSubmissionRecord {
   attempts: number;
   /** Letzte Fehlermeldung. */
   lastError: string | null;
+  /** E-Mail des einreichenden Nutzers — wird beim Sync als CC ergänzt. */
+  submitterEmail?: string | null;
 }
 
 interface OfflineDbSchema extends DBSchema {

@@ -4,11 +4,9 @@ import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { TemplateNewDialog } from './TemplateNewDialog';
-import type { Auftraggeber, FormularTemplate } from '../../types/db';
+import type { FormularTemplate } from '../../types/db';
 
-interface Row extends FormularTemplate {
-  auftraggeber?: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
-}
+type Row = FormularTemplate;
 
 export function TemplatesListPage() {
   const navigate = useNavigate();
@@ -23,7 +21,7 @@ export function TemplatesListPage() {
     setError(null);
     const { data, error: err } = await supabase
       .from('formular_templates')
-      .select('*, auftraggeber:auftraggeber_id (name, kontakt)')
+      .select('*')
       .order('name');
     if (err) setError(err.message);
     else setRows((data as unknown as Row[]) ?? []);
@@ -110,19 +108,13 @@ export function TemplatesListPage() {
                 className={`card flex flex-col p-5 ${t.sichtbar ? '' : 'opacity-60'}`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
-                    {t.auftraggeber?.name ?? 'ohne Auftraggeber'}
-                  </div>
+                  <h3 className="text-base font-semibold text-maja-navy">{t.name}</h3>
                   {!t.sichtbar && (
                     <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-700">
                       Versteckt
                     </span>
                   )}
                 </div>
-                {t.auftraggeber?.kontakt && (
-                  <div className="text-xs text-maja-muted">{t.auftraggeber.kontakt}</div>
-                )}
-                <h3 className="mt-1 text-base font-semibold text-maja-navy">{t.name}</h3>
                 <div className="mt-2 text-xs text-maja-muted">
                   {sectionCount} Sektionen · {fieldCount} Felder
                 </div>

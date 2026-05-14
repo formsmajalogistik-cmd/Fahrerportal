@@ -11,9 +11,7 @@ import type {
   Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../types/db';
 
-interface AssignedTemplate extends FormularTemplate {
-  auftraggeber?: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
-}
+type AssignedTemplate = FormularTemplate;
 
 interface DraftRow extends AusgefuelltesFormular {
   template?: Pick<FormularTemplate, 'id' | 'name'> | null;
@@ -67,7 +65,7 @@ export function FahrerDashboard() {
     const isAdminView = profile?.role === 'admin';
     let tplQuery = supabase
       .from('formular_templates')
-      .select('*, auftraggeber:auftraggeber_id (name, kontakt)');
+      .select('*');
     if (!isAdminView) tplQuery = tplQuery.eq('sichtbar', true);
     const tplPromise = tplQuery.order('name');
 
@@ -366,19 +364,13 @@ function AssignedCard({
   return (
     <li className={`card flex flex-col p-5 transition hover:shadow-lg ${template.sichtbar ? '' : 'opacity-60'}`}>
       <div className="flex items-start justify-between gap-2">
-        <div className="text-xs font-medium uppercase tracking-wide text-maja-accent">
-          {template.auftraggeber?.name ?? 'Maja-Logistik'}
-        </div>
+        <h3 className="text-base font-semibold text-maja-navy">{template.name}</h3>
         {!template.sichtbar && (
           <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-700">
             Versteckt
           </span>
         )}
       </div>
-      {template.auftraggeber?.kontakt && (
-        <div className="text-xs text-maja-muted">{template.auftraggeber.kontakt}</div>
-      )}
-      <h3 className="mt-1 text-base font-semibold text-maja-navy">{template.name}</h3>
       <div className="mt-1 text-xs text-maja-muted">
         {(template.schema?.sections ?? []).length} Sektionen
       </div>

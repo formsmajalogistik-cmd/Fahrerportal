@@ -1,10 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
   fahrzeugprotokollSchema,
   FAHRZEUGPROTOKOLL_DEFAULT_NAME,
 } from '../../lib/templates/fahrzeugprotokoll';
-import type { Auftraggeber } from '../../types/db';
 import type { Json } from '../../types/supabase';
 
 interface Props {
@@ -14,18 +13,8 @@ interface Props {
 
 export function TemplateNewDialog({ onClose, onCreated }: Props) {
   const [name, setName] = useState(FAHRZEUGPROTOKOLL_DEFAULT_NAME);
-  const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
-  const [auftraggeberId, setAuftraggeberId] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from('auftraggeber').select('*').order('name');
-      setAuftraggeber(data ?? []);
-    })();
-  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -33,7 +22,6 @@ export function TemplateNewDialog({ onClose, onCreated }: Props) {
     setError(null);
     const { error: err } = await supabase.from('formular_templates').insert({
       name: name.trim() || FAHRZEUGPROTOKOLL_DEFAULT_NAME,
-      auftraggeber_id: auftraggeberId || null,
       schema: fahrzeugprotokollSchema as unknown as Json,
       pdfs: [] as unknown as Json,
       email_config: null,
@@ -65,26 +53,6 @@ export function TemplateNewDialog({ onClose, onCreated }: Props) {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-          </div>
-
-          <div>
-            <label htmlFor="tpl-ag" className="label">Auftraggeber (optional)</label>
-            <select
-              id="tpl-ag"
-              className="input"
-              value={auftraggeberId}
-              onChange={(e) => setAuftraggeberId(e.target.value)}
-            >
-              <option value="">— kein Auftraggeber —</option>
-              {auftraggeber.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-            {auftraggeber.find((a) => a.id === auftraggeberId)?.kontakt && (
-              <p className="mt-1 text-xs text-maja-muted">
-                Kontakt: {auftraggeber.find((a) => a.id === auftraggeberId)!.kontakt}
-              </p>
-            )}
           </div>
 
           {error && (

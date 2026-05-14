@@ -435,6 +435,10 @@ export async function sendTemplateEmail(
   template: FormularTemplate,
   formular: AusgefuelltesFormular,
   generated: GeneratedPdf[],
+  /** E-Mail des einreichenden Nutzers — wird automatisch als CC ergänzt
+   *  (Duplikate werden entfernt), sodass jeder eine Kopie seiner eigenen
+   *  Einreichung bekommt. */
+  submitterEmail?: string | null,
 ): Promise<{ sent: boolean; reason?: string }> {
   const cfg = template.email_config;
   if (!cfg || !cfg.to || !cfg.to.trim()) {
@@ -443,7 +447,12 @@ export async function sendTemplateEmail(
   const data = formular.daten;
   const splitList = (s: string) => s.split(/[,;]+/).map((x) => x.trim()).filter(Boolean);
   const to = splitList(resolvePattern(cfg.to, data));
-  const cc = cfg.cc ? splitList(resolvePattern(cfg.cc, data)) : [];
+  let cc = cfg.cc ? splitList(resolvePattern(cfg.cc, data)) : [];
+  if (submitterEmail && submitterEmail.includes('@')) {
+    const norm = (a: string) => a.trim().toLowerCase();
+    const present = new Set([...to, ...cc].map(norm));
+    if (!present.has(norm(submitterEmail))) cc = [...cc, submitterEmail];
+  }
   if (to.length === 0) return { sent: false, reason: 'keine Empfänger' };
 
   const subject = resolvePattern(cfg.subject_pattern ?? template.name, data);

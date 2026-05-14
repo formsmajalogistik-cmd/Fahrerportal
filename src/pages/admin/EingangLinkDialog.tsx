@@ -20,7 +20,7 @@ interface TourRow extends Tour {
 
 interface Props {
   formular: AusgefuelltesFormular;
-  template: Pick<FormularTemplate, 'id' | 'name' | 'auftraggeber_id'> | null;
+  template: Pick<FormularTemplate, 'id' | 'name'> | null;
   onClose: () => void;
   /**
    * Wird nach erfolgreicher Verknüpfung aufgerufen. `filledFields` enthält
@@ -32,7 +32,7 @@ interface Props {
 
 type Tab = 'existing' | 'new';
 
-export function EingangLinkDialog({ formular, template, onClose, onLinked }: Props) {
+export function EingangLinkDialog({ formular, template: _template, onClose, onLinked }: Props) {
   const [tab, setTab] = useState<Tab>('existing');
   const [touren, setTouren] = useState<TourRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -134,7 +134,7 @@ export function EingangLinkDialog({ formular, template, onClose, onLinked }: Pro
   async function createAndLink() {
     setLinking(true);
     setError(null);
-    const payload = buildTourPayload(summary, template?.auftraggeber_id ?? null, formular.id);
+    const payload = buildTourPayload(summary, formular.id);
     const { error: err } = await supabase.from('touren').insert(payload);
     setLinking(false);
     if (err) { setError(err.message); return; }
@@ -309,7 +309,6 @@ function firstCity(addr: string | null): string {
 
 function buildTourPayload(
   s: EingangSummary,
-  auftraggeberId: string | null,
   eingangId: string,
 ): TourInsert {
   const start = firstCity(s.adresseUebernahme) || 'Übernahme';
@@ -334,7 +333,7 @@ function buildTourPayload(
   return {
     start_stadt: start,
     ziel_stadt: ziel,
-    auftraggeber_id: auftraggeberId,
+    auftraggeber_id: null,
     fin: s.fin,
     kennzeichen,
     kundenname: s.kundenname,

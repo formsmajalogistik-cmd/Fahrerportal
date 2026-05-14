@@ -8,7 +8,7 @@ import { TemplateMappingEditor } from './TemplateMappingEditor';
 import { TemplateEmailEditor } from './TemplateEmailEditor';
 import { copyPdfInStorage, deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
-  Auftraggeber, EmailConfig, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
+  EmailConfig, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
 } from '../../types/db';
 import type { Json } from '../../types/supabase';
 
@@ -36,9 +36,7 @@ export function TemplateEditorPage() {
   const navigate = useNavigate();
 
   const [template, setTemplate] = useState<FormularTemplate | null>(null);
-  const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
   const [name, setName] = useState('');
-  const [auftraggeberId, setAuftraggeberId] = useState<string>('');
   const [schema, setSchema] = useState<FormSchema>({ sections: [] });
   const [pdfs, setPdfs] = useState<TemplatePdf[]>([]);
   const [activePdfId, setActivePdfId] = useState<string | null>(null);
@@ -56,10 +54,8 @@ export function TemplateEditorPage() {
     if (!id) return;
     setLoading(true);
     setError(null);
-    const [{ data: tpl, error: tplErr }, { data: ag }] = await Promise.all([
-      supabase.from('formular_templates').select('*').eq('id', id).maybeSingle(),
-      supabase.from('auftraggeber').select('*').order('name'),
-    ]);
+    const { data: tpl, error: tplErr } = await supabase
+      .from('formular_templates').select('*').eq('id', id).maybeSingle();
     if (tplErr || !tpl) {
       setError(tplErr?.message ?? 'Template nicht gefunden');
       setLoading(false);
@@ -68,7 +64,6 @@ export function TemplateEditorPage() {
     const t = tpl as unknown as FormularTemplate;
     setTemplate(t);
     setName(t.name);
-    setAuftraggeberId(t.auftraggeber_id ?? '');
     setSchema(
       t.schema && typeof t.schema === 'object' && 'sections' in t.schema
         ? (t.schema as FormSchema)
@@ -78,7 +73,6 @@ export function TemplateEditorPage() {
     setPdfs(loadedPdfs);
     setActivePdfId((cur) => cur ?? loadedPdfs[0]?.id ?? null);
     setEmailConfig((t.email_config as EmailConfig | null) ?? null);
-    setAuftraggeber(ag ?? []);
     setLoading(false);
   }, [id]);
 
@@ -107,7 +101,6 @@ export function TemplateEditorPage() {
       .from('formular_templates')
       .update({
         name: name.trim() || 'Unbenanntes Template',
-        auftraggeber_id: auftraggeberId || null,
         schema: schema as unknown as Json,
         pdfs: pdfs as unknown as Json,
         email_config: (emailConfig ?? null) as unknown as Json,
@@ -141,7 +134,6 @@ export function TemplateEditorPage() {
         .from('formular_templates')
         .insert({
           name: `${name.trim() || 'Unbenanntes Template'} (Kopie)`,
-          auftraggeber_id: auftraggeberId || null,
           schema: schema as unknown as Json,
           pdfs: [] as unknown as Json,
           email_config: (emailConfig ?? null) as unknown as Json,
@@ -265,27 +257,10 @@ export function TemplateEditorPage() {
       </div>
 
       <div className="card space-y-4 p-5">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="tpl-name" className="label">Name</label>
-            <input id="tpl-name" className="input" value={name}
-                   onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div>
-            <label htmlFor="tpl-ag" className="label">Auftraggeber</label>
-            <select id="tpl-ag" className="input" value={auftraggeberId}
-                    onChange={(e) => setAuftraggeberId(e.target.value)}>
-              <option value="">— kein Auftraggeber —</option>
-              {auftraggeber.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-            {auftraggeber.find((a) => a.id === auftraggeberId)?.kontakt && (
-              <p className="mt-1 text-xs text-maja-muted">
-                Kontakt: {auftraggeber.find((a) => a.id === auftraggeberId)!.kontakt}
-              </p>
-            )}
-          </div>
+        <div>
+          <label htmlFor="tpl-name" className="label">Name</label>
+          <input id="tpl-name" className="input" value={name}
+                 onChange={(e) => setName(e.target.value)} />
         </div>
       </div>
 
