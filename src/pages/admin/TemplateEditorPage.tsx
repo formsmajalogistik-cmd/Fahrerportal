@@ -10,7 +10,15 @@ import { copyPdfInStorage, deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
   EmailConfig, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
 } from '../../types/db';
+import { ADDRESS_LABEL, ADDRESS_SUBFIELDS } from '../../types/db';
 import type { Json } from '../../types/supabase';
+
+export interface PlaceholderToken {
+  /** Der Platzhalter, der ins Pattern eingefügt wird, inkl. der geschweiften Klammern. */
+  token: string;
+  /** Optionale Beschriftung — z.B. „adresse.straße" mit Umlaut. */
+  label?: string;
+}
 
 type Tab = 'struktur' | 'mapping' | 'email';
 
@@ -212,10 +220,28 @@ export function TemplateEditorPage() {
     setPdfs(pdfs.map((p) => (p.id === pdfId ? { ...p, filename_pattern: pattern || null } : p)));
   }
 
-  const allFieldIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const s of schema.sections ?? []) for (const f of s.fields ?? []) ids.push(f.id);
-    return ids;
+  /**
+   * Verfügbare Platzhalter inkl. Sub-Felder für zusammengesetzte Feld-
+   * typen (Adresse → strasse / plz / stadt). Wird im Email-Editor und
+   * im Dateiname-Pattern angezeigt.
+   */
+  const placeholderTokens = useMemo<PlaceholderToken[]>(() => {
+    const out: PlaceholderToken[] = [];
+    for (const s of schema.sections ?? []) {
+      for (const f of s.fields ?? []) {
+        if (f.type === 'address') {
+          for (const sub of ADDRESS_SUBFIELDS) {
+            out.push({
+              token: `{${f.id}.${sub}}`,
+              label: `${f.id}.${ADDRESS_LABEL[sub].toLowerCase()}`,
+            });
+          }
+        } else {
+          out.push({ token: `{${f.id}}` });
+        }
+      }
+    }
+    return out;
   }, [schema]);
 
   if (loading) return <Spinner label="Template wird geladen …" />;
@@ -313,7 +339,7 @@ export function TemplateEditorPage() {
             onDelete={(pdf) => setConfirmDeletePdf(pdf)}
             onAdd={addPdf}
             onPatternChange={updatePdfPattern}
-            fieldIds={allFieldIds}
+            placeholders={placeholderTokens}
             canAdd={true}
           />
           {activePdf ? (
@@ -341,7 +367,7 @@ export function TemplateEditorPage() {
           config={emailConfig}
           onChange={setEmailConfig}
           pdfs={pdfs}
-          fieldIds={allFieldIds}
+          placeholders={placeholderTokens}
         />
       )}
 
@@ -398,7 +424,7 @@ export function TemplateEditorPage() {
 }
 
 function PdfTabs({
-  pdfs, activeId, onSelect, onRename, onDelete, onAdd, onPatternChange, fieldIds, canAdd,
+  pdfs, activeId, onSelect, onRename, onDelete, onAdd, onPatternChange, placeholders, canAdd,
 }: {
   pdfs: TemplatePdf[];
   activeId: string | null;
@@ -407,7 +433,7 @@ function PdfTabs({
   onDelete: (pdf: TemplatePdf) => void;
   onAdd: () => void;
   onPatternChange: (id: string, pattern: string) => void;
-  fieldIds: string[];
+  placeholders: PlaceholderToken[];
   canAdd: boolean;
 }) {
   const active = pdfs.find((p) => p.id === activeId) ?? null;
@@ -461,7 +487,7 @@ function PdfTabs({
             value={active.filename_pattern ?? ''}
             onChange={(v) => onPatternChange(active.id, v)}
             fallback={active.id}
-            fieldIds={fieldIds}
+            placeholders={placeholders}
           />
         </div>
       )}
@@ -470,12 +496,12 @@ function PdfTabs({
 }
 
 function FilenamePatternRow({
-  value, onChange, fallback, fieldIds,
+  value, onChange, fallback, placeholders,
 }: {
   value: string;
   onChange: (v: string) => void;
   fallback: string;
-  fieldIds: string[];
+  placeholders: PlaceholderToken[];
 }) {
   return (
     <div className="mt-3 w-full border-t border-maja-navy/10 pt-3">
@@ -488,26 +514,26 @@ function FilenamePatternRow({
       />
       <p className="mt-1 text-xs text-maja-muted">
         Platzhalter <code className="rounded bg-maja-light px-1">{'{feld_id}'}</code> werden
-        beim Generieren durch die Werte aus dem Formular ersetzt. Sonderzeichen
-        (z.B. Leerzeichen im Kennzeichen) werden automatisch durch „_" ersetzt.
-        Beispiel: <code className="rounded bg-maja-light px-1">Protokoll_{'{kennzeichen}'}</code>
-        {' '}→ <code>Protokoll_HB-ML_421.pdf</code>.
+        beim Generieren durch die Werte aus dem Formular ersetzt. Bei zusammen-
+        gesetzten Feldern (z.B. Adresse) sind auch Sub-Felder möglich, etc.
+        {' '}<code className="rounded bg-maja-light px-1">{'{adresse.stadt}'}</code>.
+        Sonderzeichen (Leerzeichen, Schrägstriche) werden durch „_" ersetzt.
       </p>
-      {fieldIds.length > 0 && (
+      {placeholders.length > 0 && (
         <details className="mt-2 text-xs">
           <summary className="cursor-pointer text-maja-accent hover:underline">
-            Verfügbare Platzhalter ({fieldIds.length}) anzeigen
+            Verfügbare Platzhalter ({placeholders.length}) anzeigen
           </summary>
           <div className="mt-2 flex flex-wrap gap-1">
-            {fieldIds.map((id) => (
+            {placeholders.map((p) => (
               <button
-                key={id}
+                key={p.token}
                 type="button"
-                onClick={() => onChange((value || '') + `{${id}}`)}
+                onClick={() => onChange((value || '') + p.token)}
                 title="In Pattern einfügen"
                 className="rounded-full bg-maja-light px-2 py-0.5 text-[11px] text-maja-navy hover:bg-maja-accent/20"
               >
-                {`{${id}}`}
+                {p.token}
               </button>
             ))}
           </div>

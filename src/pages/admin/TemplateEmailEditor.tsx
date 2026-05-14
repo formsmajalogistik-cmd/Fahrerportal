@@ -1,17 +1,18 @@
 import type { EmailConfig, TemplatePdf } from '../../types/db';
+import type { PlaceholderToken } from './TemplateEditorPage';
 
 interface Props {
   config: EmailConfig | null;
   onChange: (next: EmailConfig | null) => void;
   pdfs: TemplatePdf[];
-  fieldIds: string[];
+  placeholders: PlaceholderToken[];
 }
 
 const EMPTY: EmailConfig = {
   to: '', cc: '', subject_pattern: '', body_pattern: '', attach_pdf_ids: [],
 };
 
-export function TemplateEmailEditor({ config, onChange, pdfs, fieldIds }: Props) {
+export function TemplateEmailEditor({ config, onChange, pdfs, placeholders }: Props) {
   const cfg = config ?? EMPTY;
   const setCfg = (patch: Partial<EmailConfig>) => onChange({ ...cfg, ...patch });
 
@@ -58,7 +59,7 @@ export function TemplateEmailEditor({ config, onChange, pdfs, fieldIds }: Props)
             onChange={(e) => setCfg({ to: e.target.value })}
           />
           <PlaceholderHelper
-            fieldIds={fieldIds}
+            placeholders={placeholders}
             onPick={(t) => appendPlaceholder('to', t)}
           />
         </FieldRow>
@@ -71,7 +72,7 @@ export function TemplateEmailEditor({ config, onChange, pdfs, fieldIds }: Props)
             onChange={(e) => setCfg({ cc: e.target.value })}
           />
           <PlaceholderHelper
-            fieldIds={fieldIds}
+            placeholders={placeholders}
             onPick={(t) => appendPlaceholder('cc', t)}
           />
         </FieldRow>
@@ -84,7 +85,7 @@ export function TemplateEmailEditor({ config, onChange, pdfs, fieldIds }: Props)
             onChange={(e) => setCfg({ subject_pattern: e.target.value })}
           />
           <PlaceholderHelper
-            fieldIds={fieldIds}
+            placeholders={placeholders}
             onPick={(t) => appendPlaceholder('subject_pattern', t)}
           />
         </FieldRow>
@@ -97,7 +98,7 @@ export function TemplateEmailEditor({ config, onChange, pdfs, fieldIds }: Props)
             onChange={(e) => setCfg({ body_pattern: e.target.value })}
           />
           <PlaceholderHelper
-            fieldIds={fieldIds}
+            placeholders={placeholders}
             onPick={(t) => appendPlaceholder('body_pattern', t)}
           />
         </FieldRow>
@@ -144,23 +145,24 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
 }
 
 function PlaceholderHelper({
-  fieldIds, onPick,
-}: { fieldIds: string[]; onPick: (token: string) => void }) {
-  if (fieldIds.length === 0) return null;
+  placeholders, onPick,
+}: { placeholders: PlaceholderToken[]; onPick: (token: string) => void }) {
+  if (placeholders.length === 0) return null;
   return (
     <details className="mt-1 text-xs">
       <summary className="cursor-pointer text-maja-accent hover:underline">
-        Platzhalter einfügen ({fieldIds.length})
+        Platzhalter einfügen ({placeholders.length})
       </summary>
       <div className="mt-2 flex flex-wrap gap-1">
-        {fieldIds.map((id) => (
+        {placeholders.map((p) => (
           <button
-            key={id}
+            key={p.token}
             type="button"
-            onClick={() => onPick(`{${id}}`)}
+            onClick={() => onPick(p.token)}
+            title={p.label ? p.label : undefined}
             className="rounded-full bg-maja-light px-2 py-0.5 text-[11px] text-maja-navy hover:bg-maja-accent/20"
           >
-            {`{${id}}`}
+            {p.token}
           </button>
         ))}
       </div>

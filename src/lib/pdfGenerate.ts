@@ -476,8 +476,10 @@ export async function sendTemplateEmail(
  */
 function resolvePattern(pattern: string, data: Record<string, unknown>): string {
   if (!pattern) return '';
-  return pattern.replace(/\{([a-zA-Z0-9_]+)\}/g, (_m, key) => {
-    const v = data[key];
+  // Akzeptiert auch Sub-Felder mit Dot-Notation (z.B. {adresse.stadt}) —
+  // die Auflösung übernimmt readDataValue.
+  return pattern.replace(/\{([a-zA-Z0-9_.]+)\}/g, (_m, key) => {
+    const v = readDataValue(data, key);
     if (typeof v === 'string') return v;
     if (typeof v === 'number') return String(v);
     if (typeof v === 'boolean') return v ? 'ja' : 'nein';
@@ -510,8 +512,9 @@ export function resolveFilename(
 ): string {
   const base = (() => {
     if (!pattern || !pattern.trim()) return fallback;
-    const replaced = pattern.replace(/\{([a-zA-Z0-9_]+)\}/g, (_m, key) => {
-      const v = data[key];
+    // Auch hier Sub-Felder unterstützen ({adresse.stadt} etc.).
+    const replaced = pattern.replace(/\{([a-zA-Z0-9_.]+)\}/g, (_m, key) => {
+      const v = readDataValue(data, key);
       if (typeof v === 'string') return sanitizeFilename(v);
       if (typeof v === 'number') return String(v);
       if (typeof v === 'boolean') return v ? 'ja' : 'nein';
