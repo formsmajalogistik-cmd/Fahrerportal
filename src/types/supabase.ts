@@ -65,6 +65,8 @@ export type Database = {
           email2: string | null;
           preisliste_pdf_url: string | null;
           aba_aufschlag_prozent: number | null;
+          externe_app_name: string | null;
+          externe_app_url: string | null;
         };
         Insert: {
           id?: string;
@@ -77,6 +79,8 @@ export type Database = {
           email2?: string | null;
           preisliste_pdf_url?: string | null;
           aba_aufschlag_prozent?: number | null;
+          externe_app_name?: string | null;
+          externe_app_url?: string | null;
         };
         Update: {
           id?: string;
@@ -89,6 +93,8 @@ export type Database = {
           email2?: string | null;
           preisliste_pdf_url?: string | null;
           aba_aufschlag_prozent?: number | null;
+          externe_app_name?: string | null;
+          externe_app_url?: string | null;
         };
         Relationships: [];
       };

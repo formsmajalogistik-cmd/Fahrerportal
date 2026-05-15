@@ -20,12 +20,17 @@ interface Props {
   fahrerId: string | null;
   templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
   zugaenge: GreimelZugang[];
+  /** Optionale externe Protokoll-App des Auftraggebers — wenn gesetzt,
+   *  erscheint bei Protokollart "App" ein Button, der die URL öffnet. */
+  externeApp?: { name: string | null; url: string | null } | null;
 }
 
 export function ProtokollSection({
   protokollArt, schriftlichesProtokollId, greimelZugangId, appNotiz,
-  onChange, isGreimel, fahrerId, templates, zugaenge,
+  onChange, isGreimel, fahrerId, templates, zugaenge, externeApp,
 }: Props) {
+  const externeAppUrl = externeApp?.url?.trim() || null;
+  const externeAppName = externeApp?.name?.trim() || 'externe App';
   const availableZugaenge = useMemo(
     () => filterAvailableZugaenge(zugaenge, fahrerId, greimelZugangId),
     [zugaenge, fahrerId, greimelZugangId],
@@ -71,6 +76,17 @@ export function ProtokollSection({
       {/* App-Bereich */}
       {protokollArt === 'app' && (
         <div className="space-y-3">
+          {externeAppUrl && (
+            <a
+              href={externeAppUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg bg-maja-accent px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-maja-navy"
+            >
+              {externeAppName} öffnen
+              <span aria-hidden="true">↗</span>
+            </a>
+          )}
           <div>
             <label className="label" htmlFor="t-app-notiz">Notiz</label>
             <textarea

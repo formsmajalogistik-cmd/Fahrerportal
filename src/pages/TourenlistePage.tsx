@@ -21,7 +21,7 @@ type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nac
 };
 
 interface TourRow extends Tour {
-  auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt'> | null;
+  auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt' | 'externe_app_name' | 'externe_app_url'> | null;
   fahrer: FahrerWithUser | null;
   schriftliches_protokoll: { id: string; name: string } | null;
   zusaetze: TourZusatzLite[];
@@ -147,7 +147,7 @@ export function TourenlistePage() {
     const cols = isAdmin
       ? `
         *,
-        auftraggeber:auftraggeber_id (name, kontakt),
+        auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
         fahrer:fahrer_id (
           id, user_id, aktiv, vorname, nachname,
           user:user_id (email, vorname, nachname)
@@ -163,7 +163,7 @@ export function TourenlistePage() {
         adresse_start, adresse_ziel, adresse_rueckfuehrung,
         kontakt_start, kontakt_ziel, kontakt_rueckfuehrung, app_notiz,
         created_at, updated_at,
-        auftraggeber:auftraggeber_id (name, kontakt),
+        auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
         fahrer:fahrer_id (
           id, user_id, aktiv, vorname, nachname,
           user:user_id (email, vorname, nachname)
@@ -666,6 +666,33 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
                 </Meta>
               )}
             </div>
+
+            {/* Externe Protokoll-App des Auftraggebers — direkter Sprung
+                aus der Tour-Card, ohne den Detail-Dialog zu öffnen. */}
+            {tour.protokoll_art === 'app' && tour.auftraggeber?.externe_app_url && (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (tour.auftraggeber?.externe_app_url) {
+                    window.open(tour.auftraggeber.externe_app_url, '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    if (tour.auftraggeber?.externe_app_url) {
+                      window.open(tour.auftraggeber.externe_app_url, '_blank', 'noopener,noreferrer');
+                    }
+                  }
+                }}
+                className="mt-3 inline-flex cursor-pointer items-center gap-1 rounded-full bg-maja-accent px-3 py-1 text-xs font-medium text-white transition hover:bg-maja-navy"
+              >
+                {(tour.auftraggeber.externe_app_name?.trim() || 'externe App')} öffnen ↗
+              </div>
+            )}
 
             {/* Schriftliches Protokoll: für Fahrer als Direkt-Link öffnen */}
             {hasSchriftlich && (

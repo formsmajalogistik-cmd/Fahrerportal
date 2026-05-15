@@ -518,6 +518,10 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             fahrerId={fahrerId || null}
             templates={templates}
             zugaenge={zugaenge}
+            externeApp={selectedAg ? {
+              name: selectedAg.externe_app_name,
+              url:  selectedAg.externe_app_url,
+            } : null}
           />
 
           {/* Sondervereinbarung */}

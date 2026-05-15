@@ -47,6 +47,8 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
   const [ort, setOrt]         = useState(initial?.ort ?? '');
   const [email1, setEmail1]   = useState(initial?.email1 ?? '');
   const [email2, setEmail2]   = useState(initial?.email2 ?? '');
+  const [externeAppName, setExterneAppName] = useState(initial?.externe_app_name ?? '');
+  const [externeAppUrl,  setExterneAppUrl]  = useState(initial?.externe_app_url  ?? '');
 
   // Kontakte
   const [serverKontakte, setServerKontakte] = useState<AuftraggeberKontakt[]>([]);
@@ -110,6 +112,8 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
         ort:     ort.trim() || null,
         email1:  email1.trim() || null,
         email2:  email2.trim() || null,
+        externe_app_name: externeAppName.trim() || null,
+        externe_app_url:  externeAppUrl.trim()  || null,
       };
       let auftraggeberId: string;
       if (isNew) {
@@ -209,6 +213,30 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
               <label htmlFor="ag-email2" className="label">E-Mail 2</label>
               <input id="ag-email2" type="email" className="input"
                      value={email2} onChange={(e) => setEmail2(e.target.value)} />
+            </div>
+          </div>
+
+          {/* Externe Protokollierungs-App */}
+          <div className="space-y-3 rounded-lg border border-maja-navy/10 p-4">
+            <h3 className="text-sm font-semibold text-maja-navy">Externe Protokollierungs-App</h3>
+            <p className="text-xs text-maja-muted">
+              Wenn gesetzt, wird bei Touren dieses Auftraggebers mit Protokollart
+              „App" ein Button zur externen App angezeigt.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="ag-extname" className="label">App-Name</label>
+                <input id="ag-extname" className="input" placeholder="z.B. FleetBoard App"
+                       value={externeAppName}
+                       onChange={(e) => setExterneAppName(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="ag-exturl" className="label">App-URL</label>
+                <input id="ag-exturl" className="input" type="url"
+                       placeholder="https://app.fleetboard.de oder fleetboard://"
+                       value={externeAppUrl}
+                       onChange={(e) => setExterneAppUrl(e.target.value)} />
+              </div>
             </div>
           </div>
 

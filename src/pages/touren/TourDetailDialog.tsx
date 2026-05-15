@@ -32,7 +32,7 @@ type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nac
 };
 
 interface FullTour extends Tour {
-  auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt'> | null;
+  auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt' | 'externe_app_name' | 'externe_app_url'> | null;
   fahrer: FahrerWithUser | null;
   kontakt: AuftraggeberKontakt | null;
 }
@@ -100,7 +100,7 @@ function buildTourSelectCols(admin: boolean): string {
   if (admin) {
     return `
       *,
-      auftraggeber:auftraggeber_id (id, name, kontakt),
+      auftraggeber:auftraggeber_id (id, name, kontakt, externe_app_name, externe_app_url),
       kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at),
       fahrer:fahrer_id (
         id, user_id, aktiv,
@@ -116,7 +116,7 @@ function buildTourSelectCols(admin: boolean): string {
     greimel_zugang_id, ist_e_fahrzeug, fin, kontakt_id, eingang_id,
     kontakt_start, kontakt_ziel, kontakt_rueckfuehrung, app_notiz,
     created_at, updated_at,
-    auftraggeber:auftraggeber_id (id, name, kontakt),
+    auftraggeber:auftraggeber_id (id, name, kontakt, externe_app_name, externe_app_url),
     kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at),
     fahrer:fahrer_id (
       id, user_id, aktiv,
@@ -1387,6 +1387,17 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
         ) : tour.protokoll_art === 'app' ? (
           <div className="space-y-2">
             <div className="font-medium">App</div>
+            {tour.auftraggeber?.externe_app_url && (
+              <a
+                href={tour.auftraggeber.externe_app_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-maja-accent px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-maja-navy"
+              >
+                {(tour.auftraggeber.externe_app_name?.trim() || 'externe App')} öffnen
+                <span aria-hidden="true">↗</span>
+              </a>
+            )}
             {tour.app_notiz && (
               <div className="whitespace-pre-wrap text-sm text-maja-ink">{tour.app_notiz}</div>
             )}
@@ -1638,6 +1649,10 @@ function EditMode(p: EditModeProps) {
         fahrerId={draft.fahrerId || null}
         templates={templates}
         zugaenge={zugaenge}
+        externeApp={draftSelectedAg ? {
+          name: draftSelectedAg.externe_app_name,
+          url:  draftSelectedAg.externe_app_url,
+        } : null}
       />
 
       {/* E-Fahrzeug-Checkbox (FIN, Kennzeichen, Adressen sind in Bereich 6) */}
