@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro, formatKm, type TourPriceBreakdown } from '../../lib/touren';
-import { displayName } from '../../lib/names';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
+import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
@@ -56,6 +56,10 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [startdatum, setStartdatum] = useState('');
   const [enddatum, setEnddatum]     = useState('');
 
+  // Rechnungsdatum (optional, abweichend vom Tourendatum)
+  const [rechnungsdatumAbweichend, setRechnungsdatumAbweichend] = useState(false);
+  const [rechnungsdatum, setRechnungsdatum] = useState('');
+
   // Kennzeichen — 1 oder 2 Felder
   const [kennzeichenHin, setKennzeichenHin]   = useState('');
   const [kennzeichenRueck, setKennzeichenRueck] = useState('');
@@ -102,9 +106,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       ]);
       setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
       const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
-      setFahrer(faList.sort((a, b) =>
-        displayName(a.user ?? null).localeCompare(displayName(b.user ?? null), 'de'),
-      ));
+      setFahrer(faList);
       setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
       setZugaenge(Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : []);
     })();
@@ -183,6 +185,10 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       setError('Start-Stadt und Ziel-Stadt sind Pflichtfelder.');
       return;
     }
+    if (!startdatum || !enddatum) {
+      setError('Start- und Enddatum sind Pflichtfelder.');
+      return;
+    }
 
     if (hatRueckfuehrung && !rueckfuehrungStadt.trim()) {
       setError('Rückführung aktiviert: Stadt darf nicht leer sein.');
@@ -228,8 +234,9 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     // "abgeschlossen" gilt.
     // <input type="date"> liefert direkt "YYYY-MM-DD" — exakt das Format,
     // das eine Postgres-date-Spalte erwartet. Keine Timezone-Umrechnung.
-    const dateStart = startdatum || null;
-    const dateEnd   = enddatum   || null;
+    // startdatum/enddatum sind seit Migration 028 NOT NULL.
+    const dateStart = startdatum;
+    const dateEnd   = enddatum;
     const willBeCompleted = computeTourStatus(dateStart, dateEnd) === 'abgeschlossen';
     const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app' && !willBeCompleted
       ? greimelZugangId
@@ -263,6 +270,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
       schriftliches_protokoll_id: schriftlichEffective,
       greimel_zugang_id: greimelEffective,
       app_notiz: protokollArt === 'app' && appNotiz.trim() ? appNotiz.trim() : null,
+      rechnungsdatum_abweichend: rechnungsdatumAbweichend,
+      rechnungsdatum: rechnungsdatumAbweichend && rechnungsdatum ? rechnungsdatum : null,
     };
 
     const { error: err } = await supabase.from('touren').insert(payload);
@@ -285,7 +294,8 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
           <div>
             <h2 className="text-lg font-semibold text-maja-navy">Neue Tour anlegen</h2>
             <p className="text-xs text-maja-muted">
-              Start- und Ziel-Stadt sind Pflicht. Alle anderen Felder sind optional.
+              Start- und Ziel-Stadt sowie Start- und Enddatum sind Pflicht. Alle
+              anderen Felder sind optional.
             </p>
           </div>
           <button
@@ -387,14 +397,12 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             </div>
             <div>
               <label htmlFor="t-fa" className="label">Fahrer</label>
-              <select id="t-fa" className="input"
-                      value={fahrerId}
-                      onChange={(e) => setFahrerId(e.target.value)}>
-                <option value="">— kein Fahrer —</option>
-                {(fahrer ?? []).map((f) => (
-                  <option key={f.id} value={f.id}>{displayName(f.user ?? null)}</option>
-                ))}
-              </select>
+              <FahrerSelect
+                id="t-fa"
+                value={fahrerId}
+                onChange={setFahrerId}
+                fahrer={fahrer as FahrerOptionRaw[]}
+              />
             </div>
           </div>
 
@@ -429,15 +437,40 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
               </select>
             </div>
             <div>
-              <label htmlFor="t-start-dt" className="label">Startdatum</label>
-              <input id="t-start-dt" type="date" className="input"
+              <label htmlFor="t-start-dt" className="label">
+                Startdatum <span className="text-red-600">*</span>
+              </label>
+              <input id="t-start-dt" type="date" className="input" required
                      value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
             </div>
             <div>
-              <label htmlFor="t-end-dt" className="label">Enddatum</label>
-              <input id="t-end-dt" type="date" className="input"
+              <label htmlFor="t-end-dt" className="label">
+                Enddatum <span className="text-red-600">*</span>
+              </label>
+              <input id="t-end-dt" type="date" className="input" required
                      value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
             </div>
+          </div>
+
+          {/* Rechnungsdatum (optional, abweichend vom Tourendatum) */}
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+                checked={rechnungsdatumAbweichend}
+                onChange={(e) => setRechnungsdatumAbweichend(e.target.checked)}
+              />
+              Rechnungsdatum abweichend vom Tourendatum
+            </label>
+            {rechnungsdatumAbweichend && (
+              <div>
+                <label htmlFor="t-rechn-dt" className="label">Rechnungsdatum</label>
+                <input id="t-rechn-dt" type="date" className="input"
+                       value={rechnungsdatum}
+                       onChange={(e) => setRechnungsdatum(e.target.value)} />
+              </div>
+            )}
           </div>
 
           {/* Kennzeichen */}
@@ -602,7 +635,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             <button
               type="submit"
               className="btn-primary"
-              disabled={saving || !startStadt.trim() || !zielStadt.trim()}
+              disabled={saving || !startStadt.trim() || !zielStadt.trim() || !startdatum || !enddatum}
             >
               {saving ? 'Anlegen …' : 'Tour anlegen'}
             </button>

@@ -7,7 +7,8 @@ import { Spinner } from '../components/Spinner';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
-import { displayName, fahrerName as resolveFahrerName } from '../lib/names';
+import { flattenedFahrerOptions, type FahrerOptionRaw } from './touren/FahrerSelect';
+import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
   computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
@@ -132,9 +133,12 @@ export function TourenlistePage() {
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
     setError(null);
-    let query = supabase
-      .from('touren')
-      .select(`
+    // Sensible Spalten (verguetung, km_*, fahrer_honorar, barauslagen,
+    // sondervereinbarung, info, rechnungsdatum_*) für Nicht-Admins NICHT
+    // mit selektieren — sie kommen damit gar nicht erst beim Client an.
+    // Auch tour_zusaetze wird nur für Admins eingebettet.
+    const cols = isAdmin
+      ? `
         *,
         auftraggeber:auftraggeber_id (name, kontakt),
         fahrer:fahrer_id (
@@ -143,7 +147,25 @@ export function TourenlistePage() {
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
-      `);
+      `
+      : `
+        id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+        kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
+        tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
+        greimel_zugang_id, ist_e_fahrzeug, fin, kontakt_id, eingang_id,
+        adresse_start, adresse_ziel, adresse_rueckfuehrung,
+        kontakt_start, kontakt_ziel, kontakt_rueckfuehrung, app_notiz,
+        created_at, updated_at,
+        auftraggeber:auftraggeber_id (name, kontakt),
+        fahrer:fahrer_id (
+          id, user_id, aktiv, vorname, nachname,
+          user:user_id (email, vorname, nachname)
+        ),
+        schriftliches_protokoll:schriftliches_protokoll_id (id, name)
+      `;
+    let query = supabase
+      .from('touren')
+      .select(cols);
     // Nicht-Admins: nur Touren des aktiven Kontos (inkl. eigener Unterkonten,
     // wenn aktives Konto ein Haupt-Konto ist).
     if (!isAdmin && scopedFahrerIds.length > 0) {
@@ -206,41 +228,20 @@ export function TourenlistePage() {
       setAuftraggeberOptions(Array.isArray(agRes.data) ? agRes.data : []);
 
       // Fahrer-Filter:
-      // - Admin: alle aktiven Fahrer (Haupt + Unterkonten)
+      // - Admin: alle aktiven Fahrer mit Haupt/Unterkonto-Gruppierung
       // - Haupt-Konto mit Unterkonten: eigene Konten als Optionen
       // - Sonst: leer (Dropdown wird ausgeblendet)
       if (isAdmin) {
         const faRes = await supabase
           .from('fahrer')
-          .select('id, vorname, nachname, user:user_id (email, vorname, nachname)')
+          .select('id, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true);
         if (cancelled) return;
-        const fa = (Array.isArray(faRes.data) ? faRes.data : [])
-          .map((f) => {
-            const user = (f as { user?: unknown }).user;
-            const u = user && typeof user === 'object' ? user as { email?: unknown; vorname?: unknown; nachname?: unknown } : null;
-            const safeUser = u ? {
-              email:    typeof u.email === 'string' ? u.email : '',
-              vorname:  typeof u.vorname === 'string' ? u.vorname : null,
-              nachname: typeof u.nachname === 'string' ? u.nachname : null,
-            } : null;
-            const row = f as { vorname?: string | null; nachname?: string | null };
-            const ownName = [row.vorname, row.nachname].filter(Boolean).join(' ').trim();
-            return {
-              id: (f as { id: string }).id,
-              label: ownName || displayName(safeUser) || '—',
-            };
-          })
-          .sort((a, b) => a.label.localeCompare(b.label, 'de'));
-        setFahrerOptions(fa);
+        const list = (Array.isArray(faRes.data) ? faRes.data : []) as unknown as FahrerOptionRaw[];
+        setFahrerOptions(flattenedFahrerOptions(list));
       } else if (scopedFahrerIds.length > 1) {
-        const fa = scopedFahrerIds.map((id) => {
-          const f = availableFahrer.find((x) => x.id === id);
-          const ownName = [f?.vorname, f?.nachname].filter(Boolean).join(' ').trim();
-          const label = ownName || displayName(profile) || 'Konto';
-          return { id, label };
-        });
-        setFahrerOptions(fa);
+        const list = availableFahrer.filter((f) => scopedFahrerIds.includes(f.id));
+        setFahrerOptions(flattenedFahrerOptions(list as unknown as FahrerOptionRaw[]));
       } else {
         setFahrerOptions([]);
       }

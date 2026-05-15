@@ -180,8 +180,8 @@ export type Database = {
           auftraggeber_id: string | null;
           fahrer_id: string | null;
           status: TourStatus;
-          startdatum: string | null;
-          enddatum: string | null;
+          startdatum: string;
+          enddatum: string;
           verguetung: number | null;
           tourenart: TourenArt | null;
           sondervereinbarung: string | null;
@@ -202,6 +202,8 @@ export type Database = {
           kontakt_rueckfuehrung: Json | null;
           app_notiz: string | null;
           protokoll_daten_felder: string[];
+          rechnungsdatum_abweichend: boolean;
+          rechnungsdatum: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -221,8 +223,8 @@ export type Database = {
           auftraggeber_id?: string | null;
           fahrer_id?: string | null;
           status?: TourStatus;
-          startdatum?: string | null;
-          enddatum?: string | null;
+          startdatum: string;
+          enddatum: string;
           verguetung?: number | null;
           tourenart?: TourenArt | null;
           sondervereinbarung?: string | null;
@@ -243,6 +245,8 @@ export type Database = {
           kontakt_rueckfuehrung?: Json | null;
           app_notiz?: string | null;
           protokoll_daten_felder?: string[];
+          rechnungsdatum_abweichend?: boolean;
+          rechnungsdatum?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -262,8 +266,8 @@ export type Database = {
           auftraggeber_id?: string | null;
           fahrer_id?: string | null;
           status?: TourStatus;
-          startdatum?: string | null;
-          enddatum?: string | null;
+          startdatum?: string;
+          enddatum?: string;
           verguetung?: number | null;
           tourenart?: TourenArt | null;
           sondervereinbarung?: string | null;
@@ -284,6 +288,8 @@ export type Database = {
           kontakt_rueckfuehrung?: Json | null;
           app_notiz?: string | null;
           protokoll_daten_felder?: string[];
+          rechnungsdatum_abweichend?: boolean;
+          rechnungsdatum?: string | null;
           created_at?: string;
           updated_at?: string;
         };

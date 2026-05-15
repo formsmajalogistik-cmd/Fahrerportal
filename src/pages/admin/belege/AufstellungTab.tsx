@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { fahrerName as resolveFahrerName, displayName } from '../../../lib/names';
 import { Spinner } from '../../../components/Spinner';
+import { flattenedFahrerOptions, type FahrerOptionRaw } from '../../touren/FahrerSelect';
 import { generateAufstellungPdf } from './aufstellungPdf';
 import { downloadBlob } from './belegPdf';
-import type { AppUser, Fahrer } from '../../../types/db';
+import type { AppUser } from '../../../types/db';
 
 interface FahrerOption {
   id: string;
@@ -83,26 +84,22 @@ export function AufstellungTab() {
     void (async () => {
       const { data } = await supabase
         .from('fahrer')
-        .select('id, user_id, vorname, nachname, ist_unterkonto, user:user_id (email, vorname, nachname)')
+        .select('id, user_id, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true);
       if (cancelled) return;
-      const list = (data ?? []).map((f) => {
-        const user = (f as { user?: unknown }).user;
-        const u = user && typeof user === 'object' ? user as { email?: unknown; vorname?: unknown; nachname?: unknown } : null;
-        const safeUser = u ? {
-          email:    typeof u.email === 'string' ? u.email : '',
-          vorname:  typeof u.vorname === 'string' ? u.vorname : null,
-          nachname: typeof u.nachname === 'string' ? u.nachname : null,
-        } : null;
-        const row = f as Pick<Fahrer, 'id' | 'vorname' | 'nachname' | 'ist_unterkonto'>;
-        const pdfName = resolveFahrerName(row, safeUser) || displayName(safeUser) || '—';
-        const subtitle = row.ist_unterkonto ? ' (Unterkonto)' : '';
-        return {
-          id: row.id,
-          label: pdfName + subtitle,
-          pdfName,
-        };
-      }).sort((a, b) => a.label.localeCompare(b.label, 'de'));
+      // Gruppierte Optionen: Haupt → Unterkonten (gleiche Logik wie in
+      // den Tour-Dropdowns), inkl. Duplikat-Filter.
+      const raw = (data ?? []) as unknown as FahrerOptionRaw[];
+      const flat = flattenedFahrerOptions(raw);
+      // pdfName ist der reine Personenname ohne "Unterkonto von …"-Hinweis,
+      // damit er sauber in der Aufstellung-Überschrift erscheint.
+      const list: FahrerOption[] = flat.map((o) => {
+        const f = raw.find((x) => x.id === o.id);
+        const pdfName = f
+          ? (resolveFahrerName(f, f.user ?? null) || displayName(f.user ?? null) || '—')
+          : o.label;
+        return { id: o.id, label: o.label, pdfName };
+      });
       setFahrerOptions(list);
     })();
     return () => { cancelled = true; };

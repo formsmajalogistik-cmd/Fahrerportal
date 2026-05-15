@@ -19,6 +19,7 @@ import {
   downloadFormPdf, expectedOneDrivePath, resolveFilename,
 } from '../../lib/pdfGenerate';
 import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
+import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, AusgefuelltesFormular, Fahrer,
@@ -89,6 +90,40 @@ const DEFAULT_PROTOKOLL_FIELDS: string[] = [
 ];
 
 // ---------- Helpers ----------
+
+/**
+ * Liefert die SELECT-Cols-Liste für die Tour-Detail-Query. Admin sieht
+ * alle Spalten; Fahrer NUR die nicht-preisrelevanten — damit sensible
+ * Daten erst gar nicht beim Client landen.
+ */
+function buildTourSelectCols(admin: boolean): string {
+  if (admin) {
+    return `
+      *,
+      auftraggeber:auftraggeber_id (id, name, kontakt),
+      kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at),
+      fahrer:fahrer_id (
+        id, user_id, aktiv,
+        user:user_id (email, vorname, nachname)
+      )
+    `;
+  }
+  return `
+    id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+    adresse_start, adresse_ziel, adresse_rueckfuehrung,
+    kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
+    tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
+    greimel_zugang_id, ist_e_fahrzeug, fin, kontakt_id, eingang_id,
+    kontakt_start, kontakt_ziel, kontakt_rueckfuehrung, app_notiz,
+    created_at, updated_at,
+    auftraggeber:auftraggeber_id (id, name, kontakt),
+    kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at),
+    fahrer:fahrer_id (
+      id, user_id, aktiv,
+      user:user_id (email, vorname, nachname)
+    )
+  `;
+}
 
 function parseInteger(v: string): number | null {
   const t = v.trim();
@@ -169,6 +204,9 @@ interface EditDraft {
   kontaktRueckName: string;
   kontaktRueckTelefon: string;
   kontaktRueckEmail: string;
+  // Rechnungsdatum (optional, abweichend vom Tourendatum)
+  rechnungsdatumAbweichend: boolean;
+  rechnungsdatum: string;
 }
 
 function draftFromTour(t: FullTour): EditDraft {
@@ -215,6 +253,8 @@ function draftFromTour(t: FullTour): EditDraft {
     kontaktRueckName:    readKontaktField(t.kontakt_rueckfuehrung, 'name'),
     kontaktRueckTelefon: readKontaktField(t.kontakt_rueckfuehrung, 'telefon'),
     kontaktRueckEmail:   readKontaktField(t.kontakt_rueckfuehrung, 'email'),
+    rechnungsdatumAbweichend: !!t.rechnungsdatum_abweichend,
+    rechnungsdatum: isoToLocalInput(t.rechnungsdatum),
   };
 }
 
@@ -281,17 +321,12 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     setLoading(true);
     setError(null);
     const [tRes, zRes, agRes, faRes, tplRes, gzRes] = await Promise.all([
+      // Sensible Spalten (verguetung, km_*, fahrer_honorar, barauslagen,
+      // sondervereinbarung, info, rechnungsdatum_*) für Nicht-Admins NICHT
+      // mit selektieren — sie kommen damit gar nicht erst beim Client an.
       supabase
         .from('touren')
-        .select(`
-          *,
-          auftraggeber:auftraggeber_id (id, name, kontakt),
-          kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at),
-          fahrer:fahrer_id (
-            id, user_id, aktiv,
-            user:user_id (email, vorname, nachname)
-          )
-        `)
+        .select(buildTourSelectCols(isAdmin))
         .eq('id', tourId)
         .single(),
       supabase
@@ -308,7 +343,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       supabase.from('greimel_zugaenge').select('*').order('titel'),
     ]);
     if (tRes.error) { setError(tRes.error.message); setLoading(false); return; }
-    const raw = (tRes.data ?? {}) as Record<string, unknown>;
+    const raw = (tRes.data ?? {}) as unknown as Record<string, unknown>;
     const full: FullTour = {
       ...(raw as unknown as FullTour),
       kennzeichen: Array.isArray(raw.kennzeichen) ? (raw.kennzeichen as string[]) : [],
@@ -515,8 +550,15 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     // gehalten, solange die Tour nicht "abgeschlossen" ist.
     // <input type="date"> liefert "YYYY-MM-DD" — Postgres-date-Spalte
     // erwartet genau das, keine Timezone-Umrechnung nötig.
-    const draftDateStart = draft.startdatum || null;
-    const draftDateEnd   = draft.enddatum   || null;
+    // startdatum/enddatum sind seit Migration 028 NOT NULL — wir leeren
+    // sie auch im UI nicht.
+    const draftDateStart = (draft.startdatum || tour.startdatum) as string;
+    const draftDateEnd   = (draft.enddatum   || tour.enddatum)   as string;
+    if (!draft.startdatum || !draft.enddatum) {
+      setStatusMsg({ kind: 'err', text: 'Start- und Enddatum sind Pflichtfelder.' });
+      setSaving(false);
+      return;
+    }
     const willComplete = computeTourStatus(draftDateStart, draftDateEnd) === 'abgeschlossen';
 
     let nextGreimelId: string | null = null;
@@ -578,6 +620,10 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           ? kontaktFromDraft(
             draft.kontaktRueckName, draft.kontaktRueckTelefon, draft.kontaktRueckEmail,
           )
+          : null,
+        rechnungsdatum_abweichend: draft.rechnungsdatumAbweichend,
+        rechnungsdatum: draft.rechnungsdatumAbweichend && draft.rechnungsdatum
+          ? draft.rechnungsdatum
           : null,
       })
       .eq('id', tour.id);
@@ -1251,6 +1297,9 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
         <DetailItem label="Fahrer">{fahrerName}</DetailItem>
         <DetailItem label="Startdatum">{formatDate(tour.startdatum)}</DetailItem>
         <DetailItem label="Enddatum">{formatDate(tour.enddatum)}</DetailItem>
+        {isAdmin && tour.rechnungsdatum_abweichend && tour.rechnungsdatum && (
+          <DetailItem label="Rechnungsdatum">{formatDate(tour.rechnungsdatum)}</DetailItem>
+        )}
         {isAdmin && (
           tour.tourenart === 'ABA' ? (
             <DetailItem label="Kilometer gesamt">{formatKm(tour.km_gesamt)}</DetailItem>
@@ -1416,13 +1465,11 @@ function EditMode(p: EditModeProps) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label">Fahrer</label>
-          <select className="input" value={draft.fahrerId}
-                  onChange={(e) => patchDraft({ fahrerId: e.target.value })}>
-            <option value="">— kein Fahrer —</option>
-            {(fahrer ?? []).map((f) => (
-              <option key={f.id} value={f.id}>{fahrerNameOf(f)}</option>
-            ))}
-          </select>
+          <FahrerSelect
+            value={draft.fahrerId}
+            onChange={(id) => patchDraft({ fahrerId: id })}
+            fahrer={fahrer as FahrerOptionRaw[]}
+          />
         </div>
         <div>
           <label className="label">Auftraggeber</label>
@@ -1535,15 +1582,38 @@ function EditMode(p: EditModeProps) {
       {/* Datum */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="label">Startdatum</label>
-          <input type="date" className="input" value={draft.startdatum}
+          <label className="label">Startdatum <span className="text-red-600">*</span></label>
+          <input type="date" className="input" required value={draft.startdatum}
                  onChange={(e) => patchDraft({ startdatum: e.target.value })} />
         </div>
         <div>
-          <label className="label">Enddatum</label>
-          <input type="date" className="input" value={draft.enddatum}
+          <label className="label">Enddatum <span className="text-red-600">*</span></label>
+          <input type="date" className="input" required value={draft.enddatum}
                  onChange={(e) => patchDraft({ enddatum: e.target.value })} />
         </div>
+      </div>
+
+      {/* Rechnungsdatum (optional, abweichend vom Tourendatum) — Admin-only */}
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+            checked={draft.rechnungsdatumAbweichend}
+            onChange={(e) => patchDraft({
+              rechnungsdatumAbweichend: e.target.checked,
+              rechnungsdatum: e.target.checked ? draft.rechnungsdatum : '',
+            })}
+          />
+          Rechnungsdatum abweichend vom Tourendatum
+        </label>
+        {draft.rechnungsdatumAbweichend && (
+          <div>
+            <label className="label">Rechnungsdatum</label>
+            <input type="date" className="input" value={draft.rechnungsdatum}
+                   onChange={(e) => patchDraft({ rechnungsdatum: e.target.value })} />
+          </div>
+        )}
       </div>
 
       {/* Protokoll */}

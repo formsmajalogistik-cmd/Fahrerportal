@@ -327,7 +327,7 @@ function buildTourPayload(
   if (s.adresseUebergabe) protokollFelder.push('adresse_ziel');
   if (s.kundenname) protokollFelder.push('kundenname');
   if (s.kmGesamt != null) protokollFelder.push('km_hin', 'km_gesamt');
-  if (s.datum) protokollFelder.push('startdatum');
+  if (s.datum) protokollFelder.push('startdatum', 'enddatum');
   if (kontakt) protokollFelder.push('kontakt_start', 'kontakt_ziel');
 
   return {
@@ -339,7 +339,10 @@ function buildTourPayload(
     kundenname: s.kundenname,
     km_hin: s.kmGesamt,
     km_gesamt: s.kmGesamt,
-    startdatum: s.datum,
+    // startdatum + enddatum sind NOT NULL — Fallback auf heute, wenn
+    // das Protokoll kein Datum geliefert hat.
+    startdatum: s.datum ?? new Date().toISOString().slice(0, 10),
+    enddatum:   s.datum ?? new Date().toISOString().slice(0, 10),
     adresse_start: s.adresseUebernahme,
     adresse_ziel: s.adresseUebergabe,
     kontakt_start: kontakt,

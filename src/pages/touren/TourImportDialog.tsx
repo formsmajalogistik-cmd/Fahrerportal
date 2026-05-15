@@ -366,8 +366,12 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       const payload = slice.map((r) => {
         // Tourenart 'ABA' speichert km nur als km_hin.
         const isAba = r.tourenart === 'ABA';
+        // startdatum + enddatum sind NOT NULL — fehlt das Datum (sollte
+        // durch die Filter vorher abgefangen sein), füllen wir das aktuelle.
+        const sd = r.startdatum ?? new Date().toISOString().slice(0, 10);
         return {
-          startdatum: r.startdatum,
+          startdatum: sd,
+          enddatum: sd,
           start_stadt: r.start_stadt,
           ziel_stadt: r.ziel_stadt,
           rueckfuehrung_stadt: r.rueckfuehrung_stadt,
