@@ -23,9 +23,28 @@ const INK = rgb(0.06, 0.14, 0.22); // Maja-Ink
 
 interface CheckTextEntry { option: string; text: string }
 
+/**
+ * Konvertiert beliebigen User-Input in einen für WinAnsi-Schriften
+ * (Helvetica) sicheren String — die Standard-Schriften der PDF können
+ * z.B. den Pfeil → (U+2192), em-/en-Dashes oder typografische Anführungs-
+ * zeichen nicht direkt darstellen. Umlaute und € sind in WinAnsi schon
+ * enthalten und werden NICHT verändert.
+ */
+function winAnsi(s: string): string {
+  return s
+    .replace(/→/g, '»')
+    .replace(/←/g, '«')
+    .replace(/[—–]/g, '-')
+    .replace(/[“”„]/g, '"')
+    .replace(/[‘’‚]/g, "'")
+    .replace(/[•·]/g, '*')
+    .replace(/…/g, '...')
+    .replace(/[^\x20-\xFF]/g, '?');
+}
+
 function asString(v: unknown): string {
   if (v == null) return '';
-  if (typeof v === 'string') return v;
+  if (typeof v === 'string') return winAnsi(v);
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   return '';
 }
@@ -282,8 +301,10 @@ export async function fillPdf(
         if (e.text.trim()) {
           const tx = map.text;
           const tFontSize = tx.fontSize ?? TEXT_DEFAULT_FONT;
-          const tWidth = font.widthOfTextAtSize(e.text, tFontSize);
-          page(tx.page).drawText(e.text, {
+          // WinAnsi-Sicherheit: User-Input könnte → o.ä. enthalten.
+          const safeText = winAnsi(e.text);
+          const tWidth = font.widthOfTextAtSize(safeText, tFontSize);
+          page(tx.page).drawText(safeText, {
             x: tx.x - tWidth, y: tx.y, size: tFontSize,
             font, color: INK,
           });

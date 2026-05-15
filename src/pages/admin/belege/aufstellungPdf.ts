@@ -53,7 +53,7 @@ const TABLE_W = A4_W - 2 * MARGIN_X;
 const COL_TOUR = TABLE_W - COL.nr - COL.datum - COL.honorar;
 
 function formatDateDe(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
   return `${m[3]}.${m[2]}.${m[1]}`;
@@ -63,6 +63,25 @@ function formatEuro(n: number): string {
   const eur = (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
   // Tausender-Punkt
   return eur.replace(/\B(?=(\d{3})+(?=,))/g, '.') + ' €';
+}
+
+/**
+ * Macht beliebigen User-Text sicher für die Standard-WinAnsi-Schriften
+ * (Helvetica). Wenige nicht abgedeckte Unicode-Zeichen werden auf ihre
+ * WinAnsi-Äquivalente bzw. ASCII-Fallbacks gemappt — Umlaute und € sind
+ * in WinAnsi schon enthalten und bleiben unverändert.
+ */
+function winAnsi(s: string): string {
+  return s
+    .replace(/→/g, '»')
+    .replace(/←/g, '«')
+    .replace(/[—–]/g, '-')
+    .replace(/[“”„]/g, '"')
+    .replace(/[‘’‚]/g, "'")
+    .replace(/[•·]/g, '*')
+    .replace(/[…]/g, '...')
+    // Restliche, nicht-WinAnsi Zeichen außerhalb 0x20..0xFF entschärfen.
+    .replace(/[^\x20-\xFF]/g, '?');
 }
 
 async function fetchLogoBytes(): Promise<Uint8Array | null> {
@@ -164,11 +183,13 @@ function drawRow(
   x += COL.nr;
   page.drawText(formatDateDe(row.enddatum), { x, y: baseY, size: 9.5, font: regular, color: INK });
   x += COL.datum;
-  const route = clipToWidth(row.route, regular, 9.5, COL_TOUR - 12);
+  // Route enthält Pfeile/Sonderzeichen → für WinAnsi normalisieren bevor
+  // die Breite gemessen und der Text gezeichnet wird.
+  const route = clipToWidth(winAnsi(row.route), regular, 9.5, COL_TOUR - 12);
   page.drawText(route, { x, y: baseY, size: 9.5, font: regular, color: INK });
 
   const honorar = row.fahrer_honorar == null
-    ? '—'
+    ? '-'
     : formatEuro(row.fahrer_honorar);
   const honorarColor = row.fahrer_honorar == null ? MUTED : INK;
   const honW = regular.widthOfTextAtSize(honorar, 9.5);
@@ -218,7 +239,7 @@ function drawSumRow(ctx: PageContext, sum: number) {
 function drawFooter(ctx: PageContext) {
   const { page, regular } = ctx;
   const date = new Date().toLocaleDateString('de-DE');
-  const text = `Aufstellung erstellt am ${date} — Maja-Logistik (M. Janßen)`;
+  const text = `Aufstellung erstellt am ${date} - Maja-Logistik (M. Janßen)`;
   const w = regular.widthOfTextAtSize(text, 8);
   page.drawText(text, {
     x: (A4_W - w) / 2,
@@ -264,8 +285,10 @@ export async function generateAufstellungPdf(input: AufstellungInput): Promise<B
 
   let ctx = newPage(doc, { regular, bold }, logo);
   drawMetaBlock(ctx, {
-    fahrer: input.fahrerNamen.join(', ') || '—',
-    zeitraum: `${formatDateDe(input.von)} – ${formatDateDe(input.bis)}`,
+    // Sicher für WinAnsi-Schriften — Fahrer-Name könnte auch Sonderzeichen
+    // enthalten, daher hier schon säubern.
+    fahrer: winAnsi(input.fahrerNamen.join(', ') || '-'),
+    zeitraum: `${formatDateDe(input.von)} - ${formatDateDe(input.bis)}`,
     created: new Date().toLocaleDateString('de-DE'),
   });
   drawTableHeader(ctx);

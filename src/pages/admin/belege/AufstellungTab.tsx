@@ -125,6 +125,18 @@ export function AufstellungTab() {
     }
     setLoading(true);
     setError(null);
+
+    // Wird ein Haupt-Konto ausgewählt, müssen auch die Touren seiner
+    // Unterkonten in die Aufstellung. Direkt ausgewählte Unterkonten
+    // bleiben unverändert (kein Reverse-Lookup zum Haupt).
+    const { data: subData, error: subErr } = await supabase
+      .from('fahrer')
+      .select('id, haupt_user_id')
+      .in('haupt_user_id', selectedFahrer);
+    if (subErr) { setError(subErr.message); setLoading(false); return; }
+    const scopeIds = new Set<string>(selectedFahrer);
+    for (const s of subData ?? []) scopeIds.add(s.id);
+
     const { data, error: err } = await supabase
       .from('touren')
       .select(`
@@ -136,7 +148,7 @@ export function AufstellungTab() {
           user:user_id (email, vorname, nachname)
         )
       `)
-      .in('fahrer_id', selectedFahrer)
+      .in('fahrer_id', Array.from(scopeIds))
       .order('enddatum', { ascending: true, nullsFirst: false });
     if (err) { setError(err.message); setLoading(false); return; }
     // Datumsfilter clientseitig anwenden (auf Enddatum, mit Fallback startdatum).
