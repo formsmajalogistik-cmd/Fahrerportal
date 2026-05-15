@@ -217,9 +217,13 @@ export async function fillPdf(
     }
   }
 
+  // Snapshot der ursprünglichen Seiten-Objekte. dynamic_photos kann
+  // weitere Seiten EINFÜGEN — Text-/Options-Mappings müssen aber
+  // weiterhin auf die ursprünglichen Seiten zeichnen, sonst landet
+  // Text z.B. auf einer Foto-Kopie statt der Original-Seite 2.
+  const originalPages = pdf.getPages().slice();
   const page = (n: number): PDFPage => {
-    const pages = pdf.getPages();
-    return pages[Math.max(0, Math.min(n - 1, pages.length - 1))];
+    return originalPages[Math.max(0, Math.min(n - 1, originalPages.length - 1))];
   };
 
   for (const [fieldId, entry] of Object.entries(mapping)) {
@@ -348,14 +352,18 @@ export async function fillPdf(
       if (photos.length === 0) continue;
       // Bei mehr Fotos als perPage: Original-Seite kopieren
       const slots = computeDynamicSlots(entry, photos.length);
-      const startPageIdx = Math.max(0, Math.min(entry.page - 1, pdf.getPageCount() - 1));
+      const startPageIdx = Math.max(0, Math.min(entry.page - 1, originalPages.length - 1));
       const pagesNeeded = Math.max(...slots.map((s) => s.pageOffset)) + 1;
-      // Ziel-Seiten beschaffen: bei pageOffset > 0 fügen wir Kopien von startPage ein.
-      const targetPages: PDFPage[] = [pdf.getPages()[startPageIdx]];
+      // Ziel-Seiten: das Original (Snapshot) plus bei Bedarf eingefügte
+      // Kopien. Wir suchen die aktuelle Position des Original-Page-
+      // Objekts via indexOf — damit landen die Kopien direkt dahinter,
+      // auch wenn bereits VORANGEHENDE dynamic_photos-Felder weitere
+      // Seiten in dieselbe PDF eingefügt haben.
+      const targetPages: PDFPage[] = [originalPages[startPageIdx]];
       for (let i = 1; i < pagesNeeded; i += 1) {
         const [copied] = await pdf.copyPages(pdf, [startPageIdx]);
-        // Direkt nach der ursprünglichen Seite einsetzen
-        const insertIdx = startPageIdx + i;
+        const currentIdx = pdf.getPages().indexOf(originalPages[startPageIdx]);
+        const insertIdx = currentIdx >= 0 ? currentIdx + i : pdf.getPageCount();
         pdf.insertPage(insertIdx, copied);
         targetPages.push(copied);
       }
@@ -388,6 +396,40 @@ export interface GeneratedPdf {
 }
 
 /**
+ * True, wenn die Vorlage NUR Bild-Felder mappt (photo / dynamic_photos)
+ * und alle Werte dieser Felder in `data` leer sind. Solche reinen
+ * Bild-PDFs werden bei der Generierung übersprungen — z.B. das Belege-
+ * oder Zusatzbilder-PDF, wenn der Fahrer nichts hochgeladen hat.
+ *
+ * Gemischte Vorlagen (mit Text-/Options-Mappings) werden IMMER erzeugt,
+ * weil die Textfelder relevant sein können.
+ */
+function isImageOnlyAndEmpty(
+  mapping: FieldMapping,
+  data: Record<string, unknown>,
+): boolean {
+  const entries = Object.entries(mapping);
+  if (entries.length === 0) return false;
+  let imageEntries = 0;
+  let nonImageEntries = 0;
+  let hasContent = false;
+  for (const [fieldId, entry] of entries) {
+    if (isDynamicEntry(entry)) {
+      imageEntries += 1;
+      const list = asPhotos(readDataValue(data, fieldId));
+      if (list.some((p) => p.storage_path || p.pending_id)) hasContent = true;
+    } else if (isBoxEntry(entry) && entry.type === 'photo') {
+      imageEntries += 1;
+      const photo = asPhoto(readDataValue(data, fieldId));
+      if (photo && (photo.storage_path || photo.pending_id)) hasContent = true;
+    } else {
+      nonImageEntries += 1;
+    }
+  }
+  return nonImageEntries === 0 && imageEntries > 0 && !hasContent;
+}
+
+/**
  * Generiert alle PDFs eines Templates für ein konkretes Formular und legt sie
  * in OneDrive unter dem Formular-Ordner ab. Filenames kommen aus dem
  * filename_pattern bzw. fallback auf pdf.id.
@@ -405,24 +447,50 @@ export async function generateAndUploadFormPdfs(
     formularId: formular.id,
   });
 
+  const allPdfs = template.pdfs ?? [];
+  console.info(
+    `[generateAndUploadFormPdfs] Template "${template.name}": ${allPdfs.length} PDF-Vorlagen konfiguriert`,
+  );
   const generated: GeneratedPdf[] = [];
-  for (const tplPdf of template.pdfs ?? []) {
-    if (!tplPdf.path) continue;
+  for (const tplPdf of allPdfs) {
+    if (!tplPdf.path) {
+      console.info(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: SKIP (keine PDF-Datei hochgeladen)`);
+      continue;
+    }
+    const mapping = tplPdf.field_mapping ?? {};
+    const mapKeys = Object.keys(mapping);
+    if (mapKeys.length === 0) {
+      console.info(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: SKIP (kein Field-Mapping)`);
+      continue;
+    }
+    if (isImageOnlyAndEmpty(mapping, formular.daten)) {
+      console.info(
+        `[generateAndUploadFormPdfs]   – ${tplPdf.id}: SKIP (reine Bild-Vorlage, keine Bilder vorhanden)`,
+      );
+      continue;
+    }
     try {
       const tplBytes = await fetchPdfBytes(tplPdf.path);
-      if (!tplBytes) continue;
-      const out = await fillPdf(
-        tplBytes, template.schema, tplPdf.field_mapping ?? {}, formular.daten,
-      );
+      if (!tplBytes) {
+        console.warn(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: PDF-Datei konnte nicht geladen werden (${tplPdf.path})`);
+        continue;
+      }
+      const out = await fillPdf(tplBytes, template.schema, mapping, formular.daten);
       const filename = resolveFilename(tplPdf.filename_pattern, formular.daten, tplPdf.id);
       const onedrivePath = pathForPdf(folder, filename);
       const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
       await uploadToOneDrive(onedrivePath, blob);
+      console.info(
+        `[generateAndUploadFormPdfs]   – ${tplPdf.id}: OK → ${filename} (${blob.size} bytes)`,
+      );
       generated.push({ pdf: tplPdf, filename, onedrive_path: onedrivePath });
     } catch (err) {
-      console.warn(`[generateAndUploadFormPdfs] PDF ${tplPdf.id} fehlgeschlagen`, err);
+      console.warn(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: FAIL`, err);
     }
   }
+  console.info(
+    `[generateAndUploadFormPdfs] fertig: ${generated.length}/${allPdfs.length} PDFs erzeugt`,
+  );
   return generated;
 }
 

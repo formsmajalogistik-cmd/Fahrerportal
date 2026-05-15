@@ -205,6 +205,7 @@ interface MailAttachment {
 export async function sendMail(args: {
   to: string[];
   cc?: string[];
+  bcc?: string[];
   subject: string;
   bodyText: string;
   attachments?: Array<{ name: string; contentType: string; bytes: Uint8Array }>;
@@ -213,6 +214,25 @@ export async function sendMail(args: {
   const url = `${GRAPH}/users/${encodeURIComponent(upn)}/sendMail`;
   const recipients = (xs: string[]): MailRecipient[] =>
     xs.map((a) => ({ emailAddress: { address: a } }));
+
+  // Self-Mail-Workaround: Wenn der Sender (= Mailbox-User) selbst in
+  // toRecipients steht, lehnen viele Outlook-Setups die Zustellung in
+  // die EIGENE Inbox ab (Mail landet nur im Sent-Folder). Wir verschieben
+  // den Sender-Eintrag in diesem Fall in BCC, damit die Mail garantiert
+  // im Postfach des Empfängers ankommt. Mindestens ein "echter" anderer
+  // Empfänger MUSS in to bleiben — wenn der Sender alleine to wäre,
+  // setzen wir einen Dummy-To.
+  const upnNorm = upn.trim().toLowerCase();
+  const toClean = args.to.filter((a) => a.trim().toLowerCase() !== upnNorm);
+  const ccClean = (args.cc ?? []).filter((a) => a.trim().toLowerCase() !== upnNorm);
+  const bccExtra = args.to.some((a) => a.trim().toLowerCase() === upnNorm)
+                || (args.cc ?? []).some((a) => a.trim().toLowerCase() === upnNorm)
+    ? [upn] : [];
+  const finalTo = toClean.length > 0
+    ? toClean
+    : (bccExtra.length > 0 ? [upn] : args.to);
+  const finalCc = ccClean.length > 0 ? ccClean : undefined;
+  const finalBcc = [...(args.bcc ?? []), ...bccExtra];
 
   const att: MailAttachment[] = (args.attachments ?? []).map((a) => ({
     '@odata.type': '#microsoft.graph.fileAttachment',
@@ -225,12 +245,18 @@ export async function sendMail(args: {
     message: {
       subject: args.subject,
       body: { contentType: 'Text', content: args.bodyText },
-      toRecipients: recipients(args.to),
-      ccRecipients: args.cc && args.cc.length > 0 ? recipients(args.cc) : undefined,
+      from: { emailAddress: { address: upn } },
+      toRecipients: recipients(finalTo),
+      ccRecipients: finalCc ? recipients(finalCc) : undefined,
+      bccRecipients: finalBcc.length > 0 ? recipients(finalBcc) : undefined,
       attachments: att.length > 0 ? att : undefined,
     },
     saveToSentItems: true,
   };
+
+  console.info(
+    `[graph.sendMail] from=${upn} to=${finalTo.join(',')} cc=${(finalCc ?? []).join(',')} bcc=${finalBcc.join(',')} attachments=${att.length}`,
+  );
 
   const resp = await graphFetch('POST', url, body);
   if (!resp.ok) throw new Error(`sendMail: ${resp.status} ${await resp.text()}`);
