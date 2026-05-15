@@ -1,5 +1,8 @@
 {
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/" }
+  ],
+  "crons": [
+    { "path": "/api/cron-release-greimel", "schedule": "0 1 * * *" }
   ]
 }

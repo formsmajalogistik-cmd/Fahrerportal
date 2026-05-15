@@ -566,6 +566,10 @@ export type Database = {
         };
         Returns: void;
       };
+      release_completed_greimel_zugaenge: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
+      };
     };
     Enums: {
       user_role: UserRole;

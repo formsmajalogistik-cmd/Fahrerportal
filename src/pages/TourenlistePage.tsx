@@ -133,6 +133,13 @@ export function TourenlistePage() {
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
     setError(null);
+    // Hintergrund-Cleanup: koppelt abgeschlossene Touren von ihrem
+    // Greimel-Zugang. RPC ist idempotent — wenn der User kein execute
+    // hat (z.B. Fahrer), schlucken wir den Fehler still.
+    if (isAdmin) {
+      try { await supabase.rpc('release_completed_greimel_zugaenge'); }
+      catch { /* RPC-Fehler ignorieren — RLS / Berechtigungen */ }
+    }
     // Sensible Spalten (verguetung, km_*, fahrer_honorar, barauslagen,
     // sondervereinbarung, info, rechnungsdatum_*) für Nicht-Admins NICHT
     // mit selektieren — sie kommen damit gar nicht erst beim Client an.

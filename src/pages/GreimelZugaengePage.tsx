@@ -5,12 +5,25 @@ import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { GreimelZugangEditDialog } from './greimel/GreimelZugangEditDialog';
-import { displayName } from '../lib/names';
+import { fahrerName as resolveFahrerName, displayName } from '../lib/names';
+import { formatDate } from '../lib/touren';
 import type { AppUser, Fahrer, GreimelZugang } from '../types/db';
 
 type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nachname' | 'ist_unterkonto' | 'haupt_user_id'> & {
   user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
 };
+
+interface AssignedTour {
+  id: string;
+  tour_id: string | null;
+  greimel_zugang_id: string | null;
+  start_stadt: string;
+  ziel_stadt: string;
+  rueckfuehrung_stadt: string | null;
+  startdatum: string;
+  enddatum: string;
+  fahrer_id: string | null;
+}
 
 export function GreimelZugaengePage() {
   const { profile } = useAuth();
@@ -19,6 +32,8 @@ export function GreimelZugaengePage() {
 
   const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
   const [fahrer, setFahrer] = useState<FahrerWithUser[]>([]);
+  /** Aktive/geplante Touren je Zugang — nur für Admin. */
+  const [toursByZugang, setToursByZugang] = useState<Map<string, AssignedTour[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [editing, setEditing] = useState<GreimelZugang | 'new' | null>(null);
@@ -27,17 +42,38 @@ export function GreimelZugaengePage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [zRes, fRes] = await Promise.all([
-      supabase.from('greimel_zugaenge').select('*').order('titel'),
+    // Beim Laden erstmal die Cleanup-RPC anstoßen — entkoppelt abge-
+    // schlossene Touren von ihrem Zugang. Fehler ignorieren (Fahrer
+    // hat ggf. kein execute-Recht; Backup-Cron läuft separat).
+    try { await supabase.rpc('release_completed_greimel_zugaenge'); }
+    catch { /* idempotent; ignorieren */ }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const [zRes, fRes, tRes] = await Promise.all([
+      supabase.from('greimel_zugaenge').select('*'),
       isAdmin
         ? supabase
             .from('fahrer')
             .select('id, user_id, aktiv, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
             .eq('aktiv', true)
         : Promise.resolve({ data: [] as unknown[], error: null }),
+      // Aktive/geplante Touren (Enddatum >= heute) für die Anzeige
+      // "Verknüpfte Touren" pro Zugang.
+      isAdmin
+        ? supabase
+            .from('touren')
+            .select('id, tour_id, greimel_zugang_id, start_stadt, ziel_stadt, rueckfuehrung_stadt, startdatum, enddatum, fahrer_id')
+            .not('greimel_zugang_id', 'is', null)
+            .gte('enddatum', todayIso)
+            .order('enddatum', { ascending: true })
+        : Promise.resolve({ data: [] as unknown[], error: null }),
     ]);
     if (zRes.error) { setError(zRes.error.message); setLoading(false); return; }
     let list = Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : [];
+    // Natürliche Sortierung nach Titel ("Zugang 2" vor "Zugang 10").
+    list = [...list].sort((a, b) =>
+      a.titel.localeCompare(b.titel, 'de', { numeric: true, sensitivity: 'base' }),
+    );
     // Nicht-Admin: nur Zugänge des aktiven Kontos (oder sichtbar_fuer_alle).
     if (!isAdmin && activeFahrer) {
       list = list.filter((z) =>
@@ -47,6 +83,15 @@ export function GreimelZugaengePage() {
     }
     setZugaenge(list);
     setFahrer(Array.isArray(fRes.data) ? (fRes.data as unknown as FahrerWithUser[]) : []);
+    const tourList = Array.isArray(tRes.data) ? (tRes.data as unknown as AssignedTour[]) : [];
+    const grouped = new Map<string, AssignedTour[]>();
+    for (const t of tourList) {
+      if (!t.greimel_zugang_id) continue;
+      const arr = grouped.get(t.greimel_zugang_id) ?? [];
+      arr.push(t);
+      grouped.set(t.greimel_zugang_id, arr);
+    }
+    setToursByZugang(grouped);
     setLoading(false);
   }, [isAdmin, activeFahrer]);
 
@@ -100,6 +145,7 @@ export function GreimelZugaengePage() {
               zugang={z}
               isAdmin={isAdmin}
               fahrerById={fahrerById}
+              assignedTours={toursByZugang.get(z.id) ?? []}
               onEdit={() => setEditing(z)}
               onDelete={() => setDeleting(z)}
             />
@@ -135,11 +181,12 @@ interface CardProps {
   zugang: GreimelZugang;
   isAdmin: boolean;
   fahrerById: Map<string, FahrerWithUser>;
+  assignedTours: AssignedTour[];
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function ZugangCard({ zugang, isAdmin, fahrerById, onEdit, onDelete }: CardProps) {
+function ZugangCard({ zugang, isAdmin, fahrerById, assignedTours, onEdit, onDelete }: CardProps) {
   const [showPw, setShowPw] = useState(false);
   const [copied, setCopied] = useState<'user' | 'pw' | null>(null);
 
@@ -156,7 +203,9 @@ function ZugangCard({ zugang, isAdmin, fahrerById, onEdit, onDelete }: CardProps
   const fahrerNamen = (zugang.fahrer_ids ?? [])
     .map((id) => {
       const f = fahrerById.get(id);
-      return f ? displayName(f.user ?? null) : null;
+      // Nutzt den Pro-Fahrer-Namen (auch für Unterkonten) mit Fallback
+      // auf den verknüpften Auth-User.
+      return f ? (resolveFahrerName(f, f.user ?? null) || displayName(f.user ?? null)) : null;
     })
     .filter(Boolean) as string[];
 
@@ -259,6 +308,45 @@ function ZugangCard({ zugang, isAdmin, fahrerById, onEdit, onDelete }: CardProps
               ))
             )}
           </div>
+        </div>
+      )}
+
+      {/* Verknüpfte aktive/geplante Touren — nur Admin */}
+      {isAdmin && (
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+            Verknüpfte Touren
+          </div>
+          {assignedTours.length === 0 ? (
+            <div className="mt-1 text-xs text-maja-muted">Keine aktive Zuweisung</div>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {assignedTours.map((t) => {
+                const route = [t.start_stadt, t.ziel_stadt, t.rueckfuehrung_stadt]
+                  .filter(Boolean).join(' → ');
+                const fahrerLabel = t.fahrer_id
+                  ? (() => {
+                      const f = fahrerById.get(t.fahrer_id);
+                      return f ? (resolveFahrerName(f, f.user ?? null) || displayName(f.user ?? null)) : '—';
+                    })()
+                  : '—';
+                return (
+                  <li key={t.id} className="rounded-md bg-maja-light/60 px-2 py-1 text-xs text-maja-ink">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      {t.tour_id && (
+                        <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold text-maja-navy">
+                          {t.tour_id}
+                        </span>
+                      )}
+                      <span className="font-medium">{route || '—'}</span>
+                      <span className="text-maja-muted">{formatDate(t.enddatum)}</span>
+                      <span className="text-maja-muted">· {fahrerLabel}</span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
     </li>

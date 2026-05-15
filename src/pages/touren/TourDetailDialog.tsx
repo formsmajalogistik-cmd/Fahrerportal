@@ -340,7 +340,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         .select('id, user_id, aktiv, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true),
       supabase.from('formular_templates').select('id, name').order('name'),
-      supabase.from('greimel_zugaenge').select('*').order('titel'),
+      supabase.from('greimel_zugaenge').select('*'),
     ]);
     if (tRes.error) { setError(tRes.error.message); setLoading(false); return; }
     const raw = (tRes.data ?? {}) as unknown as Record<string, unknown>;
@@ -366,7 +366,11 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       (fahrerNameOf(a)).localeCompare(fahrerNameOf(b), 'de'),
     ));
     setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
-    setZugaenge(Array.isArray(gzRes.data) ? (gzRes.data as GreimelZugang[]) : []);
+    // Natürliche Sortierung nach Titel ("Zugang 2" vor "Zugang 10").
+    const zList = Array.isArray(gzRes.data) ? (gzRes.data as GreimelZugang[]) : [];
+    setZugaenge([...zList].sort((a, b) =>
+      a.titel.localeCompare(b.titel, 'de', { numeric: true, sensitivity: 'base' }),
+    ));
 
     // Optional: zugehörigen Eingang + Template laden.
     if (full.eingang_id) {

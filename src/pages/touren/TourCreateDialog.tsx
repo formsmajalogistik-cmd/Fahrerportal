@@ -102,13 +102,17 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
           .select('*, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true),
         supabase.from('formular_templates').select('id, name').order('name'),
-        supabase.from('greimel_zugaenge').select('*').order('titel'),
+        supabase.from('greimel_zugaenge').select('*'),
       ]);
       setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
       const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
       setFahrer(faList);
       setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);
-      setZugaenge(Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : []);
+      // Natürliche Sortierung nach Titel ("Zugang 2" vor "Zugang 10").
+      const zList = Array.isArray(zRes.data) ? (zRes.data as GreimelZugang[]) : [];
+      setZugaenge([...zList].sort((a, b) =>
+        a.titel.localeCompare(b.titel, 'de', { numeric: true, sensitivity: 'base' }),
+      ));
     })();
   }, []);
 
