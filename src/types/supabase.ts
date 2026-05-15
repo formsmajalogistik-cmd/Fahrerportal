@@ -514,6 +514,7 @@ export type Database = {
           daten: Json;
           status: FormularStatus;
           created_at: string;
+          gesehen_am: string | null;
         };
         Insert: {
           id?: string;
@@ -522,6 +523,7 @@ export type Database = {
           daten?: Json;
           status?: FormularStatus;
           created_at?: string;
+          gesehen_am?: string | null;
         };
         Update: {
           id?: string;
@@ -530,6 +532,7 @@ export type Database = {
           daten?: Json;
           status?: FormularStatus;
           created_at?: string;
+          gesehen_am?: string | null;
         };
         Relationships: [
           {

@@ -5,6 +5,7 @@ import { registerSW } from 'virtual:pwa-register';
 import { AuthProvider } from './auth/AuthContext';
 import { FahrerProvider } from './auth/FahrerContext';
 import { SyncProvider } from './sync/SyncContext';
+import { EingaengeProvider } from './sync/EingaengeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 import './index.css';
@@ -56,7 +57,9 @@ createRoot(document.getElementById('root')!).render(
         <AuthProvider>
           <FahrerProvider>
             <SyncProvider>
-              <App />
+              <EingaengeProvider>
+                <App />
+              </EingaengeProvider>
             </SyncProvider>
           </FahrerProvider>
         </AuthProvider>

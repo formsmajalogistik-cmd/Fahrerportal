@@ -3,8 +3,24 @@ import { NavLink } from 'react-router-dom';
 import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
+import { useEingaengeNotifications } from '../sync/EingaengeContext';
 
 interface NavItem { to: string; label: string; end?: boolean }
+
+function NavBadge({ count, pulse }: { count: number; pulse: boolean }) {
+  if (count <= 0) return null;
+  const label = count > 9 ? '9+' : String(count);
+  return (
+    <span
+      aria-label={`${count} ungesehene Eingänge`}
+      className={`ml-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold leading-none text-white shadow-sm ${
+        pulse ? 'animate-bounce' : ''
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
 
 const adminNav: NavItem[] = [
   { to: '/touren',           label: 'Tourenliste' },
@@ -17,6 +33,7 @@ const adminNav: NavItem[] = [
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {
+  const { unseen, pulse } = useEingaengeNotifications();
   return (
     <div className="min-h-screen bg-maja-light">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-maja-navy/10 bg-white lg:block">
@@ -31,14 +48,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   to={item.to}
                   end={item.end ?? false}
                   className={({ isActive }) =>
-                    `block rounded-lg px-3 py-2 text-sm font-medium transition ${
+                    `flex items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
                       isActive
                         ? 'bg-maja-navy text-white'
                         : 'text-maja-ink hover:bg-maja-light'
                     }`
                   }
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.to === '/eingaenge' && <NavBadge count={unseen} pulse={pulse} />}
                 </NavLink>
               </li>
             ))}
@@ -63,14 +81,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     to={item.to}
                     end={item.end ?? false}
                     className={({ isActive }) =>
-                      `inline-block rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                      `inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                         isActive
                           ? 'bg-maja-navy text-white'
                           : 'text-maja-navy hover:bg-maja-light'
                       }`
                     }
                   >
-                    {item.label}
+                    <span>{item.label}</span>
+                    {item.to === '/eingaenge' && <NavBadge count={unseen} pulse={pulse} />}
                   </NavLink>
                 </li>
               ))}

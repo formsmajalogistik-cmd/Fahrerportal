@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
 import { useAuth } from '../../auth/AuthContext';
+import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
   downloadFormPdf, expectedOneDrivePath, generateAndUploadFormPdfs, resolveFilename,
 } from '../../lib/pdfGenerate';
@@ -28,6 +29,7 @@ interface Row extends AusgefuelltesFormular {
 export function EingaengePage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
+  const { markAllSeen } = useEingaengeNotifications();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +70,15 @@ export function EingaengePage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Beim Öffnen des Reiters: alle bisher ungesehenen Eingänge als
+  // gesehen markieren — das rote Badge in der Navigation verschwindet
+  // damit sofort. Läuft nur einmal pro Mount, Fehler still ignorieren.
+  useEffect(() => {
+    if (!isAdmin) return;
+    void markAllSeen();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   const visibleRows = useMemo(() => {
     return hideLinked ? rows.filter((r) => !r.tour) : rows;
