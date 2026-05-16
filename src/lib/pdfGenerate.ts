@@ -371,29 +371,46 @@ export async function fillPdf(
     if (isDynamicEntry(entry)) {
       const photos = asPhotos(value);
       if (photos.length === 0) continue;
-      // Bei mehr Fotos als perPage: Original-Seite kopieren
       const slots = computeDynamicSlots(entry, photos.length);
       const startPageIdx = Math.max(0, Math.min(entry.page - 1, originalPages.length - 1));
       const pagesNeeded = Math.max(...slots.map((s) => s.pageOffset)) + 1;
-      // Ziel-Seiten: das Original (Snapshot) plus bei Bedarf eingefügte
-      // Kopien. Wir suchen die aktuelle Position des Original-Page-
-      // Objekts via indexOf — damit landen die Kopien direkt dahinter,
-      // auch wenn bereits VORANGEHENDE dynamic_photos-Felder weitere
-      // Seiten in dieselbe PDF eingefügt haben.
-      const targetPages: PDFPage[] = [originalPages[startPageIdx]];
-      for (let i = 1; i < pagesNeeded; i += 1) {
-        const [copied] = await pdf.copyPages(pdf, [startPageIdx]);
-        const currentIdx = pdf.getPages().indexOf(originalPages[startPageIdx]);
-        const insertIdx = currentIdx >= 0 ? currentIdx + i : pdf.getPageCount();
-        pdf.insertPage(insertIdx, copied);
-        targetPages.push(copied);
+      console.info(
+        `[fillPdf] dynamic_photos field=${fieldId}: photos=${photos.length}, `
+        + `perPage=${entry.perPage}, pagesNeeded=${pagesNeeded}, `
+        + `startPageIdx=${startPageIdx}, templatePages=${originalPages.length}`,
+      );
+
+      // Ziel-Seiten zusammenstellen.
+      //   – Wenn die Vorlage MEHRERE vorbereitete Seiten ab startPage hat
+      //     (z.B. Übernahme: Seite 1 + Seite 2 mit jeweils 8 Slots),
+      //     nutzen wir diese ORIGINALE direkt — KEINE Duplizierung,
+      //     sonst geht die zweite vorbereitete Seite verloren.
+      //   – Reichen die Original-Seiten nicht (z.B. einseitige Vorlage
+      //     + 16 Fotos → 2 Seiten nötig), kopieren wir die Startseite
+      //     und fügen die Kopie direkt dahinter ein.
+      const targetPages: PDFPage[] = [];
+      for (let i = 0; i < pagesNeeded; i += 1) {
+        const origIdx = startPageIdx + i;
+        if (origIdx < originalPages.length) {
+          targetPages.push(originalPages[origIdx]);
+        } else {
+          const [copied] = await pdf.copyPages(pdf, [startPageIdx]);
+          const currentIdx = pdf.getPages().indexOf(originalPages[startPageIdx]);
+          const insertIdx = currentIdx >= 0 ? currentIdx + i : pdf.getPageCount();
+          pdf.insertPage(insertIdx, copied);
+          targetPages.push(copied);
+        }
       }
+
       for (let i = 0; i < photos.length; i += 1) {
         const slot = slots[i];
         const photo = photos[i];
         if (!photo.storage_path) continue;
         const bytes = await fetchSubmittedPhotoBytes(photo.storage_path);
-        if (!bytes) continue;
+        if (!bytes) {
+          console.warn(`[fillPdf] dynamic photo ${i}: konnte Bytes nicht laden (${photo.storage_path})`);
+          continue;
+        }
         try {
           const img = await embedImage(pdf, bytes, photo.storage_path);
           const fit = aspectFit(img.width, img.height,
