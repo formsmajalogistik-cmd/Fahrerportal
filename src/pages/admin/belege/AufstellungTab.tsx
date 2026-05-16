@@ -77,6 +77,9 @@ export function AufstellungTab() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [honorarDraft, setHonorarDraft] = useState<Record<string, string>>({});
+  /** Anzahl Touren VOR dem Datumsfilter — hilft dem Admin zu sehen,
+   *  ob die Auswahl prinzipiell trifft und nur der Zeitraum daneben liegt. */
+  const [rawHits, setRawHits] = useState<number | null>(null);
 
   // Fahrer-Optionen einmalig laden — Haupt + Unterkonten, alphabetisch.
   useEffect(() => {
@@ -126,20 +129,45 @@ export function AufstellungTab() {
     setLoading(true);
     setError(null);
 
-    console.info('[Aufstellung] Auswahl', { selectedFahrer, von, bis });
+    /* eslint-disable no-console */
+    console.log('=== AUFSTELLUNG DEBUG ===');
+    console.log('Ausgewählte Fahrer IDs:', selectedFahrer);
+    console.log('Zeitraum von:', von, 'bis:', bis);
 
-    // Server-seitige Expansion via SECURITY-DEFINER-RPC — bypasst RLS
-    // und kennt die fahrer_id ↔ haupt_user_id-Beziehung. Liefert für
-    // Haupt-Konten zusätzlich alle Unterkonten zurück; Unterkonten
-    // direkt-ausgewählt bleiben unverändert (Haupt-Eintrag wird NICHT
-    // implizit ergänzt).
-    const { data: scopeData, error: scopeErr } = await supabase
-      .rpc('expand_fahrer_with_subaccounts', { p_ids: selectedFahrer });
-    if (scopeErr) { setError(scopeErr.message); setLoading(false); return; }
-    const scopeIds = (scopeData ?? selectedFahrer) as string[];
-    console.info('[Aufstellung] expandiert auf', scopeIds);
+    // ---- 1) Fahrer-Liste auf Unterkonten erweitern ----
+    // Bevorzugt server-seitige Expansion via SECURITY-DEFINER-RPC
+    // (Migration 032/033). Schlägt das fehl (RPC fehlt, RLS-Problem,
+    // Netzwerkfehler), fällt der Client auf einen direkten SELECT
+    // auf der fahrer-Tabelle zurück.
+    let scopeIds: string[] = [];
+    const rpc = await supabase.rpc('expand_fahrer_with_subaccounts', { p_ids: selectedFahrer });
+    if (rpc.error) {
+      console.warn('[Aufstellung] RPC expand_fahrer_with_subaccounts failed, fallback aktiv', rpc.error);
+      // Fallback: client-seitige Expansion über zweiten Query.
+      const sub = await supabase
+        .from('fahrer')
+        .select('id, haupt_user_id')
+        .in('haupt_user_id', selectedFahrer);
+      console.log('[Aufstellung] Fallback-Subquery:', sub);
+      const set = new Set<string>(selectedFahrer);
+      for (const row of (sub.data ?? []) as Array<{ id: string }>) set.add(row.id);
+      scopeIds = Array.from(set);
+    } else {
+      const raw = (rpc.data as string[] | null) ?? [];
+      scopeIds = raw.length > 0 ? raw : selectedFahrer;
+    }
+    console.log('Alle fahrer_ids für Query (inkl. Unterkonten):', scopeIds);
 
-    const { data, error: err } = await supabase
+    if (scopeIds.length === 0) {
+      console.warn('[Aufstellung] scopeIds leer — Query würde keine Zeilen liefern.');
+      setError('Konnte keine Fahrer-IDs ermitteln (auch keine Unterkonten).');
+      setLoading(false);
+      return;
+    }
+
+    // ---- 2) Touren laden ----
+    console.log('Supabase Query: touren WHERE fahrer_id IN', scopeIds);
+    const { data, error: err, status, statusText } = await supabase
       .from('touren')
       .select(`
         id, tour_id, enddatum, startdatum, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -152,16 +180,33 @@ export function AufstellungTab() {
       `)
       .in('fahrer_id', scopeIds)
       .order('enddatum', { ascending: true, nullsFirst: false });
-    if (err) { setError(err.message); setLoading(false); return; }
-    console.info('[Aufstellung] Tour-Treffer roh', (data ?? []).length);
-    // Datumsfilter clientseitig anwenden (auf Enddatum, mit Fallback startdatum).
+    console.log('Query Result - HTTP status:', status, statusText);
+    console.log('Query Result - data:', data);
+    console.log('Query Result - data length:', data?.length);
+    console.log('Query Result - error:', err);
+    if (err) {
+      console.error('SUPABASE ERROR:', JSON.stringify(err, null, 2));
+      setError(err.message);
+      setLoading(false);
+      return;
+    }
+
+    // ---- 3) Datumsfilter ----
     const list = ((data ?? []) as unknown as TourRow[]).filter((t) => {
       const ref = t.enddatum ?? t.startdatum;
       if (!ref) return false;
       return ref >= von && ref <= bis;
     });
-    console.info('[Aufstellung] nach Datumsfilter', list.length, `(${von} … ${bis})`);
+    console.log('Nach Datumsfilter:', list.length, `(${von} … ${bis})`);
+    if (list.length === 0 && (data?.length ?? 0) > 0) {
+      console.warn('[Aufstellung] Touren gefunden, aber kein einziges Enddatum liegt im Zeitraum.',
+        'Beispiele:',
+        (data as unknown as TourRow[]).slice(0, 5).map((t) => ({ id: t.id, enddatum: t.enddatum, startdatum: t.startdatum })));
+    }
+    /* eslint-enable no-console */
+
     setRows(list);
+    setRawHits(data?.length ?? 0);
     setHonorarDraft({});
     setLoading(false);
   }, [selectedFahrer, von, bis]);
@@ -392,7 +437,11 @@ export function AufstellungTab() {
 
       {!loading && rows.length === 0 && (
         <div className="card p-6 text-center text-sm text-maja-muted">
-          Noch keine Touren geladen. Wähle Zeitraum + Fahrer und klicke „Touren laden".
+          {rawHits === null
+            ? 'Noch keine Touren geladen. Wähle Zeitraum + Fahrer und klicke „Touren laden".'
+            : rawHits > 0
+              ? `${rawHits} ${rawHits === 1 ? 'Tour gefunden' : 'Touren gefunden'} — aber keine davon liegt im gewählten Zeitraum (${von} – ${bis}). Passe Von/Bis an.`
+              : 'Keine Touren für die gewählten Fahrer gefunden.'}
         </div>
       )}
 
