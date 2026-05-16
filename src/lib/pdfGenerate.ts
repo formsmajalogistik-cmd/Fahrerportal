@@ -181,6 +181,73 @@ async function embedImage(pdf: PDFDocument, bytes: ArrayBuffer | Uint8Array, hin
 }
 
 /**
+ * Re-encoded ein Foto vor dem Einbetten in eine PDF nochmal kleiner —
+ * 1200 px lange Kante, JPEG q=0.6. Das halbiert in der Regel die finale
+ * PDF-Größe und hält uns sicher unter dem Vercel-Function-Payload-Limit
+ * von 4.5 MB. Bei extrem kleinen Bildern (< 200 KB) bleibt das Original
+ * unverändert, weil eine Re-Encode-Runde dort nichts mehr bringt.
+ */
+async function compressForPdfEmbed(
+  source: ArrayBuffer | Uint8Array,
+  hint?: string,
+): Promise<{ bytes: Uint8Array; hintOut: string }> {
+  const buf = source instanceof Uint8Array
+    ? source.slice().buffer as ArrayBuffer
+    : source;
+  const size = (source as Uint8Array | ArrayBuffer).byteLength;
+  if (size < 200 * 1024) {
+    const bytes = source instanceof Uint8Array ? source : new Uint8Array(buf);
+    return { bytes, hintOut: hint ?? '' };
+  }
+  try {
+    const blob = new Blob([buf], { type: (hint ?? '').toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = (e) => reject(e);
+        i.src = url;
+      });
+      const maxSide = 1200;
+      let w = img.naturalWidth || img.width;
+      let h = img.naturalHeight || img.height;
+      if (w > maxSide || h > maxSide) {
+        const r = Math.min(maxSide / w, maxSide / h);
+        w = Math.round(w * r);
+        h = Math.round(h * r);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas-Kontext nicht verfügbar');
+      ctx.drawImage(img, 0, 0, w, h);
+      const outBlob: Blob | null = await new Promise((resolve) =>
+        canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.6),
+      );
+      if (!outBlob) throw new Error('toBlob lieferte null');
+      const out = new Uint8Array(await outBlob.arrayBuffer());
+      // Wenn das Ergebnis trotz Re-Encode größer wäre als das Original
+      // (passiert bei sehr kleinen, bereits komprimierten Originalen),
+      // behalten wir das Original — sonst hätten wir zusätzlich
+      // Qualitätsverlust und keinen Größengewinn.
+      if (out.byteLength >= size) {
+        const bytes = source instanceof Uint8Array ? source : new Uint8Array(buf);
+        return { bytes, hintOut: hint ?? '' };
+      }
+      return { bytes: out, hintOut: 'image.jpg' };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch (err) {
+    console.warn('[compressForPdfEmbed] Re-Encode fehlgeschlagen, nutze Original', err);
+    const bytes = source instanceof Uint8Array ? source : new Uint8Array(buf);
+    return { bytes, hintOut: hint ?? '' };
+  }
+}
+
+/**
  * Berechnet Zeichenmaße so, dass ein Bild OHNE Verzerrung in eine Box passt.
  * Der Box-Anker `boxX` ist der RECHTE Rand der Box; das Bild wird daher mit
  * seinem rechten Rand an `boxX` ausgerichtet (rechtsbündig).
@@ -359,11 +426,15 @@ export async function fillPdf(
           continue;
         }
         try {
-          const img = await embedImage(pdf, bytes, photo.storage_path);
+          const compressed = await compressForPdfEmbed(bytes, photo.storage_path);
+          const img = await embedImage(pdf, compressed.bytes, compressed.hintOut);
           const fit = aspectFit(img.width, img.height,
             entry.x, entry.y, entry.width, entry.height);
           page(entry.page).drawImage(img, fit);
-          console.info(`[fillPdf] photo ${fieldId}: OK (page ${entry.page}, ${img.width}x${img.height}, ${bytes.byteLength} bytes)`);
+          console.info(
+            `[fillPdf] photo ${fieldId}: OK (page ${entry.page}, `
+            + `${img.width}x${img.height}, raw=${bytes.byteLength}, embed=${compressed.bytes.byteLength} bytes)`,
+          );
         } catch (err) {
           console.warn(`[fillPdf] photo ${fieldId} embed failed`, err);
         }
@@ -431,7 +502,8 @@ export async function fillPdf(
           continue;
         }
         try {
-          const img = await embedImage(pdf, bytes, photo.storage_path);
+          const compressed = await compressForPdfEmbed(bytes, photo.storage_path);
+          const img = await embedImage(pdf, compressed.bytes, compressed.hintOut);
           const fit = aspectFit(img.width, img.height,
             slot.x, slot.y, slot.width, slot.height);
           targetPages[slot.pageOffset].drawImage(img, fit);

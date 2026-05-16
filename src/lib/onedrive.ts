@@ -20,9 +20,18 @@ async function bytesToBase64(bytes: Uint8Array): Promise<string> {
   return btoa(bin);
 }
 
+// Vercel-Function-Body-Limit: 4.5 MB. JSON+base64 inflieren um ~33 %,
+// also alles über ~3 MB binär nicht mehr durch /api/upload prügeln —
+// stattdessen Microsoft-Graph-Upload-Session: Server liefert nur die
+// signierte URL, der Browser PUTet die Datei direkt zu Microsoft.
+const DIRECT_UPLOAD_THRESHOLD = 3 * 1024 * 1024;
+
 export async function uploadToOneDrive(
   path: string, file: Blob,
 ): Promise<{ ok: true; path: string; webUrl?: string }> {
+  if (file.size > DIRECT_UPLOAD_THRESHOLD) {
+    return await uploadViaSession(path, file);
+  }
   const buf = await file.arrayBuffer();
   const b64 = await bytesToBase64(new Uint8Array(buf));
   // Uploads sind groß und langsam → längeres Timeout als der 15-s-Default.
@@ -38,9 +47,61 @@ export async function uploadToOneDrive(
   });
   if (!resp.ok) {
     const txt = await resp.text();
+    // 413 → Datei doch zu groß für JSON-Pfad: einmal über Session retry.
+    if (resp.status === 413) {
+      console.warn('[uploadToOneDrive] /api/upload 413 → Session-Fallback');
+      return await uploadViaSession(path, file);
+    }
     throw new Error(`Upload (${resp.status}): ${txt.slice(0, 200)}`);
   }
   return await resp.json();
+}
+
+/**
+ * Holt eine Microsoft-Graph-Upload-Session vom Server und PUTet die
+ * Datei direkt zu Microsoft. Bei großen Dateien wird in 5-MB-Chunks
+ * hochgeladen (Graph erwartet Content-Range pro Chunk). Bei kleineren
+ * Dateien reicht ein einzelner PUT.
+ */
+async function uploadViaSession(
+  path: string, file: Blob,
+): Promise<{ ok: true; path: string; webUrl?: string }> {
+  const sess = await fetchWithRetry('/api/upload-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ path }),
+    timeoutMs: 30_000,
+  });
+  if (!sess.ok) {
+    throw new Error(`upload-session (${sess.status}): ${(await sess.text()).slice(0, 200)}`);
+  }
+  const { uploadUrl } = (await sess.json()) as { uploadUrl: string };
+
+  const total = file.size;
+  const CHUNK = 5 * 1024 * 1024; // Graph empfiehlt 5–10 MB-Chunks
+  let offset = 0;
+  let last: { id?: string; webUrl?: string } | null = null;
+  while (offset < total) {
+    const end = Math.min(offset + CHUNK, total);
+    const slice = file.slice(offset, end);
+    // Wichtig: KEIN auth-Header bei diesem PUT — uploadUrl ist signiert.
+    const r = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Length': String(end - offset),
+        'Content-Range': `bytes ${offset}-${end - 1}/${total}`,
+      },
+      body: slice,
+    });
+    if (!r.ok && r.status !== 202) {
+      throw new Error(`Chunk-Upload (${r.status}): ${(await r.text()).slice(0, 200)}`);
+    }
+    if (r.status === 200 || r.status === 201) {
+      last = await r.json() as { id?: string; webUrl?: string };
+    }
+    offset = end;
+  }
+  return { ok: true, path, webUrl: last?.webUrl };
 }
 
 export async function downloadFromOneDrive(path: string): Promise<Blob> {

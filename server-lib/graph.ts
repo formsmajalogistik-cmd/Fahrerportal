@@ -52,6 +52,29 @@ function encodePath(path: string): string {
   return path.split('/').map((seg) => encodeURIComponent(seg)).join('/');
 }
 
+/**
+ * Legt eine Upload-Session für einen großen Datei-Upload an und gibt
+ * die signierte uploadUrl zurück. Der Browser kann dann mit PUTs auf
+ * diese URL hochladen — die Datei umgeht das 4.5 MB Vercel-Function-
+ * Payload-Limit komplett.
+ */
+export async function createUploadSession(path: string): Promise<{ uploadUrl: string }> {
+  const lastSlash = path.lastIndexOf('/');
+  if (lastSlash > 0) {
+    await ensureFolderPath(path.slice(0, lastSlash));
+  }
+  const sessionUrl = `${userRoot()}/root:/${encodePath(path)}:/createUploadSession`;
+  const resp = await graphFetch('POST', sessionUrl, {
+    item: { '@microsoft.graph.conflictBehavior': 'replace', name: path.split('/').pop() },
+  });
+  if (!resp.ok) {
+    throw new Error(`createUploadSession fehlgeschlagen: ${resp.status} ${await resp.text()}`);
+  }
+  const json = (await resp.json()) as { uploadUrl: string };
+  if (!json.uploadUrl) throw new Error('Graph lieferte keine uploadUrl');
+  return { uploadUrl: json.uploadUrl };
+}
+
 async function graphFetch(
   method: string, url: string, body?: unknown, headers: Record<string, string> = {},
 ): Promise<Response> {
