@@ -129,26 +129,17 @@ export function AufstellungTab() {
     setLoading(true);
     setError(null);
 
-    /* eslint-disable no-console */
-    console.log('=== AUFSTELLUNG DEBUG ===');
-    console.log('Ausgewählte Fahrer IDs:', selectedFahrer);
-    console.log('Zeitraum von:', von, 'bis:', bis);
-
-    // ---- 1) Fahrer-Liste auf Unterkonten erweitern ----
-    // Bevorzugt server-seitige Expansion via SECURITY-DEFINER-RPC
-    // (Migration 032/033). Schlägt das fehl (RPC fehlt, RLS-Problem,
-    // Netzwerkfehler), fällt der Client auf einen direkten SELECT
-    // auf der fahrer-Tabelle zurück.
+    // Fahrer-Liste auf Unterkonten erweitern — bevorzugt server-seitige
+    // SECURITY-DEFINER-RPC (Migration 032/033). Fällt sie aus (RPC fehlt,
+    // RLS-Problem, Netzwerkfehler), nutzt der Client einen direkten
+    // Sub-Select auf der fahrer-Tabelle als Fallback.
     let scopeIds: string[] = [];
     const rpc = await supabase.rpc('expand_fahrer_with_subaccounts', { p_ids: selectedFahrer });
     if (rpc.error) {
-      console.warn('[Aufstellung] RPC expand_fahrer_with_subaccounts failed, fallback aktiv', rpc.error);
-      // Fallback: client-seitige Expansion über zweiten Query.
       const sub = await supabase
         .from('fahrer')
         .select('id, haupt_user_id')
         .in('haupt_user_id', selectedFahrer);
-      console.log('[Aufstellung] Fallback-Subquery:', sub);
       const set = new Set<string>(selectedFahrer);
       for (const row of (sub.data ?? []) as Array<{ id: string }>) set.add(row.id);
       scopeIds = Array.from(set);
@@ -156,18 +147,16 @@ export function AufstellungTab() {
       const raw = (rpc.data as string[] | null) ?? [];
       scopeIds = raw.length > 0 ? raw : selectedFahrer;
     }
-    console.log('Alle fahrer_ids für Query (inkl. Unterkonten):', scopeIds);
-
     if (scopeIds.length === 0) {
-      console.warn('[Aufstellung] scopeIds leer — Query würde keine Zeilen liefern.');
       setError('Konnte keine Fahrer-IDs ermitteln (auch keine Unterkonten).');
       setLoading(false);
       return;
     }
 
-    // ---- 2) Touren laden ----
-    console.log('Supabase Query: touren WHERE fahrer_id IN', scopeIds);
-    const { data, error: err, status, statusText } = await supabase
+    // Touren direkt mit Datums-Filter in der DB-Query holen — der client-
+    // seitige Vergleich ist anfällig für Format-Mismatches und stieß ans
+    // 1000-Row-Default-Limit von PostgREST.
+    const { data, error: err } = await supabase
       .from('touren')
       .select(`
         id, tour_id, enddatum, startdatum, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -179,34 +168,15 @@ export function AufstellungTab() {
         )
       `)
       .in('fahrer_id', scopeIds)
-      .order('enddatum', { ascending: true, nullsFirst: false });
-    console.log('Query Result - HTTP status:', status, statusText);
-    console.log('Query Result - data:', data);
-    console.log('Query Result - data length:', data?.length);
-    console.log('Query Result - error:', err);
-    if (err) {
-      console.error('SUPABASE ERROR:', JSON.stringify(err, null, 2));
-      setError(err.message);
-      setLoading(false);
-      return;
-    }
+      .gte('enddatum', von)
+      .lte('enddatum', bis)
+      .order('enddatum', { ascending: true })
+      .limit(10000);
+    if (err) { setError(err.message); setLoading(false); return; }
 
-    // ---- 3) Datumsfilter ----
-    const list = ((data ?? []) as unknown as TourRow[]).filter((t) => {
-      const ref = t.enddatum ?? t.startdatum;
-      if (!ref) return false;
-      return ref >= von && ref <= bis;
-    });
-    console.log('Nach Datumsfilter:', list.length, `(${von} … ${bis})`);
-    if (list.length === 0 && (data?.length ?? 0) > 0) {
-      console.warn('[Aufstellung] Touren gefunden, aber kein einziges Enddatum liegt im Zeitraum.',
-        'Beispiele:',
-        (data as unknown as TourRow[]).slice(0, 5).map((t) => ({ id: t.id, enddatum: t.enddatum, startdatum: t.startdatum })));
-    }
-    /* eslint-enable no-console */
-
+    const list = (data ?? []) as unknown as TourRow[];
     setRows(list);
-    setRawHits(data?.length ?? 0);
+    setRawHits(list.length);
     setHonorarDraft({});
     setLoading(false);
   }, [selectedFahrer, von, bis]);
@@ -439,9 +409,7 @@ export function AufstellungTab() {
         <div className="card p-6 text-center text-sm text-maja-muted">
           {rawHits === null
             ? 'Noch keine Touren geladen. Wähle Zeitraum + Fahrer und klicke „Touren laden".'
-            : rawHits > 0
-              ? `${rawHits} ${rawHits === 1 ? 'Tour gefunden' : 'Touren gefunden'} — aber keine davon liegt im gewählten Zeitraum (${von} – ${bis}). Passe Von/Bis an.`
-              : 'Keine Touren für die gewählten Fahrer gefunden.'}
+            : `Keine Touren für die gewählten Fahrer im Zeitraum (${von} – ${bis}) gefunden.`}
         </div>
       )}
 
