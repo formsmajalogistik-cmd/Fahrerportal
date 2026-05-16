@@ -691,7 +691,7 @@ export async function sendTemplateEmail(
  * Frontend-Variante des Pattern-Resolvers, ohne Filename-Sanitisierung —
  * für Subject/Body/E-Mails. Sonderzeichen bleiben erhalten.
  */
-function resolvePattern(pattern: string, data: Record<string, unknown>): string {
+export function resolvePattern(pattern: string, data: Record<string, unknown>): string {
   if (!pattern) return '';
   // Akzeptiert auch Sub-Felder mit Dot-Notation (z.B. {adresse.stadt}) —
   // die Auflösung übernimmt readDataValue.

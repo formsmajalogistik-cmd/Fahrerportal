@@ -9,6 +9,7 @@ import {
 } from '../../lib/pdfGenerate';
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { EingangLinkDialog } from './EingangLinkDialog';
+import { EingangResendEmailDialog } from './EingangResendEmailDialog';
 import type {
   AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
 } from '../../types/db';
@@ -19,7 +20,7 @@ interface Row extends AusgefuelltesFormular {
     user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
   } | null;
   template?:
-    & Pick<FormularTemplate, 'id' | 'name'>
+    & Pick<FormularTemplate, 'id' | 'name' | 'email_config'>
     & { pdfs: TemplatePdf[]; schema: unknown }
     | null;
   /** Verknüpfte Tour (oder null). */
@@ -35,6 +36,7 @@ export function EingaengePage() {
   const [error, setError] = useState<string | null>(null);
   const [regen, setRegen] = useState<string | null>(null);
   const [linking, setLinking] = useState<Row | null>(null);
+  const [resending, setResending] = useState<Row | null>(null);
   const [hideLinked, setHideLinked] = useState(true);
   const [linkToast, setLinkToast] = useState<string | null>(null);
 
@@ -47,7 +49,7 @@ export function EingaengePage() {
       .select(`
         *,
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
-        template:template_id (id, name, pdfs, schema)
+        template:template_id (id, name, pdfs, schema, email_config)
       `)
       .order('created_at', { ascending: false })
       .limit(200);
@@ -149,6 +151,7 @@ export function EingaengePage() {
               regenBusy={regen === r.id}
               onRegenerate={() => void regeneratePdfs(r)}
               onLink={() => setLinking(r)}
+              onResendEmail={() => setResending(r)}
             />
           ))}
         </ul>
@@ -175,6 +178,30 @@ export function EingaengePage() {
         />
       )}
 
+      {resending && isAdmin && resending.template && (() => {
+        const t = resending.template;
+        const tpl: FormularTemplate = {
+          id: t.id,
+          name: t.name ?? '',
+          schema: (t.schema as FormularTemplate['schema']) ?? { sections: [] },
+          pdfs: t.pdfs ?? [],
+          email_config: t.email_config ?? null,
+          sichtbar: true,
+        };
+        return (
+          <EingangResendEmailDialog
+            formular={resending}
+            template={tpl}
+            onClose={() => setResending(null)}
+            onSent={() => {
+              setResending(null);
+              setLinkToast('E-Mail erneut versendet.');
+              window.setTimeout(() => setLinkToast(null), 4000);
+            }}
+          />
+        );
+      })()}
+
       {linkToast && (
         <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
           {linkToast}
@@ -190,9 +217,10 @@ interface CardProps {
   regenBusy: boolean;
   onRegenerate: () => void;
   onLink: () => void;
+  onResendEmail: () => void;
 }
 
-function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink }: CardProps) {
+function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink, onResendEmail }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
   const tpl: FormularTemplate | null = row.template ? {
@@ -200,7 +228,7 @@ function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink }: CardProp
     name: row.template.name ?? '',
     schema: (row.template.schema as FormularTemplate['schema']) ?? { sections: [] },
     pdfs: row.template.pdfs ?? [],
-    email_config: null,
+    email_config: row.template.email_config ?? null,
     sichtbar: true,
   } : null;
 
@@ -252,6 +280,16 @@ function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink }: CardProp
           )}
           {row.status === 'submitted' && tpl && (
             <PdfDownloads template={tpl} formular={row} />
+          )}
+          {isAdmin && row.status === 'submitted' && tpl && (tpl.pdfs?.length ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={onResendEmail}
+              className="inline-flex items-center gap-1 rounded-full bg-maja-navy px-3 py-1 text-xs font-medium text-white hover:bg-maja-accent"
+              title="E-Mail mit PDFs erneut senden"
+            >
+              ✉ E-Mail erneut senden
+            </button>
           )}
           {isAdmin && row.status === 'submitted' && (row.template?.pdfs ?? []).some((p) => p.path) && (
             <button
