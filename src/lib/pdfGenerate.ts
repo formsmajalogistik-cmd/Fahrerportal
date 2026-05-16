@@ -245,6 +245,18 @@ export async function fillPdf(
     return originalPages[Math.max(0, Math.min(n - 1, originalPages.length - 1))];
   };
 
+  // Mapping-Übersicht — hilft bei Diagnose, wenn eine Vorlage nicht
+  // wie erwartet aussieht (z.B. zweiseitige Vorlage mit 16 Foto-Feldern,
+  // die später beim Render-Schritt scheitert).
+  const mappingEntries = Object.entries(mapping);
+  const photoFieldIds = mappingEntries
+    .filter(([, e]) => isBoxEntry(e) && e.type === 'photo')
+    .map(([id]) => id);
+  console.info(
+    `[fillPdf] Pages=${originalPages.length}, mappings=${mappingEntries.length}, photo-fields=${photoFieldIds.length}`
+    + (photoFieldIds.length > 0 ? ` (${photoFieldIds.join(', ')})` : ''),
+  );
+
   for (const [fieldId, entry] of Object.entries(mapping)) {
     const value = readDataValue(data, fieldId);
     const meta = fields.get(fieldId);
@@ -337,14 +349,21 @@ export async function fillPdf(
       // photo
       if (entry.type === 'photo') {
         const photo = asPhoto(value);
-        if (!photo || !photo.storage_path) continue;
+        if (!photo || !photo.storage_path) {
+          console.info(`[fillPdf] photo ${fieldId}: SKIP (kein storage_path — value=`, value, ')');
+          continue;
+        }
         const bytes = await fetchSubmittedPhotoBytes(photo.storage_path);
-        if (!bytes) continue;
+        if (!bytes) {
+          console.warn(`[fillPdf] photo ${fieldId}: SKIP (Bytes nicht ladbar, path=${photo.storage_path})`);
+          continue;
+        }
         try {
           const img = await embedImage(pdf, bytes, photo.storage_path);
           const fit = aspectFit(img.width, img.height,
             entry.x, entry.y, entry.width, entry.height);
           page(entry.page).drawImage(img, fit);
+          console.info(`[fillPdf] photo ${fieldId}: OK (page ${entry.page}, ${img.width}x${img.height}, ${bytes.byteLength} bytes)`);
         } catch (err) {
           console.warn(`[fillPdf] photo ${fieldId} embed failed`, err);
         }
@@ -507,24 +526,44 @@ export async function generateAndUploadFormPdfs(
       );
       continue;
     }
+    // Drei separate try/catches, damit die Fehlerquelle SOFORT erkennbar
+    // ist — fetchPdfBytes vs. fillPdf vs. uploadToOneDrive.
+    let tplBytes: ArrayBuffer | null = null;
     try {
-      const tplBytes = await fetchPdfBytes(tplPdf.path);
-      if (!tplBytes) {
-        console.warn(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: PDF-Datei konnte nicht geladen werden (${tplPdf.path})`);
-        continue;
-      }
-      const out = await fillPdf(tplBytes, template.schema, mapping, formular.daten);
-      const filename = resolveFilename(tplPdf.filename_pattern, formular.daten, tplPdf.id);
-      const onedrivePath = pathForPdf(folder, filename);
-      const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
-      await uploadToOneDrive(onedrivePath, blob);
-      console.info(
-        `[generateAndUploadFormPdfs]   – ${tplPdf.id}: OK → ${filename} (${blob.size} bytes)`,
-      );
-      generated.push({ pdf: tplPdf, filename, onedrive_path: onedrivePath });
+      tplBytes = await fetchPdfBytes(tplPdf.path);
     } catch (err) {
-      console.warn(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: FAIL`, err);
+      console.error(`[generateAndUploadFormPdfs] ${tplPdf.id}: FETCH-FAIL`, err);
+      continue;
     }
+    if (!tplBytes) {
+      console.warn(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: PDF-Datei konnte nicht geladen werden (${tplPdf.path})`);
+      continue;
+    }
+
+    let out: Uint8Array;
+    try {
+      console.info(`[generateAndUploadFormPdfs] ▶ Fülle Vorlage "${tplPdf.name}" (${tplPdf.id}) — Mapping-Einträge: ${Object.keys(mapping).length}`);
+      out = await fillPdf(tplBytes, template.schema, mapping, formular.daten);
+    } catch (err) {
+      console.error(`[generateAndUploadFormPdfs] ${tplPdf.id}: FILL-FAIL`, err,
+        err instanceof Error ? err.stack : '');
+      continue;
+    }
+
+    const filename = resolveFilename(tplPdf.filename_pattern, formular.daten, tplPdf.id);
+    const onedrivePath = pathForPdf(folder, filename);
+    const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
+    try {
+      await uploadToOneDrive(onedrivePath, blob);
+    } catch (err) {
+      console.error(`[generateAndUploadFormPdfs] ${tplPdf.id}: UPLOAD-FAIL (path=${onedrivePath}, size=${blob.size})`, err);
+      continue;
+    }
+
+    console.info(
+      `[generateAndUploadFormPdfs]   – ${tplPdf.id}: OK → ${filename} (${blob.size} bytes)`,
+    );
+    generated.push({ pdf: tplPdf, filename, onedrive_path: onedrivePath });
   }
   console.info(
     `[generateAndUploadFormPdfs] fertig: ${generated.length}/${allPdfs.length} PDFs erzeugt`,
