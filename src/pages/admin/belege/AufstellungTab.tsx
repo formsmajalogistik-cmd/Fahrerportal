@@ -126,16 +126,18 @@ export function AufstellungTab() {
     setLoading(true);
     setError(null);
 
-    // Wird ein Haupt-Konto ausgewählt, müssen auch die Touren seiner
-    // Unterkonten in die Aufstellung. Direkt ausgewählte Unterkonten
-    // bleiben unverändert (kein Reverse-Lookup zum Haupt).
-    const { data: subData, error: subErr } = await supabase
-      .from('fahrer')
-      .select('id, haupt_user_id')
-      .in('haupt_user_id', selectedFahrer);
-    if (subErr) { setError(subErr.message); setLoading(false); return; }
-    const scopeIds = new Set<string>(selectedFahrer);
-    for (const s of subData ?? []) scopeIds.add(s.id);
+    console.info('[Aufstellung] Auswahl', { selectedFahrer, von, bis });
+
+    // Server-seitige Expansion via SECURITY-DEFINER-RPC — bypasst RLS
+    // und kennt die fahrer_id ↔ haupt_user_id-Beziehung. Liefert für
+    // Haupt-Konten zusätzlich alle Unterkonten zurück; Unterkonten
+    // direkt-ausgewählt bleiben unverändert (Haupt-Eintrag wird NICHT
+    // implizit ergänzt).
+    const { data: scopeData, error: scopeErr } = await supabase
+      .rpc('expand_fahrer_with_subaccounts', { p_ids: selectedFahrer });
+    if (scopeErr) { setError(scopeErr.message); setLoading(false); return; }
+    const scopeIds = (scopeData ?? selectedFahrer) as string[];
+    console.info('[Aufstellung] expandiert auf', scopeIds);
 
     const { data, error: err } = await supabase
       .from('touren')
@@ -148,15 +150,17 @@ export function AufstellungTab() {
           user:user_id (email, vorname, nachname)
         )
       `)
-      .in('fahrer_id', Array.from(scopeIds))
+      .in('fahrer_id', scopeIds)
       .order('enddatum', { ascending: true, nullsFirst: false });
     if (err) { setError(err.message); setLoading(false); return; }
+    console.info('[Aufstellung] Tour-Treffer roh', (data ?? []).length);
     // Datumsfilter clientseitig anwenden (auf Enddatum, mit Fallback startdatum).
     const list = ((data ?? []) as unknown as TourRow[]).filter((t) => {
       const ref = t.enddatum ?? t.startdatum;
       if (!ref) return false;
       return ref >= von && ref <= bis;
     });
+    console.info('[Aufstellung] nach Datumsfilter', list.length, `(${von} … ${bis})`);
     setRows(list);
     setHonorarDraft({});
     setLoading(false);
@@ -233,10 +237,6 @@ export function AufstellungTab() {
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-maja-muted">
-        Touren-Aufstellung pro Fahrer und Zeitraum erstellen, Honorare ergänzen und als PDF exportieren.
-      </p>
-
       {/* Filter */}
       <div className="card space-y-4 p-5">
         <div className="grid gap-3 sm:grid-cols-2">

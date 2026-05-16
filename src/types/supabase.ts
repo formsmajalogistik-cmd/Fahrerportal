@@ -579,6 +579,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: number;
       };
+      expand_fahrer_with_subaccounts: {
+        Args: { p_ids: string[] };
+        Returns: string[];
+      };
     };
     Enums: {
       user_role: UserRole;

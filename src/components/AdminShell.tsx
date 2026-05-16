@@ -28,6 +28,7 @@ const adminNav: NavItem[] = [
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
   { to: '/eingaenge',        label: 'Eingänge' },
   { to: '/belege',           label: 'Belege' },
+  { to: '/aufstellung',      label: 'Aufstellung' },
   { to: '/templates',        label: 'Templates' },
   { to: '/einstellungen',    label: 'Einstellungen' },
 ];
