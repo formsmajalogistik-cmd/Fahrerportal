@@ -67,6 +67,11 @@ export type Database = {
           aba_aufschlag_prozent: number | null;
           externe_app_name: string | null;
           externe_app_url: string | null;
+          rechnungsformat: Json | null;
+          kundennummer: string | null;
+          sachbearbeiter: string | null;
+          kunden_uid: string | null;
+          zahlungsziel_tage: number | null;
         };
         Insert: {
           id?: string;
@@ -81,6 +86,11 @@ export type Database = {
           aba_aufschlag_prozent?: number | null;
           externe_app_name?: string | null;
           externe_app_url?: string | null;
+          rechnungsformat?: Json | null;
+          kundennummer?: string | null;
+          sachbearbeiter?: string | null;
+          kunden_uid?: string | null;
+          zahlungsziel_tage?: number | null;
         };
         Update: {
           id?: string;
@@ -95,8 +105,56 @@ export type Database = {
           aba_aufschlag_prozent?: number | null;
           externe_app_name?: string | null;
           externe_app_url?: string | null;
+          rechnungsformat?: Json | null;
+          kundennummer?: string | null;
+          sachbearbeiter?: string | null;
+          kunden_uid?: string | null;
+          zahlungsziel_tage?: number | null;
         };
         Relationships: [];
+      };
+      rechnungsadressen: {
+        Row: {
+          id: string;
+          auftraggeber_id: string;
+          firma: string;
+          ansprechpartner: string | null;
+          strasse: string | null;
+          plz_ort: string | null;
+          land: string | null;
+          ist_standard: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          auftraggeber_id: string;
+          firma: string;
+          ansprechpartner?: string | null;
+          strasse?: string | null;
+          plz_ort?: string | null;
+          land?: string | null;
+          ist_standard?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          auftraggeber_id?: string;
+          firma?: string;
+          ansprechpartner?: string | null;
+          strasse?: string | null;
+          plz_ort?: string | null;
+          land?: string | null;
+          ist_standard?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'rechnungsadressen_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       preisstufen: {
         Row: {

@@ -1,6 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { Auftraggeber, AuftraggeberKontakt } from '../../types/db';
+import { RechnungsadressenEditor } from './RechnungsadressenEditor';
+import { RechnungsformatEditor } from './RechnungsformatEditor';
+import type { Rechnungsformat } from '../../lib/rechnungsformat';
+import type { Json } from '../../types/supabase';
 
 interface Props {
   initial: Auftraggeber | null;
@@ -49,6 +53,21 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
   const [email2, setEmail2]   = useState(initial?.email2 ?? '');
   const [externeAppName, setExterneAppName] = useState(initial?.externe_app_name ?? '');
   const [externeAppUrl,  setExterneAppUrl]  = useState(initial?.externe_app_url  ?? '');
+
+  // Rechnungs-Metadaten
+  const [kundennummer,   setKundennummer]   = useState(initial?.kundennummer ?? '');
+  const [sachbearbeiter, setSachbearbeiter] = useState(initial?.sachbearbeiter ?? '');
+  const [kundenUid,      setKundenUid]      = useState(initial?.kunden_uid ?? '');
+  const [zahlungsziel,   setZahlungsziel]   = useState<string>(
+    initial?.zahlungsziel_tage != null ? String(initial.zahlungsziel_tage) : '',
+  );
+  const [rechnungsformat, setRechnungsformat] = useState<Rechnungsformat | null>(
+    (initial?.rechnungsformat as Rechnungsformat | null) ?? null,
+  );
+
+  // Erst nach dem Speichern eines NEUEN Auftraggebers haben wir eine ID
+  // für die rechnungsadressen — bis dahin disabelen wir den Bereich.
+  const [auftraggeberIdLive, setAuftraggeberIdLive] = useState<string | null>(initial?.id ?? null);
 
   // Kontakte
   const [serverKontakte, setServerKontakte] = useState<AuftraggeberKontakt[]>([]);
@@ -104,6 +123,7 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
       // Auftraggeber speichern (kontakt-Legacy-Feld auf primären Kontakt-Namen
       // synchronisieren, damit alte Anzeigen weiter sinnvolle Werte zeigen).
       const primaerKontaktName = kontakte[0]?.name.trim() || null;
+      const zahlungszielN = zahlungsziel.trim() ? Number(zahlungsziel) : null;
       const payload = {
         name: name.trim(),
         kontakt: primaerKontaktName,
@@ -114,6 +134,11 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
         email2:  email2.trim() || null,
         externe_app_name: externeAppName.trim() || null,
         externe_app_url:  externeAppUrl.trim()  || null,
+        kundennummer:   kundennummer.trim()   || null,
+        sachbearbeiter: sachbearbeiter.trim() || null,
+        kunden_uid:     kundenUid.trim()      || null,
+        zahlungsziel_tage: zahlungszielN != null && Number.isFinite(zahlungszielN) ? zahlungszielN : null,
+        rechnungsformat: (rechnungsformat as unknown as Json | null) ?? null,
       };
       let auftraggeberId: string;
       if (isNew) {
@@ -121,6 +146,7 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
           .from('auftraggeber').insert(payload).select('id').single();
         if (err) throw err;
         auftraggeberId = data.id;
+        setAuftraggeberIdLive(auftraggeberId);
       } else {
         const { error: err } = await supabase
           .from('auftraggeber').update(payload).eq('id', initial!.id);
@@ -239,6 +265,39 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
               </div>
             </div>
           </div>
+
+          {/* Rechnungs-Stammdaten */}
+          <div className="space-y-3 rounded-lg border border-maja-navy/10 p-4">
+            <h3 className="text-sm font-semibold text-maja-navy">Rechnungs-Stammdaten</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="ag-kdnr" className="label">Kundennummer</label>
+                <input id="ag-kdnr" className="input"
+                       value={kundennummer} onChange={(e) => setKundennummer(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="ag-sb" className="label">Sachbearbeiter</label>
+                <input id="ag-sb" className="input"
+                       value={sachbearbeiter} onChange={(e) => setSachbearbeiter(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="ag-uid" className="label">Kunden-UID</label>
+                <input id="ag-uid" className="input"
+                       value={kundenUid} onChange={(e) => setKundenUid(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="ag-zz" className="label">Zahlungsziel (Tage)</label>
+                <input id="ag-zz" className="input" type="number" min={0}
+                       value={zahlungsziel} onChange={(e) => setZahlungsziel(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          {/* Rechnungsadressen */}
+          <RechnungsadressenEditor auftraggeberId={auftraggeberIdLive} />
+
+          {/* Rechnungsformat */}
+          <RechnungsformatEditor value={rechnungsformat} onChange={setRechnungsformat} />
 
           {/* Kontakte */}
           <div className="space-y-3 rounded-lg border border-maja-navy/10 p-4">
