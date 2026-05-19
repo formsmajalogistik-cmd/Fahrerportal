@@ -7,16 +7,12 @@
 -- du kannst also beide Wege nutzen.
 -- ============================================================
 
--- Sicherstellen, dass es einen Auftraggeber "Maja-Logistik" gibt
-insert into public.auftraggeber (name, kontakt)
-  values ('Maja-Logistik', 'dispo@maja-logistik.de')
-  on conflict do nothing;
-
 -- Template anlegen (PDF-Vorlagen können später im Template-Editor hochgeladen werden)
-insert into public.formular_templates (name, auftraggeber_id, schema, pdfs)
+-- Templates sind nicht mehr einem Auftraggeber zugeordnet (seit Migration 027) —
+-- Sichtbarkeit wird über das Flag `sichtbar` gesteuert.
+insert into public.formular_templates (name, schema, pdfs)
 values (
   'Fahrzeugprotokoll',
-  (select id from public.auftraggeber where name = 'Maja-Logistik' limit 1),
   $${
     "sections": [
       {
