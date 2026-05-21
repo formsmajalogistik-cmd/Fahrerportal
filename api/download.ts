@@ -1,10 +1,20 @@
 // GET /api/download?path=<onedrive-path>&filename=<optional>
-// Liefert die Datei-Bytes mit Content-Disposition (Filename) zurück.
-// Auth: Supabase-Bearer-Token (im Header Authorization, sonst per ?token= als Fallback,
-// damit man die URL z.B. in einem <a target="_blank"> verwenden könnte).
+//                   &formular_id=<uuid>&inline=1
+//
+// Liefert die Datei-Bytes mit Content-Disposition zurück. `inline=1`
+// erzeugt eine Vorschau-Disposition (Browser zeigt PDF inline statt
+// Download). Wenn `formular_id` mitgegeben ist, prüft der Server, ob
+// der User das Formular sehen darf UND ob der Pfad zu diesem Formular
+// gehört (Ordner-Prefix ODER zwischenprotokoll_url). Ohne formular_id
+// gilt das alte Verhalten: jeder eingeloggte User darf jeden Pfad
+// laden — Admin-Tools / interne Aufrufer.
+//
+// Auth: Supabase-Bearer-Token (Header `Authorization` oder als Fallback
+// `?token=`, damit man die URL in `<a target="_blank">` nutzen kann).
 
 import { downloadFile } from '../server-lib/graph.js';
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
+import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
 
 interface Req {
   method?: string;
@@ -33,7 +43,7 @@ export default async function handler(req: Req, res: Res) {
   try {
     const auth = asString(req.headers?.authorization)
       ?? (asString(req.query?.token) ? `Bearer ${asString(req.query?.token)}` : null);
-    await getAuthedUser(auth);
+    const user = await getAuthedUser(auth);
 
     const path = asString(req.query?.path);
     if (!path || path.includes('..')) {
@@ -41,14 +51,24 @@ export default async function handler(req: Req, res: Res) {
       return;
     }
     const filename = asString(req.query?.filename) || path.split('/').pop() || 'download';
+    const formularId = asString(req.query?.formular_id);
+    const inline = asString(req.query?.inline) === '1';
+
+    if (formularId) {
+      await assertCanAccessPdfPath(user, formularId, path);
+    } else if (user.role !== 'admin') {
+      // Ohne formular_id darf nur Admin laden — Fahrer müssen die Resource
+      // verknüpfen, sonst hätten sie Zugriff auf jeden bekannten Pfad.
+      throw new HttpError(403, 'formular_id erforderlich');
+    }
 
     const { bytes, contentType } = await downloadFile(path);
     res.setHeader('Content-Type', contentType);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${filename.replace(/"/g, '')}"`,
+      `${inline ? 'inline' : 'attachment'}; filename="${filename.replace(/"/g, '')}"`,
     );
-    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     res.send(Buffer.from(bytes) as any);
   } catch (err) {

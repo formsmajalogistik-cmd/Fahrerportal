@@ -187,6 +187,17 @@ async function uploadLarge(
   return last;
 }
 
+/**
+ * Löscht eine Datei in OneDrive. 404 wird als „bereits weg" toleriert,
+ * weil der Aufrufer nach erfolgreichem Submit ggf. erneut aufräumt.
+ */
+export async function deleteFile(path: string): Promise<void> {
+  const url = `${userRoot()}/root:/${encodePath(path)}`;
+  const resp = await graphFetch('DELETE', url);
+  if (resp.status === 204 || resp.status === 200 || resp.status === 404) return;
+  throw new Error(`Delete ${path}: ${resp.status} ${await resp.text()}`);
+}
+
 /** Lädt eine Datei aus OneDrive runter und gibt die Bytes zurück. */
 export async function downloadFile(path: string): Promise<{ bytes: Uint8Array; contentType: string }> {
   const url = `${userRoot()}/root:/${encodePath(path)}:/content`;

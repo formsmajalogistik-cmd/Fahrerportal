@@ -11,7 +11,8 @@ import {
 import { fetchDamageDiagramBytes } from './damageDiagramStorage';
 import { fetchPdfBytes } from './pdfStorage';
 import {
-  downloadFromOneDrive, sendEmail, triggerOneDriveDownload, uploadToOneDrive,
+  deleteFromOneDrive, downloadFromOneDrive, previewOneDrivePdf, sendEmail,
+  triggerOneDriveDownload, uploadToOneDrive,
 } from './onedrive';
 import { buildFormularFolder, pathForPdf } from './onedrivePaths';
 import type {
@@ -644,6 +645,101 @@ export async function generateAndUploadFormPdfs(
 }
 
 /**
+ * Stempelt jede Seite einer PDF mit „ZWISCHENPROTOKOLL — ENTWURF" und
+ * dem Erstellungszeitpunkt. Genutzt für die Draft-Vorschau-PDF, die
+ * Admins aus begonnenen Formularen erzeugen können.
+ */
+async function applyZwischenWatermark(pdf: PDFDocument, dateLabel: string): Promise<void> {
+  const font = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const text = 'ZWISCHENPROTOKOLL - ENTWURF';
+  for (const page of pdf.getPages()) {
+    const { width, height } = page.getSize();
+    // Halbtransparenter roter Querbalken oben.
+    page.drawRectangle({
+      x: 0, y: height - 28, width, height: 28,
+      color: rgb(0.85, 0.18, 0.18), opacity: 0.85,
+    });
+    page.drawText(text, {
+      x: 24, y: height - 20,
+      size: 12, font, color: rgb(1, 1, 1),
+    });
+    page.drawText(dateLabel, {
+      x: width - font.widthOfTextAtSize(dateLabel, 9) - 24,
+      y: height - 18,
+      size: 9, font, color: rgb(1, 1, 1),
+    });
+  }
+}
+
+const ZWISCHEN_ROOT = 'Maja-Logistik/Zwischenprotokolle';
+
+export function zwischenprotokollPath(formular: AusgefuelltesFormular): string {
+  return `${ZWISCHEN_ROOT}/${formular.id}/zwischenprotokoll.pdf`;
+}
+
+/**
+ * Erzeugt aus dem aktuellen Daten-Stand eines Drafts eine zusammengeführte
+ * PDF (alle gemappten Template-PDFs hintereinander), versieht jede Seite
+ * mit einem „ZWISCHENPROTOKOLL"-Stempel und lädt sie nach OneDrive hoch.
+ * Pfad ist deterministisch (`zwischenprotokollPath`), sodass „Neu
+ * generieren" die alte Version einfach überschreibt.
+ *
+ * Felder die noch leer sind, bleiben leer — Platzhalter-Bilder o.ä.
+ * werden NICHT eingefügt; das Mapping wirft einfach nichts auf die
+ * Seite, wenn der Wert fehlt.
+ */
+export async function generateAndUploadZwischenprotokoll(
+  template: FormularTemplate,
+  formular: AusgefuelltesFormular,
+): Promise<{ path: string; erstellt_am: string }> {
+  const allPdfs = (template.pdfs ?? []).filter(
+    (p) => p.path && p.field_mapping && Object.keys(p.field_mapping).length > 0,
+  );
+  if (allPdfs.length === 0) {
+    throw new Error('Template hat keine PDF-Vorlage mit Field-Mapping.');
+  }
+
+  // Alle Vorlagen füllen und in EIN PDF-Dokument zusammenführen.
+  const merged = await PDFDocument.create();
+  for (const tplPdf of allPdfs) {
+    let tplBytes: ArrayBuffer | null = null;
+    try { tplBytes = await fetchPdfBytes(tplPdf.path!); }
+    catch (err) {
+      console.warn(`[Zwischenprotokoll] FETCH-FAIL ${tplPdf.id}`, err);
+      continue;
+    }
+    if (!tplBytes) continue;
+    let filled: Uint8Array;
+    try {
+      filled = await fillPdf(tplBytes, template.schema, tplPdf.field_mapping ?? {}, formular.daten);
+    } catch (err) {
+      console.warn(`[Zwischenprotokoll] FILL-FAIL ${tplPdf.id}`, err);
+      continue;
+    }
+    const part = await PDFDocument.load(filled as unknown as ArrayBuffer);
+    const copied = await merged.copyPages(part, part.getPageIndices());
+    for (const p of copied) merged.addPage(p);
+  }
+
+  if (merged.getPageCount() === 0) {
+    throw new Error('Keine Seiten erzeugbar — vermutlich konnten keine Vorlagen geladen werden.');
+  }
+
+  const erstelltAm = new Date();
+  const label = `Stand: ${erstelltAm.toLocaleString('de-DE', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })}`;
+  await applyZwischenWatermark(merged, label);
+
+  const out = await merged.save();
+  const path = zwischenprotokollPath(formular);
+  const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
+  await uploadToOneDrive(path, blob);
+  return { path, erstellt_am: erstelltAm.toISOString() };
+}
+
+/**
  * Sendet die in der Template-Email-Config konfigurierte Email mit den
  * generierten PDFs als Anhang. Platzhalter `{feld_id}` werden in to/cc/
  * subject/body durch die Werte aus `formular.daten` ersetzt.
@@ -745,12 +841,28 @@ export function resolveFilename(
 
 /**
  * Lädt die generierte PDF aus OneDrive und triggert einen Browser-Download
- * mit dem gewünschten Dateinamen.
+ * mit dem gewünschten Dateinamen. `formularId` aktiviert die Pro-Resource-
+ * Authorisierung im Proxy — Pflicht für Fahrer, optional für Admin.
  */
 export async function downloadFormPdf(
-  oneDrivePath: string, filename: string,
+  oneDrivePath: string, filename: string, formularId?: string | null,
 ): Promise<boolean> {
-  return await triggerOneDriveDownload(oneDrivePath, filename);
+  return await triggerOneDriveDownload(oneDrivePath, filename, { formularId });
+}
+
+/**
+ * Öffnet die PDF im Browser-Tab zur Vorschau (inline-Disposition).
+ */
+export async function previewFormPdf(
+  oneDrivePath: string, formularId?: string | null,
+): Promise<boolean> {
+  return await previewOneDrivePdf(oneDrivePath, { formularId });
+}
+
+export async function deleteFormPdf(
+  oneDrivePath: string, formularId: string,
+): Promise<boolean> {
+  return await deleteFromOneDrive(oneDrivePath, formularId);
 }
 
 /**

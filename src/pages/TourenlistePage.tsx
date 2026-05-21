@@ -12,6 +12,10 @@ import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
   computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
+import {
+  downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
+} from '../lib/pdfGenerate';
+import type { FormularTemplate, AusgefuelltesFormular } from '../types/db';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
 } from '../types/db';
@@ -24,7 +28,16 @@ interface TourRow extends Tour {
   auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt' | 'externe_app_name' | 'externe_app_url'> | null;
   fahrer: FahrerWithUser | null;
   schriftliches_protokoll: { id: string; name: string } | null;
+  eingang: EingangLite | null;
   zusaetze: TourZusatzLite[];
+}
+
+interface EingangLite {
+  id: string;
+  status: 'draft' | 'submitted';
+  daten: Record<string, unknown> | null;
+  created_at: string | null;
+  template: { id: string; name: string; pdfs: import('../types/db').TemplatePdf[] | null } | null;
 }
 
 interface TourZusatzLite {
@@ -153,6 +166,10 @@ export function TourenlistePage() {
           user:user_id (email, vorname, nachname)
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+        eingang:eingang_id (
+          id, status, daten, created_at,
+          template:template_id (id, name, pdfs)
+        ),
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
       `
       : `
@@ -168,7 +185,11 @@ export function TourenlistePage() {
           id, user_id, aktiv, vorname, nachname,
           user:user_id (email, vorname, nachname)
         ),
-        schriftliches_protokoll:schriftliches_protokoll_id (id, name)
+        schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+        eingang:eingang_id (
+          id, status, daten, created_at,
+          template:template_id (id, name, pdfs)
+        )
       `;
     let query = supabase
       .from('touren')
@@ -199,6 +220,7 @@ export function TourenlistePage() {
           auftraggeber: (row.auftraggeber as TourRow['auftraggeber']) ?? null,
           fahrer: (row.fahrer as TourRow['fahrer']) ?? null,
           schriftliches_protokoll: (row.schriftliches_protokoll as TourRow['schriftliches_protokoll']) ?? null,
+          eingang: (row.eingang as TourRow['eingang']) ?? null,
           zusaetze: Array.isArray(row.zusaetze)
             ? (row.zusaetze as Array<Record<string, unknown>>).map((z) => ({
                 id: String(z.id ?? ''),
@@ -694,6 +716,16 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
               </div>
             )}
 
+            {/* Eingereichte Protokoll-PDFs (für Fahrer & Admin): Vorschau und
+                Download direkt aus der Tour-Karte. Nur sichtbar, wenn die
+                Tour mit einem submitted Eingang verknüpft ist. */}
+            {tour.eingang?.status === 'submitted' && tour.eingang.template
+              && (tour.eingang.template.pdfs ?? []).length > 0 && (
+              <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+                <TourEingangPdfButtons eingang={tour.eingang} />
+              </div>
+            )}
+
             {/* Schriftliches Protokoll: für Fahrer als Direkt-Link öffnen */}
             {hasSchriftlich && (
               isAdmin ? (
@@ -793,6 +825,79 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
         </div>
       )}
     </li>
+  );
+}
+
+function TourEingangPdfButtons({ eingang }: { eingang: EingangLite }) {
+  if (!eingang.template) return null;
+  const tpl: FormularTemplate = {
+    id: eingang.template.id,
+    name: eingang.template.name,
+    schema: { sections: [] } as unknown as FormularTemplate['schema'],
+    pdfs: eingang.template.pdfs ?? [],
+    email_config: null,
+    sichtbar: true,
+  };
+  const formular = {
+    id: eingang.id,
+    daten: eingang.daten ?? {},
+    created_at: eingang.created_at ?? new Date().toISOString(),
+  } as unknown as AusgefuelltesFormular;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-maja-muted">Protokoll-PDFs:</span>
+      {tpl.pdfs.map((p) => {
+        const filename = resolveFilename(p.filename_pattern, formular.daten, p.id);
+        const path = expectedOneDrivePath(tpl, formular, p);
+        return (
+          <TourPdfButton
+            key={p.id}
+            label={p.name}
+            filename={filename}
+            path={path}
+            formularId={eingang.id}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function TourPdfButton({
+  label, filename, path, formularId,
+}: { label: string; filename: string; path: string; formularId: string }) {
+  const [busy, setBusy] = useState<'download' | 'preview' | null>(null);
+  async function download(e: React.MouseEvent) {
+    e.stopPropagation();
+    setBusy('download');
+    const ok = await downloadFormPdf(path, filename, formularId);
+    setBusy(null);
+    if (!ok) alert('PDF noch nicht generiert oder nicht erreichbar.');
+  }
+  async function preview(e: React.MouseEvent) {
+    e.stopPropagation();
+    setBusy('preview');
+    const ok = await previewFormPdf(path, formularId);
+    setBusy(null);
+    if (!ok) alert('Vorschau fehlgeschlagen.');
+  }
+  return (
+    <span className="inline-flex items-stretch overflow-hidden rounded-full bg-maja-light text-xs text-maja-navy">
+      <button
+        type="button"
+        onClick={preview}
+        disabled={busy !== null}
+        className="px-2 py-1 hover:bg-maja-accent/20"
+        title={`Vorschau: ${filename}`}
+      >{busy === 'preview' ? '…' : '👁'}</button>
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy !== null}
+        className="border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        title={`Download: ${filename}\n${path}`}
+      >{busy === 'download' ? '…' : '⬇'} {label}</button>
+    </span>
   );
 }
 

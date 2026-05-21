@@ -5,7 +5,9 @@ import { Spinner } from '../../components/Spinner';
 import { useAuth } from '../../auth/AuthContext';
 import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
-  downloadFormPdf, expectedOneDrivePath, generateAndUploadFormPdfs, resolveFilename,
+  deleteFormPdf, downloadFormPdf, expectedOneDrivePath,
+  generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll,
+  previewFormPdf, resolveFilename,
 } from '../../lib/pdfGenerate';
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { EingangLinkDialog } from './EingangLinkDialog';
@@ -25,6 +27,8 @@ interface Row extends AusgefuelltesFormular {
     | null;
   /** Verknüpfte Tour (oder null). */
   tour?: { id: string; tour_id: string | null } | null;
+  zwischenprotokoll_url: string | null;
+  zwischenprotokoll_erstellt_am: string | null;
 }
 
 export function EingaengePage() {
@@ -104,6 +108,10 @@ export function EingaengePage() {
     }
   }
 
+  async function patchRowInState(id: string, patch: Partial<Row>) {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
   if (loading) return <Spinner label="Eingänge werden geladen …" />;
   if (error) {
     return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -152,6 +160,7 @@ export function EingaengePage() {
               onRegenerate={() => void regeneratePdfs(r)}
               onLink={() => setLinking(r)}
               onResendEmail={() => setResending(r)}
+              onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
             />
           ))}
         </ul>
@@ -218,9 +227,12 @@ interface CardProps {
   onRegenerate: () => void;
   onLink: () => void;
   onResendEmail: () => void;
+  onZwischenChanged: (patch: Partial<Row>) => void;
 }
 
-function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink, onResendEmail }: CardProps) {
+function EingangCard({
+  row, isAdmin, regenBusy, onRegenerate, onLink, onResendEmail, onZwischenChanged,
+}: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
   const tpl: FormularTemplate | null = row.template ? {
@@ -281,6 +293,13 @@ function EingangCard({ row, isAdmin, regenBusy, onRegenerate, onLink, onResendEm
           {row.status === 'submitted' && tpl && (
             <PdfDownloads template={tpl} formular={row} />
           )}
+          {isAdmin && row.status === 'draft' && tpl && (
+            <ZwischenprotokollSection
+              template={tpl}
+              formular={row}
+              onChanged={onZwischenChanged}
+            />
+          )}
           {isAdmin && row.status === 'submitted' && tpl && (tpl.pdfs?.length ?? 0) > 0 && (
             <button
               type="button"
@@ -335,6 +354,7 @@ function PdfDownloads({
             label={p.name}
             filename={filename}
             path={path}
+            formularId={formular.id}
           />
         );
       })}
@@ -343,23 +363,165 @@ function PdfDownloads({
 }
 
 function PdfDownloadButton({
-  label, filename, path,
-}: { label: string; filename: string; path: string }) {
-  const [busy, setBusy] = useState(false);
-  async function open() {
-    setBusy(true);
-    const ok = await downloadFormPdf(path, filename);
-    setBusy(false);
+  label, filename, path, formularId,
+}: { label: string; filename: string; path: string; formularId: string }) {
+  const [busy, setBusy] = useState<'download' | 'preview' | null>(null);
+  async function download() {
+    setBusy('download');
+    const ok = await downloadFormPdf(path, filename, formularId);
+    setBusy(null);
     if (!ok) alert('PDF noch nicht generiert oder nicht erreichbar. Beim Einreichen werden die PDFs automatisch erzeugt.');
   }
+  async function preview() {
+    setBusy('preview');
+    const ok = await previewFormPdf(path, formularId);
+    setBusy(null);
+    if (!ok) alert('PDF konnte nicht geöffnet werden. Beim Einreichen werden die PDFs automatisch erzeugt.');
+  }
   return (
-    <button
-      onClick={open}
-      disabled={busy}
-      className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-1 text-xs text-maja-navy hover:bg-maja-accent/20"
-      title={`${filename}\n${path}`}
-    >
-      {busy ? '…' : '⬇'} {label}
-    </button>
+    <span className="inline-flex items-stretch overflow-hidden rounded-full bg-maja-light text-xs text-maja-navy">
+      <button
+        type="button"
+        onClick={preview}
+        disabled={busy !== null}
+        className="px-2 py-1 hover:bg-maja-accent/20"
+        title={`Vorschau: ${filename}`}
+      >
+        {busy === 'preview' ? '…' : '👁'}
+      </button>
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy !== null}
+        className="border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        title={`Download: ${filename}\n${path}`}
+      >
+        {busy === 'download' ? '…' : '⬇'} {label}
+      </button>
+    </span>
+  );
+}
+
+function ZwischenprotokollSection({
+  template, formular, onChanged,
+}: {
+  template: FormularTemplate;
+  formular: Row;
+  onChanged: (patch: Partial<Row>) => void;
+}) {
+  const [busy, setBusy] = useState<'create' | 'preview' | 'download' | 'delete' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const existing = formular.zwischenprotokoll_url;
+
+  async function generate() {
+    setBusy('create');
+    setError(null);
+    try {
+      const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(template, formular);
+      const { error: err } = await supabase
+        .from('ausgefuellte_formulare')
+        .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
+        .eq('id', formular.id);
+      if (err) throw err;
+      onChanged({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erzeugung fehlgeschlagen');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function preview() {
+    if (!existing) return;
+    setBusy('preview');
+    const ok = await previewFormPdf(existing, formular.id);
+    setBusy(null);
+    if (!ok) setError('Vorschau fehlgeschlagen.');
+  }
+
+  async function download() {
+    if (!existing) return;
+    setBusy('download');
+    const ok = await downloadFormPdf(existing, 'zwischenprotokoll.pdf', formular.id);
+    setBusy(null);
+    if (!ok) setError('Download fehlgeschlagen.');
+  }
+
+  async function remove() {
+    if (!existing) return;
+    if (!confirm('Zwischenprotokoll wirklich löschen?')) return;
+    setBusy('delete');
+    setError(null);
+    try {
+      await deleteFormPdf(existing, formular.id);
+      const { error: err } = await supabase
+        .from('ausgefuellte_formulare')
+        .update({ zwischenprotokoll_url: null, zwischenprotokoll_erstellt_am: null })
+        .eq('id', formular.id);
+      if (err) throw err;
+      onChanged({ zwischenprotokoll_url: null, zwischenprotokoll_erstellt_am: null });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const erstelltLabel = formular.zwischenprotokoll_erstellt_am
+    ? new Date(formular.zwischenprotokoll_erstellt_am).toLocaleString('de-DE', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
+    : null;
+
+  return (
+    <div className="flex flex-col items-end gap-1 text-xs">
+      {!existing ? (
+        <button
+          type="button"
+          onClick={generate}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-900 hover:bg-amber-200"
+          title="PDF mit aktuellem Bearbeitungsstand erzeugen"
+        >
+          {busy === 'create' ? 'Erzeuge …' : '📝 Zwischenprotokoll erstellen'}
+        </button>
+      ) : (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-maja-muted">
+            Zwischenprotokoll vom {erstelltLabel ?? '?'}
+          </span>
+          <span className="inline-flex items-stretch overflow-hidden rounded-full bg-amber-50 text-amber-900">
+            <button
+              type="button"
+              onClick={preview}
+              disabled={busy !== null}
+              className="px-2 py-1 hover:bg-amber-100"
+              title="Vorschau"
+            >{busy === 'preview' ? '…' : '👁'}</button>
+            <button
+              type="button"
+              onClick={download}
+              disabled={busy !== null}
+              className="border-l border-amber-200 px-2 py-1 hover:bg-amber-100"
+            >{busy === 'download' ? '…' : '⬇'} Download</button>
+            <button
+              type="button"
+              onClick={generate}
+              disabled={busy !== null}
+              className="border-l border-amber-200 px-2 py-1 hover:bg-amber-100"
+              title="Mit aktuellem Stand neu erzeugen"
+            >{busy === 'create' ? '…' : '🔄'} Neu</button>
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy !== null}
+              className="border-l border-amber-200 px-2 py-1 text-red-700 hover:bg-red-50"
+            >{busy === 'delete' ? '…' : '✕'}</button>
+          </span>
+        </div>
+      )}
+      {error && <span className="text-red-700">{error}</span>}
+    </div>
   );
 }

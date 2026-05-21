@@ -104,17 +104,25 @@ async function uploadViaSession(
   return { ok: true, path, webUrl: last?.webUrl };
 }
 
-export async function downloadFromOneDrive(path: string): Promise<Blob> {
-  const url = `/api/download?path=${encodeURIComponent(path)}`;
-  const resp = await fetchWithRetry(url, { headers: await authHeader(), timeoutMs: 60_000 });
+export async function downloadFromOneDrive(
+  path: string, opts?: { formularId?: string | null },
+): Promise<Blob> {
+  const qs = new URLSearchParams({ path });
+  if (opts?.formularId) qs.set('formular_id', opts.formularId);
+  const resp = await fetchWithRetry(
+    `/api/download?${qs.toString()}`,
+    { headers: await authHeader(), timeoutMs: 60_000 },
+  );
   if (!resp.ok) throw new Error(`Download fehlgeschlagen (${resp.status})`);
   return await resp.blob();
 }
 
 /** Lädt eine Datei aus OneDrive und triggert einen Browser-Download mit Wunsch-Filename. */
-export async function triggerOneDriveDownload(path: string, filename: string): Promise<boolean> {
+export async function triggerOneDriveDownload(
+  path: string, filename: string, opts?: { formularId?: string | null },
+): Promise<boolean> {
   try {
-    const blob = await downloadFromOneDrive(path);
+    const blob = await downloadFromOneDrive(path, opts);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename; a.style.display = 'none';
@@ -128,16 +136,71 @@ export async function triggerOneDriveDownload(path: string, filename: string): P
 }
 
 /**
+ * Öffnet die PDF als Vorschau in einem neuen Tab. Damit der Browser die
+ * Datei inline anzeigen kann, holen wir sie als Blob (mit Bearer-Header)
+ * und öffnen die resultierende Object-URL — so muss der Token nicht in
+ * die URL gehängt werden und Vercel kann den Cache-Header korrekt setzen.
+ */
+export async function previewOneDrivePdf(
+  path: string, opts?: { formularId?: string | null },
+): Promise<boolean> {
+  try {
+    const qs = new URLSearchParams({ path, inline: '1' });
+    if (opts?.formularId) qs.set('formular_id', opts.formularId);
+    const resp = await fetchWithRetry(
+      `/api/download?${qs.toString()}`,
+      { headers: await authHeader(), timeoutMs: 60_000 },
+    );
+    if (!resp.ok) throw new Error(`Vorschau fehlgeschlagen (${resp.status})`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) {
+      // Pop-up geblockt: Fallback auf Download.
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return true;
+  } catch (err) {
+    console.warn('previewOneDrivePdf', err);
+    return false;
+  }
+}
+
+/**
  * Liefert eine Object-URL für die Datei aus OneDrive — geeignet für <img src>.
  * Achtung: muss vom Aufrufer mit URL.revokeObjectURL freigegeben werden.
  */
-export async function getOneDriveObjectUrl(path: string): Promise<string | null> {
+export async function getOneDriveObjectUrl(
+  path: string, opts?: { formularId?: string | null },
+): Promise<string | null> {
   try {
-    const blob = await downloadFromOneDrive(path);
+    const blob = await downloadFromOneDrive(path, opts);
     return URL.createObjectURL(blob);
   } catch (err) {
     console.warn('getOneDriveObjectUrl', err);
     return null;
+  }
+}
+
+/**
+ * Löscht eine Datei aus OneDrive. Nutzt /api/delete-pdf mit derselben
+ * Pro-Resource-Authorisierung wie der Download.
+ */
+export async function deleteFromOneDrive(path: string, formularId: string): Promise<boolean> {
+  try {
+    const resp = await fetchWithRetry('/api/delete-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+      body: JSON.stringify({ path, formular_id: formularId }),
+      timeoutMs: 30_000,
+    });
+    return resp.ok;
+  } catch (err) {
+    console.warn('deleteFromOneDrive', err);
+    return false;
   }
 }
 

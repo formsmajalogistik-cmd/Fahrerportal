@@ -24,7 +24,9 @@ import {
 } from '../lib/offlineDb';
 import { uploadToOneDrive } from '../lib/onedrive';
 import { supabase } from '../lib/supabase';
-import { generateAndUploadFormPdfs, sendTemplateEmail } from '../lib/pdfGenerate';
+import {
+  deleteFormPdf, generateAndUploadFormPdfs, sendTemplateEmail,
+} from '../lib/pdfGenerate';
 import type { FormularTemplate, PhotoValue } from '../types/db';
 
 /**
@@ -224,7 +226,7 @@ async function processPendingSubmissions(): Promise<void> {
         .from('ausgefuellte_formulare')
         .update({ daten: sub.data as never, status: 'submitted' })
         .eq('id', sub.formularId)
-        .select('template_id')
+        .select('template_id, zwischenprotokoll_url')
         .single();
       if (linkErr || !tplLink) throw linkErr ?? new Error('Submit fehlgeschlagen');
 
@@ -233,6 +235,19 @@ async function processPendingSubmissions(): Promise<void> {
       if (tplErr || !tpl) throw tplErr ?? new Error('Template nicht gefunden');
       const template = tpl as unknown as FormularTemplate;
       const formularStub = { id: sub.formularId, daten: sub.data } as never;
+      // Zwischenprotokoll aufräumen (falls vorhanden) — gleiche Logik wie
+      // beim Online-Submit in FormularPage.
+      if (tplLink.zwischenprotokoll_url) {
+        try {
+          await deleteFormPdf(tplLink.zwischenprotokoll_url, sub.formularId);
+          await supabase.from('ausgefuellte_formulare').update({
+            zwischenprotokoll_url: null,
+            zwischenprotokoll_erstellt_am: null,
+          }).eq('id', sub.formularId);
+        } catch (cleanupErr) {
+          console.warn('Zwischenprotokoll-Aufräumen nach Offline-Submit fehlgeschlagen', cleanupErr);
+        }
+      }
       try {
         const generated = await generateAndUploadFormPdfs(template, formularStub);
         await sendTemplateEmail(template, formularStub, generated, sub.submitterEmail ?? null);

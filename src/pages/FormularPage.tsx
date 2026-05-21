@@ -8,7 +8,9 @@ import { PdfPreviewModal } from '../components/forms/PdfPreviewModal';
 import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
-import { generateAndUploadFormPdfs, sendTemplateEmail } from '../lib/pdfGenerate';
+import {
+  deleteFormPdf, generateAndUploadFormPdfs, sendTemplateEmail,
+} from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
 import {
   deleteFormDraft, enqueueSubmission, getFormDraft, getUploadsForFormular,
@@ -295,6 +297,21 @@ export function FormularPage() {
     setFormular(submitted);
     setSavedDataJson(JSON.stringify(data));
     setStatusMsg('Protokoll eingereicht. PDFs werden erzeugt …');
+
+    // Eventuell hinterlegtes Zwischenprotokoll aufräumen — die finalen
+    // PDFs ersetzen den Entwurf. Fehler hier sind nicht kritisch.
+    const formularAny = formular as unknown as { zwischenprotokoll_url?: string | null };
+    if (formularAny.zwischenprotokoll_url) {
+      try {
+        await deleteFormPdf(formularAny.zwischenprotokoll_url, formular.id);
+        await supabase.from('ausgefuellte_formulare').update({
+          zwischenprotokoll_url: null,
+          zwischenprotokoll_erstellt_am: null,
+        }).eq('id', formular.id);
+      } catch (cleanupErr) {
+        console.warn('[FormularPage] Zwischenprotokoll-Aufräumen fehlgeschlagen', cleanupErr);
+      }
+    }
 
     let summary = 'Formular erfolgreich eingereicht!';
     try {

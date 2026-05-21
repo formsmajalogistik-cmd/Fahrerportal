@@ -573,6 +573,8 @@ export type Database = {
           status: FormularStatus;
           created_at: string;
           gesehen_am: string | null;
+          zwischenprotokoll_url: string | null;
+          zwischenprotokoll_erstellt_am: string | null;
         };
         Insert: {
           id?: string;
@@ -582,6 +584,8 @@ export type Database = {
           status?: FormularStatus;
           created_at?: string;
           gesehen_am?: string | null;
+          zwischenprotokoll_url?: string | null;
+          zwischenprotokoll_erstellt_am?: string | null;
         };
         Update: {
           id?: string;
@@ -591,6 +595,8 @@ export type Database = {
           status?: FormularStatus;
           created_at?: string;
           gesehen_am?: string | null;
+          zwischenprotokoll_url?: string | null;
+          zwischenprotokoll_erstellt_am?: string | null;
         };
         Relationships: [
           {

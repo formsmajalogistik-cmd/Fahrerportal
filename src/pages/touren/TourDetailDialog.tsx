@@ -16,7 +16,7 @@ import {
   formatDate, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
 } from '../../lib/touren';
 import {
-  downloadFormPdf, expectedOneDrivePath, resolveFilename,
+  downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
 } from '../../lib/pdfGenerate';
 import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
@@ -2025,6 +2025,7 @@ function EingangPdfDownloads({
             label={p.name}
             filename={filename}
             path={path}
+            formularId={formular.id}
           />
         );
       })}
@@ -2033,23 +2034,37 @@ function EingangPdfDownloads({
 }
 
 function EingangPdfButton({
-  label, filename, path,
-}: { label: string; filename: string; path: string }) {
-  const [busy, setBusy] = useState(false);
-  async function open() {
-    setBusy(true);
-    const ok = await downloadFormPdf(path, filename);
-    setBusy(false);
+  label, filename, path, formularId,
+}: { label: string; filename: string; path: string; formularId: string }) {
+  const [busy, setBusy] = useState<'download' | 'preview' | null>(null);
+  async function download() {
+    setBusy('download');
+    const ok = await downloadFormPdf(path, filename, formularId);
+    setBusy(null);
     if (!ok) alert('PDF noch nicht generiert oder nicht erreichbar.');
   }
+  async function preview() {
+    setBusy('preview');
+    const ok = await previewFormPdf(path, formularId);
+    setBusy(null);
+    if (!ok) alert('Vorschau fehlgeschlagen.');
+  }
   return (
-    <button
-      onClick={open}
-      disabled={busy}
-      className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-1 text-xs text-maja-navy hover:bg-maja-accent/20"
-      title={`${filename}\n${path}`}
-    >
-      {busy ? '…' : '⬇'} {label}
-    </button>
+    <span className="inline-flex items-stretch overflow-hidden rounded-full bg-maja-light text-xs text-maja-navy">
+      <button
+        type="button"
+        onClick={preview}
+        disabled={busy !== null}
+        className="px-2 py-1 hover:bg-maja-accent/20"
+        title={`Vorschau: ${filename}`}
+      >{busy === 'preview' ? '…' : '👁'}</button>
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy !== null}
+        className="border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        title={`Download: ${filename}\n${path}`}
+      >{busy === 'download' ? '…' : '⬇'} {label}</button>
+    </span>
   );
 }
