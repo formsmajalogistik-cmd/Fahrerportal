@@ -15,6 +15,7 @@ import {
 import {
   downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
 } from '../lib/pdfGenerate';
+import { DownloadIcon, EyeIcon } from '../components/icons';
 import type { FormularTemplate, AusgefuelltesFormular } from '../types/db';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
@@ -887,16 +888,20 @@ function TourPdfButton({
         type="button"
         onClick={preview}
         disabled={busy !== null}
-        className="px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center px-2 py-1 hover:bg-maja-accent/20"
         title={`Vorschau: ${filename}`}
-      >{busy === 'preview' ? '…' : '👁'}</button>
+        aria-label="Vorschau"
+      >{busy === 'preview' ? <span>…</span> : <EyeIcon className="h-4 w-4" />}</button>
       <button
         type="button"
         onClick={download}
         disabled={busy !== null}
-        className="border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center gap-1 border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
         title={`Download: ${filename}\n${path}`}
-      >{busy === 'download' ? '…' : '⬇'} {label}</button>
+      >
+        {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
+        {label}
+      </button>
     </span>
   );
 }

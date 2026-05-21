@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { filterAvailableZugaenge } from '../../lib/greimel';
+import { XIcon } from '../../components/icons';
 import type { FormularTemplate, GreimelZugang, ProtokollArt } from '../../types/db';
 
 interface Props {
@@ -114,7 +115,7 @@ export function ProtokollSection({
                     title="Zugang entfernen"
                     className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
                   >
-                    ✕
+                    <XIcon className="h-4 w-4" />
                   </button>
                   <select
                     className="input flex-1 min-w-[10rem]"

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { getDamageDiagramSignedUrl } from '../../../lib/damageDiagramStorage';
 import { FullscreenOverlay } from '../FullscreenOverlay';
+import { XIcon } from '../../icons';
 import type { DamageKind, DamageMarker, FormField } from '../../../types/db';
 import { DAMAGE_KIND_LABEL } from '../../../types/db';
 
@@ -334,7 +335,7 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
                         style={{ left: '0.6rem', top: '-1.6rem', touchAction: 'none' }}
                         aria-label="Markierung löschen"
                       >
-                        ✕
+                        <XIcon className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>

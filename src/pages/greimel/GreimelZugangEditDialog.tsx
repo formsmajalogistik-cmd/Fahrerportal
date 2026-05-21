@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
+import { XIcon } from '../../components/icons';
 import type { AppUser, Fahrer, GreimelZugang } from '../../types/db';
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
@@ -75,7 +76,7 @@ export function GreimelZugangEditDialog({ initial, onClose, onSaved }: Props) {
             {isNew ? 'Neuen Zugang anlegen' : 'Zugang bearbeiten'}
           </h2>
           <button type="button" onClick={onClose} aria-label="Schließen"
-                  className="rounded-md p-1 text-maja-muted hover:bg-maja-light">✕</button>
+                  className="rounded-md p-1 text-maja-muted hover:bg-maja-light"><XIcon className="h-4 w-4" /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>

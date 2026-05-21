@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
+import { XIcon } from '../../components/icons';
 import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro, formatKm, type TourPriceBreakdown } from '../../lib/touren';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
@@ -308,7 +309,7 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
             className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
             aria-label="Schließen"
           >
-            ✕
+            <XIcon className="h-4 w-4" />
           </button>
         </div>
 

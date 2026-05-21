@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
+import { XIcon } from '../../components/icons';
 import type { Auftraggeber, AuftraggeberKontakt } from '../../types/db';
 import { RechnungsadressenEditor } from './RechnungsadressenEditor';
 import { RechnungsformatEditor } from './RechnungsformatEditor';
@@ -321,7 +322,7 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
                         aria-label="Kontakt entfernen"
                         className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
                       >
-                        ✕
+                        <XIcon className="h-4 w-4" />
                       </button>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">

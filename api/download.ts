@@ -44,6 +44,7 @@ export default async function handler(req: Req, res: Res) {
     const auth = asString(req.headers?.authorization)
       ?? (asString(req.query?.token) ? `Bearer ${asString(req.query?.token)}` : null);
     const user = await getAuthedUser(auth);
+    const token = (auth ?? '').replace(/^bearer\s+/i, '');
 
     const path = asString(req.query?.path);
     if (!path || path.includes('..')) {
@@ -55,7 +56,7 @@ export default async function handler(req: Req, res: Res) {
     const inline = asString(req.query?.inline) === '1';
 
     if (formularId) {
-      await assertCanAccessPdfPath(user, formularId, path);
+      await assertCanAccessPdfPath(user, token, formularId, path);
     } else if (user.role !== 'admin') {
       // Ohne formular_id darf nur Admin laden — Fahrer müssen die Resource
       // verknüpfen, sonst hätten sie Zugriff auf jeden bekannten Pfad.

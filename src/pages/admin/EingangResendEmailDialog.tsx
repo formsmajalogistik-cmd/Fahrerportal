@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { sendEmail } from '../../lib/onedrive';
 import { useAuth } from '../../auth/AuthContext';
+import { XIcon } from '../../components/icons';
 import {
   expectedOneDrivePath, resolveFilename, resolvePattern,
 } from '../../lib/pdfGenerate';
@@ -115,7 +116,7 @@ export function EingangResendEmailDialog({ formular, template, onClose, onSent }
           </div>
           <button type="button" onClick={onClose}
                   className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
-                  aria-label="Schließen">✕</button>
+                  aria-label="Schließen"><XIcon className="h-4 w-4" /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>

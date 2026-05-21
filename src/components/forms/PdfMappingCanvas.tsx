@@ -349,7 +349,7 @@ function CheckMarker({
         width: `${sizePctW}%`, height: `${sizePctH}%`,
       }}
     >
-      ✓
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="M4 10.5l4 4 8-9" /></svg>
     </button>
   );
 }

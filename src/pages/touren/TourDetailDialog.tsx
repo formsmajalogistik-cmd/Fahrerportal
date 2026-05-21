@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { useFahrerContext } from '../../auth/FahrerContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
 import { fahrerName } from '../../lib/names';
 
 function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user: { email: string; vorname: string | null; nachname: string | null } | null }): string {
@@ -831,7 +832,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
           aria-label="Schließen"
         >
-          ✕
+          <XIcon className="h-4 w-4" />
         </button>
       </div>
 
@@ -893,7 +894,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                 onClick={() => setUnlinkOpen(true)}
                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
               >
-                ✕ Verknüpfung lösen
+                <XIcon className="h-3.5 w-3.5" />
+                Verknüpfung lösen
               </button>
             )}
           </div>
@@ -1036,7 +1038,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                         aria-label="Zusatz löschen"
                         className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
                       >
-                        ✕
+                        <XIcon className="h-4 w-4" />
                       </button>
                     )}
                   </li>
@@ -2055,16 +2057,20 @@ function EingangPdfButton({
         type="button"
         onClick={preview}
         disabled={busy !== null}
-        className="px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center px-2 py-1 hover:bg-maja-accent/20"
         title={`Vorschau: ${filename}`}
-      >{busy === 'preview' ? '…' : '👁'}</button>
+        aria-label="Vorschau"
+      >{busy === 'preview' ? <span>…</span> : <EyeIcon className="h-4 w-4" />}</button>
       <button
         type="button"
         onClick={download}
         disabled={busy !== null}
-        className="border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center gap-1 border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
         title={`Download: ${filename}\n${path}`}
-      >{busy === 'download' ? '…' : '⬇'} {label}</button>
+      >
+        {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
+        {label}
+      </button>
     </span>
   );
 }

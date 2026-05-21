@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
+import { XIcon } from '../../components/icons';
 import { computeTourStatus, formatDate, formatKm, tourTitel } from '../../lib/touren';
 import { summarizeEingang, type EingangSummary } from '../../lib/eingangData';
 import type {
@@ -162,7 +163,7 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
           </div>
           <button type="button" onClick={onClose}
                   className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
-                  aria-label="Schließen">✕</button>
+                  aria-label="Schließen"><XIcon className="h-4 w-4" /></button>
         </div>
 
         <div className="mb-4 inline-flex rounded-lg border border-maja-navy/15 bg-white p-0.5">

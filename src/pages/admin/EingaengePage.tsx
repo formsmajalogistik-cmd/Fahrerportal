@@ -9,6 +9,9 @@ import {
   generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll,
   previewFormPdf, resolveFilename,
 } from '../../lib/pdfGenerate';
+import {
+  DownloadIcon, EyeIcon, FileTextIcon, MailIcon, RefreshIcon, XIcon,
+} from '../../components/icons';
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { EingangLinkDialog } from './EingangLinkDialog';
 import { EingangResendEmailDialog } from './EingangResendEmailDialog';
@@ -307,7 +310,7 @@ function EingangCard({
               className="inline-flex items-center gap-1 rounded-full bg-maja-navy px-3 py-1 text-xs font-medium text-white hover:bg-maja-accent"
               title="E-Mail mit PDFs erneut senden"
             >
-              ✉ E-Mail erneut senden
+              <MailIcon className="h-3.5 w-3.5" /> E-Mail erneut senden
             </button>
           )}
           {isAdmin && row.status === 'submitted' && (row.template?.pdfs ?? []).some((p) => p.path) && (
@@ -384,19 +387,21 @@ function PdfDownloadButton({
         type="button"
         onClick={preview}
         disabled={busy !== null}
-        className="px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center px-2 py-1 hover:bg-maja-accent/20"
         title={`Vorschau: ${filename}`}
+        aria-label="Vorschau"
       >
-        {busy === 'preview' ? '…' : '👁'}
+        {busy === 'preview' ? <span>…</span> : <EyeIcon className="h-4 w-4" />}
       </button>
       <button
         type="button"
         onClick={download}
         disabled={busy !== null}
-        className="border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center gap-1 border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
         title={`Download: ${filename}\n${path}`}
       >
-        {busy === 'download' ? '…' : '⬇'} {label}
+        {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
+        {label}
       </button>
     </span>
   );
@@ -481,10 +486,15 @@ function ZwischenprotokollSection({
           type="button"
           onClick={generate}
           disabled={busy !== null}
-          className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-900 hover:bg-amber-200"
+          className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-900 hover:bg-amber-200"
           title="PDF mit aktuellem Bearbeitungsstand erzeugen"
         >
-          {busy === 'create' ? 'Erzeuge …' : '📝 Zwischenprotokoll erstellen'}
+          {busy === 'create' ? 'Erzeuge …' : (
+            <>
+              <FileTextIcon className="h-3.5 w-3.5" />
+              Zwischenprotokoll erstellen
+            </>
+          )}
         </button>
       ) : (
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -496,28 +506,36 @@ function ZwischenprotokollSection({
               type="button"
               onClick={preview}
               disabled={busy !== null}
-              className="px-2 py-1 hover:bg-amber-100"
+              className="flex items-center px-2 py-1 hover:bg-amber-100"
               title="Vorschau"
-            >{busy === 'preview' ? '…' : '👁'}</button>
+              aria-label="Vorschau"
+            >{busy === 'preview' ? <span>…</span> : <EyeIcon className="h-4 w-4" />}</button>
             <button
               type="button"
               onClick={download}
               disabled={busy !== null}
-              className="border-l border-amber-200 px-2 py-1 hover:bg-amber-100"
-            >{busy === 'download' ? '…' : '⬇'} Download</button>
+              className="flex items-center gap-1 border-l border-amber-200 px-2 py-1 hover:bg-amber-100"
+            >
+              {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
+              Download
+            </button>
             <button
               type="button"
               onClick={generate}
               disabled={busy !== null}
-              className="border-l border-amber-200 px-2 py-1 hover:bg-amber-100"
+              className="flex items-center gap-1 border-l border-amber-200 px-2 py-1 hover:bg-amber-100"
               title="Mit aktuellem Stand neu erzeugen"
-            >{busy === 'create' ? '…' : '🔄'} Neu</button>
+            >
+              {busy === 'create' ? <span>…</span> : <RefreshIcon className="h-4 w-4" />}
+              Neu
+            </button>
             <button
               type="button"
               onClick={remove}
               disabled={busy !== null}
-              className="border-l border-amber-200 px-2 py-1 text-red-700 hover:bg-red-50"
-            >{busy === 'delete' ? '…' : '✕'}</button>
+              className="flex items-center px-2 py-1 text-red-700 hover:bg-red-50"
+              aria-label="Löschen"
+            >{busy === 'delete' ? <span>…</span> : <XIcon className="h-4 w-4" />}</button>
           </span>
         </div>
       )}

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Spinner } from '../components/Spinner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { CheckIcon } from '../components/icons';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { PdfPreviewModal } from '../components/forms/PdfPreviewModal';
 import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
@@ -501,7 +502,9 @@ export function FormularPage() {
                   aria-current={active ? 'page' : undefined}
                 >
                   {status === 'complete' ? (
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white">✓</span>
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white">
+                      <CheckIcon className="h-3 w-3" />
+                    </span>
                   ) : status === 'started' ? (
                     <span className="h-2 w-2 rounded-full bg-amber-400" />
                   ) : null}

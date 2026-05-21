@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
+import { XIcon } from '../../components/icons';
 import { triggerOneDriveDownload, uploadToOneDrive } from '../../lib/onedrive';
 import { sanitizeSegment } from '../../lib/onedrivePaths';
 import type { Auftraggeber, Preisstufe, Sonderverguetung } from '../../types/db';
@@ -671,7 +672,7 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
                         className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
                         onClick={() => removeRow(row.key)}
                       >
-                        ✕
+                        <XIcon className="h-4 w-4" />
                       </button>
                     </td>
                   </tr>
@@ -748,7 +749,7 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
                         className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50"
                         onClick={() => removeSvRow(row.key)}
                       >
-                        ✕
+                        <XIcon className="h-4 w-4" />
                       </button>
                     </td>
                   </tr>

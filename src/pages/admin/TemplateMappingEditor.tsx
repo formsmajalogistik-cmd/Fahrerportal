@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildPreviewPdf } from '../../lib/pdfPreview';
 import { fetchPdfBytes, getPdfSignedUrl, uploadPdfTemplate } from '../../lib/pdfStorage';
 import { PdfMappingCanvas } from '../../components/forms/PdfMappingCanvas';
+import { CheckBoxEmptyIcon, CheckIcon } from '../../components/icons';
 import {
   fieldsById,
   isBoxEntry, isCheckboxesWithTextEntry, isDynamicEntry, isFieldMappedOnPage,
@@ -497,16 +498,19 @@ export function TemplateMappingEditor({
                           <button
                             type="button"
                             onClick={() => placeOptionPart(pickerStep.field, opt, 'checkbox')}
-                            className="flex-1 rounded-md border border-maja-navy/15 px-2 py-1 text-xs hover:bg-maja-light"
+                            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-maja-navy/15 px-2 py-1 text-xs hover:bg-maja-light"
                           >
-                            ☐ Häkchen{ce?.checkbox && <span className="ml-1 text-amber-700">✓</span>}
+                            <CheckBoxEmptyIcon className="h-3.5 w-3.5" />
+                            Häkchen
+                            {ce?.checkbox && <CheckIcon className="ml-1 h-3 w-3 text-amber-700" />}
                           </button>
                           <button
                             type="button"
                             onClick={() => placeOptionPart(pickerStep.field, opt, 'text')}
-                            className="flex-1 rounded-md border border-maja-navy/15 px-2 py-1 text-xs hover:bg-maja-light"
+                            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-maja-navy/15 px-2 py-1 text-xs hover:bg-maja-light"
                           >
-                            Aa Text{ce?.text && <span className="ml-1 text-amber-700">✓</span>}
+                            <span className="font-semibold">Aa</span> Text
+                            {ce?.text && <CheckIcon className="ml-1 h-3 w-3 text-amber-700" />}
                           </button>
                         </div>
                       </div>

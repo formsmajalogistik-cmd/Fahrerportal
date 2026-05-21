@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
+import { XIcon } from '../../components/icons';
 import { displayName } from '../../lib/names';
 import type {
   AppUser, Auftraggeber, Fahrer, TourenArt,
@@ -415,7 +416,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
             className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
             aria-label="Schließen"
           >
-            ✕
+            <XIcon className="h-4 w-4" />
           </button>
         </div>
 

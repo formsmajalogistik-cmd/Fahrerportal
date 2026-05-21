@@ -113,7 +113,15 @@ export async function downloadFromOneDrive(
     `/api/download?${qs.toString()}`,
     { headers: await authHeader(), timeoutMs: 60_000 },
   );
-  if (!resp.ok) throw new Error(`Download fehlgeschlagen (${resp.status})`);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    console.warn(
+      `[onedrive.download] ${resp.status} ${resp.statusText} path=${path}`
+      + (opts?.formularId ? ` formular=${opts.formularId}` : '')
+      + (text ? ` body=${text.slice(0, 200)}` : ''),
+    );
+    throw new Error(`Download fehlgeschlagen (${resp.status})`);
+  }
   return await resp.blob();
 }
 

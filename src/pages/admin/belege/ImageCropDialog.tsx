@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import Cropper, { type Area } from 'react-easy-crop';
+import { RotateLeftIcon, RotateRightIcon } from '../../../components/icons';
 
 interface Props {
   /** Bild als ObjectURL oder Data-URL. */
@@ -96,17 +97,19 @@ export function ImageCropDialog({ imageUrl, onCancel, onApply }: Props) {
           <div className="flex gap-2">
             <button
               type="button"
-              className="btn-secondary px-3 py-2 text-sm"
+              className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-sm"
               onClick={() => setRotation((r) => (r - 90 + 360) % 360)}
             >
-              ⟲ 90° links
+              <RotateLeftIcon className="h-4 w-4" />
+              90° links
             </button>
             <button
               type="button"
-              className="btn-secondary px-3 py-2 text-sm"
+              className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-sm"
               onClick={() => setRotation((r) => (r + 90) % 360)}
             >
-              ⟳ 90° rechts
+              <RotateRightIcon className="h-4 w-4" />
+              90° rechts
             </button>
           </div>
           <div className="flex gap-2">

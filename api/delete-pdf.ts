@@ -33,6 +33,7 @@ export default async function handler(req: Req, res: Res) {
   try {
     const auth = asString(req.headers?.authorization as string | undefined);
     const user = await getAuthedUser(auth);
+    const token = (auth ?? '').replace(/^bearer\s+/i, '');
 
     const body = (req.body && typeof req.body === 'object')
       ? req.body as Record<string, unknown>
@@ -44,7 +45,7 @@ export default async function handler(req: Req, res: Res) {
       return;
     }
 
-    await assertCanAccessPdfPath(user, formularId, path);
+    await assertCanAccessPdfPath(user, token, formularId, path);
     await deleteFile(path);
 
     res.status(200).json({ ok: true });

@@ -1,86 +1,78 @@
 // Pro-Resource-Authorization für /api/download und /api/delete-pdf.
-// Der Client schickt formular_id + path; der Server prüft:
-//   1) Darf der eingeloggte User dieses Formular sehen?
-//      Admin → ja; Fahrer → fahrer.user_id muss matchen.
-//   2) Gehört der Pfad zu diesem Formular?
-//      Erlaubt sind:
-//        a) ein Pfad innerhalb des Formular-Ordners (= reguläre PDFs),
-//        b) der in zwischenprotokoll_url hinterlegte Pfad.
+//
+// Der Client schickt formular_id + path. Auf dem Server:
+//   1) Wir laden die Zeile MIT dem JWT des Users — RLS entscheidet,
+//      ob er sie sehen darf. Findet der SELECT die Zeile, ist der
+//      User berechtigt; sonst 404.
+//   2) Pfad-Sanity: wir akzeptieren jeden Pfad unter dem Maja-Wurzel-
+//      Ordner ODER den exakten zwischenprotokoll_url-Eintrag. Strenge
+//      Folder-Name-Checks (Datum/Kennzeichen/Template-Name) sind
+//      brüchig, sobald sich Stammdaten (z.B. Template-Name) nach der
+//      PDF-Erzeugung ändern — alte PDFs sollen weiter ladbar bleiben.
 
 import { createClient } from '@supabase/supabase-js';
 import { HttpError } from './auth.js';
-import { buildFormularFolder } from './paths.js';
 
 interface AuthedUser { id: string; role: 'admin' | 'fahrer' | null }
 
 interface FormularRow {
   id: string;
   fahrer_id: string;
-  created_at: string;
-  daten: Record<string, unknown> | null;
   zwischenprotokoll_url: string | null;
-  template: { name: string } | null;
   fahrer: { user_id: string } | null;
 }
 
-function serviceClient() {
-  const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    ?? process.env.VITE_SUPABASE_ANON_KEY
-    ?? process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) throw new HttpError(500, 'Supabase-Server-Env fehlt');
-  return createClient(url, key, { auth: { persistSession: false } });
-}
+const ALLOWED_ROOTS = [
+  'Maja-Logistik/Formulare/',
+  'Maja-Logistik/Zwischenprotokolle/',
+  'Maja-Logistik/Belege/',
+];
 
-export async function loadFormularForAuth(formularId: string): Promise<FormularRow | null> {
-  const supa = serviceClient();
-  const { data, error } = await supa
-    .from('ausgefuellte_formulare')
-    .select(`
-      id, fahrer_id, created_at, daten, zwischenprotokoll_url,
-      template:template_id (name),
-      fahrer:fahrer_id (user_id)
-    `)
-    .eq('id', formularId)
-    .maybeSingle();
-  if (error) throw new HttpError(500, `DB-Fehler: ${error.message}`);
-  return (data as unknown as FormularRow) ?? null;
+function userClient(token: string) {
+  const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  const key = process.env.VITE_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) throw new HttpError(500, 'Supabase-Server-Env fehlt');
+  // Wichtig: Authorization-Header setzen, damit RLS den User sieht.
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
 }
 
 /**
- * Prüft, ob `user` das Formular sehen darf UND ob `path` zu diesem
- * Formular gehört (Formular-Ordner-Prefix oder zwischenprotokoll_url).
- * Wirft HttpError(403) bei Zugriffsverletzungen.
+ * Prüft, ob `user` die Zeile per RLS lesen darf, und ob `path` plausibel
+ * dazu gehört (Wurzel-Prefix oder exakte zwischenprotokoll_url).
+ * Wirft HttpError(403/404), wenn nicht.
  */
 export async function assertCanAccessPdfPath(
-  user: AuthedUser, formularId: string, path: string,
+  user: AuthedUser, token: string, formularId: string, path: string,
 ): Promise<void> {
-  const formular = await loadFormularForAuth(formularId);
-  if (!formular) throw new HttpError(404, 'Formular nicht gefunden');
+  const supa = userClient(token);
+  const { data, error } = await supa
+    .from('ausgefuellte_formulare')
+    .select('id, fahrer_id, zwischenprotokoll_url, fahrer:fahrer_id (user_id)')
+    .eq('id', formularId)
+    .maybeSingle();
 
-  // 1. Rollencheck.
-  if (user.role !== 'admin') {
+  if (error) throw new HttpError(500, `DB-Fehler: ${error.message}`);
+  if (!data) throw new HttpError(404, 'Formular nicht gefunden oder kein Zugriff');
+
+  const formular = data as unknown as FormularRow;
+
+  // RLS hat bereits Admin vs. Fahrer-eigene-Zeile geprüft. Defensive
+  // Doppel-Prüfung für Fahrer, falls eine künftige Migration die RLS
+  // lockert.
+  if (user.role !== 'admin' && user.role !== null) {
     if (!formular.fahrer || formular.fahrer.user_id !== user.id) {
       throw new HttpError(403, 'Keine Berechtigung für dieses Formular');
     }
   }
 
-  // 2. Pfadcheck.
-  const isoDate = (formular.created_at ?? new Date().toISOString()).slice(0, 10);
-  const daten = formular.daten ?? {};
-  const kennzeichenRaw = daten['kennzeichen'] ?? daten['Kennzeichen'];
-  const folder = buildFormularFolder({
-    date: isoDate,
-    kennzeichen: typeof kennzeichenRaw === 'string' ? kennzeichenRaw : null,
-    templateName: formular.template?.name ?? 'unbenannt',
-    formularId: formular.id,
-  });
-
   const normalized = path.replace(/^\/+/, '');
-  const inFolder = normalized.startsWith(`${folder}/`) || normalized === folder;
   const isZwischen = !!formular.zwischenprotokoll_url
     && formular.zwischenprotokoll_url.replace(/^\/+/, '') === normalized;
-  if (!inFolder && !isZwischen) {
-    throw new HttpError(403, 'Pfad gehört nicht zu diesem Formular');
+  const inAllowedRoot = ALLOWED_ROOTS.some((r) => normalized.startsWith(r));
+  if (!isZwischen && !inAllowedRoot) {
+    throw new HttpError(403, 'Pfad nicht erlaubt');
   }
 }
