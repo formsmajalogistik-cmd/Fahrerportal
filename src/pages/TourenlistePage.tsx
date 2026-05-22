@@ -13,7 +13,7 @@ import {
   computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
 import {
-  downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
+  asPdfPathList, downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
 } from '../lib/pdfGenerate';
 import { DownloadIcon, EyeIcon } from '../components/icons';
 import type { FormularTemplate, AusgefuelltesFormular } from '../types/db';
@@ -38,6 +38,7 @@ interface EingangLite {
   status: 'draft' | 'submitted';
   daten: Record<string, unknown> | null;
   created_at: string | null;
+  pdf_paths: unknown;
   template: { id: string; name: string; pdfs: import('../types/db').TemplatePdf[] | null } | null;
 }
 
@@ -168,7 +169,7 @@ export function TourenlistePage() {
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
         eingang:eingang_id (
-          id, status, daten, created_at,
+          id, status, daten, created_at, pdf_paths,
           template:template_id (id, name, pdfs)
         ),
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
@@ -188,7 +189,7 @@ export function TourenlistePage() {
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
         eingang:eingang_id (
-          id, status, daten, created_at,
+          id, status, daten, created_at, pdf_paths,
           template:template_id (id, name, pdfs)
         )
       `;
@@ -831,35 +832,48 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
 
 function TourEingangPdfButtons({ eingang }: { eingang: EingangLite }) {
   if (!eingang.template) return null;
-  const tpl: FormularTemplate = {
-    id: eingang.template.id,
-    name: eingang.template.name,
-    schema: { sections: [] } as unknown as FormularTemplate['schema'],
-    pdfs: eingang.template.pdfs ?? [],
-    email_config: null,
-    sichtbar: true,
-  };
-  const formular = {
-    id: eingang.id,
-    daten: eingang.daten ?? {},
-    created_at: eingang.created_at ?? new Date().toISOString(),
-  } as unknown as AusgefuelltesFormular;
+  // pdf_paths ist die Wahrheit für die TATSÄCHLICH erzeugten PDFs.
+  // Legacy-Eingänge (vor Migration 037) haben das Feld leer → wir
+  // fallen auf das berechnete template-pdfs-Mapping zurück.
+  const persisted = asPdfPathList(eingang.pdf_paths);
+  let list: Array<{ id: string; name: string; filename: string; onedrive_path: string }>;
+  if (persisted.length > 0) {
+    list = persisted.map((p) => ({
+      id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
+    }));
+  } else {
+    const tpl: FormularTemplate = {
+      id: eingang.template.id,
+      name: eingang.template.name,
+      schema: { sections: [] } as unknown as FormularTemplate['schema'],
+      pdfs: eingang.template.pdfs ?? [],
+      email_config: null,
+      sichtbar: true,
+    };
+    const formular = {
+      id: eingang.id,
+      daten: eingang.daten ?? {},
+      created_at: eingang.created_at ?? new Date().toISOString(),
+    } as unknown as AusgefuelltesFormular;
+    list = (tpl.pdfs ?? []).map((p) => ({
+      id: p.id, name: p.name,
+      filename: resolveFilename(p.filename_pattern, formular.daten, p.id),
+      onedrive_path: expectedOneDrivePath(tpl, formular, p),
+    }));
+  }
+  if (list.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-maja-muted">Protokoll-PDFs:</span>
-      {tpl.pdfs.map((p) => {
-        const filename = resolveFilename(p.filename_pattern, formular.daten, p.id);
-        const path = expectedOneDrivePath(tpl, formular, p);
-        return (
-          <TourPdfButton
-            key={p.id}
-            label={p.name}
-            filename={filename}
-            path={path}
-            formularId={eingang.id}
-          />
-        );
-      })}
+      {list.map((p) => (
+        <TourPdfButton
+          key={p.id}
+          label={p.name}
+          filename={p.filename}
+          path={p.onedrive_path}
+          formularId={eingang.id}
+        />
+      ))}
     </div>
   );
 }

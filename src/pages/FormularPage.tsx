@@ -329,8 +329,14 @@ export function FormularPage() {
         console.info('[Submit] Sende E-Mail mit Anhängen …');
         const r = await sendTemplateEmail(template, submitted, generated, submitterEmail);
         if (r.sent) {
-          console.info('[Submit] E-Mail versendet.');
-          summary += ' Email versendet.';
+          if (r.missing && r.missing.length > 0) {
+            console.warn('[Submit] E-Mail versendet, fehlende Anhänge:', r.missing);
+            summary += ` Email versendet, aber ${r.missing.length} Anhang/Anhänge fehlten`
+              + ` (${r.missing.join(', ')}). Admin kann sie nachsenden.`;
+          } else {
+            console.info('[Submit] E-Mail versendet.');
+            summary += ' Email versendet.';
+          }
         } else if (r.reason) {
           console.info('[Submit] E-Mail nicht versendet:', r.reason);
         }

@@ -5,9 +5,10 @@ import { Spinner } from '../../components/Spinner';
 import { useAuth } from '../../auth/AuthContext';
 import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
-  deleteFormPdf, downloadFormPdf, expectedOneDrivePath,
+  asPdfPathList, deleteFormPdf, downloadFormPdf, expectedOneDrivePath,
   generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll,
   previewFormPdf, resolveFilename,
+  type PdfPathEntry,
 } from '../../lib/pdfGenerate';
 import {
   DownloadIcon, EyeIcon, FileTextIcon, MailIcon, RefreshIcon, XIcon,
@@ -105,7 +106,15 @@ export function EingaengePage() {
         email_config: null,
         sichtbar: true,
       };
-      await generateAndUploadFormPdfs(tpl, r);
+      const generated = await generateAndUploadFormPdfs(tpl, r);
+      // pdf_paths wurde von generateAndUploadFormPdfs persistiert — wir
+      // patchen den lokalen State, damit die UI sofort die aktuelle
+      // Liste zeigt (übersprungene PDFs sind weg).
+      const paths: PdfPathEntry[] = generated.map((g) => ({
+        pdf_id: g.pdf.id, pdf_name: g.pdf.name,
+        filename: g.filename, onedrive_path: g.onedrive_path,
+      }));
+      await patchRowInState(r.id, { pdf_paths: paths as unknown as AusgefuelltesFormular['pdf_paths'] });
     } finally {
       setRegen(null);
     }
@@ -340,27 +349,47 @@ function Detail({
   );
 }
 
+/**
+ * Liefert die Liste der tatsächlich vorhandenen PDFs für einen Eingang.
+ * Bevorzugt das persistierte pdf_paths-Feld (neu seit Migration 037);
+ * für Legacy-Eingänge ohne pdf_paths fallback auf alle Template-PDFs
+ * (vorherige Logik). So bleiben alte Eingänge weiter downloadbar.
+ */
+function effectivePdfList(
+  template: FormularTemplate, formular: Row,
+): Array<{ id: string; name: string; filename: string; onedrive_path: string }> {
+  const persisted = asPdfPathList((formular as unknown as { pdf_paths?: unknown }).pdf_paths);
+  if (persisted.length > 0) {
+    return persisted.map((p) => ({
+      id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
+    }));
+  }
+  return (template.pdfs ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    filename: resolveFilename(p.filename_pattern, formular.daten, p.id),
+    onedrive_path: expectedOneDrivePath(template, formular, p),
+  }));
+}
+
 function PdfDownloads({
   template, formular,
-}: { template: FormularTemplate; formular: AusgefuelltesFormular }) {
-  if (!template.pdfs || template.pdfs.length === 0) {
-    return <span className="text-xs text-maja-muted">keine Vorlagen</span>;
+}: { template: FormularTemplate; formular: Row }) {
+  const list = effectivePdfList(template, formular);
+  if (list.length === 0) {
+    return <span className="text-xs text-maja-muted">keine PDFs erzeugt</span>;
   }
   return (
     <div className="flex flex-wrap justify-end gap-2">
-      {template.pdfs.map((p) => {
-        const filename = resolveFilename(p.filename_pattern, formular.daten, p.id);
-        const path = expectedOneDrivePath(template, formular, p);
-        return (
-          <PdfDownloadButton
-            key={p.id}
-            label={p.name}
-            filename={filename}
-            path={path}
-            formularId={formular.id}
-          />
-        );
-      })}
+      {list.map((p) => (
+        <PdfDownloadButton
+          key={p.id}
+          label={p.name}
+          filename={p.filename}
+          path={p.onedrive_path}
+          formularId={formular.id}
+        />
+      ))}
     </div>
   );
 }

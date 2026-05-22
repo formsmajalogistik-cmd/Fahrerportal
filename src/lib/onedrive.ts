@@ -212,13 +212,20 @@ export async function deleteFromOneDrive(path: string, formularId: string): Prom
   }
 }
 
+export interface SendEmailResult {
+  /** Dateinamen von Anhängen, die der Server nach Retries nicht laden konnte.
+   *  Die Mail wurde trotzdem versendet (mit Hinweis im Body). */
+  missing: string[];
+  attached: number;
+}
+
 export async function sendEmail(args: {
   to: string[];
   cc?: string[];
   subject: string;
   body: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
-}): Promise<void> {
+}): Promise<SendEmailResult> {
   const resp = await fetchWithRetry('/api/email', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
@@ -228,4 +235,9 @@ export async function sendEmail(args: {
     const txt = await resp.text();
     throw new Error(`Email-Versand fehlgeschlagen (${resp.status}): ${txt.slice(0, 200)}`);
   }
+  const json = await resp.json().catch(() => ({})) as Partial<SendEmailResult>;
+  return {
+    missing: Array.isArray(json.missing) ? json.missing : [],
+    attached: typeof json.attached === 'number' ? json.attached : 0,
+  };
 }

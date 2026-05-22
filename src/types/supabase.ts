@@ -575,6 +575,7 @@ export type Database = {
           gesehen_am: string | null;
           zwischenprotokoll_url: string | null;
           zwischenprotokoll_erstellt_am: string | null;
+          pdf_paths: Json;
         };
         Insert: {
           id?: string;
@@ -586,6 +587,7 @@ export type Database = {
           gesehen_am?: string | null;
           zwischenprotokoll_url?: string | null;
           zwischenprotokoll_erstellt_am?: string | null;
+          pdf_paths?: Json;
         };
         Update: {
           id?: string;
@@ -597,6 +599,7 @@ export type Database = {
           gesehen_am?: string | null;
           zwischenprotokoll_url?: string | null;
           zwischenprotokoll_erstellt_am?: string | null;
+          pdf_paths?: Json;
         };
         Relationships: [
           {

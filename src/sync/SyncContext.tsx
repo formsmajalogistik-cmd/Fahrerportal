@@ -250,7 +250,10 @@ async function processPendingSubmissions(): Promise<void> {
       }
       try {
         const generated = await generateAndUploadFormPdfs(template, formularStub);
-        await sendTemplateEmail(template, formularStub, generated, sub.submitterEmail ?? null);
+        const r = await sendTemplateEmail(template, formularStub, generated, sub.submitterEmail ?? null);
+        if (r.missing && r.missing.length > 0) {
+          console.warn('[SyncDrain] E-Mail abgesendet, fehlende Anhänge:', r.missing);
+        }
       } catch (postErr) {
         // PDF/Email-Fehler nach erfolgtem Submit nur loggen — Status
         // ist bereits "submitted", Admin kann manuell nachsenden.

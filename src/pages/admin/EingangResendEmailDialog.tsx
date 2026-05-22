@@ -3,7 +3,7 @@ import { sendEmail } from '../../lib/onedrive';
 import { useAuth } from '../../auth/AuthContext';
 import { XIcon } from '../../components/icons';
 import {
-  expectedOneDrivePath, resolveFilename, resolvePattern,
+  asPdfPathList, expectedOneDrivePath, resolveFilename, resolvePattern,
 } from '../../lib/pdfGenerate';
 import type { AusgefuelltesFormular, FormularTemplate } from '../../types/db';
 
@@ -46,17 +46,30 @@ export function EingangResendEmailDialog({ formular, template, onClose, onSent }
       ? resolvePattern(cfg.subject_pattern, data)
       : template.name;
     const body = cfg?.body_pattern ? resolvePattern(cfg.body_pattern, data) : '';
+    // Anhängen-Liste aus der Wahrheit auf dem Eingang: pdf_paths
+    // enthält genau die PDFs, die nach der Generierung wirklich in
+    // OneDrive liegen. Übersprungene Bild-only-Vorlagen sind hier NICHT
+    // drin und tauchen damit nicht als Anhang-Checkbox auf.
+    // Legacy-Eingänge (vor Migration 037, ohne pdf_paths) fallen auf
+    // das alte template.pdfs-Mapping zurück, sonst wäre dort plötzlich
+    // alles leer.
+    const persisted = asPdfPathList((formular as unknown as { pdf_paths?: unknown }).pdf_paths);
     const wanted = new Set(cfg?.attach_pdf_ids ?? []);
-    const attachments: AttachmentDraft[] = (template.pdfs ?? []).map((p) => ({
-      id: p.id,
-      name: p.name,
-      filename: resolveFilename(p.filename_pattern, data, p.id),
-      onedrive_path: expectedOneDrivePath(template, formular, p),
-      // Standardmäßig nur die PDFs vorausgewählt, die auch beim Erst-
-      // versand als Anhang konfiguriert sind. Hat das Template keine
-      // attach_pdf_ids gesetzt (z.B. Legacy), wählen wir alle vor.
-      selected: wanted.size === 0 ? true : wanted.has(p.id),
-    }));
+    const attachments: AttachmentDraft[] = persisted.length > 0
+      ? persisted.map((p) => ({
+          id: p.pdf_id,
+          name: p.pdf_name,
+          filename: p.filename,
+          onedrive_path: p.onedrive_path,
+          selected: wanted.size === 0 ? true : wanted.has(p.pdf_id),
+        }))
+      : (template.pdfs ?? []).map((p) => ({
+          id: p.id,
+          name: p.name,
+          filename: resolveFilename(p.filename_pattern, data, p.id),
+          onedrive_path: expectedOneDrivePath(template, formular, p),
+          selected: wanted.size === 0 ? true : wanted.has(p.id),
+        }));
     return { to: to.join(', '), cc: cc.join(', '), subject, body, attachments };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template.id, formular.id]);
@@ -84,7 +97,7 @@ export function EingangResendEmailDialog({ formular, template, onClose, onSent }
     const selected = attachments.filter((a) => a.selected);
     setBusy(true);
     try {
-      await sendEmail({
+      const result = await sendEmail({
         to,
         cc: cc.length > 0 ? cc : undefined,
         subject,
@@ -95,7 +108,17 @@ export function EingangResendEmailDialog({ formular, template, onClose, onSent }
           onedrive_path: a.onedrive_path,
         })),
       });
-      onSent();
+      if (result.missing.length > 0) {
+        // Mail wurde abgesetzt, aber unvollständig — kein Fehler-Abort,
+        // sondern Warnung und Dialog offen lassen, damit der Admin
+        // entscheidet (z.B. PDFs neu erzeugen und nochmal senden).
+        setError(
+          `E-Mail versendet, aber ${result.missing.length} Anhang/Anhänge fehlten: `
+          + `${result.missing.join(', ')}. PDFs ggf. neu erzeugen und erneut senden.`,
+        );
+      } else {
+        onSent();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Versand fehlgeschlagen');
     } finally {

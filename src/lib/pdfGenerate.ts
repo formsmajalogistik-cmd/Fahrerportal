@@ -14,6 +14,8 @@ import {
   deleteFromOneDrive, downloadFromOneDrive, previewOneDrivePdf, sendEmail,
   triggerOneDriveDownload, uploadToOneDrive,
 } from './onedrive';
+import { supabase } from './supabase';
+import type { Json } from '../types/supabase';
 import { buildFormularFolder, pathForPdf } from './onedrivePaths';
 import type {
   AusgefuelltesFormular, FieldMapping, FormSchema, FormularTemplate,
@@ -535,6 +537,46 @@ export interface GeneratedPdf {
 }
 
 /**
+ * Persistente Form der erzeugten PDFs auf ausgefuellte_formulare.pdf_paths.
+ * Enthält nur die tatsächlich generierten — übersprungene (z.B. leere
+ * Bild-Vorlagen) tauchen NICHT auf. Diese Liste ist die Wahrheit für
+ * "Welche Anhänge gibt es für diesen Eingang?".
+ */
+export interface PdfPathEntry {
+  pdf_id: string;       // Template-PDF-ID
+  pdf_name: string;     // Template-PDF-Anzeige-Name
+  filename: string;     // OneDrive-Filename
+  onedrive_path: string;
+}
+
+export function generatedToPdfPaths(generated: GeneratedPdf[]): PdfPathEntry[] {
+  return generated.map((g) => ({
+    pdf_id: g.pdf.id,
+    pdf_name: g.pdf.name,
+    filename: g.filename,
+    onedrive_path: g.onedrive_path,
+  }));
+}
+
+/** Type-Guard für die Persistenz-Form. */
+export function asPdfPathList(v: unknown): PdfPathEntry[] {
+  if (!Array.isArray(v)) return [];
+  const out: PdfPathEntry[] = [];
+  for (const item of v) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.pdf_id !== 'string' || typeof r.onedrive_path !== 'string') continue;
+    out.push({
+      pdf_id: r.pdf_id,
+      pdf_name: typeof r.pdf_name === 'string' ? r.pdf_name : r.pdf_id,
+      filename: typeof r.filename === 'string' ? r.filename : (r.onedrive_path.split('/').pop() ?? ''),
+      onedrive_path: r.onedrive_path,
+    });
+  }
+  return out;
+}
+
+/**
  * True, wenn die Vorlage NUR Bild-Felder mappt (photo / dynamic_photos)
  * und alle Werte dieser Felder in `data` leer sind. Solche reinen
  * Bild-PDFs werden bei der Generierung übersprungen — z.B. das Belege-
@@ -650,6 +692,24 @@ export async function generateAndUploadFormPdfs(
   console.info(
     `[generateAndUploadFormPdfs] fertig: ${generated.length}/${allPdfs.length} PDFs erzeugt`,
   );
+
+  // Persistiere die Liste der TATSÄCHLICH erzeugten PDFs auf dem
+  // Eingang. Übersprungene Bild-only-Vorlagen kommen damit gar nicht
+  // erst in die spätere Anhängen-Auswahl. Fehler hier sind nicht
+  // kritisch — der Eingang ist bereits eingereicht.
+  try {
+    const paths = generatedToPdfPaths(generated);
+    const { error: persistErr } = await supabase
+      .from('ausgefuellte_formulare')
+      .update({ pdf_paths: paths as unknown as Json })
+      .eq('id', formular.id);
+    if (persistErr) {
+      console.warn('[generateAndUploadFormPdfs] pdf_paths nicht persistierbar', persistErr.message);
+    }
+  } catch (err) {
+    console.warn('[generateAndUploadFormPdfs] pdf_paths-Update warf', err);
+  }
+
   return generated;
 }
 
@@ -761,7 +821,7 @@ export async function sendTemplateEmail(
    *  (Duplikate werden entfernt), sodass jeder eine Kopie seiner eigenen
    *  Einreichung bekommt. */
   submitterEmail?: string | null,
-): Promise<{ sent: boolean; reason?: string }> {
+): Promise<{ sent: boolean; reason?: string; missing?: string[] }> {
   const cfg = template.email_config;
   if (!cfg || !cfg.to || !cfg.to.trim()) {
     return { sent: false, reason: 'keine Email-Konfiguration' };
@@ -779,6 +839,9 @@ export async function sendTemplateEmail(
 
   const subject = resolvePattern(cfg.subject_pattern ?? template.name, data);
   const body    = resolvePattern(cfg.body_pattern ?? '', data);
+  // Nur tatsächlich generierte PDFs anhängen — übersprungene (z.B.
+  // Bild-only-Vorlagen ohne Bilder) liegen nicht in OneDrive und
+  // würden auf dem Server in einen vermeidbaren Retry-Loop laufen.
   const wantedIds = new Set(cfg.attach_pdf_ids ?? []);
   const attachments = generated
     .filter((g) => wantedIds.size === 0 ? false : wantedIds.has(g.pdf.id))
@@ -788,8 +851,10 @@ export async function sendTemplateEmail(
       onedrive_path: g.onedrive_path,
     }));
 
-  await sendEmail({ to, cc: cc.length > 0 ? cc : undefined, subject, body, attachments });
-  return { sent: true };
+  const result = await sendEmail({
+    to, cc: cc.length > 0 ? cc : undefined, subject, body, attachments,
+  });
+  return { sent: true, missing: result.missing };
 }
 
 /**

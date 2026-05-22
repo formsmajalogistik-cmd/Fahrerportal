@@ -73,8 +73,11 @@ export default async function handler(req: Req, res: Res) {
 
     // Anhänge aus OneDrive laden. Microsoft Graph braucht nach einem
     // frischen Upload manchmal ein paar Sekunden, bis die Datei über
-    // den Path-Endpoint erreichbar ist — wir retryen 3x mit Backoff,
-    // damit der Anhang nicht still aus der Mail fällt.
+    // den Path-Endpoint erreichbar ist — wir retryen 3x mit Backoff.
+    // Wenn Dateien danach immer noch fehlen, senden wir die Mail mit
+    // den verfügbaren Anhängen UND einer Hinweis-Zeile im Body. Der
+    // Client bekommt die Liste der fehlenden Namen zurück und kann
+    // eine Warnung anzeigen statt einen Fehler.
     const requested = (b.attachments ?? []).filter(
       (a) => a.onedrive_path && !a.onedrive_path.includes('..'),
     );
@@ -89,28 +92,35 @@ export default async function handler(req: Req, res: Res) {
       attachments.push({ name: a.name, contentType: a.contentType, bytes });
     }
 
-    // Wenn einzelne Anhänge nach Retries immer noch fehlen: HARDFAIL
-    // statt eine unvollständige Mail rauszuschicken. Der Client kann
-    // dann gezielt "E-Mail erneut senden" anbieten.
-    if (failed.length > 0 && attachments.length < requested.length) {
-      throw new HttpError(
-        503,
-        `OneDrive lieferte ${failed.length}/${requested.length} Anhänge nicht: ${failed.join(', ')}. `
-        + 'Bitte gleich noch einmal versuchen.',
+    let bodyText = b.body ?? '';
+    if (failed.length > 0) {
+      const note = `\n\n---\nHinweis: ${failed.length} Anhang/Anhänge konnten nicht geladen werden `
+        + `(${failed.join(', ')}). Bitte beim Admin nachfragen oder "E-Mail erneut senden" nutzen.`;
+      bodyText = `${bodyText}${note}`;
+      console.warn(
+        `[/api/email] ${failed.length}/${requested.length} Anhänge fehlten nach Retries:`,
+        failed,
       );
     }
 
     console.info(
-      `[/api/email] sende an=${to.join(',')} cc=${cc.join(',')} attachments=${attachments.length}`,
+      `[/api/email] sende an=${to.join(',')} cc=${cc.join(',')} attachments=${attachments.length}`
+      + (failed.length > 0 ? ` (FEHLT: ${failed.length})` : ''),
     );
     await sendMail({
       to, cc: cc.length > 0 ? cc : undefined,
       subject: b.subject,
-      bodyText: b.body ?? '',
+      bodyText,
       attachments,
     });
 
-    res.status(200).json({ ok: true, sent_to: to, cc, attached: attachments.length });
+    res.status(200).json({
+      ok: true,
+      sent_to: to,
+      cc,
+      attached: attachments.length,
+      missing: failed,
+    });
   } catch (err) {
     const status = err instanceof HttpError ? err.status : 500;
     const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
