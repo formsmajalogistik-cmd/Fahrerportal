@@ -45,6 +45,35 @@ function winAnsi(s: string): string {
     .replace(/[^\x20-\xFF]/g, '?');
 }
 
+/**
+ * Verteilt Text auf bis zu 3 Zeilen anhand der Wort-Grenzen, sodass jede
+ * Zeile in `maxWidth` passt. Wörter, die selbst zu lang sind, werden
+ * hart abgeschnitten — Zerstückeln nach Zeichen wäre für Fließtext nur
+ * Lärm. Gibt die effektiven Zeilen zurück.
+ */
+function wrapLines(
+  text: string, fontSize: number, maxWidth: number,
+  measure: (s: string, sz: number) => number,
+  maxLines: number = 3,
+): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [text];
+  const lines: string[] = [];
+  let current = '';
+  for (const w of words) {
+    const next = current ? `${current} ${w}` : w;
+    if (measure(next, fontSize) <= maxWidth) {
+      current = next;
+    } else {
+      if (current) lines.push(current);
+      current = w;
+      if (lines.length >= maxLines) break;
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines;
+}
+
 function asString(v: unknown): string {
   if (v == null) return '';
   if (typeof v === 'string') return winAnsi(v);
@@ -127,6 +156,12 @@ async function renderDamageDiagramWithMarkers(
   markers: Array<{ x: number; y: number; kind?: string }>,
   outputWidth: number,
   outputHeight: number,
+  /** Verhältnis Canvas-Pixel zu finalen PDF-Punkten. Wird genutzt, um
+   *  Marker-Größe in PDF-Punkten anzugeben — die Skalierung passiert
+   *  intern. Default: 1 (Canvas == PDF-Punkte). */
+  scale: number = 1,
+  /** Marker-Durchmesser in PDF-Punkten. 14 pt ≈ klar lesbare Größe. */
+  markerDiameterPt: number = 14,
 ): Promise<Uint8Array | null> {
   return await new Promise((resolve) => {
     const blob = new Blob([imageBytes]);
@@ -142,10 +177,13 @@ async function renderDamageDiagramWithMarkers(
         if (!ctx) { resolve(null); URL.revokeObjectURL(url); return; }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-        // Marker — Buchstabe statt Nummer (D/K/S/U); Fallback "?"
-        // Etwa halbe Größe wie zuvor (entspricht visuell den UI-Markern).
-        const r = Math.max(5, Math.min(canvas.width, canvas.height) * 0.0125);
-        ctx.font = `bold ${Math.round(r * 1.2)}px sans-serif`;
+        // Marker-Größe in CANVAS-Pixeln aus der gewünschten PDF-Punktgröße
+        // ableiten. Vorherige Formel war an die Canvas-Größe gekoppelt
+        // (0.0125 × min(w, h)) und ergab bei den üblichen Diagramm-Boxen
+        // nur ~3 pt Schrift in der finalen PDF — kaum lesbar.
+        const r = Math.max(8, (markerDiameterPt / 2) * scale);
+        const fontPx = Math.round(r * 1.3);
+        ctx.font = `bold ${fontPx}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         markers.forEach((m) => {
@@ -157,11 +195,11 @@ async function renderDamageDiagramWithMarkers(
           ctx.fillStyle = color;
           ctx.arc(cx, cy, r, 0, Math.PI * 2);
           ctx.fill();
-          ctx.lineWidth = 2;
+          ctx.lineWidth = Math.max(2, r * 0.18);
           ctx.strokeStyle = 'white';
           ctx.stroke();
           ctx.fillStyle = 'white';
-          ctx.fillText(kind || '?', cx, cy + 1);
+          ctx.fillText(kind || '?', cx, cy + r * 0.05);
         });
 
         canvas.toBlob((b) => {
@@ -272,19 +310,57 @@ function aspectFit(
   if (imgWidth <= 0 || imgHeight <= 0) {
     return { x: boxX - boxWidth, y: boxY - boxHeight, width: boxWidth, height: boxHeight };
   }
-  const isPortrait = imgHeight > imgWidth;
-  let drawWidth = boxWidth;
-  let drawHeight = boxHeight;
-  if (isPortrait) {
-    drawHeight = boxHeight;
-    drawWidth = boxHeight * (imgWidth / imgHeight);
-    if (drawWidth > boxWidth) {
-      drawWidth = boxWidth;
-      drawHeight = boxWidth * (imgHeight / imgWidth);
-    }
-  }
+  // Echtes aspect-fit: skaliere mit dem KLEINSTEN Verhältnis, damit das
+  // Bild sicher in die Box passt und die Original-Proportionen behält.
+  // Frühere Variante streckte Landscape-Bilder auf die Box-Größe — bei
+  // Unterschriften (typisch 3:1 oder breiter) führte das zu gequetschten
+  // Strichen, bei Fotos zu verzerrten Aufnahmen.
+  const scale = Math.min(boxWidth / imgWidth, boxHeight / imgHeight);
+  const drawWidth = imgWidth * scale;
+  const drawHeight = imgHeight * scale;
   // PDF-Koordinaten: y ist der OBERE Rand → unteren Rand berechnen.
   // Rechtsbündig (boxX = rechter Rand), top-aligned an boxY.
+  return {
+    x: boxX - drawWidth,
+    y: boxY - drawHeight,
+    width: drawWidth,
+    height: drawHeight,
+  };
+}
+
+/**
+ * Wie aspectFit, aber für Unterschriften: zusätzlich wird sichergestellt,
+ * dass das Bild eine Mindesthöhe von ~12 mm (≈ 34 pt) erreicht, sofern
+ * die Box selbst diese Höhe hergibt. Wenn die natürliche Aspect-Fit-
+ * Skalierung weniger Höhe ergeben würde (typischerweise breite Box,
+ * relativ niedriges Signatur-Canvas), strecken wir die Höhe bis auf
+ * 90 % der Box (oder Min-Höhe) — die Unterschrift soll lesbar bleiben.
+ */
+function signatureFit(
+  imgWidth: number, imgHeight: number,
+  boxX: number, boxY: number, boxWidth: number, boxHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  if (imgWidth <= 0 || imgHeight <= 0) {
+    return { x: boxX - boxWidth, y: boxY - boxHeight, width: boxWidth, height: boxHeight };
+  }
+  // Mindesthöhe: 12 mm ≈ 34 pt, aber nie mehr als 90 % der Box-Höhe.
+  const MIN_SIGNATURE_HEIGHT_PT = 34;
+  const targetMinHeight = Math.min(MIN_SIGNATURE_HEIGHT_PT, boxHeight * 0.9);
+  // Erst-Versuch: ehrlicher aspect-fit.
+  const fitScale = Math.min(boxWidth / imgWidth, boxHeight / imgHeight);
+  let drawWidth = imgWidth * fitScale;
+  let drawHeight = imgHeight * fitScale;
+  // Wenn die Box deutlich höher ist als das, was aspect-fit liefert
+  // (breite Box, schmale Unterschrift), höher skalieren — solange die
+  // Breite nicht aus der Box wandert.
+  if (drawHeight < targetMinHeight) {
+    const heightScale = targetMinHeight / imgHeight;
+    const candidateWidth = imgWidth * heightScale;
+    if (candidateWidth <= boxWidth) {
+      drawHeight = targetMinHeight;
+      drawWidth = candidateWidth;
+    }
+  }
   return {
     x: boxX - drawWidth,
     y: boxY - drawHeight,
@@ -341,16 +417,59 @@ export async function fillPdf(
     const meta = fields.get(fieldId);
 
     if (isTextEntry(entry)) {
-      const text = asString(value);
-      if (!text) continue;
-      const fontSize = entry.fontSize ?? TEXT_DEFAULT_FONT;
-      // X-Position ist der RECHTE Rand → Text rechtsbündig zeichnen.
-      const textWidth = font.widthOfTextAtSize(text, fontSize);
-      page(entry.page).drawText(text, {
-        x: entry.x - textWidth, y: entry.y,
-        size: fontSize,
-        font, color: INK,
-      });
+      const rawText = asString(value);
+      if (!rawText) continue;
+      const text = winAnsi(rawText);
+      const defaultSize = entry.fontSize ?? TEXT_DEFAULT_FONT;
+      const measure = (s: string, sz: number) => font.widthOfTextAtSize(s, sz);
+      const targetPage = page(entry.page);
+
+      if (entry.maxWidth && entry.maxWidth > 0) {
+        // Auto-fit: erst einzeilig schrumpfen (bis 7 pt), dann ggf.
+        // umbrechen. Vertikal zentrieren am ursprünglichen y.
+        const MIN_SIZE = 7;
+        let size = defaultSize;
+        let fits = false;
+        while (size >= MIN_SIZE) {
+          if (measure(text, size) <= entry.maxWidth) { fits = true; break; }
+          size -= 0.5;
+        }
+        if (fits) {
+          const w = measure(text, size);
+          targetPage.drawText(text, {
+            x: entry.x - w, y: entry.y, size, font, color: INK,
+          });
+        } else {
+          // Auch bei 7 pt zu lang: auf bis zu 3 Zeilen umbrechen,
+          // Schriftgröße leicht oberhalb des Minimums halten.
+          const wrapSize = MIN_SIZE + 1;
+          const lines = wrapLines(text, wrapSize, entry.maxWidth, measure, 3);
+          const lineHeight = wrapSize * 1.25;
+          // y ist die ANKER-Baseline der „einzeiligen" Variante. Bei
+          // mehreren Zeilen: die mittlere Zeile auf entry.y zentrieren.
+          const topOffset = ((lines.length - 1) * lineHeight) / 2;
+          lines.forEach((line, i) => {
+            const w = measure(line, wrapSize);
+            targetPage.drawText(line, {
+              x: entry.x - w,
+              y: entry.y + topOffset - i * lineHeight,
+              size: wrapSize, font, color: INK,
+            });
+          });
+          console.info(
+            `[fillPdf] text ${fieldId}: WRAP ${lines.length} Zeilen @${wrapSize}pt `
+            + `(text="${text.slice(0, 40)}${text.length > 40 ? '…' : ''}", maxWidth=${entry.maxWidth})`,
+          );
+        }
+      } else {
+        // Kein maxWidth gesetzt → altes Verhalten (rechtsbündig, eine Zeile,
+        // kein Schrumpfen). Für Bestands-Templates ohne Migration des
+        // Mappings. Neue/aktualisierte Templates setzen maxWidth.
+        const w = measure(text, defaultSize);
+        targetPage.drawText(text, {
+          x: entry.x - w, y: entry.y, size: defaultSize, font, color: INK,
+        });
+      }
       continue;
     }
 
@@ -413,8 +532,14 @@ export async function fillPdf(
           ? (value as Array<{ x: number; y: number; kind?: string }>)
               .filter((m) => typeof m?.x === 'number' && typeof m?.y === 'number')
           : [];
+        // Canvas wird mit 4× der PDF-Box-Größe gerendert (für scharfe
+        // Diagramme nach dem PNG-Compose), Marker werden aber in PDF-
+        // Punkten dimensioniert — sonst skalieren sie mit der Canvas-
+        // Auflösung mit und werden unleserlich.
         const png = await renderDamageDiagramWithMarkers(
           bg, markers, entry.width * 4, entry.height * 4,
+          /* scale (canvas:pdf) */ 4,
+          /* markerDiameterPt */ 14,
         );
         if (!png) continue;
         const img = await pdf.embedPng(png);
@@ -459,9 +584,13 @@ export async function fillPdf(
         if (!sig) continue;
         try {
           const img = await pdf.embedPng(sig);
-          const fit = aspectFit(img.width, img.height,
+          const fit = signatureFit(img.width, img.height,
             entry.x, entry.y, entry.width, entry.height);
           page(entry.page).drawImage(img, fit);
+          console.info(
+            `[fillPdf] signature ${fieldId}: OK (canvas ${img.width}x${img.height} → `
+            + `${fit.width.toFixed(1)}x${fit.height.toFixed(1)} pt)`,
+          );
         } catch (err) {
           console.warn(`[fillPdf] signature ${fieldId} embed failed`, err);
         }

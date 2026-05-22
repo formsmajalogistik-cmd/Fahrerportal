@@ -102,6 +102,11 @@ export type TextEntry = {
   x: number;
   y: number;
   fontSize?: number;
+  /** Maximale Breite in PDF-Punkten, in die der Text passen muss. Wird
+   *  überschritten: Schrift verkleinert sich automatisch (bis 7 pt),
+   *  dann wird umbrochen (max. 3 Zeilen). Ohne maxWidth verhält sich
+   *  das Mapping wie früher (rechtsbündig, einzeilig, kein Schrumpfen). */
+  maxWidth?: number;
 };
 
 export type BoxEntry = {

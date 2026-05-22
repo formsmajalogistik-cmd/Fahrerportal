@@ -826,7 +826,19 @@ function DetailPanel({
                       onChange={(v) => onUpdateText(selection.fieldId, { x: v })} />
           <NumberCell label="Y (pt)" value={entry.y}
                       onChange={(v) => onUpdateText(selection.fieldId, { y: v })} />
+          <NumberCell
+            label="Max-Breite (pt, 0 = aus)"
+            value={entry.maxWidth ?? 0}
+            min={0}
+            onChange={(v) => onUpdateText(selection.fieldId, {
+              maxWidth: v > 0 ? v : undefined,
+            })}
+          />
         </div>
+        <p className="mt-2 text-xs text-maja-muted">
+          Max-Breite aktiviert die Auto-Anpassung: zu lange Texte verkleinern sich
+          erst (bis 7 pt) und werden danach auf bis zu 3 Zeilen umbrochen.
+        </p>
       </div>
     );
   }
