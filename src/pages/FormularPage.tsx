@@ -316,13 +316,24 @@ export function FormularPage() {
 
     let summary = 'Formular erfolgreich eingereicht!';
     try {
+      console.info('[Submit] Starte PDF-Generierung …');
       const generated = await generateAndUploadFormPdfs(template, submitted);
+      console.info(
+        '[Submit] PDFs fertig hochgeladen:',
+        generated.map((g) => g.filename),
+      );
       summary = generated.length > 0
         ? `Formular erfolgreich eingereicht — ${generated.length} PDF${generated.length === 1 ? '' : 's'} wurden generiert und in OneDrive abgelegt.`
         : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
       try {
+        console.info('[Submit] Sende E-Mail mit Anhängen …');
         const r = await sendTemplateEmail(template, submitted, generated, submitterEmail);
-        if (r.sent) summary += ' Email versendet.';
+        if (r.sent) {
+          console.info('[Submit] E-Mail versendet.');
+          summary += ' Email versendet.';
+        } else if (r.reason) {
+          console.info('[Submit] E-Mail nicht versendet:', r.reason);
+        }
       } catch (emailErr) {
         console.warn('[FormularPage] Email-Versand fehlgeschlagen', emailErr);
         summary += ' Email-Versand schlug fehl — siehe Konsole.';

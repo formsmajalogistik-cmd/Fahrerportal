@@ -91,13 +91,19 @@ function dataUrlToBytes(dataUrl: string): Uint8Array | null {
   return out;
 }
 
-async function fetchSubmittedPhotoBytes(path: string): Promise<ArrayBuffer | null> {
-  // Photos liegen jetzt in OneDrive — Download über /api/download.
+async function fetchSubmittedPhotoBytes(
+  path: string, formularId: string | null,
+): Promise<ArrayBuffer | null> {
+  // Photos liegen in OneDrive. Der Download-Proxy verlangt für Fahrer
+  // zwingend formular_id (Pro-Resource-Auth); für Admin ist es optional,
+  // wir reichen es aber durch, sobald wir es haben.
   try {
-    const blob = await downloadFromOneDrive(path);
-    return await blob.arrayBuffer();
+    const blob = await downloadFromOneDrive(path, { formularId });
+    const buf = await blob.arrayBuffer();
+    console.info(`[PDF] Bild geladen: ${path.split('/').pop()} (${buf.byteLength} B)`);
+    return buf;
   } catch (err) {
-    console.warn('[fetchSubmittedPhotoBytes]', path, err);
+    console.error('[PDF] Bild-Download fehlgeschlagen', { path, formularId, err });
     return null;
   }
 }
@@ -286,13 +292,16 @@ function aspectFit(
 }
 
 /**
- * Füllt eine PDF-Vorlage mit den Daten aus dem Formular und gibt die Bytes zurück.
+ * Füllt eine PDF-Vorlage mit den Daten aus dem Formular und gibt die Bytes
+ * zurück. `formularId` wird an den Foto-Download durchgereicht — der
+ * /api/download-Proxy verlangt für Fahrer eine formular_id.
  */
 export async function fillPdf(
   templateBytes: ArrayBuffer,
   schema: FormSchema,
   mapping: FieldMapping,
   data: Record<string, unknown>,
+  formularId: string | null = null,
 ): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(templateBytes);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -421,7 +430,7 @@ export async function fillPdf(
           console.info(`[fillPdf] photo ${fieldId}: SKIP (kein storage_path — value=`, value, ')');
           continue;
         }
-        const bytes = await fetchSubmittedPhotoBytes(photo.storage_path);
+        const bytes = await fetchSubmittedPhotoBytes(photo.storage_path, formularId);
         if (!bytes) {
           console.warn(`[fillPdf] photo ${fieldId}: SKIP (Bytes nicht ladbar, path=${photo.storage_path})`);
           continue;
@@ -497,7 +506,7 @@ export async function fillPdf(
         const slot = slots[i];
         const photo = photos[i];
         if (!photo.storage_path) continue;
-        const bytes = await fetchSubmittedPhotoBytes(photo.storage_path);
+        const bytes = await fetchSubmittedPhotoBytes(photo.storage_path, formularId);
         if (!bytes) {
           console.warn(`[fillPdf] dynamic photo ${i}: konnte Bytes nicht laden (${photo.storage_path})`);
           continue;
@@ -615,8 +624,8 @@ export async function generateAndUploadFormPdfs(
 
     let out: Uint8Array;
     try {
-      console.info(`[generateAndUploadFormPdfs] ▶ Fülle Vorlage "${tplPdf.name}" (${tplPdf.id}) — Mapping-Einträge: ${Object.keys(mapping).length}`);
-      out = await fillPdf(tplBytes, template.schema, mapping, formular.daten);
+      console.info(`[generateAndUploadFormPdfs] > Fülle Vorlage "${tplPdf.name}" (${tplPdf.id}) — Mapping-Einträge: ${Object.keys(mapping).length}`);
+      out = await fillPdf(tplBytes, template.schema, mapping, formular.daten, formular.id);
     } catch (err) {
       console.error(`[generateAndUploadFormPdfs] ${tplPdf.id}: FILL-FAIL`, err,
         err instanceof Error ? err.stack : '');
@@ -711,7 +720,7 @@ export async function generateAndUploadZwischenprotokoll(
     if (!tplBytes) continue;
     let filled: Uint8Array;
     try {
-      filled = await fillPdf(tplBytes, template.schema, tplPdf.field_mapping ?? {}, formular.daten);
+      filled = await fillPdf(tplBytes, template.schema, tplPdf.field_mapping ?? {}, formular.daten, formular.id);
     } catch (err) {
       console.warn(`[Zwischenprotokoll] FILL-FAIL ${tplPdf.id}`, err);
       continue;
