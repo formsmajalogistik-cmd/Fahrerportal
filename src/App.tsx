@@ -21,6 +21,9 @@ import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { EingaengePage } from './pages/admin/EingaengePage';
 import { BelegePage } from './pages/admin/BelegePage';
 import { AufstellungPage } from './pages/admin/AufstellungPage';
+import { RechnungenListPage } from './pages/admin/rechnungen/RechnungenListPage';
+import { RechnungNewPage } from './pages/admin/rechnungen/RechnungNewPage';
+import { RechnungDetailPage } from './pages/admin/rechnungen/RechnungDetailPage';
 import { TourenlistePage } from './pages/TourenlistePage';
 import { GreimelZugaengePage } from './pages/GreimelZugaengePage';
 
@@ -73,6 +76,9 @@ export default function App() {
           <Route path="/eingaenge" element={<EingaengePage />} />
           <Route path="/belege" element={<BelegePage />} />
           <Route path="/aufstellung" element={<AufstellungPage />} />
+          <Route path="/rechnungen" element={<RechnungenListPage />} />
+          <Route path="/rechnungen/neu" element={<RechnungNewPage />} />
+          <Route path="/rechnungen/:id" element={<RechnungDetailPage />} />
           <Route path="/templates" element={<TemplatesListPage />} />
           <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/einstellungen" element={<EinstellungenPage />}>

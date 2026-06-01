@@ -283,3 +283,230 @@ export function summe(positionen: RenderedPosition[]): number {
 }
 
 export { formatEur };
+
+// ============================================================
+// Tour → Rechnungs-Positionen (Live-Daten aus der DB).
+// ============================================================
+
+export type TourenartReal = 'AB' | 'ABA' | 'ABC' | null;
+
+/** Eingangs-Daten einer Tour zur Positions-Generierung. */
+export interface TourForRechnung {
+  id: string;
+  tour_id: string | null;
+  start_stadt: string;
+  ziel_stadt: string;
+  rueckfuehrung_stadt: string | null;
+  startdatum: string | null;
+  enddatum: string | null;
+  tourenart: TourenartReal;
+  kennzeichen: string[];
+  kundenname: string | null;
+  fin: string | null;
+  sondervereinbarung: string | null;
+  verguetung: number | null;
+  zusaetze: Array<{
+    id: string;
+    kategorie: string;
+    anzahl: number;
+    betrag: number;
+    notiz: string | null;
+  }>;
+}
+
+/** Ein einzelner Positionseintrag, wie er in die DB-Tabelle wandert. */
+export interface GeneratedRechnungsposition {
+  bezeichnung: string;
+  unterzeilen: string[];
+  menge: number;
+  einzelpreis: number;
+  gesamtpreis: number;
+  tour_id: string | null;
+  zusatz_id: string | null;
+  ist_manuell: boolean;
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+/**
+ * Formatiert einen Datumsbereich gemäß rechnungsformat.datum_format.
+ * Wenn `von === bis`, wird nur ein Datum ausgegeben.
+ *
+ *   "kurz":           "13.5./15.5.26"
+ *   "lang":           "13.05.2026/15.05.2026"
+ *   "enddatum_kurz":  "15.5.26"
+ *   "enddatum_lang":  "15.05.2026"
+ *
+ * Akzeptiert ISO-Datums-Strings ("YYYY-MM-DD"); bei ungültigen Eingaben
+ * wird der Roh-String zurückgereicht.
+ */
+export function formatRechnungsDatum(
+  von: string | null | undefined,
+  bis: string | null | undefined,
+  format: DatumFormat,
+): string {
+  const parse = (s: string | null | undefined) => {
+    if (!s) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    if (!m) return null;
+    return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+  };
+  const a = parse(von);
+  const b = parse(bis);
+  if (!a && !b) return '';
+  if (!a) return formatRechnungsDatum(bis, bis, format);
+  if (!b) return formatRechnungsDatum(von, von, format);
+  const sameDay = a.y === b.y && a.m === b.m && a.d === b.d;
+  const single = sameDay || format === 'enddatum_kurz' || format === 'enddatum_lang';
+  const useEnd = single && (format === 'enddatum_kurz' || format === 'enddatum_lang');
+  const ref = useEnd ? b : a;
+
+  if (format === 'kurz') {
+    const aStr = `${ref.d}.${ref.m}.`;
+    if (single) {
+      const yy = String(ref.y).slice(-2);
+      return `${ref.d}.${ref.m}.${yy}`;
+    }
+    const bYY = String(b.y).slice(-2);
+    return `${aStr}/${b.d}.${b.m}.${bYY}`;
+  }
+  if (format === 'lang') {
+    const aStr = `${pad2(a.d)}.${pad2(a.m)}.${a.y}`;
+    if (single) return aStr;
+    const bStr = `${pad2(b.d)}.${pad2(b.m)}.${b.y}`;
+    return `${aStr}/${bStr}`;
+  }
+  if (format === 'enddatum_kurz') {
+    const yy = String(ref.y).slice(-2);
+    return `${ref.d}.${ref.m}.${yy}`;
+  }
+  // enddatum_lang
+  return `${pad2(ref.d)}.${pad2(ref.m)}.${ref.y}`;
+}
+
+function placeholdersForTour(
+  t: TourForRechnung, format: Rechnungsformat,
+): Record<string, string> {
+  const datum = formatRechnungsDatum(t.startdatum, t.enddatum, format.datum_format);
+  const datumVon = t.startdatum
+    ? formatRechnungsDatum(t.startdatum, t.startdatum, format.datum_format)
+    : '';
+  const datumBis = t.enddatum
+    ? formatRechnungsDatum(t.enddatum, t.enddatum, format.datum_format)
+    : '';
+  const kz = t.kennzeichen?.[0] ?? '';
+  const kzRueck = t.kennzeichen?.[1] ?? '';
+  return {
+    start: t.start_stadt ?? '',
+    ziel: t.ziel_stadt ?? '',
+    rueckfuehrung: t.rueckfuehrung_stadt ?? '',
+    datum,
+    datum_von: datumVon,
+    datum_bis: datumBis,
+    kennzeichen: kz,
+    kennzeichen_hin: kz,
+    kennzeichen_rueck: kzRueck,
+    kundenname: t.kundenname ?? '',
+    fin: t.fin ?? '',
+    tourenart: format.tourenart_anzeigen ? (t.tourenart ?? '') : '',
+    sondervereinbarung: t.sondervereinbarung ?? 'SV',
+  };
+}
+
+function pickTourTpl(
+  format: Rechnungsformat, art: TourenartReal,
+): { bezeichnung: string; unterzeilen: string[] } {
+  if (art === 'ABA') return { bezeichnung: format.aba_bezeichnung, unterzeilen: format.aba_unterzeilen };
+  if (art === 'ABC') return { bezeichnung: format.abc_bezeichnung, unterzeilen: format.abc_unterzeilen };
+  return { bezeichnung: format.tour_bezeichnung, unterzeilen: format.tour_unterzeilen };
+}
+
+export interface GenerateOptions {
+  /**
+   * Welcher Rechnungstyp wird gebaut? Wirkt nur, wenn
+   * `format.getrennte_auslagen_rechnung === true`:
+   *   'touren'   → nur Tour-Positionen (Vergütung), keine Zusätze.
+   *   'auslagen' → nur Zusatz-Positionen, formatiert mit auslagen_*.
+   *   'beides'   → eine kombinierte Rechnung mit allen Positionen.
+   * Bei Formaten ohne getrennte_auslagen_rechnung ist immer alles drin.
+   */
+  modus: 'touren' | 'auslagen' | 'beides';
+}
+
+/**
+ * Generiert Rechnungspositionen aus einer Liste echter Touren gemäß dem
+ * Rechnungsformat des Auftraggebers. Reihenfolge:
+ *   1. Touren in der gegebenen Reihenfolge.
+ *   2. Pro Tour: Tour-Position, danach (sofern aktiviert) deren Zusätze.
+ *
+ * Touren ohne `verguetung` produzieren KEINE Tour-Position (Schutz vor
+ * 0-€-Müll-Zeilen), ihre Zusätze werden aber trotzdem berücksichtigt.
+ */
+export function generatePositionenFromTouren(
+  touren: TourForRechnung[],
+  format: Rechnungsformat,
+  opts: GenerateOptions = { modus: 'beides' },
+): GeneratedRechnungsposition[] {
+  const out: GeneratedRechnungsposition[] = [];
+  const wantTouren = opts.modus !== 'auslagen';
+  const wantZusaetze = opts.modus !== 'touren'
+    && (format.zusaetze_darstellung === 'einzeln'
+        || format.getrennte_auslagen_rechnung);
+
+  for (const t of touren) {
+    const ph = placeholdersForTour(t, format);
+
+    if (wantTouren && t.verguetung != null && t.verguetung > 0) {
+      const tpl = pickTourTpl(format, t.tourenart);
+      out.push({
+        bezeichnung: resolveRechnungsPattern(tpl.bezeichnung, ph),
+        unterzeilen: tpl.unterzeilen.map((u) => resolveRechnungsPattern(u, ph))
+          .filter((line, i, arr) => !(line === '' && (i === 0 || i === arr.length - 1))),
+        menge: 1,
+        einzelpreis: Number(t.verguetung),
+        gesamtpreis: Number(t.verguetung),
+        tour_id: t.id,
+        zusatz_id: null,
+        ist_manuell: false,
+      });
+    }
+
+    if (!wantZusaetze) continue;
+    for (const z of t.zusaetze) {
+      const zph = { ...ph, kategorie: z.kategorie };
+      const targetTpl = (format.getrennte_auslagen_rechnung && opts.modus === 'auslagen')
+        ? { bezeichnung: format.auslagen_bezeichnung, unterzeilen: format.auslagen_unterzeilen }
+        : { bezeichnung: format.zusatz_bezeichnung, unterzeilen: [] as string[] };
+      const unterzeilen = targetTpl.unterzeilen.map((u) => resolveRechnungsPattern(u, zph));
+      if (format.zusatz_notiz_als_unterzeile && z.notiz) {
+        unterzeilen.push(z.notiz);
+      }
+      const menge = Number(z.anzahl) || 1;
+      const einzel = Number(z.betrag) || 0;
+      out.push({
+        bezeichnung: resolveRechnungsPattern(targetTpl.bezeichnung, zph),
+        unterzeilen,
+        menge,
+        einzelpreis: einzel,
+        gesamtpreis: menge * einzel,
+        tour_id: t.id,
+        zusatz_id: z.id,
+        ist_manuell: false,
+      });
+    }
+  }
+  return out;
+}
+
+/** Berechnet Netto/USt/Brutto aus einer Positionsliste + USt-Satz. */
+export function berechneSummen(
+  positionen: Array<{ gesamtpreis: number }>,
+  ustSatz: number,
+): { netto: number; ust: number; brutto: number } {
+  const netto = positionen.reduce((acc, p) => acc + (Number(p.gesamtpreis) || 0), 0);
+  const ust = Math.round(netto * (ustSatz / 100) * 100) / 100;
+  const brutto = Math.round((netto + ust) * 100) / 100;
+  return { netto: Math.round(netto * 100) / 100, ust, brutto };
+}

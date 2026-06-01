@@ -14,6 +14,10 @@ export type Auftraggeber = Database['public']['Tables']['auftraggeber']['Row'];
 export type AuftraggeberKontakt = Database['public']['Tables']['auftraggeber_kontakte']['Row'];
 export type Preisstufe = Database['public']['Tables']['preisstufen']['Row'];
 export type Sonderverguetung = Database['public']['Tables']['sonderverguetungen']['Row'];
+export type Rechnung = Database['public']['Tables']['rechnungen']['Row'];
+export type RechnungStatus = Rechnung['status'];
+export type Rechnungsposition = Database['public']['Tables']['rechnungspositionen']['Row'];
+export type Rechnungsadresse = Database['public']['Tables']['rechnungsadressen']['Row'];
 
 // ---- Touren -----------------------------------------------
 

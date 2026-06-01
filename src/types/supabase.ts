@@ -634,6 +634,149 @@ export type Database = {
           },
         ];
       };
+      rechnungen: {
+        Row: {
+          id: string;
+          rechnungsnummer: string;
+          auftraggeber_id: string;
+          rechnungsadresse_id: string | null;
+          datum: string;
+          leistungszeitraum_von: string;
+          leistungszeitraum_bis: string;
+          anrede: string | null;
+          netto_summe: number;
+          ust_satz: number;
+          ust_betrag: number;
+          brutto_summe: number;
+          status: 'entwurf' | 'erstellt' | 'versendet' | 'bezahlt' | 'storniert';
+          bezahlt_am: string | null;
+          pdf_url: string | null;
+          notizen: string | null;
+          ist_auslagen_rechnung: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          rechnungsnummer?: string;
+          auftraggeber_id: string;
+          rechnungsadresse_id?: string | null;
+          datum?: string;
+          leistungszeitraum_von: string;
+          leistungszeitraum_bis: string;
+          anrede?: string | null;
+          netto_summe?: number;
+          ust_satz?: number;
+          ust_betrag?: number;
+          brutto_summe?: number;
+          status?: 'entwurf' | 'erstellt' | 'versendet' | 'bezahlt' | 'storniert';
+          bezahlt_am?: string | null;
+          pdf_url?: string | null;
+          notizen?: string | null;
+          ist_auslagen_rechnung?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          rechnungsnummer?: string;
+          auftraggeber_id?: string;
+          rechnungsadresse_id?: string | null;
+          datum?: string;
+          leistungszeitraum_von?: string;
+          leistungszeitraum_bis?: string;
+          anrede?: string | null;
+          netto_summe?: number;
+          ust_satz?: number;
+          ust_betrag?: number;
+          brutto_summe?: number;
+          status?: 'entwurf' | 'erstellt' | 'versendet' | 'bezahlt' | 'storniert';
+          bezahlt_am?: string | null;
+          pdf_url?: string | null;
+          notizen?: string | null;
+          ist_auslagen_rechnung?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'rechnungen_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'rechnungen_rechnungsadresse_id_fkey';
+            columns: ['rechnungsadresse_id'];
+            referencedRelation: 'rechnungsadressen';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      rechnungspositionen: {
+        Row: {
+          id: string;
+          rechnung_id: string;
+          position_nr: number;
+          bezeichnung: string;
+          unterzeilen: string[];
+          menge: number;
+          einzelpreis: number;
+          gesamtpreis: number;
+          tour_id: string | null;
+          zusatz_id: string | null;
+          ist_manuell: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          rechnung_id: string;
+          position_nr: number;
+          bezeichnung: string;
+          unterzeilen?: string[];
+          menge?: number;
+          einzelpreis: number;
+          gesamtpreis: number;
+          tour_id?: string | null;
+          zusatz_id?: string | null;
+          ist_manuell?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          rechnung_id?: string;
+          position_nr?: number;
+          bezeichnung?: string;
+          unterzeilen?: string[];
+          menge?: number;
+          einzelpreis?: number;
+          gesamtpreis?: number;
+          tour_id?: string | null;
+          zusatz_id?: string | null;
+          ist_manuell?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'rechnungspositionen_rechnung_id_fkey';
+            columns: ['rechnung_id'];
+            referencedRelation: 'rechnungen';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'rechnungspositionen_tour_id_fkey';
+            columns: ['tour_id'];
+            referencedRelation: 'touren';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'rechnungspositionen_zusatz_id_fkey';
+            columns: ['zusatz_id'];
+            referencedRelation: 'tour_zusaetze';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;

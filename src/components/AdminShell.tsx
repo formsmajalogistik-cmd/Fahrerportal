@@ -29,6 +29,7 @@ const adminNav: NavItem[] = [
   { to: '/eingaenge',        label: 'Eingänge' },
   { to: '/belege',           label: 'Belege' },
   { to: '/aufstellung',      label: 'Aufstellung' },
+  { to: '/rechnungen',       label: 'Rechnungen' },
   { to: '/templates',        label: 'Templates' },
   { to: '/einstellungen',    label: 'Einstellungen' },
 ];
