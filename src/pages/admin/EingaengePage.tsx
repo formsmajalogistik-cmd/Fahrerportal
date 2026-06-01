@@ -114,7 +114,20 @@ export function EingaengePage() {
         pdf_id: g.pdf.id, pdf_name: g.pdf.name,
         filename: g.filename, onedrive_path: g.onedrive_path,
       }));
-      await patchRowInState(r.id, { pdf_paths: paths as unknown as AusgefuelltesFormular['pdf_paths'] });
+      // Manuelle Generierung war erfolgreich → eventuellen Fehlerstatus
+      // der Auto-Generierung zurücksetzen.
+      try {
+        await supabase.from('ausgefuellte_formulare')
+          .update({ pdf_status: 'ok', pdf_fehler: null })
+          .eq('id', r.id);
+      } catch { /* nicht kritisch */ }
+      await patchRowInState(r.id, {
+        pdf_paths: paths as unknown as AusgefuelltesFormular['pdf_paths'],
+        pdf_status: 'ok',
+        pdf_fehler: null,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'PDF-Generierung fehlgeschlagen');
     } finally {
       setRegen(null);
     }
@@ -294,6 +307,18 @@ function EingangCard({
               <Detail label="Übergabe" full>{summary.adresseUebergabe}</Detail>
             )}
           </dl>
+
+          {isAdmin && row.pdf_status === 'fehlgeschlagen' && (
+            <div role="alert" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <strong>PDFs konnten nicht automatisch generiert werden.</strong>{' '}
+              Bitte unten „PDFs neu erzeugen" nutzen.
+              {row.pdf_fehler && (
+                <span className="mt-1 block text-[11px] text-amber-700">
+                  Fehler: {row.pdf_fehler}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col items-end gap-2">

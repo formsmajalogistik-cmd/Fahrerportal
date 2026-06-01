@@ -227,12 +227,29 @@ async function embedImage(pdf: PDFDocument, bytes: ArrayBuffer | Uint8Array, hin
   catch { return await pdf.embedJpg(bytes); }
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} Timeout nach ${ms} ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 /**
  * Re-encoded ein Foto vor dem Einbetten in eine PDF nochmal kleiner —
- * 1200 px lange Kante, JPEG q=0.6. Das halbiert in der Regel die finale
- * PDF-Größe und hält uns sicher unter dem Vercel-Function-Payload-Limit
- * von 4.5 MB. Bei extrem kleinen Bildern (< 200 KB) bleibt das Original
- * unverändert, weil eine Re-Encode-Runde dort nichts mehr bringt.
+ * normalerweise 1200 px lange Kante, JPEG q=0.6. Das hält die finale PDF
+ * klein und stellt sicher, dass auch HEIC-/sehr-große iPhone-Bilder als
+ * JPEG vorliegen (pdf-lib kann HEIC nicht einbetten).
+ *
+ * Robustheit für große iPhone-Bilder (Problem-Fall: 4000×3000, 3–5 MB):
+ *  - Bilder > 5 MB werden aggressiver komprimiert (800 px / q=0.4), um
+ *    Speicher- und Zeitdruck auf dem Gerät zu senken.
+ *  - Das Decodieren bekommt ein hartes Timeout (15 s). Schlägt es fehl
+ *    (HEIC nicht decodierbar, Memory-Druck, hängender Decoder), geben
+ *    wir das Original zurück — der Aufrufer entscheidet dann, ob es
+ *    einbettbar ist.
  */
 async function compressForPdfEmbed(
   source: ArrayBuffer | Uint8Array,
@@ -242,55 +259,66 @@ async function compressForPdfEmbed(
     ? source.slice().buffer as ArrayBuffer
     : source;
   const size = (source as Uint8Array | ArrayBuffer).byteLength;
-  if (size < 200 * 1024) {
-    const bytes = source instanceof Uint8Array ? source : new Uint8Array(buf);
-    return { bytes, hintOut: hint ?? '' };
-  }
+  const original = () => ({
+    bytes: source instanceof Uint8Array ? source : new Uint8Array(buf),
+    hintOut: hint ?? '',
+  });
+  if (size < 200 * 1024) return original();
+
+  // Aggressiver bei sehr großen Originalen.
+  const huge = size > 5 * 1024 * 1024;
+  const maxSide = huge ? 800 : 1200;
+  const quality = huge ? 0.4 : 0.6;
+
+  let url: string | null = null;
   try {
     const blob = new Blob([buf], { type: (hint ?? '').toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg' });
-    const url = URL.createObjectURL(blob);
-    try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    url = URL.createObjectURL(blob);
+    const localUrl = url;
+    const img = await withTimeout(
+      new Promise<HTMLImageElement>((resolve, reject) => {
         const i = new Image();
         i.onload = () => resolve(i);
-        i.onerror = (e) => reject(e);
-        i.src = url;
-      });
-      const maxSide = 1200;
-      let w = img.naturalWidth || img.width;
-      let h = img.naturalHeight || img.height;
-      if (w > maxSide || h > maxSide) {
-        const r = Math.min(maxSide / w, maxSide / h);
-        w = Math.round(w * r);
-        h = Math.round(h * r);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Canvas-Kontext nicht verfügbar');
-      ctx.drawImage(img, 0, 0, w, h);
-      const outBlob: Blob | null = await new Promise((resolve) =>
-        canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.6),
-      );
-      if (!outBlob) throw new Error('toBlob lieferte null');
-      const out = new Uint8Array(await outBlob.arrayBuffer());
-      // Wenn das Ergebnis trotz Re-Encode größer wäre als das Original
-      // (passiert bei sehr kleinen, bereits komprimierten Originalen),
-      // behalten wir das Original — sonst hätten wir zusätzlich
-      // Qualitätsverlust und keinen Größengewinn.
-      if (out.byteLength >= size) {
-        const bytes = source instanceof Uint8Array ? source : new Uint8Array(buf);
-        return { bytes, hintOut: hint ?? '' };
-      }
-      return { bytes: out, hintOut: 'image.jpg' };
-    } finally {
-      URL.revokeObjectURL(url);
+        i.onerror = () => reject(new Error('Bild-Decode fehlgeschlagen'));
+        i.src = localUrl;
+      }),
+      15_000,
+      '[compressForPdfEmbed] Bild-Decode',
+    );
+
+    let w = img.naturalWidth || img.width;
+    let h = img.naturalHeight || img.height;
+    if (w > maxSide || h > maxSide) {
+      const r = Math.min(maxSide / w, maxSide / h);
+      w = Math.round(w * r);
+      h = Math.round(h * r);
     }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas-Kontext nicht verfügbar');
+    ctx.drawImage(img, 0, 0, w, h);
+    const outBlob: Blob | null = await withTimeout(
+      new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', quality)),
+      15_000,
+      '[compressForPdfEmbed] toBlob',
+    );
+    if (!outBlob) throw new Error('toBlob lieferte null');
+    const out = new Uint8Array(await outBlob.arrayBuffer());
+    // Falls das Re-Encode (bei bereits kleinen Originalen) größer würde,
+    // Original behalten — außer es ist ein huge-Bild, dann ist der
+    // JPEG-Output IMMER vorzuziehen (HEIC/riesig wäre nicht einbettbar).
+    if (!huge && out.byteLength >= size) return original();
+    console.info(
+      `[compressForPdfEmbed] ${huge ? 'AGGRESSIV ' : ''}${size} → ${out.byteLength} B (${w}×${h}, q=${quality})`,
+    );
+    return { bytes: out, hintOut: 'image.jpg' };
   } catch (err) {
     console.warn('[compressForPdfEmbed] Re-Encode fehlgeschlagen, nutze Original', err);
-    const bytes = source instanceof Uint8Array ? source : new Uint8Array(buf);
-    return { bytes, hintOut: hint ?? '' };
+    return original();
+  } finally {
+    if (url) URL.revokeObjectURL(url);
   }
 }
 

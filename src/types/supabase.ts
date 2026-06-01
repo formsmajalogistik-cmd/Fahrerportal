@@ -576,6 +576,8 @@ export type Database = {
           zwischenprotokoll_url: string | null;
           zwischenprotokoll_erstellt_am: string | null;
           pdf_paths: Json;
+          pdf_status: string | null;
+          pdf_fehler: string | null;
         };
         Insert: {
           id?: string;
@@ -588,6 +590,8 @@ export type Database = {
           zwischenprotokoll_url?: string | null;
           zwischenprotokoll_erstellt_am?: string | null;
           pdf_paths?: Json;
+          pdf_status?: string | null;
+          pdf_fehler?: string | null;
         };
         Update: {
           id?: string;
@@ -600,6 +604,8 @@ export type Database = {
           zwischenprotokoll_url?: string | null;
           zwischenprotokoll_erstellt_am?: string | null;
           pdf_paths?: Json;
+          pdf_status?: string | null;
+          pdf_fehler?: string | null;
         };
         Relationships: [
           {

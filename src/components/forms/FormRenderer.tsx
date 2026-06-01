@@ -147,6 +147,7 @@ function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder, formula
         <DynamicPhotosField
           field={field} value={value}
           oneDriveFolder={oneDriveFolder}
+          formularId={formularId}
           onChange={onChange} disabled={disabled}
         />
       );

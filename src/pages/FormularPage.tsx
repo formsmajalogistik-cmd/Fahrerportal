@@ -40,6 +40,100 @@ function parseSchema(raw: unknown): FormSchema {
 }
 
 const REDIRECT_AFTER_SUBMIT_MS = 3000;
+const PDF_RETRY_DELAY_MS = 10_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Führt nach dem Einreichen die PDF-Generierung + den E-Mail-Versand aus —
+ * mit umfassendem Error-Handling, EINEM automatischen Retry nach 10 s und
+ * Persistenz des Ergebnis-Status auf dem Eingang (pdf_status / pdf_fehler).
+ *
+ * Schlägt die Generierung auch im Retry fehl (z.B. sehr große iPhone-Bilder,
+ * Memory-/Timeout-Probleme), bleibt das Formular eingereicht, aber der Admin
+ * sieht in der Eingänge-Liste den Fehlerhinweis und kann "PDFs neu erzeugen"
+ * nutzen. Gibt den anzuzeigenden Summary-Text zurück.
+ */
+async function runPdfPipeline(
+  template: FormularTemplate,
+  submitted: AusgefuelltesFormular,
+  formularId: string,
+  submitterEmail: string | null,
+): Promise<string> {
+  async function attempt(): Promise<{ generated: number; emailNote: string }> {
+    console.info('[Submit] Starte PDF-Generierung …', { formularId });
+    const generated = await generateAndUploadFormPdfs(template, submitted);
+    console.info('[Submit] PDFs fertig hochgeladen:', generated.map((g) => g.filename));
+
+    let emailNote = '';
+    try {
+      console.info('[Submit] Sende E-Mail mit Anhängen …');
+      const r = await sendTemplateEmail(template, submitted, generated, submitterEmail);
+      if (r.sent) {
+        if (r.missing && r.missing.length > 0) {
+          console.warn('[Submit] E-Mail versendet, fehlende Anhänge:', r.missing);
+          emailNote = ` Email versendet, aber ${r.missing.length} Anhang/Anhänge fehlten`
+            + ` (${r.missing.join(', ')}). Admin kann sie nachsenden.`;
+        } else {
+          console.info('[Submit] E-Mail versendet.');
+          emailNote = ' Email versendet.';
+        }
+      } else if (r.reason) {
+        console.info('[Submit] E-Mail nicht versendet:', r.reason);
+      }
+    } catch (emailErr) {
+      // E-Mail-Fehler ist NICHT kritisch für den PDF-Status — die PDFs
+      // liegen bereits in OneDrive, der Admin kann manuell nachsenden.
+      console.warn('[Submit] Email-Versand fehlgeschlagen', emailErr);
+      emailNote = ' Email-Versand schlug fehl — siehe Konsole.';
+    }
+    return { generated: generated.length, emailNote };
+  }
+
+  let lastErr: unknown = null;
+  for (let tryNo = 1; tryNo <= 2; tryNo += 1) {
+    try {
+      const { generated, emailNote } = await attempt();
+      // Erfolg → Status auf dem Eingang vermerken.
+      try {
+        await supabase.from('ausgefuellte_formulare')
+          .update({ pdf_status: 'ok', pdf_fehler: null })
+          .eq('id', formularId);
+      } catch { /* Status-Update nicht kritisch */ }
+      const base = generated > 0
+        ? `Formular erfolgreich eingereicht — ${generated} PDF${generated === 1 ? '' : 's'} in OneDrive abgelegt.`
+        : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
+      return base + emailNote;
+    } catch (err) {
+      lastErr = err;
+      console.error('[Auto-PDF] Fehlgeschlagen:', {
+        versuch: tryNo,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        formularId,
+        template: template.name,
+      });
+      if (tryNo === 1) {
+        console.info(`[Auto-PDF] Retry in ${PDF_RETRY_DELAY_MS / 1000} s …`);
+        await delay(PDF_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  // Beide Versuche fehlgeschlagen → Fehlerstatus persistieren.
+  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  try {
+    await supabase.from('ausgefuellte_formulare')
+      .update({ pdf_status: 'fehlgeschlagen', pdf_fehler: msg.slice(0, 500) })
+      .eq('id', formularId);
+  } catch (statusErr) {
+    console.warn('[Auto-PDF] Fehlerstatus konnte nicht gespeichert werden', statusErr);
+  }
+  return 'Formular eingereicht. Die PDFs konnten nicht automatisch erzeugt werden — '
+    + 'die Administration wird benachrichtigt und erzeugt sie manuell nach.';
+}
 
 export function FormularPage() {
   const { id } = useParams();
@@ -314,40 +408,7 @@ export function FormularPage() {
       }
     }
 
-    let summary = 'Formular erfolgreich eingereicht!';
-    try {
-      console.info('[Submit] Starte PDF-Generierung …');
-      const generated = await generateAndUploadFormPdfs(template, submitted);
-      console.info(
-        '[Submit] PDFs fertig hochgeladen:',
-        generated.map((g) => g.filename),
-      );
-      summary = generated.length > 0
-        ? `Formular erfolgreich eingereicht — ${generated.length} PDF${generated.length === 1 ? '' : 's'} wurden generiert und in OneDrive abgelegt.`
-        : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
-      try {
-        console.info('[Submit] Sende E-Mail mit Anhängen …');
-        const r = await sendTemplateEmail(template, submitted, generated, submitterEmail);
-        if (r.sent) {
-          if (r.missing && r.missing.length > 0) {
-            console.warn('[Submit] E-Mail versendet, fehlende Anhänge:', r.missing);
-            summary += ` Email versendet, aber ${r.missing.length} Anhang/Anhänge fehlten`
-              + ` (${r.missing.join(', ')}). Admin kann sie nachsenden.`;
-          } else {
-            console.info('[Submit] E-Mail versendet.');
-            summary += ' Email versendet.';
-          }
-        } else if (r.reason) {
-          console.info('[Submit] E-Mail nicht versendet:', r.reason);
-        }
-      } catch (emailErr) {
-        console.warn('[FormularPage] Email-Versand fehlgeschlagen', emailErr);
-        summary += ' Email-Versand schlug fehl — siehe Konsole.';
-      }
-    } catch (pdfErr) {
-      console.warn('[FormularPage] PDF-Erzeugung fehlgeschlagen', pdfErr);
-      summary = 'Formular eingereicht. PDF-Erzeugung schlug fehl — siehe Konsole.';
-    }
+    const summary = await runPdfPipeline(template, submitted, formular.id, submitterEmail);
     setSaving('idle');
     setStatusMsg(null);
     setSubmittedSummary(summary);
@@ -412,6 +473,10 @@ export function FormularPage() {
   );
   const currentPageIdx = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : 0;
   const hasMultiplePages = pages.length > 1;
+  // Auf dem letzten (Abschluss-)Tab wird "Endgültig abschließen" primär
+  // hervorgehoben, sonst "Speichern und später fortfahren". Greift
+  // automatisch für jedes Template — der letzte Tab ist immer der Abschluss.
+  const isLastPage = pages.length === 0 || currentPageIdx >= pages.length - 1;
 
   const header = (
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -625,11 +690,19 @@ export function FormularPage() {
             PDF-Vorschau
           </button>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => void saveDraft().catch(() => {})} className="btn-secondary" disabled={saving !== 'idle'}>
-              {saving === 'draft' ? 'Speichern …' : 'Entwurf speichern'}
+            <button
+              onClick={() => void saveDraft().catch(() => {})}
+              className={isLastPage ? 'btn-secondary' : 'btn-primary'}
+              disabled={saving !== 'idle'}
+            >
+              {saving === 'draft' ? 'Speichern …' : 'Speichern und später fortfahren'}
             </button>
-            <button onClick={submit} className="btn-primary" disabled={saving !== 'idle'}>
-              {saving === 'submit' ? 'Einreichen …' : 'Einreichen'}
+            <button
+              onClick={submit}
+              className={isLastPage ? 'btn-primary' : 'btn-secondary'}
+              disabled={saving !== 'idle'}
+            >
+              {saving === 'submit' ? 'Wird abgeschlossen …' : 'Endgültig abschließen'}
             </button>
           </div>
         </div>

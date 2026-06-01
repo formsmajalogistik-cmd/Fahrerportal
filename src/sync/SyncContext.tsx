@@ -254,10 +254,27 @@ async function processPendingSubmissions(): Promise<void> {
         if (r.missing && r.missing.length > 0) {
           console.warn('[SyncDrain] E-Mail abgesendet, fehlende Anhänge:', r.missing);
         }
+        try {
+          await supabase.from('ausgefuellte_formulare')
+            .update({ pdf_status: 'ok', pdf_fehler: null })
+            .eq('id', sub.formularId);
+        } catch { /* Status-Update nicht kritisch */ }
       } catch (postErr) {
         // PDF/Email-Fehler nach erfolgtem Submit nur loggen — Status
-        // ist bereits "submitted", Admin kann manuell nachsenden.
-        console.warn('PDF/Email nach Offline-Submit fehlgeschlagen', postErr);
+        // ist bereits "submitted". Fehlerstatus markieren, damit der
+        // Admin in der Eingänge-Liste die manuelle Nachgenerierung sieht.
+        console.error('[Auto-PDF] Offline-Submit-Nachbereitung fehlgeschlagen', {
+          formularId: sub.formularId,
+          error: postErr instanceof Error ? postErr.message : String(postErr),
+        });
+        try {
+          await supabase.from('ausgefuellte_formulare')
+            .update({
+              pdf_status: 'fehlgeschlagen',
+              pdf_fehler: (postErr instanceof Error ? postErr.message : String(postErr)).slice(0, 500),
+            })
+            .eq('id', sub.formularId);
+        } catch { /* noop */ }
       }
       await removePendingSubmission(sub.formularId);
       window.dispatchEvent(new CustomEvent('maja:submission-completed', {

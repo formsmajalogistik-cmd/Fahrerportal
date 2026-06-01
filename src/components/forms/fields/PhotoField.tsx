@@ -48,13 +48,19 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
-  // Online-Bild laden, wenn storage_path gesetzt ist.
+  // Online-Bild laden, wenn storage_path gesetzt ist. formularId wird
+  // zwingend an den Proxy durchgereicht — sonst 403 für Fahrer.
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
     if (current?.storage_path) {
-      getPhotoUrl(current.storage_path).then((u) => {
+      getPhotoUrl(current.storage_path, formularId).then((u) => {
         if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
+        if (!u) {
+          console.warn('[Bild-Vorschau] Laden fehlgeschlagen', {
+            feld: field.id, path: current.storage_path, formularId,
+          });
+        }
         createdUrl = u;
         setSignedUrl(u);
       });
@@ -65,7 +71,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [current?.storage_path]);
+  }, [current?.storage_path, formularId, field.id]);
 
   // Pending-Bild aus IDB nachladen — Preview-Blob für Felder, deren
   // Upload noch in der Queue steht (z.B. nach App-Restart, schwarzer

@@ -8,6 +8,8 @@ interface Props {
   value: unknown;
   /** OneDrive-Folder des Formulars; Photos landen unter <folder>/Fotos/ */
   oneDriveFolder: string;
+  /** Formular-Instanz-ID — für die Foto-Vorschau via Download-Proxy nötig. */
+  formularId?: string;
   onChange: (v: PhotoValue[]) => void;
   disabled?: boolean;
 }
@@ -26,7 +28,7 @@ function asArray(v: unknown): PhotoValue[] {
 const MAX_DYNAMIC_PHOTOS = 100;
 
 export function DynamicPhotosField({
-  field, value, oneDriveFolder, onChange, disabled,
+  field, value, oneDriveFolder, formularId, onChange, disabled,
 }: Props) {
   const { profile } = useAuth();
   const items = asArray(value);
@@ -90,6 +92,7 @@ export function DynamicPhotosField({
               <DynamicPhotoTile
                 photo={p}
                 index={i}
+                formularId={formularId}
                 onRemove={() => removeAt(i)}
                 disabled={disabled}
               />
@@ -158,10 +161,11 @@ export function DynamicPhotosField({
 }
 
 function DynamicPhotoTile({
-  photo, index, onRemove, disabled,
+  photo, index, formularId, onRemove, disabled,
 }: {
   photo: PhotoValue;
   index: number;
+  formularId?: string;
   onRemove: () => void;
   disabled?: boolean;
 }) {
@@ -171,15 +175,20 @@ function DynamicPhotoTile({
     let cancelled = false;
     let createdUrl: string | null = null;
     if (!photo.storage_path) { setUrl(null); return; }
-    getPhotoUrl(photo.storage_path).then((u) => {
+    getPhotoUrl(photo.storage_path, formularId).then((u) => {
       if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
+      if (!u) {
+        console.warn('[Bild-Vorschau] dynamic photo Laden fehlgeschlagen', {
+          path: photo.storage_path, formularId,
+        });
+      }
       createdUrl = u; setUrl(u);
     });
     return () => {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [photo.storage_path]);
+  }, [photo.storage_path, formularId]);
 
   return (
     <div className="relative overflow-hidden rounded-lg border border-maja-navy/20 bg-maja-light">

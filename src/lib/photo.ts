@@ -1,5 +1,6 @@
 import imageCompression from 'browser-image-compression';
 import { uploadToOneDrive, getOneDriveObjectUrl } from './onedrive';
+import { heicToJpeg } from './heic';
 
 // Client-seitige Komprimierung: max. 1200px Kante, JPEG ~80%
 const COMPRESSION_OPTIONS = {
@@ -10,16 +11,46 @@ const COMPRESSION_OPTIONS = {
   initialQuality: 0.8,
 } as const;
 
+// Für sehr große Originale (typische iPhone-Aufnahmen 4000×3000, 3–5 MB)
+// aggressiver: kleinere Kante + niedrigere Qualität, damit Upload und
+// spätere PDF-Einbettung auf dem Gerät nicht an Speicher/Zeit scheitern.
+const AGGRESSIVE_OPTIONS = {
+  maxSizeMB: 1.0,
+  maxWidthOrHeight: 1000,
+  useWebWorker: true,
+  fileType: 'image/jpeg',
+  initialQuality: 0.6,
+} as const;
+
+const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
+
 export async function compressImage(file: File): Promise<File> {
-  if (!file.type.startsWith('image/')) return file;
+  // 1. HEIC/HEIF zuerst zu JPEG konvertieren — iPhone-Standardformat, das
+  //    sonst in Vorschau und PDF-Einbettung Probleme macht.
+  let working = file;
   try {
-    const compressed = await imageCompression(file, COMPRESSION_OPTIONS);
+    working = await heicToJpeg(file);
+  } catch (err) {
+    console.warn('[compressImage] HEIC-Konvertierung fehlgeschlagen', err);
+  }
+
+  if (!working.type.startsWith('image/') && !/\.(jpe?g|png)$/i.test(working.name)) {
+    return working;
+  }
+
+  const options = working.size > LARGE_FILE_THRESHOLD ? AGGRESSIVE_OPTIONS : COMPRESSION_OPTIONS;
+  try {
+    const compressed = await imageCompression(working, options);
     const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
-    const name = file.name.replace(/\.[^.]+$/, '') + '.' + ext;
+    const name = working.name.replace(/\.[^.]+$/, '') + '.' + ext;
+    console.info(
+      `[compressImage] ${file.name}: ${file.size} → ${compressed.size} B`
+      + (working.size > LARGE_FILE_THRESHOLD ? ' (aggressiv)' : ''),
+    );
     return new File([compressed], name, { type: compressed.type });
   } catch (err) {
-    console.warn('Bildkompression fehlgeschlagen, sende Original', err);
-    return file;
+    console.warn('[compressImage] Bildkompression fehlgeschlagen, sende (ggf. konvertiertes) Original', err);
+    return working;
   }
 }
 
@@ -115,7 +146,14 @@ export async function downloadFile(file: Blob, filename: string): Promise<boolea
 /**
  * Liefert eine Object-URL für ein OneDrive-Foto. Aufrufer ist verantwortlich
  * fürs URL.revokeObjectURL.
+ *
+ * `formularId` MUSS für Fahrer mitgegeben werden: der Download-Proxy
+ * (/api/download) verlangt seit der Pro-Resource-Auth eine formular_id und
+ * antwortet sonst für Nicht-Admins mit 403 — die Foto-Vorschau bliebe
+ * andernfalls leer, sobald die lokale Blob-URL nach Seitenwechsel weg ist.
  */
-export async function getPhotoUrl(storagePath: string): Promise<string | null> {
-  return await getOneDriveObjectUrl(storagePath);
+export async function getPhotoUrl(
+  storagePath: string, formularId?: string | null,
+): Promise<string | null> {
+  return await getOneDriveObjectUrl(storagePath, { formularId });
 }
