@@ -13,8 +13,9 @@ function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user
   return fahrerName(f, f.user);
 }
 import {
-  computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
-  formatDate, formatEuro, formatKm, tourTitel, type TourPriceBreakdown,
+  abschnittLabels, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
+  formatDate, formatEuro, formatKm, hasTwoProtokollSlots, tourTitel,
+  type TourPriceBreakdown,
 } from '../../lib/touren';
 import {
   asPdfPathList, downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
@@ -289,13 +290,17 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
   const [zugaenge, setZugaenge] = useState<GreimelZugang[]>([]);
 
-  // Verknüpfter Eingang (ausgefuelltes_formular) inklusive Template — wird
-  // gelesen, sobald tour.eingang_id gesetzt ist, um die PDF-Downloads
-  // direkt im Tour-Detail anbieten zu können.
-  const [eingang, setEingang] = useState<{
+  // Verknüpfte Eingänge (ausgefüllte_formulare) inklusive Template — werden
+  // gelesen, sobald tour.eingang_id bzw. tour.eingang_id_bc gesetzt sind,
+  // um die PDF-Downloads direkt im Tour-Detail anbieten zu können.
+  // ABA/ABC-Touren können bis zu ZWEI Eingänge verknüpfen — einen pro
+  // Streckenabschnitt (AB / BC bzw. Rück).
+  type LinkedEingang = {
     formular: AusgefuelltesFormular;
     template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown };
-  } | null>(null);
+  };
+  const [eingangAb, setEingangAb] = useState<LinkedEingang | null>(null);
+  const [eingangBc, setEingangBc] = useState<LinkedEingang | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -304,8 +309,11 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  /** Welcher Abschnitt soll beim Verknüpfung-Lösen behandelt werden? null = Dialog zu. */
+  const [unlinkOpen, setUnlinkOpen] = useState<null | 'ab' | 'bc'>(null);
   const [unlinkBusy, setUnlinkBusy] = useState(false);
+  /** Dialog "Mit Tour verknüpfen" auch aus dem Detail heraus öffnen, pro Abschnitt. */
+  const [relinkSlot, setRelinkSlot] = useState<null | 'ab' | 'bc'>(null);
 
   // Barauslagen / Fahrer-Honorar (separate Auto-Save Felder)
   const [barauslagenInput, setBarauslagenInput] = useState('');
@@ -373,24 +381,31 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       a.titel.localeCompare(b.titel, 'de', { numeric: true, sensitivity: 'base' }),
     ));
 
-    // Optional: zugehörigen Eingang + Template laden.
-    if (full.eingang_id) {
-      const { data: eingangRow } = await supabase
+    // Verknüpfte Eingänge je Slot (AB + BC) laden. Eine kombinierte Query
+    // mit .in([id_ab, id_bc]) spart einen Roundtrip; danach pro Slot
+    // zuordnen.
+    const ids: string[] = [];
+    if (full.eingang_id) ids.push(full.eingang_id);
+    if (full.eingang_id_bc) ids.push(full.eingang_id_bc);
+    let abEingang: LinkedEingang | null = null;
+    let bcEingang: LinkedEingang | null = null;
+    if (ids.length > 0) {
+      const { data: rows } = await supabase
         .from('ausgefuellte_formulare')
         .select('*, template:template_id (id, name, pdfs, schema)')
-        .eq('id', full.eingang_id)
-        .maybeSingle();
-      if (eingangRow && eingangRow.template) {
-        setEingang({
-          formular: eingangRow as unknown as AusgefuelltesFormular,
-          template: (eingangRow as unknown as { template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown } }).template,
-        });
-      } else {
-        setEingang(null);
+        .in('id', ids);
+      type RowWithTemplate = AusgefuelltesFormular & {
+        template?: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown } | null;
+      };
+      for (const row of (rows ?? []) as unknown as RowWithTemplate[]) {
+        if (!row.template) continue;
+        const entry: LinkedEingang = { formular: row, template: row.template };
+        if (row.id === full.eingang_id) abEingang = entry;
+        if (row.id === full.eingang_id_bc) bcEingang = entry;
       }
-    } else {
-      setEingang(null);
     }
+    setEingangAb(abEingang);
+    setEingangBc(bcEingang);
     setLoading(false);
   }, [tourId]);
 
@@ -751,25 +766,30 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
   /**
    * Löst die Verknüpfung Tour ↔ Eingang/Protokoll und setzt — auf Wunsch —
-   * die durch das Protokoll befüllten Felder zurück.
+   * die durch das Protokoll befüllten Felder zurück. Funktioniert pro Slot
+   * (AB oder BC): nur die Felder DIESES Abschnitts werden zurückgesetzt.
    *
-   * resetFields=true:  Felder aus protokoll_daten_felder zurücksetzen
-   *                    (oder bei Legacy-Touren ohne Tracking: die
-   *                    Standard-Protokoll-Felder).
-   * resetFields=false: nur eingang_id auf null, Daten bleiben stehen.
+   * resetFields=true:  Felder aus protokoll_daten_felder[_bc] zurücksetzen
+   *                    (Legacy-AB-Touren ohne Tracking: Standard-Protokoll-
+   *                    Felder).
+   * resetFields=false: nur die jeweilige eingang_id auf null, Daten bleiben.
    */
   async function handleUnlinkProtokoll(resetFields: boolean) {
-    if (!tour || !isAdmin) return;
+    if (!tour || !isAdmin || !unlinkOpen) return;
+    const slot = unlinkOpen;
     setUnlinkBusy(true);
     setError(null);
-    const tracked = tour.protokoll_daten_felder ?? [];
+    const tracked = slot === 'bc'
+      ? (tour.protokoll_daten_felder_bc ?? [])
+      : (tour.protokoll_daten_felder ?? []);
     const fieldsToReset = resetFields
-      ? (tracked.length > 0 ? tracked : DEFAULT_PROTOKOLL_FIELDS)
+      ? (tracked.length > 0
+          ? tracked
+          : (slot === 'ab' ? DEFAULT_PROTOKOLL_FIELDS : []))
       : [];
-    const patch: Record<string, unknown> = {
-      eingang_id: null,
-      protokoll_daten_felder: [],
-    };
+    const patch: Record<string, unknown> = slot === 'bc'
+      ? { eingang_id_bc: null, protokoll_daten_felder_bc: [] }
+      : { eingang_id: null, protokoll_daten_felder: [] };
     for (const f of fieldsToReset) {
       patch[f] = f === 'kennzeichen' ? [] : null;
     }
@@ -779,7 +799,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       .eq('id', tour.id);
     setUnlinkBusy(false);
     if (err) { setError(err.message); return; }
-    setUnlinkOpen(false);
+    setUnlinkOpen(null);
     setStatusMsg({
       kind: 'ok',
       text: resetFields
@@ -883,39 +903,23 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         />
       )}
 
-      {/* Verknüpfter Eingang — PDF-Downloads */}
-      {eingang && (
-        <div className="mt-6">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h3 className="text-base font-semibold text-maja-navy">Verknüpfter Eingang</h3>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => setUnlinkOpen(true)}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-              >
-                <XIcon className="h-3.5 w-3.5" />
-                Verknüpfung lösen
-              </button>
-            )}
-          </div>
-          <div className="rounded-lg border border-maja-navy/10 bg-white p-3 text-sm">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-medium text-maja-ink">{eingang.template.name}</div>
-                <div className="text-xs text-maja-muted">
-                  {eingang.formular.created_at
-                    ? new Date(eingang.formular.created_at).toLocaleString('de-DE')
-                    : '—'}
-                </div>
-              </div>
-              <EingangPdfDownloads
-                template={eingang.template}
-                formular={eingang.formular}
-              />
-            </div>
-          </div>
-        </div>
+      {/* Verknüpfte Eingänge — bei ABA/ABC zwei Slots, sonst einer. */}
+      <VerknuepfteEingaenge
+        tour={tour}
+        isAdmin={isAdmin}
+        eingangAb={eingangAb}
+        eingangBc={eingangBc}
+        onUnlink={(slot) => setUnlinkOpen(slot)}
+        onLink={(slot) => setRelinkSlot(slot)}
+      />
+
+      {relinkSlot && (
+        <RelinkLauncher
+          tour={tour}
+          slot={relinkSlot}
+          onClose={() => setRelinkSlot(null)}
+          onLinked={() => { setRelinkSlot(null); void load(); onChanged(); }}
+        />
       )}
 
       {/* Zusätze — nur für Admins */}
@@ -1156,10 +1160,12 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
       {unlinkOpen && (
         <UnlinkProtokollDialog
-          fields={tour.protokoll_daten_felder ?? []}
+          fields={(unlinkOpen === 'bc'
+            ? tour.protokoll_daten_felder_bc
+            : tour.protokoll_daten_felder) ?? []}
           busy={unlinkBusy}
           onConfirm={(reset) => void handleUnlinkProtokoll(reset)}
-          onClose={() => setUnlinkOpen(false)}
+          onClose={() => setUnlinkOpen(null)}
         />
       )}
     </Shell>
@@ -2080,5 +2086,173 @@ function EingangPdfButton({
         {label}
       </button>
     </span>
+  );
+}
+
+// ---------- Verknüpfte Eingänge (ein oder zwei Slots) ----------
+
+type LinkedEingangProp = {
+  formular: AusgefuelltesFormular;
+  template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown };
+} | null;
+
+function VerknuepfteEingaenge({
+  tour, isAdmin, eingangAb, eingangBc, onUnlink, onLink,
+}: {
+  tour: FullTour;
+  isAdmin: boolean;
+  eingangAb: LinkedEingangProp;
+  eingangBc: LinkedEingangProp;
+  onUnlink: (slot: 'ab' | 'bc') => void;
+  onLink: (slot: 'ab' | 'bc') => void;
+}) {
+  const twoSlots = hasTwoProtokollSlots(tour.tourenart);
+
+  // AB-only-Touren: alte UI beibehalten — nur rendern, wenn auch verknüpft.
+  if (!twoSlots) {
+    if (!eingangAb) return null;
+    return (
+      <div className="mt-6">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-maja-navy">Verknüpfter Eingang</h3>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => onUnlink('ab')}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+            >
+              <XIcon className="h-3.5 w-3.5" />
+              Verknüpfung lösen
+            </button>
+          )}
+        </div>
+        <EingangSlot eingang={eingangAb} />
+      </div>
+    );
+  }
+
+  // ABA/ABC: zwei Slots, jeweils mit eigenem Verknüpfen-/Lösen-Button.
+  const labels = abschnittLabels(tour);
+  return (
+    <div className="mt-6">
+      <h3 className="mb-2 text-base font-semibold text-maja-navy">Verknüpfte Eingänge</h3>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <EingangSlotCard
+          title={`${labels.ab.short}: ${labels.ab.route}`}
+          eingang={eingangAb}
+          isAdmin={isAdmin}
+          onUnlink={() => onUnlink('ab')}
+          onLink={() => onLink('ab')}
+        />
+        <EingangSlotCard
+          title={`${labels.bc.short}: ${labels.bc.route}`}
+          eingang={eingangBc}
+          isAdmin={isAdmin}
+          onUnlink={() => onUnlink('bc')}
+          onLink={() => onLink('bc')}
+        />
+      </div>
+    </div>
+  );
+}
+
+function EingangSlotCard({
+  title, eingang, isAdmin, onUnlink, onLink,
+}: {
+  title: string;
+  eingang: LinkedEingangProp;
+  isAdmin: boolean;
+  onUnlink: () => void;
+  onLink: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-maja-navy/10 bg-white p-3 text-sm">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
+          {title}
+        </div>
+        {eingang ? (
+          isAdmin && (
+            <button
+              type="button"
+              onClick={onUnlink}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+            >
+              <XIcon className="h-3.5 w-3.5" />
+              Lösen
+            </button>
+          )
+        ) : (
+          isAdmin && (
+            <button
+              type="button"
+              onClick={onLink}
+              className="inline-flex items-center gap-1 rounded-md bg-maja-navy px-2 py-1 text-xs font-medium text-white hover:bg-maja-accent"
+            >
+              Verknüpfen
+            </button>
+          )
+        )}
+      </div>
+      {eingang ? (
+        <EingangSlot eingang={eingang} />
+      ) : (
+        <p className="text-xs text-maja-muted">Noch nicht verknüpft.</p>
+      )}
+    </div>
+  );
+}
+
+function EingangSlot({ eingang }: { eingang: NonNullable<LinkedEingangProp> }) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <div className="font-medium text-maja-ink">{eingang.template.name}</div>
+        <div className="text-xs text-maja-muted">
+          {eingang.formular.created_at
+            ? new Date(eingang.formular.created_at).toLocaleString('de-DE')
+            : '—'}
+        </div>
+      </div>
+      <EingangPdfDownloads
+        template={eingang.template}
+        formular={eingang.formular}
+      />
+    </div>
+  );
+}
+
+/**
+ * Aus dem Tour-Detail heraus startet der Admin die Verknüpfung über den
+ * normalen "Eingänge"-Reiter — dort gibt es bereits die volle Logik
+ * (AB/BC-Picker, Daten-Übernahme) inklusive Suche nach Formularen.
+ * Direkt im Tour-Detail einen weiteren EingangLinkDialog einzubetten
+ * wäre redundant, da dieser ein konkretes Formular als Pflichteingabe
+ * braucht.
+ */
+function RelinkLauncher({
+  onClose, onLinked,
+}: {
+  tour: FullTour;
+  slot: 'ab' | 'bc';
+  onClose: () => void;
+  onLinked: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
+      <div className="card w-full max-w-md p-5">
+        <h3 className="text-base font-semibold text-maja-navy">Eingang verknüpfen</h3>
+        <p className="mt-2 text-sm text-maja-ink">
+          Öffne den Reiter <strong>Eingänge</strong>, wähle das gewünschte
+          Formular und klicke dort auf <em>Mit Tour verknüpfen</em>. Bei
+          ABA/ABC-Touren wirst du gefragt, welcher Streckenabschnitt
+          befüllt werden soll.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose}>OK</button>
+          <button type="button" className="btn-primary" onClick={onLinked}>Aktualisieren</button>
+        </div>
+      </div>
+    </div>
   );
 }

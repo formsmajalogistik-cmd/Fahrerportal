@@ -182,3 +182,36 @@ export function tourTitel(
   }
   return parts.filter(Boolean).join(' → ');
 }
+
+/** ABA- und ABC-Touren brauchen zwei Protokoll-Formulare (einen pro Abschnitt). */
+export function hasTwoProtokollSlots(art: TourenArt | null | undefined): boolean {
+  return art === 'ABA' || art === 'ABC';
+}
+
+/** Zwei Streckenabschnitte einer ABA/ABC-Tour, von der Verknüpfungs-UI benötigt. */
+export type ProtokollAbschnitt = 'ab' | 'bc';
+
+export interface AbschnittLabel {
+  short: string;       // z.B. "Hin" / "Rück" / "Teil 1"
+  route: string;       // z.B. "Bremen → München"
+}
+
+/** Liefert sprechende Beschriftungen für die beiden Slots einer ABA/ABC-Tour. */
+export function abschnittLabels(
+  t: Partial<Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt' | 'tourenart'>> | null | undefined,
+): { ab: AbschnittLabel; bc: AbschnittLabel } {
+  const start = t?.start_stadt ?? 'Start';
+  const ziel = t?.ziel_stadt ?? 'Ziel';
+  const rueck = t?.rueckfuehrung_stadt ?? '';
+  if (t?.tourenart === 'ABA') {
+    return {
+      ab: { short: 'Hin',  route: `${start} → ${ziel}` },
+      bc: { short: 'Rück', route: `${ziel} → ${rueck || start}` },
+    };
+  }
+  // ABC (oder Fallback): Bremen → München → Berlin
+  return {
+    ab: { short: 'Teil 1', route: `${start} → ${ziel}` },
+    bc: { short: 'Teil 2', route: `${ziel} → ${rueck || 'Ziel 2'}` },
+  };
+}

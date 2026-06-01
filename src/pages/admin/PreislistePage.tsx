@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { XIcon } from '../../components/icons';
 import { triggerOneDriveDownload, uploadToOneDrive } from '../../lib/onedrive';
 import { sanitizeSegment } from '../../lib/onedrivePaths';
@@ -222,8 +223,11 @@ export function PreislistePage() {
             <PreislisteDetail
               key={selected.id}
               auftraggeber={selected}
+              alleAuftraggeber={auftraggeber}
+              preisstufenCounts={counts}
               onPatched={handleAuftraggeberPatch}
               onCountChanged={(n) => handleAfterSave(selected.id, n)}
+              onSvCountsRefresh={loadList}
             />
           )}
         </section>
@@ -234,11 +238,21 @@ export function PreislistePage() {
 
 interface DetailProps {
   auftraggeber: Auftraggeber;
+  /** Vollständige Auftraggeber-Liste (für "Preisliste kopieren von…"). */
+  alleAuftraggeber: Auftraggeber[];
+  /** Anzahl Preisstufen pro Auftraggeber, aus dem Parent. */
+  preisstufenCounts: Record<string, number>;
   onPatched: (a: Auftraggeber) => void;
   onCountChanged: (count: number) => void;
+  /** Nach dem Kopieren von einem anderen Auftraggeber neu laden, damit
+   *  die Sidebar-Counts aktualisiert werden. */
+  onSvCountsRefresh: () => void;
 }
 
-function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailProps) {
+function PreislisteDetail({
+  auftraggeber, alleAuftraggeber, preisstufenCounts,
+  onPatched, onCountChanged, onSvCountsRefresh,
+}: DetailProps) {
   const [serverRows, setServerRows] = useState<Preisstufe[]>([]);
   const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
   const [serverSv, setServerSv] = useState<Sonderverguetung[]>([]);
@@ -311,6 +325,100 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
     setDraftRows(DEFAULT_RANGES.map(([von, bis]) => newDraftRow(String(von), String(bis), '0,00')));
     setStatusMsg(null);
   }
+
+  // ---------- Preisliste von anderem Auftraggeber kopieren ----------
+  const [copyPickerOpen, setCopyPickerOpen] = useState(false);
+  const [copyConfirm, setCopyConfirm] = useState<Auftraggeber | null>(null);
+  const [copying, setCopying] = useState(false);
+
+  /**
+   * Kopiert Preisstufen + Sondervergütungen + ABA-Aufschlag vom Quell-
+   * Auftraggeber auf den aktuell ausgewählten. Bestehende Preisstufen/
+   * Sondervergütungen werden vorher gelöscht. NICHT kopiert werden:
+   * Name, Kontakt, Rechnungsformat, Rechnungsadressen, Preisliste-PDF.
+   *
+   * Es gibt keine echte DB-Transaktion über den supabase-js-Client; wir
+   * geben uns Mühe, Fehler sauber zu propagieren — falls inserts nach
+   * dem delete fehlschlagen, sieht der Admin das im Status-Banner und
+   * kann die Standard-Buttons neu nutzen.
+   */
+  async function handleCopyFrom(src: Auftraggeber) {
+    setCopying(true);
+    setStatusMsg(null);
+    try {
+      // 1. Quell-Daten laden (Preisstufen + SV + ABA-Aufschlag).
+      const [psSrc, svSrc] = await Promise.all([
+        supabase.from('preisstufen').select('*').eq('auftraggeber_id', src.id),
+        supabase.from('sonderverguetungen').select('*').eq('auftraggeber_id', src.id),
+      ]);
+      if (psSrc.error) throw psSrc.error;
+      if (svSrc.error) throw svSrc.error;
+
+      // 2. Bestehende Ziel-Einträge löschen.
+      const [delPs, delSv] = await Promise.all([
+        supabase.from('preisstufen').delete().eq('auftraggeber_id', auftraggeber.id),
+        supabase.from('sonderverguetungen').delete().eq('auftraggeber_id', auftraggeber.id),
+      ]);
+      if (delPs.error) throw delPs.error;
+      if (delSv.error) throw delSv.error;
+
+      // 3. Neue Einträge als Kopie einfügen (ohne id → neue UUIDs).
+      const psInsert = (psSrc.data ?? []).map((p) => ({
+        auftraggeber_id: auftraggeber.id,
+        km_von: p.km_von,
+        km_bis: p.km_bis,
+        preis: p.preis,
+        e_fahrzeug_aufschlag: p.e_fahrzeug_aufschlag ?? 0,
+      }));
+      const svInsert = (svSrc.data ?? []).map((s) => ({
+        auftraggeber_id: auftraggeber.id,
+        bezeichnung: s.bezeichnung,
+        einheit: s.einheit,
+        preis: s.preis,
+      }));
+      if (psInsert.length > 0) {
+        const { error } = await supabase.from('preisstufen').insert(psInsert);
+        if (error) throw error;
+      }
+      if (svInsert.length > 0) {
+        const { error } = await supabase.from('sonderverguetungen').insert(svInsert);
+        if (error) throw error;
+      }
+
+      // 4. ABA-Aufschlag setzen.
+      const { error: agErr } = await supabase
+        .from('auftraggeber')
+        .update({ aba_aufschlag_prozent: src.aba_aufschlag_prozent ?? null })
+        .eq('id', auftraggeber.id);
+      if (agErr) throw agErr;
+      onPatched({ ...auftraggeber, aba_aufschlag_prozent: src.aba_aufschlag_prozent ?? null });
+
+      // 5. Lokale Drafts neu laden, Sidebar-Counts auffrischen.
+      await load();
+      onCountChanged(psInsert.length);
+      onSvCountsRefresh();
+      setStatusMsg({
+        kind: 'ok',
+        text: `Preisliste von „${src.name}" übernommen — `
+          + `${psInsert.length} Stufe${psInsert.length === 1 ? '' : 'n'}, `
+          + `${svInsert.length} Sondervergütung${svInsert.length === 1 ? '' : 'en'}.`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Kopieren fehlgeschlagen';
+      setStatusMsg({ kind: 'err', text: msg });
+    } finally {
+      setCopying(false);
+      setCopyPickerOpen(false);
+      setCopyConfirm(null);
+    }
+  }
+
+  const copyCandidates = useMemo(
+    () => alleAuftraggeber
+      .filter((a) => a.id !== auftraggeber.id && (preisstufenCounts[a.id] ?? 0) > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, 'de')),
+    [alleAuftraggeber, preisstufenCounts, auftraggeber.id],
+  );
 
   function updateSvRow(key: string, patch: Partial<SvDraftRow>) {
     setDraftSv((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -598,7 +706,20 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
       </div>
 
       <div className="card p-5 space-y-3">
-        <h3 className="text-base font-semibold text-maja-navy">Preisstufen</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-maja-navy">Preisstufen</h3>
+          {copyCandidates.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setCopyPickerOpen(true)}
+              disabled={copying}
+              className="btn-secondary text-sm disabled:opacity-60"
+              title="Preisstufen, Sondervergütungen und ABA-Aufschlag eines anderen Auftraggebers übernehmen"
+            >
+              {copying ? 'Kopiere …' : 'Preisliste kopieren von …'}
+            </button>
+          )}
+        </div>
 
         {loading ? (
           <Spinner label="Stufen werden geladen …" />
@@ -607,9 +728,21 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
             <p className="text-sm text-maja-muted">
               Für diesen Auftraggeber sind noch keine Preisstufen hinterlegt.
             </p>
-            <button type="button" className="btn-primary" onClick={loadDefaults}>
-              Standardstufen laden
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn-primary" onClick={loadDefaults}>
+                Standardstufen laden
+              </button>
+              {copyCandidates.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setCopyPickerOpen(true)}
+                  disabled={copying}
+                >
+                  Preisliste kopieren von …
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -790,6 +923,77 @@ function PreislisteDetail({ auftraggeber, onPatched, onCountChanged }: DetailPro
           </button>
         </div>
       )}
+
+      {copyPickerOpen && (
+        <CopyPricelistPicker
+          candidates={copyCandidates}
+          counts={preisstufenCounts}
+          onCancel={() => setCopyPickerOpen(false)}
+          onPick={(src) => setCopyConfirm(src)}
+        />
+      )}
+
+      {copyConfirm && (
+        <ConfirmDialog
+          title="Preisstufen übernehmen?"
+          message={
+            <>
+              Preisstufen, Sondervergütungen und ABA-Aufschlag von{' '}
+              <strong>{copyConfirm.name}</strong> übernehmen? Bestehende
+              Preisstufen und Sondervergütungen werden dabei{' '}
+              <strong>überschrieben</strong>.
+            </>
+          }
+          confirmLabel="Übernehmen"
+          onConfirm={async () => { await handleCopyFrom(copyConfirm); }}
+          onClose={() => setCopyConfirm(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CopyPricelistPicker({
+  candidates, counts, onCancel, onPick,
+}: {
+  candidates: Auftraggeber[];
+  counts: Record<string, number>;
+  onCancel: () => void;
+  onPick: (src: Auftraggeber) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-maja-ink/40 px-4">
+      <div className="card w-full max-w-lg p-5">
+        <h3 className="text-base font-semibold text-maja-navy">Preisliste kopieren von …</h3>
+        <p className="mt-1 text-xs text-maja-muted">
+          Wähle einen Auftraggeber, dessen Preisstufen, Sondervergütungen
+          und ABA-Aufschlag übernommen werden sollen.
+        </p>
+        <ul className="mt-4 max-h-80 divide-y divide-maja-navy/10 overflow-auto rounded-lg border border-maja-navy/10">
+          {candidates.map((a) => (
+            <li key={a.id}>
+              <button
+                type="button"
+                onClick={() => onPick(a)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-maja-light"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-maja-ink">{a.name}</span>
+                  {a.kontakt && (
+                    <span className="block truncate text-xs text-maja-muted">{a.kontakt}</span>
+                  )}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-maja-navy/10 px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                  {counts[a.id] ?? 0} Stufen
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex justify-end">
+          <button type="button" className="btn-secondary" onClick={onCancel}>Abbrechen</button>
+        </div>
+      </div>
     </div>
   );
 }

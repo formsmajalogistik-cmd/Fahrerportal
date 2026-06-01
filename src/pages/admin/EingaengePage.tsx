@@ -63,16 +63,25 @@ export function EingaengePage() {
       .limit(200);
     if (err) { setError(err.message); setLoading(false); return; }
     const list = (data as unknown as Row[]) ?? [];
-    // 2. Verknüpfte Touren je Eingang nachladen.
+    // 2. Verknüpfte Touren je Eingang nachladen. Bei ABA/ABC kann eine
+    // Tour bis zu ZWEI Eingänge referenzieren (eingang_id = AB,
+    // eingang_id_bc = BC). Wir suchen Touren, bei denen einer der beiden
+    // Slots auf einen der geladenen Eingänge zeigt.
     const ids = list.map((r) => r.id);
     let tourMap = new Map<string, { id: string; tour_id: string | null }>();
     if (ids.length > 0) {
+      const idList = ids.map((id) => `"${id}"`).join(',');
       const { data: tdata } = await supabase
         .from('touren')
-        .select('id, tour_id, eingang_id')
-        .in('eingang_id', ids);
+        .select('id, tour_id, eingang_id, eingang_id_bc')
+        .or(`eingang_id.in.(${idList}),eingang_id_bc.in.(${idList})`);
       for (const t of tdata ?? []) {
-        if (t.eingang_id) tourMap.set(t.eingang_id, { id: t.id, tour_id: t.tour_id });
+        if (t.eingang_id && ids.includes(t.eingang_id)) {
+          tourMap.set(t.eingang_id, { id: t.id, tour_id: t.tour_id });
+        }
+        if (t.eingang_id_bc && ids.includes(t.eingang_id_bc)) {
+          tourMap.set(t.eingang_id_bc, { id: t.id, tour_id: t.tour_id });
+        }
       }
     }
     setRows(list.map((r) => ({ ...r, tour: tourMap.get(r.id) ?? null })));

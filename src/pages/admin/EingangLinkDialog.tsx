@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { XIcon } from '../../components/icons';
-import { computeTourStatus, formatDate, formatKm, tourTitel } from '../../lib/touren';
+import {
+  abschnittLabels, computeTourStatus, formatDate, formatKm, hasTwoProtokollSlots,
+  tourTitel,
+  type ProtokollAbschnitt,
+} from '../../lib/touren';
 import { summarizeEingang, type EingangSummary } from '../../lib/eingangData';
 import type {
   AppUser, Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
@@ -40,12 +44,20 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
   const [search, setSearch] = useState('');
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Bei ABA/ABC mit zwei freien Slots: Tour, deren Abschnitt gerade gewählt wird. */
+  const [abschnittPick, setAbschnittPick] = useState<TourRow | null>(null);
 
   const summary = useMemo(() => summarizeEingang(formular), [formular]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // Touren laden, bei denen mindestens ein Protokoll-Slot frei ist:
+      //   AB-Touren: eingang_id IS NULL
+      //   ABA/ABC: AB-Slot ODER BC-Slot frei (2 Protokolle pro Tour)
+      // PostgREST kann das mit `.or(...)` als kombinierter Filter:
+      //   eingang_id IS NULL OR
+      //   (tourenart in (ABA,ABC) AND eingang_id_bc IS NULL)
       const { data, error: err } = await supabase
         .from('touren')
         .select(`
@@ -54,7 +66,7 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
           fahrer:fahrer_id (id, user_id, aktiv,
             user:user_id (email, vorname, nachname))
         `)
-        .is('eingang_id', null)
+        .or('eingang_id.is.null,and(tourenart.in.(ABA,ABC),eingang_id_bc.is.null)')
         .order('startdatum', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
         .limit(200);
@@ -80,12 +92,25 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
     });
   }, [touren, search]);
 
-  async function linkExisting(tour: TourRow) {
+  /**
+   * Verknüpfungs-Logik für eine bestehende Tour. Bei ABA/ABC mit zwei
+   * Slots wird `abschnitt` mitgegeben — daraus ergibt sich, welche Tour-
+   * Spalten aus dem Eingang befüllt werden.
+   *
+   *   abschnitt === 'ab' (Default für AB-Touren): Daten fließen in
+   *     adresse_start/ziel + kontakt_start/ziel (wie bisher).
+   *   abschnitt === 'bc' (Rück/Teil 2): Daten fließen in
+   *     adresse_rueckfuehrung + kontakt_rueckfuehrung. adresse_start/ziel
+   *     bleibt unberührt — der AB-Teil ist bereits gefüllt.
+   */
+  async function linkExisting(tour: TourRow, abschnitt: ProtokollAbschnitt = 'ab') {
     setLinking(true);
     setError(null);
     // Bei einer bestehenden Tour: nur leere Felder aus dem Eingang nachfüllen.
     // Bereits eingetragene Tour-Werte werden NICHT überschrieben.
-    const patch: TourUpdate = { eingang_id: formular.id };
+    const patch: TourUpdate = abschnitt === 'bc'
+      ? { eingang_id_bc: formular.id }
+      : { eingang_id: formular.id };
     const filled: string[] = [];
     const fieldKeys: string[] = [];
     function maybe(key: keyof TourUpdate, label: string, current: unknown, next: unknown) {
@@ -98,29 +123,40 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
         fieldKeys.push(key as string);
       }
     }
+    // Feld-übergreifende Daten (FIN, Kennzeichen, Kundenname, km) gelten
+    // für die ganze Tour — nur ergänzen, wenn noch leer.
     maybe('fin', 'FIN', tour.fin, summary.fin);
     maybe('kennzeichen', 'Kennzeichen', tour.kennzeichen, summary.kennzeichen ? [summary.kennzeichen.toUpperCase()] : null);
-    maybe('adresse_start', 'Adresse Übernahme', tour.adresse_start, summary.adresseUebernahme);
-    maybe('adresse_ziel', 'Adresse Übergabe', tour.adresse_ziel, summary.adresseUebergabe);
     maybe('kundenname', 'Kundenname', tour.kundenname, summary.kundenname);
-    // Kontakt-Daten landen in den per-Adresse-Feldern. Wir packen einmal
-    // Übernahme→kontakt_start und Übergabe→kontakt_ziel ein; Rückführung
-    // bleibt leer, weil das Protokoll dafür typischerweise keine eigene
-    // Kontaktperson erfasst.
+
     const kontaktPayload = (summary.kontaktName || summary.kontaktTelefon || summary.kontaktEmail) ? {
       name: summary.kontaktName ?? '',
       telefon: summary.kontaktTelefon ?? '',
       email: summary.kontaktEmail ?? '',
     } : null;
-    if (kontaktPayload) {
-      maybe('kontakt_start', 'Kontakt Übernahme', tour.kontakt_start, kontaktPayload);
-      maybe('kontakt_ziel',  'Kontakt Übergabe',  tour.kontakt_ziel,  kontaktPayload);
+
+    if (abschnitt === 'bc') {
+      // Rück/Teil 2: Übernahme = Übergabe-Adresse des AB-Teils (bleibt
+      // wie sie ist), Übergabe-Adresse dieses Abschnitts = Rückführung.
+      maybe('adresse_rueckfuehrung', 'Adresse Rückführung', tour.adresse_rueckfuehrung, summary.adresseUebergabe);
+      if (kontaktPayload) {
+        maybe('kontakt_rueckfuehrung', 'Kontakt Rückführung', tour.kontakt_rueckfuehrung, kontaktPayload);
+      }
+    } else {
+      maybe('adresse_start', 'Adresse Übernahme', tour.adresse_start, summary.adresseUebernahme);
+      maybe('adresse_ziel', 'Adresse Übergabe', tour.adresse_ziel, summary.adresseUebergabe);
+      if (kontaktPayload) {
+        maybe('kontakt_start', 'Kontakt Übernahme', tour.kontakt_start, kontaktPayload);
+        maybe('kontakt_ziel',  'Kontakt Übergabe',  tour.kontakt_ziel,  kontaktPayload);
+      }
     }
 
     // Liste der durch das Protokoll befüllten Spalten persistieren —
-    // wird beim "Verknüpfung lösen" wieder gezielt zurückgesetzt.
+    // wird beim "Verknüpfung lösen" wieder gezielt zurückgesetzt. Pro
+    // Abschnitt eigene Liste.
     if (fieldKeys.length > 0) {
-      (patch as Record<string, unknown>).protokoll_daten_felder = fieldKeys;
+      const colName = abschnitt === 'bc' ? 'protokoll_daten_felder_bc' : 'protokoll_daten_felder';
+      (patch as Record<string, unknown>)[colName] = fieldKeys;
     }
 
     const { error: err } = await supabase
@@ -130,6 +166,24 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
     setLinking(false);
     if (err) { setError(err.message); return; }
     onLinked(filled);
+  }
+
+  /**
+   * Wird vom Tour-Listen-Button aufgerufen. Bei ABA/ABC entscheidet sich
+   * hier, ob ein Abschnitts-Dialog nötig ist (beide Slots noch frei) oder
+   * der freie Slot direkt verwendet werden kann.
+   */
+  function handleTourClick(tour: TourRow) {
+    if (!hasTwoProtokollSlots(tour.tourenart)) {
+      void linkExisting(tour, 'ab');
+      return;
+    }
+    const abFree = !tour.eingang_id;
+    const bcFree = !tour.eingang_id_bc;
+    if (abFree && !bcFree) { void linkExisting(tour, 'ab'); return; }
+    if (!abFree && bcFree) { void linkExisting(tour, 'bc'); return; }
+    // Beide Slots noch frei → Dialog.
+    setAbschnittPick(tour);
   }
 
   async function createAndLink() {
@@ -199,11 +253,19 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
               <ul className="max-h-96 space-y-1 overflow-auto">
                 {filteredTouren.map((t) => {
                   const status = computeTourStatus(t.startdatum, t.enddatum);
+                  const twoSlots = hasTwoProtokollSlots(t.tourenart);
+                  const abFilled = !!t.eingang_id;
+                  const bcFilled = !!t.eingang_id_bc;
+                  const slotBadge = twoSlots
+                    ? (abFilled || bcFilled
+                        ? `1/2 verknüpft (${abFilled ? abschnittLabels(t).bc.short : abschnittLabels(t).ab.short} fehlt)`
+                        : '2 Slots')
+                    : null;
                   return (
                     <li key={t.id}>
                       <button
                         type="button"
-                        onClick={() => void linkExisting(t)}
+                        onClick={() => handleTourClick(t)}
                         disabled={linking}
                         className="flex w-full flex-wrap items-start justify-between gap-2 rounded-lg border border-maja-navy/10 bg-white p-3 text-left text-sm hover:bg-maja-light disabled:opacity-50"
                       >
@@ -215,6 +277,16 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
                               </span>
                             )}
                             <span className="font-medium text-maja-ink">{tourTitel(t)}</span>
+                            {t.tourenart && (
+                              <span className="rounded-full bg-maja-navy/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-maja-navy">
+                                {t.tourenart}
+                              </span>
+                            )}
+                            {slotBadge && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                                {slotBadge}
+                              </span>
+                            )}
                           </div>
                           <div className="mt-1 text-xs text-maja-muted">
                             {displayName(t.fahrer?.user ?? null) || '—'}
@@ -265,6 +337,62 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
 
         <div className="mt-4 flex justify-end">
           <button type="button" onClick={onClose} className="btn-secondary" disabled={linking}>
+            Abbrechen
+          </button>
+        </div>
+      </div>
+
+      {abschnittPick && (
+        <AbschnittPickerDialog
+          tour={abschnittPick}
+          onCancel={() => setAbschnittPick(null)}
+          onChoose={(abschnitt) => {
+            const t = abschnittPick;
+            setAbschnittPick(null);
+            void linkExisting(t, abschnitt);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AbschnittPickerDialog({
+  tour, onCancel, onChoose,
+}: {
+  tour: TourRow;
+  onCancel: () => void;
+  onChoose: (abschnitt: ProtokollAbschnitt) => void;
+}) {
+  const labels = abschnittLabels(tour);
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/50 px-4">
+      <div className="card w-full max-w-md p-5">
+        <h3 className="text-base font-semibold text-maja-navy">Welcher Streckenabschnitt?</h3>
+        <p className="mt-1 text-xs text-maja-muted">
+          {tour.tour_id ? <><span className="font-medium">{tour.tour_id}</span> — </> : null}
+          {tourTitel(tour)} ({tour.tourenart})
+        </p>
+        <div className="mt-4 grid gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-maja-navy/15 bg-white px-4 py-3 text-left text-sm hover:bg-maja-light"
+            onClick={() => onChoose('ab')}
+          >
+            <div className="font-medium text-maja-ink">{labels.ab.short}: {labels.ab.route}</div>
+            <div className="text-xs text-maja-muted">Daten fließen in Übernahme/Übergabe (1. Teil).</div>
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-maja-navy/15 bg-white px-4 py-3 text-left text-sm hover:bg-maja-light"
+            onClick={() => onChoose('bc')}
+          >
+            <div className="font-medium text-maja-ink">{labels.bc.short}: {labels.bc.route}</div>
+            <div className="text-xs text-maja-muted">Daten fließen in die Rückführungs-Adresse.</div>
+          </button>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button type="button" className="btn-secondary" onClick={onCancel}>
             Abbrechen
           </button>
         </div>

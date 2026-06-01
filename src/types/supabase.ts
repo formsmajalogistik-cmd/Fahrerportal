@@ -261,11 +261,13 @@ export type Database = {
           fin: string | null;
           kontakt_id: string | null;
           eingang_id: string | null;
+          eingang_id_bc: string | null;
           kontakt_start: Json | null;
           kontakt_ziel: Json | null;
           kontakt_rueckfuehrung: Json | null;
           app_notiz: string | null;
           protokoll_daten_felder: string[];
+          protokoll_daten_felder_bc: string[];
           rechnungsdatum_abweichend: boolean;
           rechnungsdatum: string | null;
           created_at: string;
@@ -304,11 +306,13 @@ export type Database = {
           fin?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
+          eingang_id_bc?: string | null;
           kontakt_start?: Json | null;
           kontakt_ziel?: Json | null;
           kontakt_rueckfuehrung?: Json | null;
           app_notiz?: string | null;
           protokoll_daten_felder?: string[];
+          protokoll_daten_felder_bc?: string[];
           rechnungsdatum_abweichend?: boolean;
           rechnungsdatum?: string | null;
           created_at?: string;
@@ -347,11 +351,13 @@ export type Database = {
           fin?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
+          eingang_id_bc?: string | null;
           kontakt_start?: Json | null;
           kontakt_ziel?: Json | null;
           kontakt_rueckfuehrung?: Json | null;
           app_notiz?: string | null;
           protokoll_daten_felder?: string[];
+          protokoll_daten_felder_bc?: string[];
           rechnungsdatum_abweichend?: boolean;
           rechnungsdatum?: string | null;
           created_at?: string;
@@ -379,6 +385,12 @@ export type Database = {
           {
             foreignKeyName: 'touren_eingang_id_fkey';
             columns: ['eingang_id'];
+            referencedRelation: 'ausgefuellte_formulare';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'touren_eingang_id_bc_fkey';
+            columns: ['eingang_id_bc'];
             referencedRelation: 'ausgefuellte_formulare';
             referencedColumns: ['id'];
           },
