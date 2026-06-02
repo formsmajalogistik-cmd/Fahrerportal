@@ -447,10 +447,35 @@ export interface GenerateOptions {
 }
 
 /**
+ * Sortiert Touren für die Positions-Generierung nach den
+ * Rechnungs-Anforderungen:
+ *   1. Startdatum aufsteigend (frühestes zuerst).
+ *   2. Bei gleichem Startdatum: Enddatum aufsteigend.
+ *   3. Bei identischem Datum: alphabetisch nach Start-Stadt.
+ * Tagestouren (start == ende) ordnen sich damit automatisch ans Ende
+ * ihrer Datums-Gruppe — und am Tag selbst nach allen länger laufenden,
+ * die am selben Tag enden.
+ */
+export function sortTourenForRechnung(touren: TourForRechnung[]): TourForRechnung[] {
+  const safe = (s: string | null | undefined) => s ?? '9999-99-99';
+  return touren.slice().sort((a, b) => {
+    const sa = safe(a.startdatum);
+    const sb = safe(b.startdatum);
+    if (sa !== sb) return sa < sb ? -1 : 1;
+    const ea = safe(a.enddatum);
+    const eb = safe(b.enddatum);
+    if (ea !== eb) return ea < eb ? -1 : 1;
+    return (a.start_stadt ?? '').localeCompare(b.start_stadt ?? '', 'de');
+  });
+}
+
+/**
  * Generiert Rechnungspositionen aus einer Liste echter Touren gemäß dem
  * Rechnungsformat des Auftraggebers. Reihenfolge:
- *   1. Touren in der gegebenen Reihenfolge.
+ *   1. Touren werden VOR der Generierung nach Startdatum sortiert
+ *      (siehe sortTourenForRechnung).
  *   2. Pro Tour: Tour-Position, danach (sofern aktiviert) deren Zusätze.
+ *      Zusätze bleiben damit direkt unter "ihrer" Tour.
  *
  * Touren ohne `verguetung` produzieren KEINE Tour-Position (Schutz vor
  * 0-€-Müll-Zeilen), ihre Zusätze werden aber trotzdem berücksichtigt.
@@ -460,6 +485,7 @@ export function generatePositionenFromTouren(
   format: Rechnungsformat,
   opts: GenerateOptions = { modus: 'beides' },
 ): GeneratedRechnungsposition[] {
+  const sorted = sortTourenForRechnung(touren);
   const out: GeneratedRechnungsposition[] = [];
   const wantTouren = opts.modus !== 'auslagen';
   const wantZusaetze = format.zusaetze_darstellung === 'einzeln'
@@ -477,7 +503,7 @@ export function generatePositionenFromTouren(
     return aufTourenSet.has((kategorie ?? '').trim().toLowerCase());
   }
 
-  for (const t of touren) {
+  for (const t of sorted) {
     const ph = placeholdersForTour(t, format);
 
     if (wantTouren && t.verguetung != null && t.verguetung > 0) {
@@ -538,6 +564,53 @@ export function generatePositionenFromTouren(
     }
   }
   return out;
+}
+
+/**
+ * Letzter Werktag VOR dem gegebenen Datum (default: heute).
+ * Samstag → Freitag, Sonntag → Freitag, Montag → Freitag,
+ * sonst → Vortag. Reine Wochenend-Prüfung; Feiertage werden bewusst
+ * NICHT betrachtet — kommt bei Bedarf später.
+ */
+export function letzterWerktagVor(ref: Date = new Date()): Date {
+  const d = new Date(ref);
+  d.setHours(12, 0, 0, 0); // Mittagspause, schützt vor DST-Schiebungen
+  d.setDate(d.getDate() - 1);
+  while (d.getDay() === 0 || d.getDay() === 6) {
+    d.setDate(d.getDate() - 1);
+  }
+  return d;
+}
+
+/**
+ * Bei Monatsübergang (letzter Rechnungstag liegt in einem anderen Monat
+ * als heute) wird die Auslagen-Rechnung trotzdem im VORMONAT verbucht
+ * — Stichtag = letzter Tag des Monats des letzten Rechnungstags.
+ *
+ * Normalfall (gleicher Monat): heute.
+ */
+export function auslagenRechnungsdatum(
+  letzterRechnungstag: Date | string,
+  today: Date = new Date(),
+): string {
+  const ref = typeof letzterRechnungstag === 'string'
+    ? new Date(`${letzterRechnungstag}T12:00:00`)
+    : letzterRechnungstag;
+  if (ref.getFullYear() === today.getFullYear() && ref.getMonth() === today.getMonth()) {
+    return today.toISOString().slice(0, 10);
+  }
+  // Letzter Tag des Monats: Tag 0 des Folgemonats.
+  const last = new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+  return last.toISOString().slice(0, 10);
+}
+
+/** ISO-Date-only ("YYYY-MM-DD") aus einem Date-Objekt. */
+export function isoDate(d: Date): string {
+  // toISOString liefert UTC — wir setzen daher vorher die Stunde auf 12, um
+  // zwischen Zeitzonen kein anderes Datum rauszufallen.
+  const safe = new Date(d);
+  safe.setHours(12, 0, 0, 0);
+  return safe.toISOString().slice(0, 10);
 }
 
 /** Berechnet Netto/USt/Brutto aus einer Positionsliste + USt-Satz. */

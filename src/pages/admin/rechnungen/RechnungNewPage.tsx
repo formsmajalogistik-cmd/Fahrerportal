@@ -4,7 +4,8 @@ import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import {
-  DEFAULT_RECHNUNGSFORMAT, berechneSummen, generatePositionenFromTouren,
+  DEFAULT_RECHNUNGSFORMAT, auslagenRechnungsdatum, berechneSummen,
+  generatePositionenFromTouren, letzterWerktagVor, isoDate,
   type Rechnungsformat, type TourForRechnung, type TourenartReal,
 } from '../../../lib/rechnungsformat';
 import { PositionsTable } from './PositionsTable';
@@ -93,6 +94,15 @@ export function RechnungNewPage() {
   const [erstelleTouren, setErstelleTouren] = useState(true);
   const [erstelleAuslagen, setErstelleAuslagen] = useState(true);
 
+  /**
+   * "Schnell-Modus" für CC-Auslagenrechnung: nur Auslagen-Positionen
+   * werden geladen und gespeichert (kein Touren-Teil). Wird durch
+   * den Button "Auslagenrechnung zum Vortag erstellen" aktiviert.
+   */
+  const [auslagenOnly, setAuslagenOnly] = useState(false);
+  const [schnellInfo, setSchnellInfo] = useState<string | null>(null);
+  const [loadingSchnell, setLoadingSchnell] = useState(false);
+
   // Generierte Positionen (zwei Töpfe — für getrennte Rechnungen).
   const [haupt, setHaupt] = useState<EditorPosition[]>([]);
   const [auslagen, setAuslagen] = useState<EditorPosition[]>([]);
@@ -150,12 +160,17 @@ export function RechnungNewPage() {
     setTouren([]);
     setErstelleTouren(true);
     setErstelleAuslagen(true);
+    setAuslagenOnly(false);
+    setSchnellInfo(null);
   }, [auftraggeber, format.anrede, format.ust_satz]);
 
   const loadTouren = useCallback(async () => {
     if (!auftraggeber) return;
     setLoadingTouren(true);
     setError(null);
+    // Manuelle Touren-Ladung verlässt den Auslagen-only-Schnellmodus.
+    setAuslagenOnly(false);
+    setSchnellInfo(null);
     // Effektives Rechnungsdatum einer Tour:
     //   abweichend=true UND rechnungsdatum gesetzt → rechnungsdatum
     //   sonst                                       → enddatum
@@ -243,6 +258,135 @@ export function RechnungNewPage() {
       setAuslagen([]);
     }
   }, [auftraggeber, rechnungsdatum, format, getrennt]);
+
+  /**
+   * Schnell-Erstellung der CC-Auslagenrechnung zum letzten Touren-
+   * Rechnungstag.
+   *
+   * Schritt 1: ermittele den Referenz-Rechnungstag — bevorzugt das
+   *   `datum` der zuletzt erstellten TOUREN-Rechnung (also nicht
+   *   ist_auslagen_rechnung), Fallback: letzter Werktag vor heute.
+   * Schritt 2: lade alle Touren des Auftraggebers, deren effektives
+   *   Rechnungsdatum diesem Referenzdatum entspricht.
+   * Schritt 3: generiere NUR die Auslagen-Positionen (Zusätze die
+   *   NICHT in zusaetze_auf_touren_rechnung sind).
+   * Schritt 4: setze das Rechnungsdatum gemäß Monatsübergangs-Regel
+   *   (heute vs. letzter Monatsende).
+   * Schritt 5: schalte den Editor in auslagenOnly-Mode, damit nur
+   *   die Auslagen-Sektion sichtbar und ist_auslagen_rechnung=true
+   *   gespeichert wird.
+   */
+  const loadAuslagenVortag = useCallback(async () => {
+    if (!auftraggeber) return;
+    setLoadingSchnell(true);
+    setError(null);
+    setSchnellInfo(null);
+    try {
+      // 1. Letzte Touren-Rechnung des Auftraggebers finden.
+      const { data: lastRow, error: lastErr } = await supabase
+        .from('rechnungen')
+        .select('id, datum')
+        .eq('auftraggeber_id', auftraggeber.id)
+        .eq('ist_auslagen_rechnung', false)
+        .neq('status', 'storniert')
+        .order('datum', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastErr) throw lastErr;
+
+      let referenzDatum: string;
+      if (lastRow) {
+        referenzDatum = lastRow.datum;
+      } else {
+        // Fallback: letzter Werktag vor heute.
+        referenzDatum = isoDate(letzterWerktagVor());
+        setSchnellInfo(
+          'Keine Touren-Rechnung vom Vortag gefunden — nutze letzten Werktag '
+          + `(${formatDate(referenzDatum)}). Bitte Touren prüfen oder manuell erstellen.`,
+        );
+      }
+
+      // 2. Touren mit diesem effektiven Rechnungsdatum laden.
+      const orFilter =
+        `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${referenzDatum}),`
+        + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${referenzDatum}),`
+        + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${referenzDatum})`;
+      console.info('[Rechnungen] Auslagen-Schnellmodus laden:', {
+        auftraggeber_id: auftraggeber.id,
+        referenzDatum,
+        letzteRechnung: lastRow?.id ?? null,
+      });
+      const { data, error: err } = await supabase
+        .from('touren')
+        .select(`
+          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+          startdatum, enddatum, tourenart, kennzeichen,
+          kundenname, fin, sondervereinbarung, verguetung,
+          rechnungsdatum, rechnungsdatum_abweichend,
+          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
+        `)
+        .eq('auftraggeber_id', auftraggeber.id)
+        .or(orFilter)
+        .order('enddatum', { ascending: true });
+      if (err) throw err;
+      type RawTour = {
+        id: string; tour_id: string | null;
+        start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
+        startdatum: string | null; enddatum: string | null;
+        tourenart: TourenartReal; kennzeichen: string[] | null;
+        kundenname: string | null; fin: string | null;
+        sondervereinbarung: string | null; verguetung: number | null;
+        rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
+        zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null }>;
+      };
+      const list: TourForRechnung[] = ((data as unknown as RawTour[]) ?? []).map((t) => ({
+        id: t.id, tour_id: t.tour_id,
+        start_stadt: t.start_stadt, ziel_stadt: t.ziel_stadt,
+        rueckfuehrung_stadt: t.rueckfuehrung_stadt,
+        startdatum: t.startdatum, enddatum: t.enddatum,
+        tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [],
+        kundenname: t.kundenname, fin: t.fin,
+        sondervereinbarung: t.sondervereinbarung,
+        verguetung: t.verguetung,
+        zusaetze: t.zusaetze ?? [],
+      }));
+
+      // 3. NUR Auslagen-Positionen generieren.
+      const teilAuslagen = generatePositionenFromTouren(list, format, { modus: 'auslagen' });
+
+      // 4. Rechnungsdatum gemäß Monatsübergangs-Regel.
+      const neuesRechnungsdatum = auslagenRechnungsdatum(referenzDatum);
+
+      setTouren(list);
+      setHaupt([]);
+      setAuslagen(teilAuslagen.map((p) => ({ ...p, key: newKey('aus') })));
+      setRechnungsdatum(neuesRechnungsdatum);
+      setAuslagenOnly(true);
+      setErstelleTouren(false);
+      setErstelleAuslagen(true);
+
+      if (teilAuslagen.length === 0) {
+        setSchnellInfo(
+          (schnellInfo ?? '')
+          + (schnellInfo ? ' ' : '')
+          + `Keine Auslagen für ${formatDate(referenzDatum)} gefunden.`,
+        );
+      } else if (!schnellInfo) {
+        setSchnellInfo(
+          `Auslagen aus ${list.length} Tour(en) zum Referenz-Datum ${formatDate(referenzDatum)}. `
+          + `Rechnungsdatum: ${formatDate(neuesRechnungsdatum)}.`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Schnellerstellung fehlgeschlagen');
+    } finally {
+      setLoadingSchnell(false);
+    }
+    // schnellInfo wird absichtlich nicht in die Deps aufgenommen — nur
+    // initiale Werte sind relevant, die Funktion wird per Button getriggert.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auftraggeber, format]);
 
   const hauptSummen = useMemo(() => berechneSummen(haupt, ustSatz), [haupt, ustSatz]);
   const auslagenSummen = useMemo(() => berechneSummen(auslagen, ustSatz), [auslagen, ustSatz]);
@@ -514,21 +658,27 @@ export function RechnungNewPage() {
 
         {getrennt && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            <p className="font-medium">Hinweis: Touren und Auslagen werden als separate Rechnungen erstellt.</p>
-            <div className="mt-2 flex flex-wrap gap-4 text-sm">
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" className="h-4 w-4"
-                       checked={erstelleTouren}
-                       onChange={(e) => setErstelleTouren(e.target.checked)} />
-                Touren-Rechnung
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" className="h-4 w-4"
-                       checked={erstelleAuslagen}
-                       onChange={(e) => setErstelleAuslagen(e.target.checked)} />
-                Auslagen-Rechnung
-              </label>
-            </div>
+            <p className="font-medium">
+              {auslagenOnly
+                ? 'Schnellmodus: Es wird NUR eine Auslagen-Rechnung angelegt.'
+                : 'Hinweis: Touren und Auslagen werden als separate Rechnungen erstellt.'}
+            </p>
+            {!auslagenOnly && (
+              <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" className="h-4 w-4"
+                         checked={erstelleTouren}
+                         onChange={(e) => setErstelleTouren(e.target.checked)} />
+                  Touren-Rechnung
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" className="h-4 w-4"
+                         checked={erstelleAuslagen}
+                         onChange={(e) => setErstelleAuslagen(e.target.checked)} />
+                  Auslagen-Rechnung
+                </label>
+              </div>
+            )}
           </div>
         )}
 
@@ -537,20 +687,39 @@ export function RechnungNewPage() {
             type="button"
             className="btn-primary"
             onClick={() => void loadTouren()}
-            disabled={!auftraggeber || loadingTouren}
+            disabled={!auftraggeber || loadingTouren || loadingSchnell}
           >
             {loadingTouren ? 'Lade Touren …' : 'Touren laden'}
           </button>
-          {touren.length > 0 && (
+          {getrennt && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void loadAuslagenVortag()}
+              disabled={!auftraggeber || loadingTouren || loadingSchnell}
+              title="Erstellt eine Auslagenrechnung basierend auf der letzten Touren-Sammelrechnung dieses Auftraggebers"
+            >
+              {loadingSchnell ? 'Lade Vortag …' : 'Auslagenrechnung zum Vortag erstellen'}
+            </button>
+          )}
+          {auslagenOnly && (
+            <span className="inline-flex items-center rounded-full bg-maja-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-maja-accent">
+              Nur Auslagen
+            </span>
+          )}
+          {touren.length > 0 && !auslagenOnly && (
             <span className="text-xs text-maja-muted">
               {touren.length} Tour{touren.length === 1 ? '' : 'en'} mit Rechnungsdatum {formatDate(rechnungsdatum)} — Leistungszeitraum {formatDate(leistungszeitraum.von)} – {formatDate(leistungszeitraum.bis)}.
             </span>
           )}
         </div>
+        {schnellInfo && (
+          <p className="rounded-md bg-maja-light/60 p-2 text-xs text-maja-ink">{schnellInfo}</p>
+        )}
       </section>
 
-      {/* Haupt-Positionen */}
-      {(haupt.length > 0 || auslagen.length > 0) && (
+      {/* Haupt-Positionen — im "Auslagen-only"-Schnellmodus ausgeblendet */}
+      {!auslagenOnly && (haupt.length > 0 || auslagen.length > 0) && (
         <section className="card space-y-3 p-5">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-maja-navy">{hauptTitle}</h2>
