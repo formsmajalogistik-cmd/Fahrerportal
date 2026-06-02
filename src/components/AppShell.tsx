@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
+import { PdfPreviewProvider } from './PdfPreviewProvider';
 
 interface NavItem { to: string; label: string }
 
@@ -47,6 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      <PdfPreviewProvider />
     </div>
   );
 }

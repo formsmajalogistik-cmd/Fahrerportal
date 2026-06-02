@@ -125,12 +125,96 @@ export async function downloadFromOneDrive(
   return await resp.blob();
 }
 
+/**
+ * True, wenn der aktuelle Tab als installierte PWA läuft. In iOS-/macOS-
+ * Safari-PWAs ist `window.open()` blockiert, und `<a download>` mit
+ * Object-URLs verhält sich unzuverlässig. Aufrufer können das nutzen,
+ * um direkt auf den Inline-Modal-Fallback umzuschalten, statt erst auf
+ * den Popup-Block zu warten.
+ */
+export function isStandalonePwa(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
+  } catch { /* ignore */ }
+  // iOS-Safari hat den nicht-standard navigator.standalone-Flag.
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  return nav.standalone === true;
+}
+
+/** True für Safari (incl. iOS), false für Chrome/Edge/Firefox. */
+export function isSafari(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent ?? '';
+  return /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua);
+}
+
+/**
+ * Triggert einen Datei-Download über eine data-URL (FileReader). In
+ * Safari-PWAs ist dieser Weg deutlich zuverlässiger als der klassische
+ * URL.createObjectURL-Anchor-Click — und auf Chrome/Edge funktioniert
+ * er ebenfalls problemlos.
+ */
+function downloadBlobViaDataUrl(blob: Blob, filename: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const a = document.createElement('a');
+        a.href = String(reader.result ?? '');
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        resolve(true);
+      } catch (err) {
+        console.warn('[downloadBlobViaDataUrl] anchor-click fehlgeschlagen', err);
+        resolve(false);
+      }
+    };
+    reader.onerror = () => {
+      console.warn('[downloadBlobViaDataUrl] FileReader-Fehler', reader.error);
+      resolve(false);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Letzter Notnagel-Fallback für PWA-Browser, die weder Object-URL- noch
+ * data-URL-Downloads zulassen: navigiere direkt zum Proxy-Endpoint
+ * mit Token als Query-Parameter — der Server triggert dann selbst die
+ * Content-Disposition. Funktioniert immer, weil hier kein JS-Download
+ * mehr involviert ist; Nachteil: der Token landet in der History.
+ */
+async function downloadViaWindowLocation(
+  path: string, opts?: { formularId?: string | null },
+): Promise<boolean> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) return false;
+  const qs = new URLSearchParams({ path, token });
+  if (opts?.formularId) qs.set('formular_id', opts.formularId);
+  window.location.href = `/api/download?${qs.toString()}`;
+  return true;
+}
+
 /** Lädt eine Datei aus OneDrive und triggert einen Browser-Download mit Wunsch-Filename. */
 export async function triggerOneDriveDownload(
   path: string, filename: string, opts?: { formularId?: string | null },
 ): Promise<boolean> {
   try {
     const blob = await downloadFromOneDrive(path, opts);
+    // Safari/PWA: bevorzugt data-URL — Object-URL + <a download> verhält
+    // sich dort unzuverlässig (Tab öffnet sich, statt zu downloaden).
+    if (isSafari() || isStandalonePwa()) {
+      const ok = await downloadBlobViaDataUrl(blob, filename);
+      if (ok) return true;
+      // Wenn auch das fehlschlägt, navigiere via Server-Redirect.
+      return await downloadViaWindowLocation(path, opts);
+    }
+    // Chrome/Edge/Firefox: Object-URL ist schneller (kein FileReader-RT).
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename; a.style.display = 'none';
@@ -144,19 +228,29 @@ export async function triggerOneDriveDownload(
 }
 
 /**
- * Öffnet die PDF als Vorschau in einem neuen Tab. Damit der Browser die
- * Datei inline anzeigen kann, holen wir sie als Blob (mit Bearer-Header)
- * und öffnen die resultierende Object-URL — so muss der Token nicht in
- * die URL gehängt werden und Vercel kann den Cache-Header korrekt setzen.
+ * Öffnet die PDF als Vorschau. Strategie:
+ *   1. Safari/iOS- oder Mac-PWA (Standalone): direkt das Inline-Modal
+ *      öffnen — `window.open()` ist dort entweder gesperrt oder zeigt
+ *      Blob-URLs nicht zuverlässig an. Wir senden ein CustomEvent
+ *      `maja:pdf-preview`, den `<PdfPreviewProvider />` (einmalig in
+ *      AppShell/AdminShell montiert) abfängt und rendert.
+ *   2. Sonstige Browser: synchrones `window.open('about:blank')`, dann
+ *      nach dem Fetch via `placeholder.location.href = blobUrl`
+ *      umlenken — schlägt das fehl, fällt es ebenfalls aufs Modal.
+ *
+ * `filename` ist optional; wenn nicht gegeben, leitet sich der Anzeige-
+ * Name aus dem Dateinamen am Pfad-Ende ab.
  */
 export async function previewOneDrivePdf(
-  path: string, opts?: { formularId?: string | null },
+  path: string, opts?: { formularId?: string | null; filename?: string },
 ): Promise<boolean> {
-  // Popup-Blocker-Trick: das neue Fenster SYNCHRON im Klick-Handler
-  // öffnen (mit about:blank-Platzhalter), bevor wir auf den Netzwerk-
-  // Request warten. Browser akzeptieren das als User-Gesture; ohne
-  // diesen Trick blockt Safari/Firefox window.open() nach dem await.
-  const placeholder = window.open('about:blank', '_blank');
+  const filename = opts?.filename || path.split('/').pop() || 'preview.pdf';
+  const useModalDirectly = isSafari() || isStandalonePwa();
+
+  // Bei "klassischen" Browsern: Platzhalter-Tab SYNCHRON öffnen (zählt
+  // als User-Gesture). Bei Safari/PWA überspringen wir das.
+  const placeholder = useModalDirectly ? null : window.open('about:blank', '_blank');
+
   try {
     const qs = new URLSearchParams({ path, inline: '1' });
     if (opts?.formularId) qs.set('formular_id', opts.formularId);
@@ -175,15 +269,26 @@ export async function previewOneDrivePdf(
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
+
+    // Safari/PWA → immer Modal.
+    if (useModalDirectly) {
+      window.dispatchEvent(new CustomEvent('maja:pdf-preview', {
+        detail: { blobUrl: url, filename },
+      }));
+      // Der Provider übernimmt das URL.revokeObjectURL beim Schließen.
+      return true;
+    }
+
     if (placeholder && !placeholder.closed) {
       placeholder.location.href = url;
-    } else {
-      // Popup wurde geblockt → Download-Fallback im selben Tab.
-      const a = document.createElement('a');
-      a.href = url; a.target = '_blank'; a.rel = 'noopener';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      // Object-URL nach 60 s wieder freigeben.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return true;
     }
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    // Popup wurde nachträglich geblockt → ebenfalls Modal.
+    window.dispatchEvent(new CustomEvent('maja:pdf-preview', {
+      detail: { blobUrl: url, filename },
+    }));
     return true;
   } catch (err) {
     placeholder?.close();

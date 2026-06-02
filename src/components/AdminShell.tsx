@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
+import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { useEingaengeNotifications } from '../sync/EingaengeContext';
 
 interface NavItem { to: string; label: string; end?: boolean }
@@ -101,6 +102,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
         <main className="mx-auto max-w-6xl px-4 py-6 lg:px-8">{children}</main>
       </div>
+      <PdfPreviewProvider />
     </div>
   );
 }

@@ -698,11 +698,10 @@ export function RechnungDetailPage() {
  * Fehlschlag). Wichtig: kein "geheimes" silent-fail, sonst sieht der
  * Admin nicht warum nichts passiert.
  *
- * Vorschau-Hinweis: previewOneDrivePdf öffnet das PDF via window.open()
- * nach einem fetch() — manche Browser blocken das aus dem Klick-Handler
- * heraus als "delayed popup". Wenn das passiert, fängt das Helper den
- * Fall ab und triggert stattdessen einen Tab über <a>.click(), und wir
- * zeigen zusätzlich einen Alert wenn auch das fehlschlägt.
+ * Vorschau-Hinweis: previewOneDrivePdf entscheidet selbst, ob es einen
+ * neuen Tab öffnet (Chrome/Edge/Firefox) oder ins globale PdfPreview-
+ * Modal fällt (Safari/iOS- und Mac-PWA, wo window.open() blockt). Der
+ * Dateiname wird mitgegeben, damit der Modal-Header korrekt ist.
  */
 function RechnungPdfButtons({
   pdfUrl, filename, onRegenerate, regenerating,
@@ -718,7 +717,7 @@ function RechnungPdfButtons({
     console.info('[Rechnung PDF] Vorschau geklickt:', { pdfUrl });
     setBusy('preview');
     try {
-      const ok = await previewOneDrivePdf(pdfUrl);
+      const ok = await previewOneDrivePdf(pdfUrl, { filename });
       console.info('[Rechnung PDF] Vorschau-Result:', { ok });
       if (!ok) alert('PDF konnte nicht geöffnet werden. Prüfe Popup-Blocker oder lade die Datei stattdessen herunter.');
     } catch (err) {
