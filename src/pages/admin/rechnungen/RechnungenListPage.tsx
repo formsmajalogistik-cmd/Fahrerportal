@@ -14,7 +14,7 @@ interface RechnungRow extends Rechnung {
 
 const PAGE_SIZE = 25;
 const STATUS_ORDER: Array<RechnungStatus | 'alle'> = [
-  'alle', 'entwurf', 'erstellt', 'versendet', 'bezahlt', 'storniert',
+  'alle', 'entwurf', 'offen', 'bezahlt', 'storniert',
 ];
 
 export function RechnungenListPage() {
@@ -120,7 +120,7 @@ export function RechnungenListPage() {
     let entwuerfe = 0;
     for (const r of filtered) {
       const n = Number(r.netto_summe) || 0;
-      if (r.status === 'erstellt' || r.status === 'versendet') offen += n;
+      if (r.status === 'offen') offen += n;
       if (r.status === 'bezahlt') bezahlt += n;
       if (r.status === 'entwurf') entwuerfe += 1;
     }
@@ -231,7 +231,7 @@ export function RechnungenListPage() {
       {/* KPI-Karten */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard title="Rechnungen" value={String(kpi.total)} hint="im gewählten Filter" />
-        <KpiCard title="Offen (Netto)" value={formatEuro(kpi.offen)} hint="erstellt + versendet" accent />
+        <KpiCard title="Offen (Netto)" value={formatEuro(kpi.offen)} hint="Status offen" accent />
         <KpiCard title="Bezahlt (Netto)" value={formatEuro(kpi.bezahlt)} hint="Status bezahlt" />
         <KpiCard title="Entwürfe" value={String(kpi.entwuerfe)} hint="Status entwurf" />
       </div>

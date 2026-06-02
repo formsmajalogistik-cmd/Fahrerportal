@@ -648,7 +648,7 @@ export type Database = {
           ust_satz: number;
           ust_betrag: number;
           brutto_summe: number;
-          status: 'entwurf' | 'erstellt' | 'versendet' | 'bezahlt' | 'storniert';
+          status: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
           bezahlt_am: string | null;
           pdf_url: string | null;
           notizen: string | null;
@@ -676,7 +676,7 @@ export type Database = {
           ust_satz?: number;
           ust_betrag?: number;
           brutto_summe?: number;
-          status?: 'entwurf' | 'erstellt' | 'versendet' | 'bezahlt' | 'storniert';
+          status?: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
           notizen?: string | null;
@@ -704,7 +704,7 @@ export type Database = {
           ust_satz?: number;
           ust_betrag?: number;
           brutto_summe?: number;
-          status?: 'entwurf' | 'erstellt' | 'versendet' | 'bezahlt' | 'storniert';
+          status?: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
           notizen?: string | null;
@@ -806,6 +806,10 @@ export type Database = {
       is_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      next_rechnungsnummer: {
+        Args: { p_year?: number };
+        Returns: string;
       };
       calculate_tour_price: {
         Args: {

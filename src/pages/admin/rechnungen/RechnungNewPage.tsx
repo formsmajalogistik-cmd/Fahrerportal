@@ -13,6 +13,7 @@ import {
   emptyManuellePosition, newKey, type EditorPosition,
 } from './positionUtils';
 import type { Auftraggeber, Rechnungsadresse } from '../../../types/db';
+import type { Database } from '../../../types/supabase';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -73,11 +74,17 @@ export function RechnungNewPage() {
   const [auftraggeberList, setAuftraggeberList] = useState<AuftraggeberFull[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<null | 'entwurf' | 'erstellt'>(null);
+  const [saving, setSaving] = useState<null | 'entwurf' | 'offen'>(null);
 
   // Kopfdaten
   const [auftraggeberId, setAuftraggeberId] = useState<string>('');
   const [rechnungsdatum, setRechnungsdatum] = useState<string>(todayIso());
+  /** Vorbelegte (per RPC ermittelte) nächste freie Rechnungsnummer.
+   *  Der Admin kann sie überschreiben, z.B. wenn er aus einem
+   *  externen System eine andere Nummer fortführen will. Leer
+   *  lassen = Trigger vergibt automatisch beim INSERT. */
+  const [rechnungsnummer, setRechnungsnummer] = useState<string>('');
+  const [nummerHint, setNummerHint] = useState<string | null>(null);
   const [anrede, setAnrede] = useState<string>('');
   const [ustSatz, setUstSatz] = useState<number>(19);
   const [notizen, setNotizen] = useState<string>('');
@@ -126,6 +133,36 @@ export function RechnungNewPage() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  /**
+   * Vorschau: nächste freie Rechnungsnummer für das Jahr des aktuellen
+   * Rechnungsdatums per RPC abrufen. Der Wert dient nur als Vorschlag —
+   * der Admin kann ihn überschreiben. Wenn die Vorschau scheitert (z.B.
+   * Migration 042 noch nicht eingespielt), bleibt das Feld leer und der
+   * Trigger vergibt die Nummer beim INSERT.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const year = Number(rechnungsdatum.slice(0, 4));
+    if (!Number.isFinite(year) || year < 2000) return;
+    void (async () => {
+      const { data, error: err } = await supabase
+        .rpc('next_rechnungsnummer', { p_year: year });
+      if (cancelled) return;
+      if (err) {
+        console.warn('[Rechnungen] next_rechnungsnummer fehlgeschlagen', err);
+        return;
+      }
+      if (typeof data === 'string' && !rechnungsnummer) {
+        setRechnungsnummer(data);
+        setNummerHint('Vorgeschlagen — überschreibbar, falls eine andere fortlaufende Nummer gewünscht ist.');
+      }
+    })();
+    return () => { cancelled = true; };
+    // rechnungsnummer absichtlich nicht in deps — wir füllen sie nur,
+    // wenn der Admin noch nichts eingegeben hat.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rechnungsdatum]);
 
   const auftraggeber = useMemo(
     () => auftraggeberList.find((a) => a.id === auftraggeberId) ?? null,
@@ -411,7 +448,7 @@ export function RechnungNewPage() {
     return { von: von ?? rechnungsdatum, bis: bis ?? rechnungsdatum };
   }, [touren, rechnungsdatum]);
 
-  async function speichern(status: 'entwurf' | 'erstellt') {
+  async function speichern(status: 'entwurf' | 'offen') {
     if (!auftraggeber) { setError('Bitte einen Auftraggeber wählen.'); return; }
     if (!rechnungsdatum) { setError('Bitte das Rechnungsdatum angeben.'); return; }
     setError(null);
@@ -420,35 +457,43 @@ export function RechnungNewPage() {
     async function insertOne(
       positionen: EditorPosition[],
       istAuslagen: boolean,
+      customNummer: string | null,
     ): Promise<{ ok: boolean; id?: string; error?: string }> {
       if (positionen.length === 0) return { ok: true };
       const sum = berechneSummen(positionen, ustSatz);
+      type Insert = Database['public']['Tables']['rechnungen']['Insert'];
+      const insertPayload: Insert = {
+        auftraggeber_id: auftraggeber!.id,
+        // FK auf rechnungsadressen wird nicht mehr genutzt — wir
+        // speichern den Snapshot direkt auf der Rechnung.
+        rechnungsadresse_id: null,
+        datum: rechnungsdatum,
+        leistungszeitraum_von: leistungszeitraum.von,
+        leistungszeitraum_bis: leistungszeitraum.bis,
+        anrede: anrede || null,
+        netto_summe: sum.netto,
+        ust_satz: ustSatz,
+        ust_betrag: sum.ust,
+        brutto_summe: sum.brutto,
+        status,
+        notizen: notizen || null,
+        ist_auslagen_rechnung: istAuslagen,
+        ansprechpartner: snapshot.ansprechpartner || null,
+        sachbearbeiter: sachbearbeiter || null,
+        kundennummer: kundennummer || null,
+        rechnungsadresse_firma:   snapshot.firma   || null,
+        rechnungsadresse_strasse: snapshot.strasse || null,
+        rechnungsadresse_plz_ort: snapshot.plz_ort || null,
+        rechnungsadresse_land:    snapshot.land    || null,
+      };
+      // Manuelle Nummer nur, wenn der Admin sie nicht leer gelassen hat;
+      // ansonsten vergibt der DB-Trigger die nächste freie Nummer.
+      if (customNummer && customNummer.trim()) {
+        insertPayload.rechnungsnummer = customNummer.trim();
+      }
       const { data: rRow, error: rErr } = await supabase
         .from('rechnungen')
-        .insert({
-          auftraggeber_id: auftraggeber!.id,
-          // FK auf rechnungsadressen wird nicht mehr genutzt — wir
-          // speichern den Snapshot direkt auf der Rechnung.
-          rechnungsadresse_id: null,
-          datum: rechnungsdatum,
-          leistungszeitraum_von: leistungszeitraum.von,
-          leistungszeitraum_bis: leistungszeitraum.bis,
-          anrede: anrede || null,
-          netto_summe: sum.netto,
-          ust_satz: ustSatz,
-          ust_betrag: sum.ust,
-          brutto_summe: sum.brutto,
-          status,
-          notizen: notizen || null,
-          ist_auslagen_rechnung: istAuslagen,
-          ansprechpartner: snapshot.ansprechpartner || null,
-          sachbearbeiter: sachbearbeiter || null,
-          kundennummer: kundennummer || null,
-          rechnungsadresse_firma:   snapshot.firma   || null,
-          rechnungsadresse_strasse: snapshot.strasse || null,
-          rechnungsadresse_plz_ort: snapshot.plz_ort || null,
-          rechnungsadresse_land:    snapshot.land    || null,
-        })
+        .insert(insertPayload)
         .select('id')
         .single();
       if (rErr || !rRow) {
@@ -472,31 +517,44 @@ export function RechnungNewPage() {
     }
 
     try {
+      // Manuelle Rechnungsnummer (falls gesetzt) gilt für die ERSTE
+      // angelegte Rechnung — bei getrennten Rechnungen würde sie sonst
+      // den UNIQUE-Constraint verletzen. Die zweite Rechnung bekommt
+      // ihre Nummer vom Trigger.
+      const manuelleNummer = rechnungsnummer.trim() || null;
       let firstId: string | null = null;
+      let nummerUsed = false;
       if (getrennt) {
         if (erstelleTouren) {
-          const r = await insertOne(haupt, false);
+          const r = await insertOne(haupt, false, nummerUsed ? null : manuelleNummer);
           if (!r.ok) throw new Error(r.error);
-          if (r.id) firstId = r.id;
+          if (r.id) { firstId = r.id; nummerUsed = true; }
         }
         if (erstelleAuslagen) {
-          const r = await insertOne(auslagen, true);
+          const r = await insertOne(auslagen, true, nummerUsed ? null : manuelleNummer);
           if (!r.ok) throw new Error(r.error);
           if (!firstId && r.id) firstId = r.id;
         }
       } else {
-        const r = await insertOne(haupt, false);
+        const r = await insertOne(haupt, false, manuelleNummer);
         if (!r.ok) throw new Error(r.error);
         if (r.id) firstId = r.id;
       }
 
-      if (status === 'erstellt') {
+      if (status === 'offen') {
         alert('Rechnung erstellt. PDF-Generierung wird in Kürze verfügbar.');
       }
       if (firstId) navigate(`/rechnungen/${firstId}`);
       else navigate('/rechnungen');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+      const msg = err instanceof Error ? err.message : String(err);
+      // Postgres UNIQUE-Violation auf rechnungen.rechnungsnummer →
+      // freundlicher Hinweis statt Roh-DB-Text.
+      const isDuplicate = /duplicate key|unique|23505/i.test(msg)
+        && /rechnungsnummer/i.test(msg);
+      setError(isDuplicate
+        ? `Rechnungsnummer „${rechnungsnummer.trim()}" existiert bereits. Bitte eine andere Nummer wählen oder das Feld leeren.`
+        : (msg || 'Speichern fehlgeschlagen'));
     } finally {
       setSaving(null);
     }
@@ -551,6 +609,19 @@ export function RechnungNewPage() {
               "Touren laden" findet abgeschlossene Touren des Auftraggebers,
               deren effektives Rechnungsdatum (rechnungsdatum_abweichend
               bzw. enddatum) genau diesem Datum entspricht.
+            </p>
+          </div>
+          <div>
+            <label htmlFor="rnr" className="label">Rechnungsnummer</label>
+            <input
+              id="rnr" className="input"
+              value={rechnungsnummer}
+              onChange={(e) => { setRechnungsnummer(e.target.value); setNummerHint(null); }}
+              placeholder="z. B. Re-2026/349"
+              spellCheck={false}
+            />
+            <p className="mt-1 text-xs text-maja-muted">
+              {nummerHint ?? 'Leer lassen, um die nächste freie Nummer automatisch zu vergeben.'}
             </p>
           </div>
           <div>
@@ -786,10 +857,10 @@ export function RechnungNewPage() {
         <button
           type="button"
           className="btn-primary"
-          onClick={() => void speichern('erstellt')}
+          onClick={() => void speichern('offen')}
           disabled={saving !== null}
         >
-          {saving === 'erstellt' ? 'Erstellt …' : 'Rechnung erstellen'}
+          {saving === 'offen' ? 'Erstellt …' : 'Rechnung erstellen'}
         </button>
       </div>
     </div>

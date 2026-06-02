@@ -7,7 +7,6 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import { berechneSummen } from '../../../lib/rechnungsformat';
 import { PositionsTable } from './PositionsTable';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
-import { RECHNUNG_STATUS_LABEL } from './rechnungLabels';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition } from './positionUtils';
 import type {
@@ -169,7 +168,10 @@ export function RechnungDetailPage() {
 
   function startEditing() {
     if (!rechnung) return;
-    if (rechnung.status === 'versendet' || rechnung.status === 'bezahlt') {
+    // Eine bereits bezahlte Rechnung sollte normalerweise nicht mehr
+    // editiert werden — wir warnen, lassen es aber zu (Buchhaltung
+    // muss manche Korrekturen nachträglich machen können).
+    if (rechnung.status === 'bezahlt') {
       setEditConfirmOpen(true);
       return;
     }
@@ -222,36 +224,49 @@ export function RechnungDetailPage() {
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
 
-      {/* Status-Aktionen */}
-      {!isStorniert && (
-        <section className="card flex flex-wrap items-center gap-2 p-4">
-          {status === 'entwurf' && (
+      {/* Status-Aktionen — Flow: Entwurf → Offen → Bezahlt (+Storniert).
+          Status ist in beide Richtungen änderbar. */}
+      <section className="card flex flex-wrap items-center gap-2 p-4">
+        {status === 'entwurf' && (
+          <button
+            type="button" className="btn-primary"
+            disabled={statusBusy}
+            onClick={() => void patchStatus({ status: 'offen' })}
+          >Rechnung erstellen</button>
+        )}
+        {status === 'offen' && (
+          <button
+            type="button" className="btn-primary"
+            disabled={statusBusy}
+            onClick={() => setBezahltPicker(true)}
+          >Als bezahlt markieren</button>
+        )}
+        {status === 'bezahlt' && (
+          <>
+            {rechnung.bezahlt_am && (
+              <span className="text-sm text-emerald-700">
+                Bezahlt am {formatDate(rechnung.bezahlt_am)}.
+              </span>
+            )}
             <button
-              type="button" className="btn-primary"
+              type="button" className="btn-secondary text-sm"
               disabled={statusBusy}
-              onClick={() => void patchStatus({ status: 'erstellt' })}
-            >Rechnung erstellen</button>
-          )}
-          {status === 'erstellt' && (
+              onClick={() => void patchStatus({ status: 'offen', bezahlt_am: null })}
+            >Zurück auf offen setzen</button>
+          </>
+        )}
+        {status === 'storniert' && (
+          <>
+            <span className="text-sm text-red-700">Diese Rechnung ist storniert.</span>
             <button
-              type="button" className="btn-primary"
+              type="button" className="btn-secondary text-sm"
               disabled={statusBusy}
-              onClick={() => void patchStatus({ status: 'versendet' })}
-            >Als versendet markieren</button>
-          )}
-          {status === 'versendet' && (
-            <button
-              type="button" className="btn-primary"
-              disabled={statusBusy}
-              onClick={() => setBezahltPicker(true)}
-            >Als bezahlt markieren</button>
-          )}
-          {status === 'bezahlt' && rechnung.bezahlt_am && (
-            <span className="text-sm text-emerald-700">
-              Bezahlt am {formatDate(rechnung.bezahlt_am)}.
-            </span>
-          )}
-          <span className="flex-1" />
+              onClick={() => void patchStatus({ status: 'offen' })}
+            >Stornierung aufheben</button>
+          </>
+        )}
+        <span className="flex-1" />
+        {status !== 'storniert' && (
           <button
             type="button"
             className="text-sm font-medium text-red-600 hover:underline"
@@ -260,8 +275,8 @@ export function RechnungDetailPage() {
           >
             Stornieren
           </button>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* Adresse + Empfänger */}
       <section className="card grid gap-4 p-5 sm:grid-cols-2">
@@ -388,11 +403,11 @@ export function RechnungDetailPage() {
       {/* Confirm-Dialoge */}
       {editConfirmOpen && (
         <ConfirmDialog
-          title="Rechnung bereits versendet"
+          title="Rechnung ist bereits bezahlt"
           message={
-            <>Diese Rechnung wurde bereits {RECHNUNG_STATUS_LABEL[status].toLowerCase()} —
-              trotzdem bearbeiten? Änderungen an versendeten Rechnungen
-              sollten nachvollziehbar bleiben.</>
+            <>Diese Rechnung wurde bereits als bezahlt markiert —
+              trotzdem bearbeiten? Änderungen an bezahlten Rechnungen
+              sollten in der Buchhaltung nachvollziehbar bleiben.</>
           }
           confirmLabel="Trotzdem bearbeiten"
           onConfirm={async () => { setEditing(true); }}

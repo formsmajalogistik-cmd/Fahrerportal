@@ -2,8 +2,7 @@ import type { RechnungStatus } from '../../../types/db';
 
 export const RECHNUNG_STATUS_LABEL: Record<RechnungStatus, string> = {
   entwurf: 'Entwurf',
-  erstellt: 'Erstellt',
-  versendet: 'Versendet',
+  offen: 'Offen',
   bezahlt: 'Bezahlt',
   storniert: 'Storniert',
 };
