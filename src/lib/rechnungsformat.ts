@@ -26,6 +26,15 @@ export interface Rechnungsformat {
   getrennte_auslagen_rechnung: boolean;
   auslagen_bezeichnung: string;
   auslagen_unterzeilen: string[];
+  /**
+   * Zusatz-Kategorien, die bei getrennter Auslagen-Rechnung TROTZDEM
+   * auf der Touren-Rechnung erscheinen (CC-Sonderfall: Rote Kennzeichen
+   * und Wartezeit gehören nicht in die Auslagen, sondern bleiben bei
+   * den Touren).
+   *
+   * Nur ausgewertet, wenn getrennte_auslagen_rechnung = true.
+   */
+  zusaetze_auf_touren_rechnung: string[];
   // ---- Meta / Layout ----
   anrede: string;
   ust_satz: number;
@@ -48,6 +57,7 @@ export const DEFAULT_RECHNUNGSFORMAT: Rechnungsformat = {
   getrennte_auslagen_rechnung: false,
   auslagen_bezeichnung: '{kategorie} {kennzeichen}',
   auslagen_unterzeilen: ['{start} nach {ziel} {datum}'],
+  zusaetze_auf_touren_rechnung: [],
   anrede: 'Sehr geehrte Damen und Herren,',
   ust_satz: 19,
   spalten: ['pos', 'bezeichnung', 'menge', 'einzelpreis', 'gesamtpreis'],
@@ -86,6 +96,7 @@ const CC_TOUREN: Rechnungsformat = {
   getrennte_auslagen_rechnung: true,
   auslagen_bezeichnung: '{kategorie} {kennzeichen}',
   auslagen_unterzeilen: ['{start} nach {ziel} {datum}'],
+  zusaetze_auf_touren_rechnung: ['Rote Kennzeichen', 'Wartezeit'],
 };
 
 const FAHRAUFTRAG_KZ: Rechnungsformat = {
@@ -451,9 +462,20 @@ export function generatePositionenFromTouren(
 ): GeneratedRechnungsposition[] {
   const out: GeneratedRechnungsposition[] = [];
   const wantTouren = opts.modus !== 'auslagen';
-  const wantZusaetze = opts.modus !== 'touren'
-    && (format.zusaetze_darstellung === 'einzeln'
-        || format.getrennte_auslagen_rechnung);
+  const wantZusaetze = format.zusaetze_darstellung === 'einzeln'
+    || format.getrennte_auslagen_rechnung;
+
+  // Set der Zusatz-Kategorien, die bei getrennter Auslagen-Rechnung
+  // auf der TOUREN-Rechnung erscheinen sollen (CC-Sonderfall: Rote
+  // Kennzeichen, Wartezeit). Case-insensitiv + trim, damit kleine
+  // Schreibweise-Abweichungen ("rote kennzeichen") trotzdem matchen.
+  const aufTourenSet = new Set(
+    (format.zusaetze_auf_touren_rechnung ?? []).map((k) => k.trim().toLowerCase()),
+  );
+  /** Gehört eine Zusatz-Kategorie auf die Touren-Rechnung? */
+  function isTouren(kategorie: string): boolean {
+    return aufTourenSet.has((kategorie ?? '').trim().toLowerCase());
+  }
 
   for (const t of touren) {
     const ph = placeholdersForTour(t, format);
@@ -475,8 +497,26 @@ export function generatePositionenFromTouren(
 
     if (!wantZusaetze) continue;
     for (const z of t.zusaetze) {
+      // Bei getrennter Auslagen-Rechnung den Zusatz dem richtigen
+      // Modus zuordnen: konfigurierte Kategorien → Touren-Rechnung,
+      // alle anderen → Auslagen-Rechnung.
+      if (format.getrennte_auslagen_rechnung) {
+        const aufTouren = isTouren(z.kategorie);
+        if (opts.modus === 'touren'   && !aufTouren) continue;
+        if (opts.modus === 'auslagen' &&  aufTouren) continue;
+      } else if (opts.modus === 'auslagen') {
+        // Modus 'auslagen' macht ohne getrennte_auslagen_rechnung
+        // keinen Sinn — defensive: nichts dazumischen.
+        continue;
+      }
+
       const zph = { ...ph, kategorie: z.kategorie };
-      const targetTpl = (format.getrennte_auslagen_rechnung && opts.modus === 'auslagen')
+      // Auslagen-Template wird verwendet, wenn der Zusatz tatsächlich
+      // auf der Auslagen-Rechnung landet — also nur bei
+      // getrennte_auslagen_rechnung=true UND nicht-Touren-Kategorie.
+      const useAuslagenTpl = format.getrennte_auslagen_rechnung
+        && !isTouren(z.kategorie);
+      const targetTpl = useAuslagenTpl
         ? { bezeichnung: format.auslagen_bezeichnung, unterzeilen: format.auslagen_unterzeilen }
         : { bezeichnung: format.zusatz_bezeichnung, unterzeilen: [] as string[] };
       const unterzeilen = targetTpl.unterzeilen.map((u) => resolveRechnungsPattern(u, zph));

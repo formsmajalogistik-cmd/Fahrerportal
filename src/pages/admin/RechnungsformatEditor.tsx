@@ -4,6 +4,7 @@ import {
   formatEur, renderRechnungSections, summe,
   type DatumFormat, type Rechnungsformat, type ZusaetzeDarstellung,
 } from '../../lib/rechnungsformat';
+import { ZUSATZ_KATEGORIEN } from '../../lib/zusatzKategorien';
 
 interface Props {
   value: Rechnungsformat | null;
@@ -150,6 +151,12 @@ export function RechnungsformatEditor({ value, onChange }: Props) {
                         onChange={(v) => update({ auslagen_bezeichnung: v })} />
             <UnterzeilenRow label="Auslagen-Unterzeilen" value={f.auslagen_unterzeilen}
                             onChange={(v) => update({ auslagen_unterzeilen: v })} />
+            <KategorienMultiselect
+              label="Zusätze auf Touren-Rechnung"
+              hint='Diese Kategorien gehören trotz "getrennte Auslagen-Rechnung" auf die Touren-Rechnung (CC-Sonderfall, typisch: "Rote Kennzeichen", "Wartezeit").'
+              value={f.zusaetze_auf_touren_rechnung ?? []}
+              onChange={(v) => update({ zusaetze_auf_touren_rechnung: v })}
+            />
           </>
         )}
       </div>
@@ -227,6 +234,48 @@ function UnterzeilenRow({
         </button>
       </div>
       <PlatzhalterChips onPick={(t) => onChange([...value.slice(0, -1), (value[value.length - 1] ?? '') + t])} />
+    </div>
+  );
+}
+
+function KategorienMultiselect({
+  label, hint, value, onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const selected = new Set(value);
+  function toggle(k: string) {
+    const next = new Set(selected);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    // Reihenfolge stabil halten = Reihenfolge in ZUSATZ_KATEGORIEN.
+    onChange(ZUSATZ_KATEGORIEN.filter((c) => next.has(c)));
+  }
+  return (
+    <div>
+      <label className="label">{label}</label>
+      {hint && <p className="mb-1 text-xs text-maja-muted">{hint}</p>}
+      <div className="flex flex-wrap gap-2">
+        {ZUSATZ_KATEGORIEN.map((k) => {
+          const active = selected.has(k);
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => toggle(k)}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${
+                active
+                  ? 'bg-maja-navy text-white'
+                  : 'bg-white text-maja-navy border border-maja-navy/15 hover:bg-maja-light'
+              }`}
+            >
+              {k}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

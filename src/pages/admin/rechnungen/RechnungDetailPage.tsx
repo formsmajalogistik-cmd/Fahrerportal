@@ -16,6 +16,9 @@ import type {
 
 interface RechnungFull extends Rechnung {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt'> | null;
+  /** Legacy: Touren-Rechnungen, die noch über FK zur rechnungsadressen-
+   *  Tabelle verknüpft sind. Neue Rechnungen speichern die Adresse als
+   *  Snapshot direkt in den rechnungsadresse_*-Spalten. */
   rechnungsadresse: Rechnungsadresse | null;
 }
 
@@ -179,7 +182,16 @@ export function RechnungDetailPage() {
   }
   if (!rechnung || !summen) return null;
 
-  const adr = rechnung.rechnungsadresse;
+  // Snapshot-Adresse hat Vorrang (so wie sie auf der Rechnung steht);
+  // Legacy-FK ist Fallback für vor-Migration-041 angelegte Rechnungen.
+  const adr = {
+    firma: rechnung.rechnungsadresse_firma ?? rechnung.rechnungsadresse?.firma ?? null,
+    ansprechpartner: rechnung.ansprechpartner ?? rechnung.rechnungsadresse?.ansprechpartner ?? null,
+    strasse: rechnung.rechnungsadresse_strasse ?? rechnung.rechnungsadresse?.strasse ?? null,
+    plz_ort: rechnung.rechnungsadresse_plz_ort ?? rechnung.rechnungsadresse?.plz_ort ?? null,
+    land:    rechnung.rechnungsadresse_land    ?? rechnung.rechnungsadresse?.land    ?? null,
+  };
+  const hasAdresse = !!(adr.firma || adr.strasse || adr.plz_ort);
   const status: RechnungStatus = rechnung.status;
   const isStorniert = status === 'storniert';
 
@@ -255,9 +267,9 @@ export function RechnungDetailPage() {
       <section className="card grid gap-4 p-5 sm:grid-cols-2">
         <div>
           <h3 className="text-sm font-semibold text-maja-navy">Rechnungsadresse</h3>
-          {adr ? (
+          {hasAdresse ? (
             <address className="mt-1 not-italic text-sm text-maja-ink">
-              <div className="font-medium">{adr.firma}</div>
+              {adr.firma && <div className="font-medium">{adr.firma}</div>}
               {adr.ansprechpartner && <div>{adr.ansprechpartner}</div>}
               {adr.strasse && <div>{adr.strasse}</div>}
               {adr.plz_ort && <div>{adr.plz_ort}</div>}
@@ -267,11 +279,25 @@ export function RechnungDetailPage() {
             <p className="mt-1 text-xs text-maja-muted">Keine Rechnungsadresse hinterlegt.</p>
           )}
         </div>
-        <div>
-          <h3 className="text-sm font-semibold text-maja-navy">Anrede</h3>
-          <p className="mt-1 text-sm text-maja-ink">{rechnung.anrede || '—'}</p>
-          <h3 className="mt-4 text-sm font-semibold text-maja-navy">USt-Satz</h3>
-          <p className="mt-1 text-sm text-maja-ink">{Number(rechnung.ust_satz).toFixed(2)} %</p>
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-maja-navy">Anrede</h3>
+            <p className="mt-1 text-sm text-maja-ink">{rechnung.anrede || '—'}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">Kundennummer</h4>
+              <p className="text-sm text-maja-ink">{rechnung.kundennummer || '—'}</p>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">Sachbearbeiter</h4>
+              <p className="text-sm text-maja-ink">{rechnung.sachbearbeiter || '—'}</p>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">USt-Satz</h4>
+              <p className="text-sm text-maja-ink">{Number(rechnung.ust_satz).toFixed(2)} %</p>
+            </div>
+          </div>
         </div>
       </section>
 

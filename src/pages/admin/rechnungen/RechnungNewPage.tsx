@@ -17,16 +17,6 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function isoYearStart(y: number): string {
-  return `${y}-01-01`;
-}
-
-function isoMonthEnd(): string {
-  const d = new Date();
-  const next = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-  return next.toISOString().slice(0, 10);
-}
-
 function parseRechnungsformat(raw: unknown): Rechnungsformat {
   if (raw && typeof raw === 'object') {
     return { ...DEFAULT_RECHNUNGSFORMAT, ...(raw as Partial<Rechnungsformat>) };
@@ -38,6 +28,45 @@ interface AuftraggeberFull extends Auftraggeber {
   rechnungsadressen?: Rechnungsadresse[];
 }
 
+/**
+ * Snapshot der Rechnungsadresse + Kopfdaten. Diese Werte werden als
+ * eigenständige Spalten auf der Rechnung gespeichert, NICHT als FK zu
+ * den Auftraggeber-Stammdaten — damit eine einmal ausgestellte
+ * Rechnung ein festes Dokument bleibt.
+ */
+interface AdressSnapshot {
+  firma: string;
+  ansprechpartner: string;
+  strasse: string;
+  plz_ort: string;
+  land: string;
+}
+
+function emptySnapshot(): AdressSnapshot {
+  return { firma: '', ansprechpartner: '', strasse: '', plz_ort: '', land: '' };
+}
+
+function snapshotFromAuftraggeber(a: Auftraggeber): AdressSnapshot {
+  const plzOrt = [a.plz, a.ort].filter((x) => !!x && (x as string).trim() !== '').join(' ');
+  return {
+    firma: a.name ?? '',
+    ansprechpartner: '',
+    strasse: a.strasse ?? '',
+    plz_ort: plzOrt,
+    land: '',
+  };
+}
+
+function snapshotFromRechnungsadresse(r: Rechnungsadresse): AdressSnapshot {
+  return {
+    firma: r.firma ?? '',
+    ansprechpartner: r.ansprechpartner ?? '',
+    strasse: r.strasse ?? '',
+    plz_ort: r.plz_ort ?? '',
+    land: r.land ?? '',
+  };
+}
+
 export function RechnungNewPage() {
   const navigate = useNavigate();
   const [auftraggeberList, setAuftraggeberList] = useState<AuftraggeberFull[]>([]);
@@ -47,13 +76,17 @@ export function RechnungNewPage() {
 
   // Kopfdaten
   const [auftraggeberId, setAuftraggeberId] = useState<string>('');
-  const [rechnungsadresseId, setRechnungsadresseId] = useState<string>('');
+  const [rechnungsdatum, setRechnungsdatum] = useState<string>(todayIso());
   const [anrede, setAnrede] = useState<string>('');
-  const [datum, setDatum] = useState<string>(todayIso());
-  const [zeitraumVon, setZeitraumVon] = useState<string>(isoYearStart(new Date().getFullYear()));
-  const [zeitraumBis, setZeitraumBis] = useState<string>(isoMonthEnd());
   const [ustSatz, setUstSatz] = useState<number>(19);
   const [notizen, setNotizen] = useState<string>('');
+
+  // Snapshot-Felder (Adresse + Kunden- / Sachbearbeiter-Stammdaten).
+  // Werden initial aus dem Auftraggeber befüllt, bleiben aber pro
+  // Rechnung frei editierbar.
+  const [snapshot, setSnapshot] = useState<AdressSnapshot>(emptySnapshot());
+  const [kundennummer, setKundennummer] = useState<string>('');
+  const [sachbearbeiter, setSachbearbeiter] = useState<string>('');
 
   // Bei getrennten Auslagen-Rechnungen kann der Admin steuern, welche Teile
   // angelegt werden sollen.
@@ -73,7 +106,7 @@ export function RechnungNewPage() {
         .from('auftraggeber')
         .select(`
           *,
-          rechnungsadressen (id, firma, ansprechpartner, strasse, plz_ort, land, ist_standard)
+          rechnungsadressen (id, firma, ansprechpartner, strasse, plz_ort, land, ist_standard, auftraggeber_id, created_at)
         `)
         .order('name');
       if (cancelled) return;
@@ -95,15 +128,21 @@ export function RechnungNewPage() {
   );
   const getrennt = format.getrennte_auslagen_rechnung;
 
-  // Bei Auftraggeber-Wechsel: Defaults nachziehen (Standardadresse, Anrede, USt).
+  // Bei Auftraggeber-Wechsel: Adress-Snapshot, Anrede, USt, Kundennummer,
+  // Sachbearbeiter aus den Stammdaten ziehen. Wenn der Auftraggeber eine
+  // hinterlegte Standard-Rechnungsadresse hat, hat die Vorrang.
   useEffect(() => {
-    if (!auftraggeber) return;
-    const std = (auftraggeber.rechnungsadressen ?? []).find((a) => a.ist_standard)
-      ?? auftraggeber.rechnungsadressen?.[0]
-      ?? null;
-    setRechnungsadresseId(std?.id ?? '');
+    if (!auftraggeber) {
+      setSnapshot(emptySnapshot());
+      setKundennummer(''); setSachbearbeiter('');
+      return;
+    }
+    const std = (auftraggeber.rechnungsadressen ?? []).find((a) => a.ist_standard);
+    setSnapshot(std ? snapshotFromRechnungsadresse(std) : snapshotFromAuftraggeber(auftraggeber));
     setAnrede(format.anrede ?? '');
     setUstSatz(Number(format.ust_satz) || 19);
+    setKundennummer(auftraggeber.kundennummer ?? '');
+    setSachbearbeiter(auftraggeber.sachbearbeiter ?? '');
     // Bei Wechsel des Auftraggebers Positionen verwerfen — sonst wären
     // sie mit dem falschen Format gerendert.
     setHaupt([]);
@@ -117,21 +156,47 @@ export function RechnungNewPage() {
     if (!auftraggeber) return;
     setLoadingTouren(true);
     setError(null);
+    // Effektives Rechnungsdatum einer Tour:
+    //   abweichend=true UND rechnungsdatum gesetzt → rechnungsdatum
+    //   sonst                                       → enddatum
+    // PostgREST kann das nicht direkt — also drei Branches mit .or():
+    //   (rechnungsdatum_abweichend = true  AND rechnungsdatum = X)
+    //   OR (rechnungsdatum_abweichend = false AND enddatum = X)
+    //   OR (rechnungsdatum_abweichend IS NULL  AND enddatum = X)
+    //
+    // Bewusst KEIN Filter auf status='abgeschlossen': eine Tour die heute
+    // endet (enddatum = today) ist im UI noch "aktiv", soll aber bei
+    // Rechnungsdatum=today direkt mit auftauchen. Das ist die explizite
+    // Anforderung aus Fix 3. "geplante" Touren ohne tatsächliches Ende
+    // werden in der Regel kein Enddatum heute haben — falls doch
+    // (Sonderfall), darf sie ja auch berechnet werden.
+    const orFilter =
+      `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${rechnungsdatum}),`
+      + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${rechnungsdatum}),`
+      + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${rechnungsdatum})`;
+    console.info('[Rechnungen] Touren laden:', {
+      auftraggeber_id: auftraggeber.id,
+      rechnungsdatum,
+      filter: orFilter,
+    });
     const { data, error: err } = await supabase
       .from('touren')
       .select(`
         id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
         startdatum, enddatum, tourenart, kennzeichen,
         kundenname, fin, sondervereinbarung, verguetung,
+        rechnungsdatum, rechnungsdatum_abweichend, status,
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
       `)
       .eq('auftraggeber_id', auftraggeber.id)
-      .gte('enddatum', zeitraumVon)
-      .lte('enddatum', zeitraumBis)
-      .eq('status', 'abgeschlossen')
+      .or(orFilter)
       .order('enddatum', { ascending: true });
     setLoadingTouren(false);
-    if (err) { setError(err.message); return; }
+    if (err) {
+      console.error('[Rechnungen] Touren-Query Fehler', err);
+      setError(err.message);
+      return;
+    }
     type RawTour = {
       id: string; tour_id: string | null;
       start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
@@ -139,6 +204,8 @@ export function RechnungNewPage() {
       tourenart: TourenartReal; kennzeichen: string[] | null;
       kundenname: string | null; fin: string | null;
       sondervereinbarung: string | null; verguetung: number | null;
+      rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
+      status: string | null;
       zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null }>;
     };
     const list: TourForRechnung[] = ((data as unknown as RawTour[]) ?? []).map((t) => ({
@@ -157,6 +224,10 @@ export function RechnungNewPage() {
       verguetung: t.verguetung,
       zusaetze: t.zusaetze ?? [],
     }));
+    console.info('[Rechnungen] Ergebnis:', {
+      anzahl: list.length,
+      tour_ids: list.map((t) => t.tour_id),
+    });
     setTouren(list);
 
     // Positionen rendern: bei getrennten Auslagen-Rechnungen in zwei Töpfe,
@@ -171,18 +242,37 @@ export function RechnungNewPage() {
       setHaupt(alle.map((p) => ({ ...p, key: newKey('p') })));
       setAuslagen([]);
     }
-  }, [auftraggeber, zeitraumVon, zeitraumBis, format, getrennt]);
+  }, [auftraggeber, rechnungsdatum, format, getrennt]);
 
   const hauptSummen = useMemo(() => berechneSummen(haupt, ustSatz), [haupt, ustSatz]);
   const auslagenSummen = useMemo(() => berechneSummen(auslagen, ustSatz), [auslagen, ustSatz]);
 
+  /**
+   * Frühestes Startdatum und spätestes Enddatum der geladenen Touren —
+   * wird für leistungszeitraum_von/_bis auf der Rechnung gespeichert.
+   * Fällt auf das Rechnungsdatum zurück, wenn keine Touren geladen sind.
+   */
+  const leistungszeitraum = useMemo(() => {
+    if (touren.length === 0) {
+      return { von: rechnungsdatum, bis: rechnungsdatum };
+    }
+    let von: string | null = null;
+    let bis: string | null = null;
+    for (const t of touren) {
+      const s = t.startdatum ?? t.enddatum;
+      const e = t.enddatum ?? t.startdatum;
+      if (s && (!von || s < von)) von = s;
+      if (e && (!bis || e > bis)) bis = e;
+    }
+    return { von: von ?? rechnungsdatum, bis: bis ?? rechnungsdatum };
+  }, [touren, rechnungsdatum]);
+
   async function speichern(status: 'entwurf' | 'erstellt') {
     if (!auftraggeber) { setError('Bitte einen Auftraggeber wählen.'); return; }
-    if (!zeitraumVon || !zeitraumBis) { setError('Bitte den Leistungszeitraum angeben.'); return; }
+    if (!rechnungsdatum) { setError('Bitte das Rechnungsdatum angeben.'); return; }
     setError(null);
     setSaving(status);
 
-    /** Eine einzelne Rechnung (haupt ODER auslagen) anlegen. */
     async function insertOne(
       positionen: EditorPosition[],
       istAuslagen: boolean,
@@ -193,10 +283,12 @@ export function RechnungNewPage() {
         .from('rechnungen')
         .insert({
           auftraggeber_id: auftraggeber!.id,
-          rechnungsadresse_id: rechnungsadresseId || null,
-          datum,
-          leistungszeitraum_von: zeitraumVon,
-          leistungszeitraum_bis: zeitraumBis,
+          // FK auf rechnungsadressen wird nicht mehr genutzt — wir
+          // speichern den Snapshot direkt auf der Rechnung.
+          rechnungsadresse_id: null,
+          datum: rechnungsdatum,
+          leistungszeitraum_von: leistungszeitraum.von,
+          leistungszeitraum_bis: leistungszeitraum.bis,
           anrede: anrede || null,
           netto_summe: sum.netto,
           ust_satz: ustSatz,
@@ -205,14 +297,19 @@ export function RechnungNewPage() {
           status,
           notizen: notizen || null,
           ist_auslagen_rechnung: istAuslagen,
+          ansprechpartner: snapshot.ansprechpartner || null,
+          sachbearbeiter: sachbearbeiter || null,
+          kundennummer: kundennummer || null,
+          rechnungsadresse_firma:   snapshot.firma   || null,
+          rechnungsadresse_strasse: snapshot.strasse || null,
+          rechnungsadresse_plz_ort: snapshot.plz_ort || null,
+          rechnungsadresse_land:    snapshot.land    || null,
         })
         .select('id')
         .single();
       if (rErr || !rRow) {
         return { ok: false, error: rErr?.message ?? 'Rechnung konnte nicht angelegt werden.' };
       }
-      // Positionen mit der frischen Rechnungs-ID einfügen, mit
-      // automatischer position_nr aus dem Index.
       const rows = positionen.map((p, idx) => ({
         rechnung_id: rRow.id,
         position_nr: idx + 1,
@@ -249,7 +346,6 @@ export function RechnungNewPage() {
         if (r.id) firstId = r.id;
       }
 
-      // Hinweis zur PDF-Generierung (kommt im nächsten Schritt).
       if (status === 'erstellt') {
         alert('Rechnung erstellt. PDF-Generierung wird in Kürze verfügbar.');
       }
@@ -265,7 +361,7 @@ export function RechnungNewPage() {
   if (loading) return <Spinner label="Auftraggeber werden geladen …" />;
 
   const hauptTitle = getrennt ? 'Touren-Positionen' : 'Positionen';
-  const adressen = auftraggeber?.rechnungsadressen ?? [];
+  const adressVorlagen = auftraggeber?.rechnungsadressen ?? [];
 
   return (
     <div className="space-y-6">
@@ -273,9 +369,9 @@ export function RechnungNewPage() {
         <div>
           <h1 className="text-2xl font-semibold text-maja-navy">Neue Rechnung</h1>
           <p className="text-sm text-maja-muted">
-            Auftraggeber wählen, Zeitraum festlegen, Touren laden — Positionen
-            werden automatisch aus dem Rechnungsformat generiert und sind
-            danach frei editierbar.
+            Auftraggeber wählen, Rechnungsdatum setzen, Touren laden — die
+            Positionen werden automatisch aus dem Rechnungsformat generiert
+            und sind danach frei editierbar.
           </p>
         </div>
         <button type="button" className="btn-secondary" onClick={() => navigate('/rechnungen')}>
@@ -284,7 +380,7 @@ export function RechnungNewPage() {
       </div>
 
       {/* Kopfdaten */}
-      <section className="card space-y-3 p-5">
+      <section className="card space-y-4 p-5">
         <h2 className="text-base font-semibold text-maja-navy">Kopfdaten</h2>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -302,41 +398,31 @@ export function RechnungNewPage() {
             </select>
           </div>
           <div>
-            <label htmlFor="adr" className="label">Rechnungsadresse</label>
-            <select
-              id="adr"
-              className="input"
-              value={rechnungsadresseId}
-              onChange={(e) => setRechnungsadresseId(e.target.value)}
-              disabled={adressen.length === 0}
-            >
-              <option value="">— keine —</option>
-              {adressen.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.firma}{a.ist_standard ? ' (Standard)' : ''}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="rdat" className="label">Rechnungsdatum *</label>
+            <input
+              id="rdat" type="date" className="input"
+              value={rechnungsdatum} onChange={(e) => setRechnungsdatum(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-maja-muted">
+              "Touren laden" findet abgeschlossene Touren des Auftraggebers,
+              deren effektives Rechnungsdatum (rechnungsdatum_abweichend
+              bzw. enddatum) genau diesem Datum entspricht.
+            </p>
           </div>
           <div>
-            <label htmlFor="von" className="label">Zeitraum von *</label>
+            <label htmlFor="kdnr" className="label">Kundennummer</label>
             <input
-              id="von" type="date" className="input"
-              value={zeitraumVon} onChange={(e) => setZeitraumVon(e.target.value)}
+              id="kdnr" className="input"
+              value={kundennummer} onChange={(e) => setKundennummer(e.target.value)}
+              placeholder={auftraggeber?.kundennummer ?? ''}
             />
           </div>
           <div>
-            <label htmlFor="bis" className="label">Zeitraum bis *</label>
+            <label htmlFor="sb" className="label">Sachbearbeiter</label>
             <input
-              id="bis" type="date" className="input"
-              value={zeitraumBis} onChange={(e) => setZeitraumBis(e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="datum" className="label">Rechnungsdatum</label>
-            <input
-              id="datum" type="date" className="input"
-              value={datum} onChange={(e) => setDatum(e.target.value)}
+              id="sb" className="input"
+              value={sachbearbeiter} onChange={(e) => setSachbearbeiter(e.target.value)}
+              placeholder={auftraggeber?.sachbearbeiter ?? ''}
             />
           </div>
           <div>
@@ -347,13 +433,82 @@ export function RechnungNewPage() {
               onChange={(e) => setUstSatz(Number(e.target.value) || 0)}
             />
           </div>
-          <div className="sm:col-span-2">
+          <div>
             <label htmlFor="anrede" className="label">Anrede</label>
             <input
               id="anrede" className="input"
               value={anrede} onChange={(e) => setAnrede(e.target.value)}
               placeholder="Sehr geehrte Damen und Herren,"
             />
+          </div>
+        </div>
+
+        {/* Rechnungsadresse — editierbare Snapshot-Felder */}
+        <div className="space-y-3 rounded-lg bg-maja-light/40 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-maja-navy">Rechnungsadresse</h3>
+            {adressVorlagen.length > 0 && (
+              <label className="flex items-center gap-2 text-xs text-maja-muted">
+                <span>Adresse laden von …</span>
+                <select
+                  className="input py-1 text-xs"
+                  value=""
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (!id) return;
+                    if (id === '__stammdaten' && auftraggeber) {
+                      setSnapshot(snapshotFromAuftraggeber(auftraggeber));
+                    } else {
+                      const adr = adressVorlagen.find((a) => a.id === id);
+                      if (adr) setSnapshot(snapshotFromRechnungsadresse(adr));
+                    }
+                    e.currentTarget.selectedIndex = 0;
+                  }}
+                >
+                  <option value="">— wählen —</option>
+                  {auftraggeber && <option value="__stammdaten">Stammdaten</option>}
+                  {adressVorlagen.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.firma}{a.ist_standard ? ' (Standard)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="adr-firma" className="label">Firma</label>
+              <input id="adr-firma" className="input"
+                     value={snapshot.firma}
+                     onChange={(e) => setSnapshot((s) => ({ ...s, firma: e.target.value }))} />
+            </div>
+            <div>
+              <label htmlFor="adr-ap" className="label">Ansprechpartner</label>
+              <input id="adr-ap" className="input"
+                     value={snapshot.ansprechpartner}
+                     onChange={(e) => setSnapshot((s) => ({ ...s, ansprechpartner: e.target.value }))}
+                     placeholder="z. B. Herr Jens Dracker" />
+            </div>
+            <div>
+              <label htmlFor="adr-str" className="label">Straße</label>
+              <input id="adr-str" className="input"
+                     value={snapshot.strasse}
+                     onChange={(e) => setSnapshot((s) => ({ ...s, strasse: e.target.value }))} />
+            </div>
+            <div>
+              <label htmlFor="adr-plz" className="label">PLZ / Ort</label>
+              <input id="adr-plz" className="input"
+                     value={snapshot.plz_ort}
+                     onChange={(e) => setSnapshot((s) => ({ ...s, plz_ort: e.target.value }))} />
+            </div>
+            <div>
+              <label htmlFor="adr-land" className="label">Land</label>
+              <input id="adr-land" className="input"
+                     value={snapshot.land}
+                     onChange={(e) => setSnapshot((s) => ({ ...s, land: e.target.value }))}
+                     placeholder="(leer = Deutschland)" />
+            </div>
           </div>
         </div>
 
@@ -388,7 +543,7 @@ export function RechnungNewPage() {
           </button>
           {touren.length > 0 && (
             <span className="text-xs text-maja-muted">
-              {touren.length} Tour{touren.length === 1 ? '' : 'en'} im Zeitraum {formatDate(zeitraumVon)} – {formatDate(zeitraumBis)}.
+              {touren.length} Tour{touren.length === 1 ? '' : 'en'} mit Rechnungsdatum {formatDate(rechnungsdatum)} — Leistungszeitraum {formatDate(leistungszeitraum.von)} – {formatDate(leistungszeitraum.bis)}.
             </span>
           )}
         </div>

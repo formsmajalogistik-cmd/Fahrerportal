@@ -58,11 +58,8 @@ const STATUS_BADGE: Record<TourStatus, string> = {
   abgeschlossen:  'bg-gray-100 text-gray-600',
 };
 
-const ZUSATZ_KATEGORIEN = [
-  'Maut', 'Ladezeit', 'Wartezeit', 'Rote Kennzeichen', 'Reifenhandling',
-  'Wäsche', 'Tankauslagen', 'Ladeauslagen', 'Waschauslagen',
-  'Tank und Waschauslagen', 'Lade und Waschauslagen', 'Taxiauslagen',
-];
+import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
+const ZUSATZ_KATEGORIEN: readonly string[] = ZUSATZ_KATEGORIEN_BASE;
 
 // Lesbare Labels für die Tour-Spalten, die durch ein Protokoll befüllt
 // werden können — werden im "Verknüpfung lösen"-Dialog angezeigt.
