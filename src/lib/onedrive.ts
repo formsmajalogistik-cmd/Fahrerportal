@@ -1,13 +1,75 @@
 // Frontend-Client für die /api-Routen, die das OneDrive über Microsoft Graph
 // bedienen. Alle Calls laufen mit dem Supabase-Bearer-Token im Header.
 
-import { supabase } from './supabase';
+import { supabase, getValidToken } from './supabase';
 import { fetchWithRetry } from './fetchRetry';
 
+/**
+ * Liefert {Authorization: "Bearer <token>"}-Header. Nutzt getValidToken(),
+ * das einen baldigen Ablauf proaktiv via refreshSession() ausgleicht —
+ * Safari/PWA-Sessions können sonst still mit einem abgelaufenen Token
+ * weiterlaufen und der Server antwortet mit 401 "Token ungültig".
+ *
+ * Gibt ein leeres Objekt zurück, wenn keine Session mehr existiert.
+ * In dem Fall wird `redirectToLogin` getriggert, damit der User nicht
+ * mit einem stillen 401-Loop landet.
+ */
 async function authHeader(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const token = await getValidToken();
+  if (!token) {
+    redirectToLoginOnce();
+    return {};
+  }
+  return { Authorization: `Bearer ${token}` };
+}
+
+/**
+ * Einmaliger Login-Redirect (Safari-PWA: wenn die Session weg ist,
+ * sollen mehrere parallele Calls NICHT mehrmals navigation triggern).
+ */
+let redirected = false;
+function redirectToLoginOnce() {
+  if (redirected) return;
+  if (typeof window === 'undefined') return;
+  // Bereits auf /login? Nichts tun.
+  if (window.location.pathname.startsWith('/login')) return;
+  redirected = true;
+  console.warn('[onedrive] Keine gültige Session — leite zum Login um');
+  window.location.href = '/login?reason=session_expired';
+}
+
+/**
+ * Fetch + automatischer Retry bei 401. Wenn der Server 401 meldet,
+ * versuchen wir EINMAL einen frischen Token zu holen (refreshSession)
+ * und wiederholen den Call. Schlägt auch der zweite Versuch fehl,
+ * geht es in den Login-Redirect.
+ */
+async function fetchWithAuthRetry(
+  url: string,
+  init: Parameters<typeof fetchWithRetry>[1] = {},
+): Promise<Response> {
+  const buildInit = async (): Promise<typeof init> => {
+    const auth = await authHeader();
+    return {
+      ...init,
+      headers: { ...(init.headers as Record<string, string> | undefined), ...auth },
+    };
+  };
+  let resp = await fetchWithRetry(url, await buildInit());
+  if (resp.status === 401) {
+    console.warn('[onedrive] 401 — versuche Token-Refresh und Retry');
+    // refreshSession durch getValidToken-Pfad — danach erneut fetchen.
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.error || !refreshed.data.session) {
+      redirectToLoginOnce();
+      return resp;
+    }
+    resp = await fetchWithRetry(url, await buildInit());
+    if (resp.status === 401) {
+      redirectToLoginOnce();
+    }
+  }
+  return resp;
 }
 
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
@@ -35,9 +97,9 @@ export async function uploadToOneDrive(
   const buf = await file.arrayBuffer();
   const b64 = await bytesToBase64(new Uint8Array(buf));
   // Uploads sind groß und langsam → längeres Timeout als der 15-s-Default.
-  const resp = await fetchWithRetry('/api/upload', {
+  const resp = await fetchWithAuthRetry('/api/upload', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       path,
       contentType: file.type || 'application/octet-stream',
@@ -66,9 +128,9 @@ export async function uploadToOneDrive(
 async function uploadViaSession(
   path: string, file: Blob,
 ): Promise<{ ok: true; path: string; webUrl?: string }> {
-  const sess = await fetchWithRetry('/api/upload-session', {
+  const sess = await fetchWithAuthRetry('/api/upload-session', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
     timeoutMs: 30_000,
   });
@@ -109,9 +171,9 @@ export async function downloadFromOneDrive(
 ): Promise<Blob> {
   const qs = new URLSearchParams({ path });
   if (opts?.formularId) qs.set('formular_id', opts.formularId);
-  const resp = await fetchWithRetry(
+  const resp = await fetchWithAuthRetry(
     `/api/download?${qs.toString()}`,
-    { headers: await authHeader(), timeoutMs: 60_000 },
+    { timeoutMs: 60_000 },
   );
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -191,9 +253,12 @@ function downloadBlobViaDataUrl(blob: Blob, filename: string): Promise<boolean> 
 async function downloadViaWindowLocation(
   path: string, opts?: { formularId?: string | null },
 ): Promise<boolean> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) return false;
+  // Token MUSS frisch sein — sonst landet der Server-Aufruf im 401.
+  const token = await getValidToken();
+  if (!token) {
+    redirectToLoginOnce();
+    return false;
+  }
   const qs = new URLSearchParams({ path, token });
   if (opts?.formularId) qs.set('formular_id', opts.formularId);
   window.location.href = `/api/download?${qs.toString()}`;
@@ -254,9 +319,9 @@ export async function previewOneDrivePdf(
   try {
     const qs = new URLSearchParams({ path, inline: '1' });
     if (opts?.formularId) qs.set('formular_id', opts.formularId);
-    const resp = await fetchWithRetry(
+    const resp = await fetchWithAuthRetry(
       `/api/download?${qs.toString()}`,
-      { headers: await authHeader(), timeoutMs: 60_000 },
+      { timeoutMs: 60_000 },
     );
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
@@ -319,9 +384,9 @@ export async function getOneDriveObjectUrl(
  */
 export async function deleteFromOneDrive(path: string, formularId: string): Promise<boolean> {
   try {
-    const resp = await fetchWithRetry('/api/delete-pdf', {
+    const resp = await fetchWithAuthRetry('/api/delete-pdf', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, formular_id: formularId }),
       timeoutMs: 30_000,
     });
@@ -346,9 +411,9 @@ export async function sendEmail(args: {
   body: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
 }): Promise<SendEmailResult> {
-  const resp = await fetchWithRetry('/api/email', {
+  const resp = await fetchWithAuthRetry('/api/email', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(args),
   });
   if (!resp.ok) {

@@ -145,10 +145,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void apply(s);
     });
 
+    // PWA-Resume-Handling: iOS-/macOS-Safari pausiert Background-Timer
+    // aggressiv, sodass autoRefreshToken nicht ausgelöst wird. Wenn die
+    // App wieder sichtbar wird, prüfen wir die Session und refreshen,
+    // falls sie abgelaufen ist — sonst landet der erste API-Call nach
+    // dem App-Wechsel in einem 401.
+    async function onVisibility() {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.warn('[Auth/visibility] getSession-Fehler', error.message);
+          return;
+        }
+        const s = data.session;
+        if (!s) return; // Kein User eingeloggt → nichts zu tun.
+        const expiresAt = s.expires_at ?? 0;
+        const now = Math.floor(Date.now() / 1000);
+        if (expiresAt - now < 120) {
+          console.info('[Auth/visibility] Session läuft bald ab — refresh');
+          const r = await supabase.auth.refreshSession();
+          if (r.error || !r.data.session) {
+            console.warn('[Auth/visibility] Refresh fehlgeschlagen, signOut');
+            await supabase.auth.signOut().catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn('[Auth/visibility] Fehler', err);
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
       sub.subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 

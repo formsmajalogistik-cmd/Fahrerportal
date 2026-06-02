@@ -30,7 +30,17 @@ export async function getAuthedUser(authHeader: string | null | undefined): Prom
   // gegen den anon-Endpoint laufen).
   const verifier = createClient(url, key, { auth: { persistSession: false } });
   const { data, error } = await verifier.auth.getUser(token);
-  if (error || !data?.user) throw new HttpError(401, 'Token ungültig');
+  if (error || !data?.user) {
+    // Diagnose: in Safari/PWA kommt es vor, dass abgelaufene Tokens
+    // rauskommen. Wir loggen Token-Länge + ersten 20 Zeichen, NICHT
+    // den ganzen Token (Security).
+    const preview = token.length > 20 ? `${token.slice(0, 20)}...` : token;
+    console.warn('[getAuthedUser] auth.getUser fehlgeschlagen', {
+      tokenLen: token.length, preview,
+      errMsg: error?.message ?? 'no user',
+    });
+    throw new HttpError(401, 'Token ungültig');
+  }
 
   // JWT-aware Client für die Rollen-Abfrage — RLS sieht damit auth.uid()
   // und lässt die self-read-Policy auf app_users durch.
