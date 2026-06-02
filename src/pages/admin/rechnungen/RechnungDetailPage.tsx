@@ -620,32 +620,12 @@ export function RechnungDetailPage() {
       <section className="card space-y-2 p-5">
         <h2 className="text-base font-semibold text-maja-navy">PDF</h2>
         {rechnung.pdf_url ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="btn-secondary text-sm"
-              onClick={() => {
-                if (rechnung.pdf_url) void previewOneDrivePdf(rechnung.pdf_url);
-              }}
-            >PDF anzeigen</button>
-            <button
-              type="button"
-              className="btn-secondary text-sm"
-              onClick={() => {
-                if (rechnung.pdf_url) {
-                  void triggerOneDriveDownload(
-                    rechnung.pdf_url,
-                    rechnungPdfFilename(rechnung.rechnungsnummer),
-                  );
-                }
-              }}
-            >PDF herunterladen</button>
-            <button
-              type="button" className="btn-primary text-sm"
-              onClick={() => void generierePdf()}
-              disabled={generatingPdf}
-            >{generatingPdf ? 'Generiert …' : 'PDF neu generieren'}</button>
-          </div>
+          <RechnungPdfButtons
+            pdfUrl={rechnung.pdf_url}
+            filename={rechnungPdfFilename(rechnung.rechnungsnummer)}
+            onRegenerate={() => void generierePdf()}
+            regenerating={generatingPdf}
+          />
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm text-maja-muted">Noch keine PDF generiert.</p>
@@ -708,6 +688,82 @@ export function RechnungDetailPage() {
           onClose={() => setDeleteConfirm(false)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * PDF-Aktionsleiste mit Vorschau, Download und Neu-Generieren — gleiche
+ * Mechanik wie die Eingang-PDF-Buttons (busy-State, Alert bei
+ * Fehlschlag). Wichtig: kein "geheimes" silent-fail, sonst sieht der
+ * Admin nicht warum nichts passiert.
+ *
+ * Vorschau-Hinweis: previewOneDrivePdf öffnet das PDF via window.open()
+ * nach einem fetch() — manche Browser blocken das aus dem Klick-Handler
+ * heraus als "delayed popup". Wenn das passiert, fängt das Helper den
+ * Fall ab und triggert stattdessen einen Tab über <a>.click(), und wir
+ * zeigen zusätzlich einen Alert wenn auch das fehlschlägt.
+ */
+function RechnungPdfButtons({
+  pdfUrl, filename, onRegenerate, regenerating,
+}: {
+  pdfUrl: string;
+  filename: string;
+  onRegenerate: () => void;
+  regenerating: boolean;
+}) {
+  const [busy, setBusy] = useState<null | 'preview' | 'download'>(null);
+
+  async function preview() {
+    console.info('[Rechnung PDF] Vorschau geklickt:', { pdfUrl });
+    setBusy('preview');
+    try {
+      const ok = await previewOneDrivePdf(pdfUrl);
+      console.info('[Rechnung PDF] Vorschau-Result:', { ok });
+      if (!ok) alert('PDF konnte nicht geöffnet werden. Prüfe Popup-Blocker oder lade die Datei stattdessen herunter.');
+    } catch (err) {
+      console.error('[Rechnung PDF] Vorschau-Error:', err);
+      alert(`Vorschau fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function download() {
+    console.info('[Rechnung PDF] Download geklickt:', { pdfUrl, filename });
+    setBusy('download');
+    try {
+      const ok = await triggerOneDriveDownload(pdfUrl, filename);
+      console.info('[Rechnung PDF] Download-Result:', { ok });
+      if (!ok) alert('Download fehlgeschlagen. Sieh in die Browser-Konsole für Details (Network-Tab).');
+    } catch (err) {
+      console.error('[Rechnung PDF] Download-Error:', err);
+      alert(`Download fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        className="btn-secondary text-sm"
+        onClick={() => void preview()}
+        disabled={busy !== null}
+      >{busy === 'preview' ? 'Lädt …' : 'PDF anzeigen'}</button>
+      <button
+        type="button"
+        className="btn-secondary text-sm"
+        onClick={() => void download()}
+        disabled={busy !== null}
+      >{busy === 'download' ? 'Lädt …' : 'PDF herunterladen'}</button>
+      <button
+        type="button"
+        className="btn-primary text-sm"
+        onClick={onRegenerate}
+        disabled={regenerating || busy !== null}
+      >{regenerating ? 'Generiert …' : 'PDF neu generieren'}</button>
     </div>
   );
 }

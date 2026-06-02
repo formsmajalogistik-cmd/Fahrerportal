@@ -152,6 +152,11 @@ export async function triggerOneDriveDownload(
 export async function previewOneDrivePdf(
   path: string, opts?: { formularId?: string | null },
 ): Promise<boolean> {
+  // Popup-Blocker-Trick: das neue Fenster SYNCHRON im Klick-Handler
+  // öffnen (mit about:blank-Platzhalter), bevor wir auf den Netzwerk-
+  // Request warten. Browser akzeptieren das als User-Gesture; ohne
+  // diesen Trick blockt Safari/Firefox window.open() nach dem await.
+  const placeholder = window.open('about:blank', '_blank');
   try {
     const qs = new URLSearchParams({ path, inline: '1' });
     if (opts?.formularId) qs.set('formular_id', opts.formularId);
@@ -159,12 +164,21 @@ export async function previewOneDrivePdf(
       `/api/download?${qs.toString()}`,
       { headers: await authHeader(), timeoutMs: 60_000 },
     );
-    if (!resp.ok) throw new Error(`Vorschau fehlgeschlagen (${resp.status})`);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      console.warn(
+        `[onedrive.preview] ${resp.status} ${resp.statusText} path=${path}`
+        + (text ? ` body=${text.slice(0, 200)}` : ''),
+      );
+      placeholder?.close();
+      throw new Error(`Vorschau fehlgeschlagen (${resp.status})`);
+    }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank');
-    if (!win) {
-      // Pop-up geblockt: Fallback auf Download.
+    if (placeholder && !placeholder.closed) {
+      placeholder.location.href = url;
+    } else {
+      // Popup wurde geblockt → Download-Fallback im selben Tab.
       const a = document.createElement('a');
       a.href = url; a.target = '_blank'; a.rel = 'noopener';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -172,6 +186,7 @@ export async function previewOneDrivePdf(
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return true;
   } catch (err) {
+    placeholder?.close();
     console.warn('previewOneDrivePdf', err);
     return false;
   }
