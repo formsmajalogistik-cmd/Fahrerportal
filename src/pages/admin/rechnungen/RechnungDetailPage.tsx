@@ -8,7 +8,9 @@ import { berechneSummenProUst } from '../../../lib/rechnungsformat';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { generateRechnungPdf, rechnungPdfFilename, type RechnungPdfPosition } from './rechnungPdf';
-import { uploadToOneDrive } from '../../../lib/onedrive';
+import {
+  previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
+} from '../../../lib/onedrive';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition } from './positionUtils';
@@ -619,15 +621,25 @@ export function RechnungDetailPage() {
         <h2 className="text-base font-semibold text-maja-navy">PDF</h2>
         {rechnung.pdf_url ? (
           <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={`/api/download?path=${encodeURIComponent(rechnung.pdf_url)}&inline=1`}
-              target="_blank" rel="noopener noreferrer"
+            <button
+              type="button"
               className="btn-secondary text-sm"
-            >PDF anzeigen</a>
-            <a
-              href={`/api/download?path=${encodeURIComponent(rechnung.pdf_url)}`}
+              onClick={() => {
+                if (rechnung.pdf_url) void previewOneDrivePdf(rechnung.pdf_url);
+              }}
+            >PDF anzeigen</button>
+            <button
+              type="button"
               className="btn-secondary text-sm"
-            >PDF herunterladen</a>
+              onClick={() => {
+                if (rechnung.pdf_url) {
+                  void triggerOneDriveDownload(
+                    rechnung.pdf_url,
+                    rechnungPdfFilename(rechnung.rechnungsnummer),
+                  );
+                }
+              }}
+            >PDF herunterladen</button>
             <button
               type="button" className="btn-primary text-sm"
               onClick={() => void generierePdf()}
