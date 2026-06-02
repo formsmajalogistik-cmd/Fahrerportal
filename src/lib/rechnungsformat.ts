@@ -339,6 +339,9 @@ export interface GeneratedRechnungsposition {
   tour_id: string | null;
   zusatz_id: string | null;
   ist_manuell: boolean;
+  /** Individueller USt-Satz für diese Position (Prozent). null → Standard-
+   *  Satz der Rechnung gilt (rechnungen.ust_satz). */
+  ust_satz: number | null;
 }
 
 function pad2(n: number): string {
@@ -522,6 +525,7 @@ export function generatePositionenFromTouren(
         tour_id: t.id,
         zusatz_id: null,
         ist_manuell: false,
+        ust_satz: null,
       });
     }
 
@@ -554,9 +558,19 @@ export function generatePositionenFromTouren(
       // getrennte_auslagen_rechnung=true UND nicht-Touren-Kategorie.
       const useAuslagenTpl = format.getrennte_auslagen_rechnung
         && !isTouren(z.kategorie);
-      const targetTpl = useAuslagenTpl
+      let targetTpl = useAuslagenTpl
         ? { bezeichnung: format.auslagen_bezeichnung, unterzeilen: format.auslagen_unterzeilen }
         : { bezeichnung: format.zusatz_bezeichnung, unterzeilen: [] as string[] };
+      // Auto-Erweiterung der Route bei ABA/ABC: Template "{start} nach
+      // {ziel}" wird zu "{start} nach {ziel} nach {rueckfuehrung}",
+      // wenn die Tour eine Rückführungs-Stadt hat. Greift sowohl in
+      // den Auslagen-Unterzeilen als auch in der Bezeichnung.
+      if (t.rueckfuehrung_stadt && t.rueckfuehrung_stadt.trim()) {
+        targetTpl = {
+          bezeichnung: expandRueckfuehrungInPattern(targetTpl.bezeichnung),
+          unterzeilen: targetTpl.unterzeilen.map(expandRueckfuehrungInPattern),
+        };
+      }
       const unterzeilen = targetTpl.unterzeilen.map((u) => resolveRechnungsPattern(u, zph));
       if (format.zusatz_notiz_als_unterzeile && z.notiz) {
         unterzeilen.push(z.notiz);
@@ -572,6 +586,7 @@ export function generatePositionenFromTouren(
         tour_id: t.id,
         zusatz_id: z.id,
         ist_manuell: false,
+        ust_satz: null,
       });
     }
   }
@@ -634,4 +649,60 @@ export function berechneSummen(
   const ust = Math.round(netto * (ustSatz / 100) * 100) / 100;
   const brutto = Math.round((netto + ust) * 100) / 100;
   return { netto: Math.round(netto * 100) / 100, ust, brutto };
+}
+
+/**
+ * Aufschlüsselung der USt nach Satz — wird verwendet, wenn Positionen
+ * unterschiedliche `ust_satz`-Werte haben. Positionen ohne expliziten
+ * Satz fallen auf `defaultSatz` zurück (= rechnungen.ust_satz).
+ *
+ * Liefert pro vorkommendem Satz die Netto-Summe + USt-Betrag, plus
+ * Gesamt-Netto und Brutto. Die Reihenfolge ist nach Satz absteigend
+ * (üblicherweise 19 % vor 7 % vor 0 %).
+ */
+export interface UstGroup {
+  satz: number;
+  netto: number;
+  ust: number;
+}
+export function berechneSummenProUst(
+  positionen: Array<{ gesamtpreis: number; ust_satz?: number | null }>,
+  defaultSatz: number,
+): { groups: UstGroup[]; netto: number; ust: number; brutto: number } {
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const byRate = new Map<number, number>(); // satz → netto-Summe
+  for (const p of positionen) {
+    const eff = (p.ust_satz != null && Number.isFinite(Number(p.ust_satz)))
+      ? Number(p.ust_satz)
+      : defaultSatz;
+    byRate.set(eff, (byRate.get(eff) ?? 0) + (Number(p.gesamtpreis) || 0));
+  }
+  const groups: UstGroup[] = Array.from(byRate.entries())
+    .sort((a, b) => b[0] - a[0])
+    .map(([satz, netto]) => ({
+      satz,
+      netto: round(netto),
+      ust: round(netto * (satz / 100)),
+    }));
+  const netto = round(groups.reduce((acc, g) => acc + g.netto, 0));
+  const ust = round(groups.reduce((acc, g) => acc + g.ust, 0));
+  const brutto = round(netto + ust);
+  return { groups, netto, ust, brutto };
+}
+
+/**
+ * Erweitert ein Pattern, das Routen-Platzhalter ohne Rückführung
+ * enthält ("{start} nach {ziel}"), um den Rückführungs-Teil. Greift
+ * nur, wenn `{rueckfuehrung}` noch nicht im Pattern steht — sonst
+ * würde es doppelt erscheinen. Genutzt bei ABA/ABC-Auslagen, wo das
+ * Vorlagen-Template "{start} nach {ziel}" ist, die Tour aber drei
+ * Stationen hat.
+ */
+export function expandRueckfuehrungInPattern(pattern: string): string {
+  if (!pattern) return pattern;
+  if (/\{rueckfuehrung\}/.test(pattern)) return pattern;
+  return pattern.replace(
+    /\{start\}\s+nach\s+\{ziel\}/g,
+    '{start} nach {ziel} nach {rueckfuehrung}',
+  );
 }

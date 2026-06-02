@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
-import { formatDate, formatEuro } from '../../../lib/touren';
-import { berechneSummen } from '../../../lib/rechnungsformat';
+import { formatDate } from '../../../lib/touren';
+import { berechneSummenProUst } from '../../../lib/rechnungsformat';
+import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
+import { generateRechnungPdf, rechnungPdfFilename, type RechnungPdfPosition } from './rechnungPdf';
+import { uploadToOneDrive } from '../../../lib/onedrive';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition } from './positionUtils';
@@ -14,7 +17,10 @@ import type {
 } from '../../../types/db';
 
 interface RechnungFull extends Rechnung {
-  auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt'> | null;
+  auftraggeber: Pick<
+    Auftraggeber,
+    'id' | 'name' | 'kontakt' | 'kunden_uid' | 'zahlungsziel_tage'
+  > | null;
   /** Legacy: Touren-Rechnungen, die noch über FK zur rechnungsadressen-
    *  Tabelle verknüpft sind. Neue Rechnungen speichern die Adresse als
    *  Snapshot direkt in den rechnungsadresse_*-Spalten. */
@@ -90,6 +96,9 @@ export function RechnungDetailPage() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // PDF-Generierung
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -99,7 +108,7 @@ export function RechnungDetailPage() {
         .from('rechnungen')
         .select(`
           *,
-          auftraggeber:auftraggeber_id (id, name, kontakt),
+          auftraggeber:auftraggeber_id (id, name, kontakt, kunden_uid, zahlungsziel_tage),
           rechnungsadresse:rechnungsadresse_id (
             id, firma, ansprechpartner, strasse, plz_ort, land, ist_standard, auftraggeber_id, created_at
           )
@@ -130,16 +139,15 @@ export function RechnungDetailPage() {
       tour_id: p.tour_id,
       zusatz_id: p.zusatz_id,
       ist_manuell: p.ist_manuell,
+      ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
     })));
     setLoading(false);
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const summen = useMemo(
-    () => rechnung ? berechneSummen(positionen, Number(rechnung.ust_satz) || 0) : null,
-    [positionen, rechnung],
-  );
+  // Summen werden vom SummenBlock direkt aus positionen + Standard-Satz
+  // berechnet — kein eigener Memo nötig.
 
   async function patchStatus(patch: Partial<Rechnung>) {
     if (!rechnung) return;
@@ -186,7 +194,7 @@ export function RechnungDetailPage() {
     try {
       // Bei USt-Änderung neue Summen mitschreiben (Netto bleibt gleich,
       // USt-Betrag und Brutto werden neu berechnet).
-      const sum = berechneSummen(positionen, ustNum);
+      const sum = berechneSummenProUst(positionen, ustNum);
       const { error: err } = await supabase
         .from('rechnungen')
         .update({
@@ -245,12 +253,13 @@ export function RechnungDetailPage() {
         tour_id: p.tour_id,
         zusatz_id: p.zusatz_id,
         ist_manuell: p.ist_manuell,
+        ust_satz: p.ust_satz,
       }));
       if (rows.length > 0) {
         const { error: insErr } = await supabase.from('rechnungspositionen').insert(rows);
         if (insErr) throw insErr;
       }
-      const sum = berechneSummen(positionen, Number(rechnung.ust_satz) || 0);
+      const sum = berechneSummenProUst(positionen, Number(rechnung.ust_satz) || 0);
       const { error: uErr } = await supabase
         .from('rechnungen')
         .update({
@@ -312,11 +321,76 @@ export function RechnungDetailPage() {
     }
   }
 
+  /**
+   * Generiert die Rechnungs-PDF im Browser (pdf-lib) und lädt sie nach
+   * OneDrive hoch. Speichert den Pfad in rechnungen.pdf_url. Pfadstruktur:
+   *   Maja-Logistik/Rechnungen/{Jahr}/Re-{Jahr}_N.pdf
+   * "/" in der Rechnungsnummer wird durch "_" ersetzt, damit der
+   * Dateiname keine Pfad-Trenner enthält.
+   */
+  async function generierePdf() {
+    if (!rechnung) return;
+    setGeneratingPdf(true);
+    setError(null);
+    try {
+      const defaultSatz = Number(rechnung.ust_satz) || 0;
+      const pdfPositionen: RechnungPdfPosition[] = positionen.map((p, idx) => ({
+        position_nr: idx + 1,
+        bezeichnung: p.bezeichnung,
+        unterzeilen: p.unterzeilen,
+        menge: Number(p.menge),
+        einzelpreis: Number(p.einzelpreis),
+        gesamtpreis: Number(p.gesamtpreis),
+        ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
+      }));
+      // Fällig-Datum aus Auftraggeber-Zahlungsziel + Rechnungsdatum.
+      const zahlungsziel = rechnung.auftraggeber?.zahlungsziel_tage ?? null;
+      let faelligAm: string | null = null;
+      if (zahlungsziel != null && Number.isFinite(zahlungsziel) && rechnung.datum) {
+        const d = new Date(`${rechnung.datum}T12:00:00`);
+        d.setDate(d.getDate() + Number(zahlungsziel));
+        faelligAm = d.toISOString().slice(0, 10);
+      }
+      const blob = await generateRechnungPdf({
+        rechnungsnummer: rechnung.rechnungsnummer,
+        datum: rechnung.datum,
+        anrede: rechnung.anrede,
+        kundennummer: rechnung.kundennummer,
+        sachbearbeiter: rechnung.sachbearbeiter,
+        faelligAm,
+        empfaenger: {
+          firma:           rechnung.rechnungsadresse_firma   ?? rechnung.rechnungsadresse?.firma           ?? null,
+          ansprechpartner: rechnung.ansprechpartner          ?? rechnung.rechnungsadresse?.ansprechpartner ?? null,
+          strasse:         rechnung.rechnungsadresse_strasse ?? rechnung.rechnungsadresse?.strasse         ?? null,
+          plz_ort:         rechnung.rechnungsadresse_plz_ort ?? rechnung.rechnungsadresse?.plz_ort         ?? null,
+          land:            rechnung.rechnungsadresse_land    ?? rechnung.rechnungsadresse?.land            ?? null,
+        },
+        kundenUid: rechnung.auftraggeber?.kunden_uid ?? null,
+        zahlungszielTage: zahlungsziel,
+        ustSatzDefault: defaultSatz,
+        positionen: pdfPositionen,
+      });
+
+      const jahr = (rechnung.datum ?? '').slice(0, 4) || String(new Date().getFullYear());
+      const filename = rechnungPdfFilename(rechnung.rechnungsnummer);
+      const path = `Maja-Logistik/Rechnungen/${jahr}/${filename}`;
+      await uploadToOneDrive(path, blob);
+      const { error: uErr } = await supabase
+        .from('rechnungen').update({ pdf_url: path }).eq('id', rechnung.id);
+      if (uErr) throw uErr;
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'PDF-Generierung fehlgeschlagen');
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
+
   if (loading) return <Spinner label="Rechnung wird geladen …" />;
   if (error && !rechnung) {
     return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   }
-  if (!rechnung || !summen) return null;
+  if (!rechnung) return null;
 
   // Snapshot-Adresse hat Vorrang (so wie sie auf der Rechnung steht);
   // Legacy-FK ist Fallback für vor-Migration-041 angelegte Rechnungen.
@@ -516,13 +590,14 @@ export function RechnungDetailPage() {
         <PositionsTable
           positionen={positionen}
           readOnly={!editingPos}
+          defaultUstSatz={Number(rechnung.ust_satz) || 0}
           onChange={setPositionen}
         />
-        <div className="border-t border-maja-navy/10 pt-2">
-          <SumLine label="Netto" value={summen.netto} />
-          <SumLine label={`${Number(rechnung.ust_satz).toFixed(2)}% USt.`} value={summen.ust} />
-          <SumLine label="Brutto" value={summen.brutto} bold />
-        </div>
+        <SummenBlock
+          positionen={positionen}
+          defaultSatz={Number(rechnung.ust_satz) || 0}
+          prominent
+        />
       </section>
 
       {/* Notizen */}
@@ -539,7 +614,7 @@ export function RechnungDetailPage() {
         />
       </section>
 
-      {/* PDF-Bereich (Generierung folgt im nächsten Schritt) */}
+      {/* PDF-Bereich */}
       <section className="card space-y-2 p-5">
         <h2 className="text-base font-semibold text-maja-navy">PDF</h2>
         {rechnung.pdf_url ? (
@@ -554,14 +629,20 @@ export function RechnungDetailPage() {
               className="btn-secondary text-sm"
             >PDF herunterladen</a>
             <button
-              type="button" className="btn-primary text-sm" disabled
-              title="Wird im nächsten Schritt implementiert"
-            >PDF neu generieren</button>
+              type="button" className="btn-primary text-sm"
+              onClick={() => void generierePdf()}
+              disabled={generatingPdf}
+            >{generatingPdf ? 'Generiert …' : 'PDF neu generieren'}</button>
           </div>
         ) : (
-          <p className="text-sm text-maja-muted">
-            Noch keine PDF generiert. Die Generierung folgt im nächsten Schritt.
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-maja-muted">Noch keine PDF generiert.</p>
+            <button
+              type="button" className="btn-primary text-sm"
+              onClick={() => void generierePdf()}
+              disabled={generatingPdf}
+            >{generatingPdf ? 'Generiert …' : 'PDF generieren'}</button>
+          </div>
         )}
       </section>
 
@@ -640,14 +721,6 @@ function Field({
   );
 }
 
-function SumLine({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
-  return (
-    <div className={`flex items-center justify-between py-1 text-sm ${bold ? 'font-semibold text-maja-navy' : 'text-maja-ink'}`}>
-      <span>{label}</span>
-      <span className="tabular-nums">{formatEuro(value)}</span>
-    </div>
-  );
-}
 
 function BezahltDialog({
   initial, onCancel, onConfirm,

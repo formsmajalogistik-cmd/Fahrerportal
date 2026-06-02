@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
-import { formatDate, formatEuro } from '../../../lib/touren';
+import { formatDate } from '../../../lib/touren';
 import {
-  DEFAULT_RECHNUNGSFORMAT, auslagenRechnungsdatum, berechneSummen,
+  DEFAULT_RECHNUNGSFORMAT, auslagenRechnungsdatum, berechneSummenProUst,
   generatePositionenFromTouren, letzterWerktagVor, isoDate,
   type Rechnungsformat, type TourForRechnung, type TourenartReal,
 } from '../../../lib/rechnungsformat';
 import { PositionsTable } from './PositionsTable';
+import { SummenBlock } from './SummenBlock';
 import {
   emptyManuellePosition, newKey, type EditorPosition,
 } from './positionUtils';
@@ -424,8 +425,8 @@ export function RechnungNewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auftraggeber, format]);
 
-  const hauptSummen = useMemo(() => berechneSummen(haupt, ustSatz), [haupt, ustSatz]);
-  const auslagenSummen = useMemo(() => berechneSummen(auslagen, ustSatz), [auslagen, ustSatz]);
+  // Summen wandern in SummenBlock — die alten useMemos sind nicht mehr
+  // nötig, da der Block selbst pro Render aggregiert.
 
   /**
    * Frühestes Startdatum und spätestes Enddatum der geladenen Touren —
@@ -459,7 +460,8 @@ export function RechnungNewPage() {
       customNummer: string | null,
     ): Promise<{ ok: boolean; id?: string; error?: string }> {
       if (positionen.length === 0) return { ok: true };
-      const sum = berechneSummen(positionen, ustSatz);
+      // Brutto + USt-Summe mehrmonatig korrekt: pro USt-Satz aggregieren.
+      const sum = berechneSummenProUst(positionen, ustSatz);
       type Insert = Database['public']['Tables']['rechnungen']['Insert'];
       const insertPayload: Insert = {
         auftraggeber_id: auftraggeber!.id,
@@ -509,6 +511,7 @@ export function RechnungNewPage() {
         tour_id: p.tour_id,
         zusatz_id: p.zusatz_id,
         ist_manuell: p.ist_manuell,
+        ust_satz: p.ust_satz,
       }));
       const { error: pErr } = await supabase.from('rechnungspositionen').insert(rows);
       if (pErr) return { ok: false, error: pErr.message };
@@ -801,10 +804,8 @@ export function RechnungNewPage() {
               + Position hinzufügen
             </button>
           </div>
-          <PositionsTable positionen={haupt} onChange={setHaupt} />
-          <SummenLine label="Netto" value={hauptSummen.netto} />
-          <SummenLine label={`${ustSatz}% USt.`} value={hauptSummen.ust} />
-          <SummenLine label="Brutto" value={hauptSummen.brutto} bold />
+          <PositionsTable positionen={haupt} defaultUstSatz={ustSatz} onChange={setHaupt} />
+          <SummenBlock positionen={haupt} defaultSatz={ustSatz} prominent />
         </section>
       )}
 
@@ -821,10 +822,8 @@ export function RechnungNewPage() {
               + Position hinzufügen
             </button>
           </div>
-          <PositionsTable positionen={auslagen} onChange={setAuslagen} />
-          <SummenLine label="Netto" value={auslagenSummen.netto} />
-          <SummenLine label={`${ustSatz}% USt.`} value={auslagenSummen.ust} />
-          <SummenLine label="Brutto" value={auslagenSummen.brutto} bold />
+          <PositionsTable positionen={auslagen} defaultUstSatz={ustSatz} onChange={setAuslagen} />
+          <SummenBlock positionen={auslagen} defaultSatz={ustSatz} prominent />
         </section>
       )}
 
@@ -866,11 +865,3 @@ export function RechnungNewPage() {
   );
 }
 
-function SummenLine({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
-  return (
-    <div className={`flex items-center justify-between border-t border-maja-navy/10 py-2 text-sm ${bold ? 'font-semibold text-maja-navy' : 'text-maja-ink'}`}>
-      <span>{label}</span>
-      <span className="tabular-nums">{formatEuro(value)}</span>
-    </div>
-  );
-}

@@ -26,6 +26,7 @@ export function emptyManuellePosition(): EditorPosition {
     tour_id: null,
     zusatz_id: null,
     ist_manuell: true,
+    ust_satz: null,
   };
 }
 

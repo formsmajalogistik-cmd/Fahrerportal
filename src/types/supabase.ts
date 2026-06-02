@@ -750,6 +750,7 @@ export type Database = {
           tour_id: string | null;
           zusatz_id: string | null;
           ist_manuell: boolean;
+          ust_satz: number | null;
           created_at: string;
         };
         Insert: {
@@ -764,6 +765,7 @@ export type Database = {
           tour_id?: string | null;
           zusatz_id?: string | null;
           ist_manuell?: boolean;
+          ust_satz?: number | null;
           created_at?: string;
         };
         Update: {
@@ -778,6 +780,7 @@ export type Database = {
           tour_id?: string | null;
           zusatz_id?: string | null;
           ist_manuell?: boolean;
+          ust_satz?: number | null;
           created_at?: string;
         };
         Relationships: [

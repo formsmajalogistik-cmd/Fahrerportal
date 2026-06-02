@@ -9,6 +9,9 @@ import {
 interface Props {
   positionen: EditorPosition[];
   readOnly?: boolean;
+  /** Standard-USt-Satz der Rechnung — wird als Platzhalter angezeigt,
+   *  wenn die Position keinen eigenen Satz hat. */
+  defaultUstSatz?: number;
   onChange: (next: EditorPosition[]) => void;
 }
 
@@ -18,8 +21,21 @@ interface Props {
  * Plugin) — die Position-Nummern werden bei jedem onChange aus dem
  * Index neu vergeben.
  */
-export function PositionsTable({ positionen, readOnly, onChange }: Props) {
+export function PositionsTable({ positionen, readOnly, defaultUstSatz, onChange }: Props) {
   const dragKey = useRef<string | null>(null);
+
+  /** Parst die "USt %"-Eingabe — leeres Feld setzt null (= Standard). */
+  function parseUst(s: string): number | null {
+    const t = s.trim().replace(',', '.');
+    if (!t) return null;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Math.round(n * 100) / 100;
+  }
+  function formatUst(v: number | null | undefined): string {
+    if (v == null) return '';
+    return formatDecimal(Number(v));
+  }
 
   function patch(key: string, p: Partial<EditorPosition>) {
     onChange(positionen.map((row) => {
@@ -84,6 +100,7 @@ export function PositionsTable({ positionen, readOnly, onChange }: Props) {
             <th className="w-24 px-3 py-2 text-right font-semibold">Menge</th>
             <th className="w-28 px-3 py-2 text-right font-semibold">Einzelpreis</th>
             <th className="w-28 px-3 py-2 text-right font-semibold">Gesamt</th>
+            <th className="w-20 px-3 py-2 text-right font-semibold" title="USt-Satz dieser Position">USt %</th>
             {!readOnly && <th className="w-10 px-3 py-2"></th>}
           </tr>
         </thead>
@@ -176,6 +193,31 @@ export function PositionsTable({ positionen, readOnly, onChange }: Props) {
               </td>
               <td className="px-3 py-2 text-right font-medium tabular-nums">
                 {formatEuro(p.gesamtpreis)}
+              </td>
+              <td className="px-3 py-2 text-right">
+                {readOnly ? (
+                  p.ust_satz != null ? (
+                    <span className="tabular-nums font-semibold text-maja-accent">
+                      {formatDecimal(Number(p.ust_satz))} %
+                    </span>
+                  ) : (
+                    <span className="tabular-nums text-maja-muted">
+                      {defaultUstSatz != null ? `${formatDecimal(defaultUstSatz)} %` : '—'}
+                    </span>
+                  )
+                ) : (
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className={`input w-16 text-right tabular-nums ${
+                      p.ust_satz != null ? 'border-maja-accent font-semibold text-maja-accent' : ''
+                    }`}
+                    value={formatUst(p.ust_satz)}
+                    placeholder={defaultUstSatz != null ? `${formatDecimal(defaultUstSatz)}` : '19'}
+                    onChange={(e) => patch(p.key, { ust_satz: parseUst(e.target.value) })}
+                    title="Leer = Standard-USt-Satz der Rechnung"
+                  />
+                )}
               </td>
               {!readOnly && (
                 <td className="px-2 py-2">
