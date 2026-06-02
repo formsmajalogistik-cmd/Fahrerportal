@@ -9,6 +9,13 @@ interface AuthedUser {
 /**
  * Verifiziert den im Authorization-Header übergebenen Supabase-JWT und
  * lädt die Rolle aus app_users. Wirft, wenn der Token fehlt oder ungültig ist.
+ *
+ * Wichtig: für die Rollen-Abfrage wird der Token auch als
+ * Authorization-Header auf den Supabase-Client gesetzt — die
+ * app_users-RLS-Policy (`id = auth.uid() OR is_admin()`) hängt
+ * davon ab. Ohne diesen Schritt würde der SELECT als Anon laufen,
+ * keine Zeile zurückbekommen und der User würde fälschlich als
+ * "kein Admin" eingestuft.
  */
 export async function getAuthedUser(authHeader: string | null | undefined): Promise<AuthedUser> {
   if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
@@ -19,15 +26,26 @@ export async function getAuthedUser(authHeader: string | null | undefined): Prom
   const key = process.env.VITE_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY;
   if (!url || !key) throw new HttpError(500, 'Supabase-Server-Env fehlt');
 
-  const supa = createClient(url, key, { auth: { persistSession: false } });
-  const { data, error } = await supa.auth.getUser(token);
+  // Anon-Client zum Verifizieren des Tokens (auth.getUser kann nur
+  // gegen den anon-Endpoint laufen).
+  const verifier = createClient(url, key, { auth: { persistSession: false } });
+  const { data, error } = await verifier.auth.getUser(token);
   if (error || !data?.user) throw new HttpError(401, 'Token ungültig');
 
-  const { data: profile } = await supa
+  // JWT-aware Client für die Rollen-Abfrage — RLS sieht damit auth.uid()
+  // und lässt die self-read-Policy auf app_users durch.
+  const authed = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: profile, error: profileErr } = await authed
     .from('app_users')
     .select('role')
     .eq('id', data.user.id)
     .maybeSingle();
+  if (profileErr) {
+    console.warn('[getAuthedUser] role-Lookup fehlgeschlagen', profileErr.message);
+  }
 
   return {
     id: data.user.id,

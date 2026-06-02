@@ -56,11 +56,20 @@ export default async function handler(req: Req, res: Res) {
     const inline = asString(req.query?.inline) === '1';
 
     if (formularId) {
+      // Protokoll-/Formular-PDF: Pro-Resource-Auth über formular_id.
       await assertCanAccessPdfPath(user, token, formularId, path);
-    } else if (user.role !== 'admin') {
-      // Ohne formular_id darf nur Admin laden — Fahrer müssen die Resource
-      // verknüpfen, sonst hätten sie Zugriff auf jeden bekannten Pfad.
-      throw new HttpError(403, 'formular_id erforderlich');
+    } else if (user.role === 'admin') {
+      // Admin-Dokumente (z.B. Rechnungs-PDFs unter Maja-Logistik/Rechnungen/)
+      // dürfen ohne formular_id geladen werden — der Admin sieht ohnehin
+      // alles.
+    } else {
+      // Nicht-Admin ohne formular_id → kein Zugriff.
+      throw new HttpError(
+        403,
+        `Kein Zugriff (Rolle=${user.role ?? 'unbekannt'}). Bei Protokoll-PDFs `
+        + 'muss formular_id mitgegeben werden; Admin-Dokumente sind '
+        + 'Fahrern nicht zugänglich.',
+      );
     }
 
     const { bytes, contentType } = await downloadFile(path);
