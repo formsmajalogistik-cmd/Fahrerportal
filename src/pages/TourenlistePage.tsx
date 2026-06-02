@@ -48,6 +48,7 @@ interface TourZusatzLite {
   anzahl: number;
   betrag: number;
   notiz: string | null;
+  kennzeichen: string | null;
 }
 
 const PAGE_SIZE = 25;
@@ -172,7 +173,7 @@ export function TourenlistePage() {
           id, status, daten, created_at, pdf_paths,
           template:template_id (id, name, pdfs)
         ),
-        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
+        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
       `
       : `
         id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -230,6 +231,7 @@ export function TourenlistePage() {
                 anzahl: Number.isFinite(Number(z.anzahl)) ? Math.max(1, Math.round(Number(z.anzahl))) : 1,
                 betrag: Number(z.betrag ?? 0),
                 notiz: typeof z.notiz === 'string' ? z.notiz : null,
+                kennzeichen: typeof z.kennzeichen === 'string' ? z.kennzeichen : null,
               }))
             : [],
         } as TourRow;
@@ -806,7 +808,11 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
                   const gesamt = anzahl * betrag;
                   return (
                     <li key={z.id} className="flex flex-wrap items-baseline gap-x-1">
-                      <span className="font-medium">{z.kategorie}:</span>
+                      {z.kennzeichen && (
+                        <span className="font-semibold text-maja-navy">{z.kennzeichen}:</span>
+                      )}
+                      <span className="font-medium">{z.kategorie}</span>
+                      <span className="text-maja-muted">:</span>
                       {anzahl > 1 ? (
                         <span>
                           {anzahl} × {formatEuro(betrag)} = {formatEuro(gesamt)}

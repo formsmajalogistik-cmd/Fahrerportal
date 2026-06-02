@@ -322,6 +322,10 @@ export interface TourForRechnung {
     anzahl: number;
     betrag: number;
     notiz: string | null;
+    /** Bei ABA-/ABC-Touren das konkrete Kennzeichen (Hin oder Rück);
+     *  bei AB-Touren oder Altdaten = null → erstes Tour-Kennzeichen
+     *  als Fallback im Platzhalter. */
+    kennzeichen: string | null;
   }>;
 }
 
@@ -536,7 +540,15 @@ export function generatePositionenFromTouren(
         continue;
       }
 
-      const zph = { ...ph, kategorie: z.kategorie };
+      // Wenn der Zusatz einem konkreten Kennzeichen (Hin/Rück bei
+      // ABA/ABC) zugeordnet wurde, überschreibt das die Tour-Platzhalter
+      // — die Bezeichnung trägt dann z.B. "M-CC4783E" statt eines
+      // Default-Werts. Ohne Zuordnung bleibt das erste Tour-Kennzeichen.
+      const zph: Record<string, string> = { ...ph, kategorie: z.kategorie };
+      if (z.kennzeichen) {
+        zph.kennzeichen = z.kennzeichen;
+        zph.kennzeichen_hin = z.kennzeichen;
+      }
       // Auslagen-Template wird verwendet, wenn der Zusatz tatsächlich
       // auf der Auslagen-Rechnung landet — also nur bei
       // getrennte_auslagen_rechnung=true UND nicht-Touren-Kategorie.

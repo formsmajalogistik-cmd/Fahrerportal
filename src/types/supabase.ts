@@ -477,6 +477,7 @@ export type Database = {
           anzahl: number;
           betrag: number;
           notiz: string | null;
+          kennzeichen: string | null;
           created_at: string;
         };
         Insert: {
@@ -486,6 +487,7 @@ export type Database = {
           anzahl?: number;
           betrag: number;
           notiz?: string | null;
+          kennzeichen?: string | null;
           created_at?: string;
         };
         Update: {
@@ -495,6 +497,7 @@ export type Database = {
           anzahl?: number;
           betrag?: number;
           notiz?: string | null;
+          kennzeichen?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -648,7 +651,7 @@ export type Database = {
           ust_satz: number;
           ust_betrag: number;
           brutto_summe: number;
-          status: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
+          status: 'entwurf' | 'offen' | 'bezahlt';
           bezahlt_am: string | null;
           pdf_url: string | null;
           notizen: string | null;
@@ -676,7 +679,7 @@ export type Database = {
           ust_satz?: number;
           ust_betrag?: number;
           brutto_summe?: number;
-          status?: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
+          status?: 'entwurf' | 'offen' | 'bezahlt';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
           notizen?: string | null;
@@ -704,7 +707,7 @@ export type Database = {
           ust_satz?: number;
           ust_betrag?: number;
           brutto_summe?: number;
-          status?: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
+          status?: 'entwurf' | 'offen' | 'bezahlt';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
           notizen?: string | null;

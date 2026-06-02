@@ -238,7 +238,7 @@ export function RechnungNewPage() {
         startdatum, enddatum, tourenart, kennzeichen,
         kundenname, fin, sondervereinbarung, verguetung,
         rechnungsdatum, rechnungsdatum_abweichend, status,
-        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
+        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
       `)
       .eq('auftraggeber_id', auftraggeber.id)
       .or(orFilter)
@@ -258,7 +258,7 @@ export function RechnungNewPage() {
       sondervereinbarung: string | null; verguetung: number | null;
       rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
       status: string | null;
-      zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null }>;
+      zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
     };
     const list: TourForRechnung[] = ((data as unknown as RawTour[]) ?? []).map((t) => ({
       id: t.id,
@@ -325,7 +325,6 @@ export function RechnungNewPage() {
         .select('id, datum')
         .eq('auftraggeber_id', auftraggeber.id)
         .eq('ist_auslagen_rechnung', false)
-        .neq('status', 'storniert')
         .order('datum', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(1)
@@ -361,7 +360,7 @@ export function RechnungNewPage() {
           startdatum, enddatum, tourenart, kennzeichen,
           kundenname, fin, sondervereinbarung, verguetung,
           rechnungsdatum, rechnungsdatum_abweichend,
-          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz)
+          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
         .eq('auftraggeber_id', auftraggeber.id)
         .or(orFilter)
@@ -375,7 +374,7 @@ export function RechnungNewPage() {
         kundenname: string | null; fin: string | null;
         sondervereinbarung: string | null; verguetung: number | null;
         rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
-        zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null }>;
+        zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
       };
       const list: TourForRechnung[] = ((data as unknown as RawTour[]) ?? []).map((t) => ({
         id: t.id, tour_id: t.tour_id,

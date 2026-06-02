@@ -316,11 +316,15 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const [barauslagenInput, setBarauslagenInput] = useState('');
   const [honorarInput, setHonorarInput] = useState('');
 
-  // Zusatz-Eingabe
+  // Zusatz-Eingabe. Bei ABA/ABC-Touren kann pro Zusatz ein konkretes
+  // Kennzeichen (Hin oder Rück) gewählt werden — wird in tour_zusaetze
+  // gespeichert und in der Rechnungsgenerierung als {kennzeichen}-
+  // Platzhalter verwendet.
   const [neueKategorie, setNeueKategorie] = useState('');
   const [neueAnzahl, setNeueAnzahl]       = useState<string>('1');
   const [neuerBetrag, setNeuerBetrag]     = useState('');
   const [neueNotiz, setNeueNotiz]         = useState('');
+  const [neuesKennzeichen, setNeuesKennzeichen] = useState('');
   const [addingZusatz, setAddingZusatz] = useState(false);
 
   const load = useCallback(async () => {
@@ -719,6 +723,22 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     }
     const anzahlNum = parseInt(neueAnzahl, 10);
     const anzahl = Number.isFinite(anzahlNum) && anzahlNum >= 1 ? anzahlNum : 1;
+    // Bei ABA/ABC-Touren ist das Kennzeichen-Feld sichtbar — und Pflicht,
+    // damit der Admin nicht versehentlich ohne Zuordnung speichert. Bei
+    // AB-Touren wird automatisch das einzige Kennzeichen genommen (oder
+    // NULL, falls keins erfasst ist).
+    const twoSlots = tour.tourenart === 'ABA' || tour.tourenart === 'ABC';
+    let kennzeichen: string | null = null;
+    if (twoSlots) {
+      const picked = neuesKennzeichen.trim();
+      if (!picked) {
+        setStatusMsg({ kind: 'err', text: 'Bitte das Kennzeichen wählen.' });
+        return;
+      }
+      kennzeichen = picked;
+    } else {
+      kennzeichen = (tour.kennzeichen?.[0]?.trim() || null);
+    }
     setAddingZusatz(true);
     const { data, error: err } = await supabase
       .from('tour_zusaetze')
@@ -728,6 +748,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
         anzahl,
         betrag,
         notiz: neueNotiz.trim() || null,
+        kennzeichen,
       })
       .select('*')
       .single();
@@ -738,6 +759,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     setNeueAnzahl('1');
     setNeuerBetrag('');
     setNeueNotiz('');
+    setNeuesKennzeichen('');
     setStatusMsg(null);
     onChanged();
   }
@@ -929,9 +951,42 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           </span>
         </div>
 
-        {isAdmin && (
+        {isAdmin && (() => {
+          // Bei ABA/ABC sind zwei Kennzeichen möglich; der Admin wählt
+          // pro Zusatz das passende. AB-Touren ohne Wahl-UI bleiben
+          // visuell wie bisher.
+          const twoSlots = tour.tourenart === 'ABA' || tour.tourenart === 'ABC';
+          const kennzeichenOpts = (tour.kennzeichen ?? []).filter((k) => k.trim());
+          const labels = twoSlots ? abschnittLabels(tour) : null;
+          const colsClass = twoSlots
+            ? 'sm:grid-cols-[8rem_1fr_5rem_8rem_1fr_auto]'
+            : 'sm:grid-cols-[1fr_5rem_8rem_1fr_auto]';
+          return (
           <div className="card mb-3 space-y-3 p-4">
-            <div className="grid gap-2 sm:grid-cols-[1fr_5rem_8rem_1fr_auto] sm:items-end">
+            <div className={`grid gap-2 ${colsClass} sm:items-end`}>
+              {twoSlots && (
+                <div>
+                  <label htmlFor="z-kz" className="label">Kennzeichen</label>
+                  <select
+                    id="z-kz"
+                    className="input"
+                    value={neuesKennzeichen}
+                    onChange={(e) => setNeuesKennzeichen(e.target.value)}
+                  >
+                    <option value="">— wählen —</option>
+                    {kennzeichenOpts[0] && (
+                      <option value={kennzeichenOpts[0]}>
+                        {kennzeichenOpts[0]} ({labels?.ab.short ?? 'Hin'})
+                      </option>
+                    )}
+                    {kennzeichenOpts[1] && (
+                      <option value={kennzeichenOpts[1]}>
+                        {kennzeichenOpts[1]} ({labels?.bc.short ?? 'Rück'})
+                      </option>
+                    )}
+                  </select>
+                </div>
+              )}
               <div>
                 <label htmlFor="z-kat" className="label">Kategorie</label>
                 <select
@@ -982,7 +1037,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                 type="button"
                 className="btn-primary"
                 onClick={() => void handleAddZusatz()}
-                disabled={addingZusatz || !neueKategorie || !neuerBetrag}
+                disabled={addingZusatz || !neueKategorie || !neuerBetrag || (twoSlots && !neuesKennzeichen)}
               >
                 {addingZusatz ? '…' : '+ Hinzufügen'}
               </button>
@@ -1005,7 +1060,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
               ))}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {(zusaetze ?? []).length === 0 ? (
           <p className="text-sm text-maja-muted">Noch keine Zusätze erfasst.</p>
@@ -1020,8 +1076,16 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                   <li key={z.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
                     <div className="min-w-0 flex-1">
                       <div className="text-maja-ink">
+                        {z.kennzeichen && (
+                          <>
+                            <span className="rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                              {z.kennzeichen}
+                            </span>
+                            <span className="text-maja-muted"> — </span>
+                          </>
+                        )}
                         <span className="font-medium">{z.kategorie}</span>
-                        <span className="text-maja-muted"> — </span>
+                        <span className="text-maja-muted">: </span>
                         {anzahl > 1 ? (
                           <>
                             {anzahl} × {formatEuro(betrag)} = <span className="font-semibold">{formatEuro(gesamt)}</span>

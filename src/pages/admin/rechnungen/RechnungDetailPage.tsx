@@ -23,6 +23,43 @@ interface RechnungFull extends Rechnung {
 
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 
+/**
+ * Editierbare Stammdaten-Snapshot-Felder. Werden initial aus rechnung
+ * gefüllt und beim "Stammdaten speichern" als Update auf die Rechnung
+ * geschrieben. Snapshot-Spalten sind absichtlich frei wählbar — dem
+ * Buchhalter müssen nachträgliche Korrekturen offenstehen.
+ */
+interface KopfDraft {
+  rechnungsnummer: string;
+  datum: string;
+  anrede: string;
+  kundennummer: string;
+  sachbearbeiter: string;
+  ustSatz: string;
+  firma: string;
+  ansprechpartner: string;
+  strasse: string;
+  plz_ort: string;
+  land: string;
+}
+
+function draftFromRechnung(r: RechnungFull): KopfDraft {
+  const fallback = r.rechnungsadresse;
+  return {
+    rechnungsnummer: r.rechnungsnummer,
+    datum: r.datum,
+    anrede: r.anrede ?? '',
+    kundennummer: r.kundennummer ?? '',
+    sachbearbeiter: r.sachbearbeiter ?? '',
+    ustSatz: String(Number(r.ust_satz)),
+    firma:           r.rechnungsadresse_firma   ?? fallback?.firma           ?? '',
+    ansprechpartner: r.ansprechpartner          ?? fallback?.ansprechpartner ?? '',
+    strasse:         r.rechnungsadresse_strasse ?? fallback?.strasse         ?? '',
+    plz_ort:         r.rechnungsadresse_plz_ort ?? fallback?.plz_ort         ?? '',
+    land:            r.rechnungsadresse_land    ?? fallback?.land            ?? '',
+  };
+}
+
 export function RechnungDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -31,11 +68,11 @@ export function RechnungDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [editing, setEditing] = useState(false);
-  const [editConfirmOpen, setEditConfirmOpen] = useState(false);
+  const [editingPos, setEditingPos] = useState(false);
+  const [posEditConfirmOpen, setPosEditConfirmOpen] = useState(false);
   const [savingPositions, setSavingPositions] = useState(false);
 
-  // Notizen wird unabhängig vom edit-Modus gespeichert (Auto-Save bei Blur).
+  // Notizen: Auto-Save bei Blur.
   const [notizen, setNotizen] = useState('');
   const [savingNotizen, setSavingNotizen] = useState(false);
 
@@ -43,7 +80,15 @@ export function RechnungDetailPage() {
   const [statusBusy, setStatusBusy] = useState(false);
   const [bezahltPicker, setBezahltPicker] = useState(false);
   const [bezahltAm, setBezahltAm] = useState<string>(todayIso());
-  const [stornoConfirm, setStornoConfirm] = useState(false);
+
+  // Stammdaten-Editor
+  const [editingKopf, setEditingKopf] = useState(false);
+  const [kopfDraft, setKopfDraft] = useState<KopfDraft | null>(null);
+  const [savingKopf, setSavingKopf] = useState(false);
+
+  // Löschen
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -73,6 +118,7 @@ export function RechnungDetailPage() {
     const r = rRes.data as unknown as RechnungFull;
     setRechnung(r);
     setNotizen(r.notizen ?? '');
+    setKopfDraft(draftFromRechnung(r));
     const rows = (pRes.data ?? []) as Rechnungsposition[];
     setPositionen(rows.map((p) => ({
       key: p.id,
@@ -119,6 +165,64 @@ export function RechnungDetailPage() {
     if (err) setError(err.message);
   }
 
+  async function speichereKopf() {
+    if (!rechnung || !kopfDraft) return;
+    const draft = kopfDraft;
+    if (!draft.rechnungsnummer.trim()) {
+      setError('Rechnungsnummer darf nicht leer sein.');
+      return;
+    }
+    if (!draft.datum) {
+      setError('Rechnungsdatum ist Pflicht.');
+      return;
+    }
+    const ustNum = Number(draft.ustSatz.replace(',', '.'));
+    if (!Number.isFinite(ustNum) || ustNum < 0) {
+      setError('USt-Satz ist ungültig.');
+      return;
+    }
+    setSavingKopf(true);
+    setError(null);
+    try {
+      // Bei USt-Änderung neue Summen mitschreiben (Netto bleibt gleich,
+      // USt-Betrag und Brutto werden neu berechnet).
+      const sum = berechneSummen(positionen, ustNum);
+      const { error: err } = await supabase
+        .from('rechnungen')
+        .update({
+          rechnungsnummer: draft.rechnungsnummer.trim(),
+          datum: draft.datum,
+          anrede: draft.anrede || null,
+          kundennummer: draft.kundennummer || null,
+          sachbearbeiter: draft.sachbearbeiter || null,
+          ust_satz: ustNum,
+          ust_betrag: sum.ust,
+          brutto_summe: sum.brutto,
+          netto_summe: sum.netto,
+          rechnungsadresse_firma:   draft.firma           || null,
+          ansprechpartner:          draft.ansprechpartner || null,
+          rechnungsadresse_strasse: draft.strasse         || null,
+          rechnungsadresse_plz_ort: draft.plz_ort         || null,
+          rechnungsadresse_land:    draft.land            || null,
+        })
+        .eq('id', rechnung.id);
+      if (err) {
+        const msg = err.message ?? String(err);
+        const isDup = /duplicate key|unique|23505/i.test(msg)
+          && /rechnungsnummer/i.test(msg);
+        throw new Error(isDup
+          ? `Rechnungsnummer „${draft.rechnungsnummer.trim()}" existiert bereits.`
+          : msg);
+      }
+      setEditingKopf(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+    } finally {
+      setSavingKopf(false);
+    }
+  }
+
   async function speicherePositionen() {
     if (!rechnung) return;
     setSavingPositions(true);
@@ -146,7 +250,6 @@ export function RechnungDetailPage() {
         const { error: insErr } = await supabase.from('rechnungspositionen').insert(rows);
         if (insErr) throw insErr;
       }
-      // Summen auf der Rechnung mit aktualisieren.
       const sum = berechneSummen(positionen, Number(rechnung.ust_satz) || 0);
       const { error: uErr } = await supabase
         .from('rechnungen')
@@ -157,7 +260,7 @@ export function RechnungDetailPage() {
         })
         .eq('id', rechnung.id);
       if (uErr) throw uErr;
-      setEditing(false);
+      setEditingPos(false);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -166,16 +269,47 @@ export function RechnungDetailPage() {
     }
   }
 
-  function startEditing() {
+  function startEditingPositions() {
     if (!rechnung) return;
-    // Eine bereits bezahlte Rechnung sollte normalerweise nicht mehr
-    // editiert werden — wir warnen, lassen es aber zu (Buchhaltung
-    // muss manche Korrekturen nachträglich machen können).
     if (rechnung.status === 'bezahlt') {
-      setEditConfirmOpen(true);
+      setPosEditConfirmOpen(true);
       return;
     }
-    setEditing(true);
+    setEditingPos(true);
+  }
+
+  /**
+   * Löscht die Rechnung endgültig. Positions-CASCADE räumt die
+   * Positionen mit.
+   *
+   * PDF-Cleanup in OneDrive: Der bestehende /api/delete-pdf-Endpoint
+   * arbeitet mit einer formular_id-basierten Auth (Pro-Resource-Check
+   * für Formular-PDFs). Für Rechnungs-PDFs gibt es noch keine passende
+   * Auth-Route — diese wird zusammen mit der PDF-Generierung im
+   * nächsten Schritt nachgereicht. Bis dahin loggen wir die karteileiche-
+   * Warnung, damit der Admin bei Bedarf manuell aufräumen kann.
+   */
+  async function loescheRechnung() {
+    if (!rechnung) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      if (rechnung.pdf_url) {
+        console.warn(
+          '[Rechnung löschen] OneDrive-PDF bleibt als Karteileiche, bis '
+          + 'der dedizierte Delete-Endpoint mit PDF-Generierung kommt:',
+          rechnung.pdf_url,
+        );
+      }
+      const { error: err } = await supabase
+        .from('rechnungen').delete().eq('id', rechnung.id);
+      if (err) throw err;
+      navigate('/rechnungen');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen');
+      setDeleting(false);
+      setDeleteConfirm(false);
+    }
   }
 
   if (loading) return <Spinner label="Rechnung wird geladen …" />;
@@ -195,7 +329,6 @@ export function RechnungDetailPage() {
   };
   const hasAdresse = !!(adr.firma || adr.strasse || adr.plz_ort);
   const status: RechnungStatus = rechnung.status;
-  const isStorniert = status === 'storniert';
 
   return (
     <div className="space-y-6">
@@ -224,8 +357,7 @@ export function RechnungDetailPage() {
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
 
-      {/* Status-Aktionen — Flow: Entwurf → Offen → Bezahlt (+Storniert).
-          Status ist in beide Richtungen änderbar. */}
+      {/* Status-Aktionen — Flow: Entwurf → Offen → Bezahlt. */}
       <section className="card flex flex-wrap items-center gap-2 p-4">
         {status === 'entwurf' && (
           <button
@@ -255,65 +387,100 @@ export function RechnungDetailPage() {
             >Zurück auf offen setzen</button>
           </>
         )}
-        {status === 'storniert' && (
-          <>
-            <span className="text-sm text-red-700">Diese Rechnung ist storniert.</span>
-            <button
-              type="button" className="btn-secondary text-sm"
-              disabled={statusBusy}
-              onClick={() => void patchStatus({ status: 'offen' })}
-            >Stornierung aufheben</button>
-          </>
-        )}
         <span className="flex-1" />
-        {status !== 'storniert' && (
-          <button
-            type="button"
-            className="text-sm font-medium text-red-600 hover:underline"
-            disabled={statusBusy}
-            onClick={() => setStornoConfirm(true)}
-          >
-            Stornieren
-          </button>
-        )}
       </section>
 
-      {/* Adresse + Empfänger */}
-      <section className="card grid gap-4 p-5 sm:grid-cols-2">
-        <div>
-          <h3 className="text-sm font-semibold text-maja-navy">Rechnungsadresse</h3>
-          {hasAdresse ? (
-            <address className="mt-1 not-italic text-sm text-maja-ink">
-              {adr.firma && <div className="font-medium">{adr.firma}</div>}
-              {adr.ansprechpartner && <div>{adr.ansprechpartner}</div>}
-              {adr.strasse && <div>{adr.strasse}</div>}
-              {adr.plz_ort && <div>{adr.plz_ort}</div>}
-              {adr.land && <div className="text-maja-muted">{adr.land}</div>}
-            </address>
+      {/* Stammdaten — editierbar */}
+      <section className="card space-y-3 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-maja-navy">Stammdaten</h2>
+          {!editingKopf ? (
+            <button
+              type="button" className="btn-secondary text-sm"
+              onClick={() => { setKopfDraft(draftFromRechnung(rechnung)); setEditingKopf(true); }}
+            >Stammdaten bearbeiten</button>
           ) : (
-            <p className="mt-1 text-xs text-maja-muted">Keine Rechnungsadresse hinterlegt.</p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button" className="btn-primary text-sm"
+                onClick={() => void speichereKopf()}
+                disabled={savingKopf}
+              >{savingKopf ? 'Speichert …' : 'Speichern'}</button>
+              <button
+                type="button" className="btn-secondary text-sm"
+                onClick={() => { setEditingKopf(false); setKopfDraft(draftFromRechnung(rechnung)); }}
+                disabled={savingKopf}
+              >Abbrechen</button>
+            </div>
           )}
         </div>
-        <div className="space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-maja-navy">Anrede</h3>
-            <p className="mt-1 text-sm text-maja-ink">{rechnung.anrede || '—'}</p>
+
+        {!editingKopf ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-semibold text-maja-navy">Rechnungsadresse</h3>
+              {hasAdresse ? (
+                <address className="mt-1 not-italic text-sm text-maja-ink">
+                  {adr.firma && <div className="font-medium">{adr.firma}</div>}
+                  {adr.ansprechpartner && <div>{adr.ansprechpartner}</div>}
+                  {adr.strasse && <div>{adr.strasse}</div>}
+                  {adr.plz_ort && <div>{adr.plz_ort}</div>}
+                  {adr.land && <div className="text-maja-muted">{adr.land}</div>}
+                </address>
+              ) : (
+                <p className="mt-1 text-xs text-maja-muted">Keine Rechnungsadresse hinterlegt.</p>
+              )}
+            </div>
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-maja-navy">Anrede</h3>
+                <p className="mt-1 text-sm text-maja-ink">{rechnung.anrede || '—'}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">Kundennummer</h4>
+                  <p className="text-sm text-maja-ink">{rechnung.kundennummer || '—'}</p>
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">Sachbearbeiter</h4>
+                  <p className="text-sm text-maja-ink">{rechnung.sachbearbeiter || '—'}</p>
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">USt-Satz</h4>
+                  <p className="text-sm text-maja-ink">{Number(rechnung.ust_satz).toFixed(2)} %</p>
+                </div>
+              </div>
+            </div>
           </div>
+        ) : kopfDraft && (
           <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">Kundennummer</h4>
-              <p className="text-sm text-maja-ink">{rechnung.kundennummer || '—'}</p>
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">Sachbearbeiter</h4>
-              <p className="text-sm text-maja-ink">{rechnung.sachbearbeiter || '—'}</p>
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">USt-Satz</h4>
-              <p className="text-sm text-maja-ink">{Number(rechnung.ust_satz).toFixed(2)} %</p>
+            <Field label="Rechnungsnummer" value={kopfDraft.rechnungsnummer}
+                   onChange={(v) => setKopfDraft({ ...kopfDraft, rechnungsnummer: v })} />
+            <Field label="Rechnungsdatum" type="date" value={kopfDraft.datum}
+                   onChange={(v) => setKopfDraft({ ...kopfDraft, datum: v })} />
+            <Field label="Anrede" value={kopfDraft.anrede}
+                   onChange={(v) => setKopfDraft({ ...kopfDraft, anrede: v })} />
+            <Field label="USt-Satz (%)" value={kopfDraft.ustSatz}
+                   onChange={(v) => setKopfDraft({ ...kopfDraft, ustSatz: v })} />
+            <Field label="Kundennummer" value={kopfDraft.kundennummer}
+                   onChange={(v) => setKopfDraft({ ...kopfDraft, kundennummer: v })} />
+            <Field label="Sachbearbeiter" value={kopfDraft.sachbearbeiter}
+                   onChange={(v) => setKopfDraft({ ...kopfDraft, sachbearbeiter: v })} />
+            <div className="sm:col-span-2 grid gap-3 rounded-lg bg-maja-light/40 p-3 sm:grid-cols-2">
+              <h3 className="sm:col-span-2 text-sm font-semibold text-maja-navy">Rechnungsadresse</h3>
+              <Field label="Firma" value={kopfDraft.firma}
+                     onChange={(v) => setKopfDraft({ ...kopfDraft, firma: v })} />
+              <Field label="Ansprechpartner" value={kopfDraft.ansprechpartner}
+                     onChange={(v) => setKopfDraft({ ...kopfDraft, ansprechpartner: v })} />
+              <Field label="Straße" value={kopfDraft.strasse}
+                     onChange={(v) => setKopfDraft({ ...kopfDraft, strasse: v })} />
+              <Field label="PLZ / Ort" value={kopfDraft.plz_ort}
+                     onChange={(v) => setKopfDraft({ ...kopfDraft, plz_ort: v })} />
+              <Field label="Land" value={kopfDraft.land}
+                     onChange={(v) => setKopfDraft({ ...kopfDraft, land: v })} />
             </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* Positionen */}
@@ -321,7 +488,7 @@ export function RechnungDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-maja-navy">Positionen</h2>
           <div className="flex items-center gap-2">
-            {editing ? (
+            {editingPos ? (
               <>
                 <button
                   type="button" className="btn-secondary text-sm"
@@ -334,23 +501,21 @@ export function RechnungDetailPage() {
                 >{savingPositions ? 'Speichert …' : 'Speichern'}</button>
                 <button
                   type="button" className="btn-secondary text-sm"
-                  onClick={() => { setEditing(false); void load(); }}
+                  onClick={() => { setEditingPos(false); void load(); }}
                   disabled={savingPositions}
                 >Abbrechen</button>
               </>
             ) : (
-              !isStorniert && (
-                <button
-                  type="button" className="btn-secondary text-sm"
-                  onClick={startEditing}
-                >Bearbeiten</button>
-              )
+              <button
+                type="button" className="btn-secondary text-sm"
+                onClick={startEditingPositions}
+              >Bearbeiten</button>
             )}
           </div>
         </div>
         <PositionsTable
           positionen={positionen}
-          readOnly={!editing}
+          readOnly={!editingPos}
           onChange={setPositionen}
         />
         <div className="border-t border-maja-navy/10 pt-2">
@@ -400,8 +565,20 @@ export function RechnungDetailPage() {
         )}
       </section>
 
+      {/* Löschen — bei jedem Status verfügbar */}
+      <section className="flex justify-start pt-2">
+        <button
+          type="button"
+          onClick={() => setDeleteConfirm(true)}
+          disabled={deleting}
+          className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+        >
+          {deleting ? 'Lösche …' : 'Rechnung löschen'}
+        </button>
+      </section>
+
       {/* Confirm-Dialoge */}
-      {editConfirmOpen && (
+      {posEditConfirmOpen && (
         <ConfirmDialog
           title="Rechnung ist bereits bezahlt"
           message={
@@ -410,8 +587,8 @@ export function RechnungDetailPage() {
               sollten in der Buchhaltung nachvollziehbar bleiben.</>
           }
           confirmLabel="Trotzdem bearbeiten"
-          onConfirm={async () => { setEditing(true); }}
-          onClose={() => setEditConfirmOpen(false)}
+          onConfirm={async () => { setEditingPos(true); }}
+          onClose={() => setPosEditConfirmOpen(false)}
         />
       )}
       {bezahltPicker && (
@@ -425,16 +602,40 @@ export function RechnungDetailPage() {
           }}
         />
       )}
-      {stornoConfirm && (
+      {deleteConfirm && (
         <ConfirmDialog
-          title="Rechnung stornieren?"
-          message={<>Die Rechnung wird als <strong>storniert</strong> markiert. Das ist nachträglich nicht ohne weiteres rückgängig.</>}
-          confirmLabel="Stornieren"
+          title="Rechnung löschen?"
+          message={
+            <>Rechnung <strong>{rechnung.rechnungsnummer}</strong> unwiderruflich löschen?
+              Alle Positionen werden ebenfalls gelöscht.</>
+          }
+          confirmLabel="Löschen"
           destructive
-          onConfirm={async () => { await patchStatus({ status: 'storniert' }); }}
-          onClose={() => setStornoConfirm(false)}
+          onConfirm={async () => { await loescheRechnung(); }}
+          onClose={() => setDeleteConfirm(false)}
         />
       )}
+    </div>
+  );
+}
+
+function Field({
+  label, value, type = 'text', onChange,
+}: {
+  label: string;
+  value: string;
+  type?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input
+        className="input"
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

@@ -4,5 +4,4 @@ export const RECHNUNG_STATUS_LABEL: Record<RechnungStatus, string> = {
   entwurf: 'Entwurf',
   offen: 'Offen',
   bezahlt: 'Bezahlt',
-  storniert: 'Storniert',
 };

@@ -14,7 +14,7 @@ interface RechnungRow extends Rechnung {
 
 const PAGE_SIZE = 25;
 const STATUS_ORDER: Array<RechnungStatus | 'alle'> = [
-  'alle', 'entwurf', 'offen', 'bezahlt', 'storniert',
+  'alle', 'entwurf', 'offen', 'bezahlt',
 ];
 
 export function RechnungenListPage() {
