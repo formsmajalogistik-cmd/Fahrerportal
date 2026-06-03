@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { XIcon } from '../../components/icons';
+import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import {
   abschnittLabels, computeTourStatus, formatDate, formatKm, hasTwoProtokollSlots,
   tourTitel,
@@ -12,6 +13,14 @@ import type {
   AppUser, Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../../types/db';
 import type { Database } from '../../types/supabase';
+
+interface RouteQueueItem {
+  tourId: string;
+  origin: string;
+  destination: string;
+  field: 'km_hin' | 'km_rueck';
+  title: string;
+}
 
 type TourInsert = Database['public']['Tables']['touren']['Insert'];
 type TourUpdate = Database['public']['Tables']['touren']['Update'];
@@ -46,8 +55,27 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
   const [error, setError] = useState<string | null>(null);
   /** Bei ABA/ABC mit zwei freien Slots: Tour, deren Abschnitt gerade gewählt wird. */
   const [abschnittPick, setAbschnittPick] = useState<TourRow | null>(null);
+  /**
+   * Queue für die automatische Routenberechnung nach erfolgreicher
+   * Verknüpfung. Wird vom RouteSelectorDialog der Reihe nach abgearbeitet.
+   * Sobald die Queue leer ist UND eine Verknüpfung gespeichert war,
+   * rufen wir onLinked auf und schließen den Dialog (siehe finalize-Effekt).
+   */
+  const [routeQueue, setRouteQueue] = useState<RouteQueueItem[]>([]);
+  const pendingFilledRef = useRef<string[] | null>(null);
 
   const summary = useMemo(() => summarizeEingang(formular), [formular]);
+
+  useEffect(() => {
+    // Finalisiert die Post-Link-Routenphase: sobald die Queue leer ist
+    // und wir eine ausstehende Verknüpfung haben, geben wir die ge-
+    // füllten Felder an den Aufrufer (Toast + Reload).
+    if (routeQueue.length === 0 && pendingFilledRef.current !== null) {
+      const filled = pendingFilledRef.current;
+      pendingFilledRef.current = null;
+      onLinked(filled);
+    }
+  }, [routeQueue, onLinked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,7 +193,42 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
       .eq('id', tour.id);
     setLinking(false);
     if (err) { setError(err.message); return; }
-    onLinked(filled);
+    // Resultierende Adressen nach dem Update bestimmen — entweder
+    // war der Wert schon auf der Tour, oder er kam gerade aus dem
+    // Patch. Auto-Routenberechnung nur, wenn beide Enden für die
+    // jeweilige Strecke ausgefüllt sind.
+    const finalStart = (patch.adresse_start as string | null | undefined) ?? tour.adresse_start ?? null;
+    const finalZiel  = (patch.adresse_ziel  as string | null | undefined) ?? tour.adresse_ziel  ?? null;
+    const finalRueck = (patch.adresse_rueckfuehrung as string | null | undefined)
+      ?? tour.adresse_rueckfuehrung ?? null;
+    const queue: RouteQueueItem[] = [];
+    if (abschnitt === 'bc') {
+      if (finalZiel && finalRueck) {
+        queue.push({
+          tourId: tour.id,
+          origin: finalZiel,
+          destination: finalRueck,
+          field: 'km_rueck',
+          title: 'Routen für Rück-Strecke',
+        });
+      }
+    } else {
+      if (finalStart && finalZiel) {
+        queue.push({
+          tourId: tour.id,
+          origin: finalStart,
+          destination: finalZiel,
+          field: 'km_hin',
+          title: 'Routen für Hin-Strecke',
+        });
+      }
+    }
+    if (queue.length === 0) {
+      onLinked(filled);
+    } else {
+      pendingFilledRef.current = filled;
+      setRouteQueue(queue);
+    }
   }
 
   /**
@@ -190,18 +253,38 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
     setLinking(true);
     setError(null);
     const payload = buildTourPayload(summary, formular.id);
-    const { error: err } = await supabase.from('touren').insert(payload);
+    // id zurückholen, damit wir bei vorhandenen Adressen anschließend
+    // die Auto-Routenberechnung starten können.
+    const { data: inserted, error: err } = await supabase
+      .from('touren').insert(payload).select('id').single();
     setLinking(false);
     if (err) { setError(err.message); return; }
     // Bei neuer Tour werden ALLE Felder direkt aus dem Eingang gesetzt.
-    onLinked([
+    const filled = [
       summary.fin && 'FIN',
       summary.kennzeichen && 'Kennzeichen',
       summary.adresseUebernahme && 'Adresse Übernahme',
       summary.adresseUebergabe && 'Adresse Übergabe',
       summary.kundenname && 'Kundenname',
       (summary.kontaktName || summary.kontaktTelefon || summary.kontaktEmail) && 'Kontakt vor Ort',
-    ].filter((s): s is string => !!s));
+    ].filter((s): s is string => !!s);
+    const queue: RouteQueueItem[] = [];
+    const tourId = inserted?.id;
+    if (tourId && summary.adresseUebernahme && summary.adresseUebergabe) {
+      queue.push({
+        tourId,
+        origin: summary.adresseUebernahme,
+        destination: summary.adresseUebergabe,
+        field: 'km_hin',
+        title: 'Routen für Hin-Strecke',
+      });
+    }
+    if (queue.length === 0) {
+      onLinked(filled);
+    } else {
+      pendingFilledRef.current = filled;
+      setRouteQueue(queue);
+    }
   }
 
   return (
@@ -353,6 +436,32 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
           }}
         />
       )}
+
+      {routeQueue.length > 0 && (() => {
+        const item = routeQueue[0];
+        const advance = () => setRouteQueue((q) => q.slice(1));
+        return (
+          <RouteSelectorDialog
+            title={item.title}
+            origin={item.origin}
+            destination={item.destination}
+            onClose={advance}
+            onApply={async (km) => {
+              const updatePatch: TourUpdate = item.field === 'km_rueck'
+                ? { km_rueck: km }
+                : { km_hin: km };
+              const { error: updErr } = await supabase
+                .from('touren')
+                .update(updatePatch)
+                .eq('id', item.tourId);
+              if (updErr) {
+                console.warn('[EingangLinkDialog] km-Update fehlgeschlagen', updErr);
+              }
+              advance();
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

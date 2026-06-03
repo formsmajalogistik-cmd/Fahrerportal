@@ -460,6 +460,30 @@ export type Database = {
         };
         Relationships: [];
       };
+      routen_cache: {
+        Row: {
+          id: string;
+          origin_norm: string;
+          destination_norm: string;
+          routes: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          origin_norm: string;
+          destination_norm: string;
+          routes: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          origin_norm?: string;
+          destination_norm?: string;
+          routes?: Json;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       greimel_zugaenge: {
         Row: {
           id: string;
