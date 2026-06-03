@@ -112,3 +112,12 @@ export function CheckBoxEmptyIcon({ className, ariaLabel }: IconProps) {
     </svg>
   );
 }
+
+export function CheckBoxCheckedIcon({ className, ariaLabel }: IconProps) {
+  return (
+    <svg {...svgProps(className, ariaLabel)}>
+      <rect x="3.5" y="3.5" width="13" height="13" rx="1.5" />
+      <path d="M6.5 10.5 L9 13 L13.5 7.5" />
+    </svg>
+  );
+}

@@ -270,6 +270,7 @@ export type Database = {
           protokoll_daten_felder_bc: string[];
           rechnungsdatum_abweichend: boolean;
           rechnungsdatum: string | null;
+          bearbeitet_markiert_am: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -315,6 +316,7 @@ export type Database = {
           protokoll_daten_felder_bc?: string[];
           rechnungsdatum_abweichend?: boolean;
           rechnungsdatum?: string | null;
+          bearbeitet_markiert_am?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -360,6 +362,7 @@ export type Database = {
           protokoll_daten_felder_bc?: string[];
           rechnungsdatum_abweichend?: boolean;
           rechnungsdatum?: string | null;
+          bearbeitet_markiert_am?: string | null;
           created_at?: string;
           updated_at?: string;
         };

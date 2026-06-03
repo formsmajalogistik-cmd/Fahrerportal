@@ -12,11 +12,13 @@ import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
   computeTourStatus, formatAnzahl, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
-import { letzterWerktagVor } from '../lib/rechnungsformat';
+import { letzterWerktagVor, naechsterWerktagNach } from '../lib/rechnungsformat';
 import {
   asPdfPathList, downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
 } from '../lib/pdfGenerate';
-import { DownloadIcon, EyeIcon } from '../components/icons';
+import {
+  CheckBoxCheckedIcon, CheckBoxEmptyIcon, DownloadIcon, EyeIcon,
+} from '../components/icons';
 import type { FormularTemplate, AusgefuelltesFormular } from '../types/db';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
@@ -247,6 +249,36 @@ export function TourenlistePage() {
   // Reset Pagination wenn Filter sich ändern
   useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter]);
 
+  /**
+   * Toggle für die "Heute bearbeitet"-Markierung pro aktiver Tour.
+   * Markierung wird mit dem aktuellen Datum gespeichert; ein Klick auf
+   * eine bereits markierte Tour setzt zurück. Datum >= heute zählt als
+   * "an", ältere Markierungen werden automatisch ignoriert — kein
+   * Cron-Reset nötig. Nur Admins dürfen togglen.
+   */
+  const todayYmd = useMemo(() => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, []);
+  const toggleBearbeitet = useCallback(async (tourId: string, current: string | null) => {
+    if (!isAdmin) return;
+    const next = current === todayYmd ? null : todayYmd;
+    setRows((prev) => prev.map((r) =>
+      r.id === tourId ? { ...r, bearbeitet_markiert_am: next } : r,
+    ));
+    const { error: err } = await supabase
+      .from('touren')
+      .update({ bearbeitet_markiert_am: next })
+      .eq('id', tourId);
+    if (err) {
+      console.warn('[TourenlistePage] toggleBearbeitet fehlgeschlagen', err.message);
+      setRows((prev) => prev.map((r) =>
+        r.id === tourId ? { ...r, bearbeitet_markiert_am: current } : r,
+      ));
+    }
+  }, [isAdmin, todayYmd]);
+
   // Lookup-Listen für die Filter-Dropdowns (eigene Queries, damit auch
   // Auftraggeber / Fahrer angezeigt werden, deren Touren noch nicht im
   // aktuellen Zeitraum liegen).
@@ -411,51 +443,51 @@ export function TourenlistePage() {
           {(() => {
             const heuteYmd = ymd(today);
             const vortagYmd = ymd(letzterWerktagVor(today));
+            const naechsterYmd = ymd(naechsterWerktagNach(today));
             const monthYmdFrom = ymd(monthStart);
             const monthYmdTo = ymd(monthEnd);
+            const yearStart = new Date(today.getFullYear(), 0, 1);
+            const yearEnd = new Date(today.getFullYear(), 11, 31);
+            const yearYmdFrom = ymd(yearStart);
+            const yearYmdTo = ymd(yearEnd);
             const heuteAktiv = dateFrom === heuteYmd && dateTo === heuteYmd;
             const vortagAktiv = dateFrom === vortagYmd && dateTo === vortagYmd;
+            const naechsterAktiv = dateFrom === naechsterYmd && dateTo === naechsterYmd;
+            const monatAktiv = dateFrom === monthYmdFrom && dateTo === monthYmdTo;
+            const jahrAktiv = dateFrom === yearYmdFrom && dateTo === yearYmdTo;
+            // Identische Pill-Optik wie die Status-Pills weiter unten —
+            // gleicher Radius, Padding, Border, Hover, Aktiv-Zustand.
             const pillCls = (active: boolean) => `inline-block rounded-full px-3 py-1.5 text-sm font-medium transition ${
               active ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light border border-maja-navy/15'
             }`;
+            // Tages-Toggle: zweiter Klick stellt den Monats-Standard
+            // wieder her. Monat/Jahr setzen den Bereich direkt — der
+            // Aktiv-Zustand fällt automatisch zurück, sobald ein anderer
+            // Bereich gewählt wird.
+            const toggleDay = (active: boolean, target: string) => {
+              if (active) { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }
+              else { setDateFrom(target); setDateTo(target); }
+            };
             return (
               <>
-                <button
-                  type="button"
-                  className={pillCls(heuteAktiv)}
-                  onClick={() => {
-                    if (heuteAktiv) { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }
-                    else { setDateFrom(heuteYmd); setDateTo(heuteYmd); }
-                  }}
-                >
+                <button type="button" className={pillCls(heuteAktiv)}
+                        onClick={() => toggleDay(heuteAktiv, heuteYmd)}>
                   Heute
                 </button>
-                <button
-                  type="button"
-                  className={pillCls(vortagAktiv)}
-                  onClick={() => {
-                    if (vortagAktiv) { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }
-                    else { setDateFrom(vortagYmd); setDateTo(vortagYmd); }
-                  }}
-                >
+                <button type="button" className={pillCls(vortagAktiv)}
+                        onClick={() => toggleDay(vortagAktiv, vortagYmd)}>
                   Vortag
                 </button>
-                <button
-                  type="button"
-                  className="btn-secondary px-3 py-2 text-sm"
-                  onClick={() => { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }}
-                >
+                <button type="button" className={pillCls(naechsterAktiv)}
+                        onClick={() => toggleDay(naechsterAktiv, naechsterYmd)}>
+                  Nächster Tag
+                </button>
+                <button type="button" className={pillCls(monatAktiv)}
+                        onClick={() => { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }}>
                   Aktueller Monat
                 </button>
-                <button
-                  type="button"
-                  className="btn-secondary px-3 py-2 text-sm"
-                  onClick={() => {
-                    const yStart = new Date(today.getFullYear(), 0, 1);
-                    const yEnd = new Date(today.getFullYear(), 11, 31);
-                    setDateFrom(ymd(yStart)); setDateTo(ymd(yEnd));
-                  }}
-                >
+                <button type="button" className={pillCls(jahrAktiv)}
+                        onClick={() => { setDateFrom(yearYmdFrom); setDateTo(yearYmdTo); }}>
                   Aktuelles Jahr
                 </button>
               </>
@@ -581,6 +613,8 @@ export function TourenlistePage() {
               onOpenProtokoll={() => void openSchriftlichesProtokoll(t)}
               opening={openingProtokoll === t.id}
               isAdmin={isAdmin}
+              todayYmd={todayYmd}
+              onToggleBearbeitet={() => void toggleBearbeitet(t.id, t.bearbeitet_markiert_am ?? null)}
             />
           ))}
         </ul>
@@ -658,12 +692,17 @@ interface CardProps {
   onOpenProtokoll: () => void;
   opening: boolean;
   isAdmin: boolean;
+  todayYmd: string;
+  onToggleBearbeitet: () => void;
 }
-function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps) {
+function TourCard({
+  tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
+}: CardProps) {
   const protokollName = tour.schriftliches_protokoll?.name ?? null;
   const hasSchriftlich = tour.protokoll_art === 'schriftlich' && !!tour.schriftliches_protokoll_id;
   const fahrerName = resolveFahrerName(tour.fahrer ?? null, tour.fahrer?.user ?? null) || '— kein Fahrer —';
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
+  const bearbeitetHeute = tour.bearbeitet_markiert_am === todayYmd;
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
     if (tour.startdatum && tour.enddatum) {
@@ -790,11 +829,38 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
           </div>
 
           <div className="flex flex-col items-end gap-2">
-            <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
-              STATUS_BADGE[computedStatus]
-            }`}>
-              {STATUS_LABEL[computedStatus]}
-            </span>
+            {computedStatus === 'aktiv' && isAdmin ? (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleBearbeitet(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation(); e.preventDefault(); onToggleBearbeitet();
+                  }
+                }}
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  bearbeitetHeute
+                    ? 'bg-emerald-600 text-white ring-1 ring-emerald-700'
+                    : `${STATUS_BADGE.aktiv} hover:ring-1 hover:ring-emerald-300`
+                }`}
+                title={bearbeitetHeute
+                  ? 'Heute bereits bearbeitet — klicken zum Zurücksetzen'
+                  : 'Als heute bearbeitet markieren'}
+                aria-pressed={bearbeitetHeute}
+              >
+                {bearbeitetHeute
+                  ? <CheckBoxCheckedIcon className="h-3.5 w-3.5" />
+                  : <CheckBoxEmptyIcon className="h-3.5 w-3.5" />}
+                Aktiv
+              </span>
+            ) : (
+              <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
+                STATUS_BADGE[computedStatus]
+              }`}>
+                {STATUS_LABEL[computedStatus]}
+              </span>
+            )}
             {tour.ist_e_fahrzeug && (
               <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
                 E-Fahrzeug

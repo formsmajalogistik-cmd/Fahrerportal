@@ -610,6 +610,22 @@ export function letzterWerktagVor(ref: Date = new Date()): Date {
 }
 
 /**
+ * Nächster Werktag NACH dem gegebenen Datum (default: heute).
+ * Freitag → Montag, Samstag → Montag, Sonntag → Montag, sonst →
+ * Folgetag. Feiertage werden bewusst NICHT betrachtet — kommt bei
+ * Bedarf später.
+ */
+export function naechsterWerktagNach(ref: Date = new Date()): Date {
+  const d = new Date(ref);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0 || d.getDay() === 6) {
+    d.setDate(d.getDate() + 1);
+  }
+  return d;
+}
+
+/**
  * Bei Monatsübergang (letzter Rechnungstag liegt in einem anderen Monat
  * als heute) wird die Auslagen-Rechnung trotzdem im VORMONAT verbucht
  * — Stichtag = letzter Tag des Monats des letzten Rechnungstags.
