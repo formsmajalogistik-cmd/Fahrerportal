@@ -15,7 +15,7 @@ import {
 } from '../../components/icons';
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { EingangLinkDialog } from './EingangLinkDialog';
-import { EingangResendEmailDialog } from './EingangResendEmailDialog';
+import { EingangSendEmailDialog } from './EingangSendEmailDialog';
 import type {
   AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
 } from '../../types/db';
@@ -38,7 +38,7 @@ interface Row extends AusgefuelltesFormular {
 export function EingaengePage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
-  const { markAllSeen } = useEingaengeNotifications();
+  const { markEingangSeen } = useEingaengeNotifications();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,14 +90,17 @@ export function EingaengePage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Beim Öffnen des Reiters: alle bisher ungesehenen Eingänge als
-  // gesehen markieren — das rote Badge in der Navigation verschwindet
-  // damit sofort. Läuft nur einmal pro Mount, Fehler still ignorieren.
-  useEffect(() => {
+  // Markiert den Eingang als gesehen (für Badge-Update) und patcht den
+  // lokalen State, damit die Hervorhebung sofort verschwindet. Wird bei
+  // jeder echten Admin-Interaktion (Klick aufs Eingangs-Detail, E-Mail
+  // versenden, PDFs neu erzeugen, Tour verknüpfen, Zwischenprotokoll
+  // erstellen) aufgerufen — NICHT beim bloßen Öffnen des Reiters.
+  const handleSeen = useCallback(async (r: Row) => {
     if (!isAdmin) return;
-    void markAllSeen();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+    if (r.gesehen_am) return;
+    await markEingangSeen(r.id);
+    setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, gesehen_am: new Date().toISOString() } : x)));
+  }, [isAdmin, markEingangSeen]);
 
   const visibleRows = useMemo(() => {
     return hideLinked ? rows.filter((r) => !r.tour) : rows;
@@ -191,9 +194,10 @@ export function EingaengePage() {
               row={r}
               isAdmin={isAdmin}
               regenBusy={regen === r.id}
-              onRegenerate={() => void regeneratePdfs(r)}
-              onLink={() => setLinking(r)}
-              onResendEmail={() => setResending(r)}
+              onSeen={() => void handleSeen(r)}
+              onRegenerate={() => { void handleSeen(r); void regeneratePdfs(r); }}
+              onLink={() => { void handleSeen(r); setLinking(r); }}
+              onResendEmail={() => { void handleSeen(r); setResending(r); }}
               onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
             />
           ))}
@@ -232,13 +236,13 @@ export function EingaengePage() {
           sichtbar: true,
         };
         return (
-          <EingangResendEmailDialog
+          <EingangSendEmailDialog
             formular={resending}
             template={tpl}
             onClose={() => setResending(null)}
             onSent={() => {
               setResending(null);
-              setLinkToast('E-Mail erneut versendet.');
+              setLinkToast('E-Mail versendet.');
               window.setTimeout(() => setLinkToast(null), 4000);
             }}
           />
@@ -258,6 +262,7 @@ interface CardProps {
   row: Row;
   isAdmin: boolean;
   regenBusy: boolean;
+  onSeen: () => void;
   onRegenerate: () => void;
   onLink: () => void;
   onResendEmail: () => void;
@@ -265,7 +270,7 @@ interface CardProps {
 }
 
 function EingangCard({
-  row, isAdmin, regenBusy, onRegenerate, onLink, onResendEmail, onZwischenChanged,
+  row, isAdmin, regenBusy, onSeen, onRegenerate, onLink, onResendEmail, onZwischenChanged,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
@@ -278,11 +283,35 @@ function EingangCard({
     sichtbar: true,
   } : null;
 
+  const ungesehen = isAdmin && !row.gesehen_am;
   return (
-    <li className="card p-4">
+    <li
+      className={
+        'card p-4 transition ' +
+        (ungesehen
+          ? 'border-l-4 border-l-maja-accent bg-maja-light/40'
+          : '')
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+        <div
+          role={ungesehen ? 'button' : undefined}
+          tabIndex={ungesehen ? 0 : undefined}
+          onClick={ungesehen ? onSeen : undefined}
+          onKeyDown={ungesehen ? (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSeen(); }
+          } : undefined}
+          className={'min-w-0 flex-1 ' + (ungesehen ? 'cursor-pointer' : '')}
+          aria-label={ungesehen ? 'Als gesehen markieren' : undefined}
+        >
           <div className="flex flex-wrap items-center gap-2">
+            {ungesehen && (
+              <span
+                className="inline-block h-2 w-2 rounded-full bg-maja-accent"
+                aria-label="Neu"
+                title="Neu — noch nicht gesehen"
+              />
+            )}
             <h3 className="text-base font-semibold text-maja-navy">
               {summary.kennzeichen ?? row.template?.name ?? 'Eingang'}
             </h3>
@@ -344,6 +373,7 @@ function EingangCard({
               template={tpl}
               formular={row}
               onChanged={onZwischenChanged}
+              onCreate={onSeen}
             />
           )}
           {isAdmin && row.status === 'submitted' && tpl && (tpl.pdfs?.length ?? 0) > 0 && (
@@ -351,9 +381,9 @@ function EingangCard({
               type="button"
               onClick={onResendEmail}
               className="inline-flex items-center gap-1 rounded-full bg-maja-navy px-3 py-1 text-xs font-medium text-white hover:bg-maja-accent"
-              title="E-Mail mit PDFs erneut senden"
+              title="E-Mail mit PDFs versenden"
             >
-              <MailIcon className="h-3.5 w-3.5" /> E-Mail erneut senden
+              <MailIcon className="h-3.5 w-3.5" /> E-Mail versenden
             </button>
           )}
           {isAdmin && row.status === 'submitted' && (row.template?.pdfs ?? []).some((p) => p.path) && (
@@ -471,11 +501,12 @@ function PdfDownloadButton({
 }
 
 function ZwischenprotokollSection({
-  template, formular, onChanged,
+  template, formular, onChanged, onCreate,
 }: {
   template: FormularTemplate;
   formular: Row;
   onChanged: (patch: Partial<Row>) => void;
+  onCreate?: () => void;
 }) {
   const [busy, setBusy] = useState<'create' | 'preview' | 'download' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -484,6 +515,7 @@ function ZwischenprotokollSection({
   async function generate() {
     setBusy('create');
     setError(null);
+    onCreate?.();
     try {
       const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(template, formular);
       const { error: err } = await supabase

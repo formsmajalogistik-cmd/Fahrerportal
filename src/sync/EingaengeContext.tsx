@@ -21,6 +21,8 @@ interface EingaengeContextValue {
   pulse: boolean;
   /** Markiert alle ungesehenen Eingänge als gesehen. */
   markAllSeen: () => Promise<void>;
+  /** Markiert einen einzelnen Eingang als gesehen (bei echter Admin-Interaktion). */
+  markEingangSeen: (id: string) => Promise<void>;
 }
 
 const EingaengeContext = createContext<EingaengeContextValue | undefined>(undefined);
@@ -98,9 +100,30 @@ export function EingaengeProvider({ children }: { children: ReactNode }) {
     setUnseen(0);
   }, [isAdmin]);
 
+  const markEingangSeen = useCallback(async (id: string) => {
+    if (!isAdmin || !id) return;
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('ausgefuellte_formulare')
+      .update({ gesehen_am: now })
+      .eq('id', id)
+      .is('gesehen_am', null);
+    if (error) {
+      console.warn('[EingaengeContext] markEingangSeen failed', error);
+      return;
+    }
+    // Optimistisches Update: Realtime-Update kommt parallel und korrigiert
+    // sich selbst.
+    setUnseen((u) => {
+      const next = Math.max(0, u - 1);
+      prevRef.current = next;
+      return next;
+    });
+  }, [isAdmin]);
+
   const value = useMemo(
-    () => ({ unseen, pulse, markAllSeen }),
-    [unseen, pulse, markAllSeen],
+    () => ({ unseen, pulse, markAllSeen, markEingangSeen }),
+    [unseen, pulse, markAllSeen, markEingangSeen],
   );
 
   return <EingaengeContext.Provider value={value}>{children}</EingaengeContext.Provider>;

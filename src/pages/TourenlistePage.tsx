@@ -12,6 +12,7 @@ import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
   computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
+import { letzterWerktagVor } from '../lib/rechnungsformat';
 import {
   asPdfPathList, downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
 } from '../lib/pdfGenerate';
@@ -407,24 +408,59 @@ export function TourenlistePage() {
             <input id="t-to" type="date" className="input"
                    value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
-          <button
-            type="button"
-            className="btn-secondary px-3 py-2 text-sm"
-            onClick={() => { setDateFrom(ymd(monthStart)); setDateTo(ymd(monthEnd)); }}
-          >
-            Aktueller Monat
-          </button>
-          <button
-            type="button"
-            className="btn-secondary px-3 py-2 text-sm"
-            onClick={() => {
-              const yStart = new Date(today.getFullYear(), 0, 1);
-              const yEnd = new Date(today.getFullYear(), 11, 31);
-              setDateFrom(ymd(yStart)); setDateTo(ymd(yEnd));
-            }}
-          >
-            Aktuelles Jahr
-          </button>
+          {(() => {
+            const heuteYmd = ymd(today);
+            const vortagYmd = ymd(letzterWerktagVor(today));
+            const monthYmdFrom = ymd(monthStart);
+            const monthYmdTo = ymd(monthEnd);
+            const heuteAktiv = dateFrom === heuteYmd && dateTo === heuteYmd;
+            const vortagAktiv = dateFrom === vortagYmd && dateTo === vortagYmd;
+            const pillCls = (active: boolean) => `inline-block rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              active ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light border border-maja-navy/15'
+            }`;
+            return (
+              <>
+                <button
+                  type="button"
+                  className={pillCls(heuteAktiv)}
+                  onClick={() => {
+                    if (heuteAktiv) { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }
+                    else { setDateFrom(heuteYmd); setDateTo(heuteYmd); }
+                  }}
+                >
+                  Heute
+                </button>
+                <button
+                  type="button"
+                  className={pillCls(vortagAktiv)}
+                  onClick={() => {
+                    if (vortagAktiv) { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }
+                    else { setDateFrom(vortagYmd); setDateTo(vortagYmd); }
+                  }}
+                >
+                  Vortag
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary px-3 py-2 text-sm"
+                  onClick={() => { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }}
+                >
+                  Aktueller Monat
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary px-3 py-2 text-sm"
+                  onClick={() => {
+                    const yStart = new Date(today.getFullYear(), 0, 1);
+                    const yEnd = new Date(today.getFullYear(), 11, 31);
+                    setDateFrom(ymd(yStart)); setDateTo(ymd(yEnd));
+                  }}
+                >
+                  Aktuelles Jahr
+                </button>
+              </>
+            );
+          })()}
         </div>
       </div>
 

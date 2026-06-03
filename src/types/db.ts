@@ -31,6 +31,7 @@ export interface KontaktVorOrt {
 export type Tour = Database['public']['Tables']['touren']['Row'];
 export type TourZusatz = Database['public']['Tables']['tour_zusaetze']['Row'];
 export type GreimelZugang = Database['public']['Tables']['greimel_zugaenge']['Row'];
+export type EmailFavorit = Database['public']['Tables']['email_favoriten']['Row'];
 export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
 
 // ---- Templates: schema und pdfs sind in der DB jsonb.

@@ -433,6 +433,30 @@ export type Database = {
           },
         ];
       };
+      email_favoriten: {
+        Row: {
+          id: string;
+          email: string;
+          name: string | null;
+          ist_favorit: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          name?: string | null;
+          ist_favorit?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          name?: string | null;
+          ist_favorit?: boolean;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       greimel_zugaenge: {
         Row: {
           id: string;
