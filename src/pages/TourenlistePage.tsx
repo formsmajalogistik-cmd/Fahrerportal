@@ -10,7 +10,7 @@ import { TourImportDialog } from './touren/TourImportDialog';
 import { flattenedFahrerOptions, type FahrerOptionRaw } from './touren/FahrerSelect';
 import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
-  computeTourStatus, formatDate, formatEuro, formatKm, tourTitel,
+  computeTourStatus, formatAnzahl, formatDate, formatEuro, formatKm, tourTitel,
 } from '../lib/touren';
 import { letzterWerktagVor } from '../lib/rechnungsformat';
 import {
@@ -229,7 +229,7 @@ export function TourenlistePage() {
             ? (row.zusaetze as Array<Record<string, unknown>>).map((z) => ({
                 id: String(z.id ?? ''),
                 kategorie: String(z.kategorie ?? ''),
-                anzahl: Number.isFinite(Number(z.anzahl)) ? Math.max(1, Math.round(Number(z.anzahl))) : 1,
+                anzahl: Number.isFinite(Number(z.anzahl)) ? Math.max(0.01, Number(z.anzahl)) : 1,
                 betrag: Number(z.betrag ?? 0),
                 notiz: typeof z.notiz === 'string' ? z.notiz : null,
                 kennzeichen: typeof z.kennzeichen === 'string' ? z.kennzeichen : null,
@@ -839,9 +839,9 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
             <div className="rounded-b-xl border-t border-maja-navy/10 px-5 py-3">
               <ul className="space-y-1">
                 {zusaetze.map((z) => {
-                  const anzahl = Math.max(1, Number(z.anzahl) || 1);
+                  const anzahl = Math.max(0.01, Number(z.anzahl) || 1);
                   const betrag = Number(z.betrag ?? 0);
-                  const gesamt = anzahl * betrag;
+                  const gesamt = Math.round(anzahl * betrag * 100) / 100;
                   return (
                     <li key={z.id} className="flex flex-wrap items-baseline gap-x-1">
                       {z.kennzeichen && (
@@ -849,9 +849,9 @@ function TourCard({ tour, onOpen, onOpenProtokoll, opening, isAdmin }: CardProps
                       )}
                       <span className="font-medium">{z.kategorie}</span>
                       <span className="text-maja-muted">:</span>
-                      {anzahl > 1 ? (
+                      {anzahl !== 1 ? (
                         <span>
-                          {anzahl} × {formatEuro(betrag)} = {formatEuro(gesamt)}
+                          {formatAnzahl(anzahl)} × {formatEuro(betrag)} = {formatEuro(gesamt)}
                         </span>
                       ) : (
                         <span>{formatEuro(betrag)}</span>

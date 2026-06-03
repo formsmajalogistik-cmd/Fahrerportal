@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { compressImage } from '../../../lib/photo';
+import { pdfjsLib } from '../../../lib/pdfjs';
 import { heicToJpeg } from './heic';
 import { ImageCropDialog } from './ImageCropDialog';
 import { downloadBlob, generateBelegePdf, type Layout } from './belegPdf';
@@ -8,6 +9,50 @@ interface BelegItem {
   id: string;
   blob: Blob;
   url: string;
+}
+
+// Render-Auflösung für aus PDFs extrahierte Seiten. PDFs sind
+// standardmäßig 72 DPI; 150 ist ein guter Kompromiss zwischen
+// Qualität und Datei-/Speichergröße auf mobilen Geräten.
+const PDF_RENDER_DPI = 150;
+
+/**
+ * Rendert jede Seite einer PDF als JPEG-Bild im Browser. Nutzt das
+ * bereits global konfigurierte pdfjs-dist (siehe src/lib/pdfjs.ts).
+ * onProgress wird vor dem Rendern jeder Seite aufgerufen, damit der
+ * Aufrufer einen "Seite x von y"-Hinweis anzeigen kann.
+ */
+async function pdfToJpegPages(
+  file: File,
+  onProgress?: (current: number, total: number) => void,
+): Promise<File[]> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const total = pdf.numPages;
+  const out: File[] = [];
+  const baseName = file.name.replace(/\.pdf$/i, '') || 'pdf';
+  const scale = PDF_RENDER_DPI / 72;
+  for (let i = 1; i <= total; i += 1) {
+    onProgress?.(i, total);
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      page.cleanup();
+      throw new Error('Canvas-Kontext nicht verfügbar');
+    }
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', 0.85),
+    );
+    page.cleanup();
+    if (!blob) throw new Error(`Seite ${i} konnte nicht gerendert werden`);
+    out.push(new File([blob], `${baseName} - Seite ${i}.jpg`, { type: 'image/jpeg' }));
+  }
+  return out;
 }
 
 function makeId() {
@@ -26,28 +71,61 @@ export function BelegeUploadTab() {
   const [filename, setFilename] = useState<string>(`Auslagen_${todayIso()}.pdf`);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     setError(null);
-    setBusy('Bilder werden verarbeitet …');
+    setInfo(null);
+    const all = Array.from(files);
+    const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    const isImage = (f: File) => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name);
+    const pdfs   = all.filter(isPdf);
+    const images = all.filter((f) => !isPdf(f) && isImage(f));
+
+    const processed: BelegItem[] = [];
+    let extractedPages = 0;
     try {
-      const incoming = Array.from(files).filter((f) => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name));
-      const processed: BelegItem[] = [];
-      for (const f of incoming) {
+      // 1) PDF-Dateien zuerst in Bilder zerlegen — pro Seite ein File.
+      for (const pdf of pdfs) {
+        setBusy(`PDF wird verarbeitet: ${pdf.name} …`);
+        try {
+          const pageFiles = await pdfToJpegPages(pdf, (current, total) => {
+            setBusy(`PDF wird verarbeitet: ${pdf.name} — Seite ${current} von ${total}`);
+          });
+          extractedPages += pageFiles.length;
+          for (const pageFile of pageFiles) {
+            try {
+              const compressed = await compressImage(pageFile);
+              processed.push({ id: makeId(), blob: compressed, url: URL.createObjectURL(compressed) });
+            } catch (e) {
+              console.warn('PDF-Seite konnte nicht verarbeitet werden', pageFile.name, e);
+            }
+          }
+        } catch (e) {
+          console.warn('PDF konnte nicht geöffnet werden', pdf.name, e);
+          setError(`PDF "${pdf.name}" konnte nicht geöffnet werden.`);
+        }
+      }
+
+      // 2) Bilder (JPG/PNG/HEIC) wie bisher.
+      if (images.length > 0) setBusy('Bilder werden verarbeitet …');
+      for (const f of images) {
         try {
           const jpeg = await heicToJpeg(f);
           const compressed = await compressImage(jpeg);
-          const url = URL.createObjectURL(compressed);
-          processed.push({ id: makeId(), blob: compressed, url });
+          processed.push({ id: makeId(), blob: compressed, url: URL.createObjectURL(compressed) });
         } catch (e) {
           console.warn('Bild konnte nicht verarbeitet werden', f.name, e);
         }
       }
-      if (processed.length === 0 && incoming.length > 0) {
-        setError('Keine Bilder konnten verarbeitet werden.');
+
+      if (processed.length === 0 && (images.length > 0 || pdfs.length > 0)) {
+        setError('Keine Belege konnten verarbeitet werden.');
+      } else if (extractedPages > 0) {
+        setInfo(`${extractedPages} ${extractedPages === 1 ? 'Seite' : 'Seiten'} aus PDF extrahiert.`);
       }
       setItems((prev) => [...prev, ...processed]);
     } finally {
@@ -140,14 +218,17 @@ export function BelegeUploadTab() {
             <IconUpload />
           </div>
           <div className="mt-2 text-sm font-medium text-maja-navy">
-            Bilder per Drag & Drop ablegen oder klicken zum Auswählen
+            Belege per Drag & Drop ablegen oder klicken zum Auswählen
           </div>
-          <div className="text-xs text-maja-muted">JPG, PNG, HEIC — mehrere auf einmal möglich</div>
+          <div className="text-xs text-maja-muted">
+            JPG, PNG, HEIC oder PDF — mehrere auf einmal möglich. PDF-Seiten werden
+            einzeln eingelesen.
+          </div>
         </div>
         <input
           ref={inputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,.heic,.heif,application/pdf,.pdf"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -159,6 +240,11 @@ export function BelegeUploadTab() {
         {error && (
           <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
+          </div>
+        )}
+        {info && (
+          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {info}
           </div>
         )}
 

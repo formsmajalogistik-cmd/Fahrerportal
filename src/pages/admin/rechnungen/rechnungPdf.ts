@@ -109,7 +109,14 @@ function formatEurPlain(n: number): string {
 }
 
 function formatMenge(n: number): string {
-  return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+  // Ganzzahl: "3". Dezimal: "2,5" oder "2,55" — trailing 0 wird
+  // abgeschnitten, damit halbe/viertel Einheiten ohne unnötige
+  // Nullen erscheinen.
+  const rounded = Math.round(n * 100) / 100;
+  if (Number.isInteger(rounded)) return String(rounded);
+  let s = rounded.toFixed(2);
+  if (s.endsWith('0')) s = s.slice(0, -1);
+  return s.replace('.', ',');
 }
 
 function formatPercent(n: number): string {

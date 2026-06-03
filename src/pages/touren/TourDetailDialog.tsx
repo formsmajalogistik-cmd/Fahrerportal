@@ -14,7 +14,7 @@ function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user
 }
 import {
   abschnittLabels, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
-  formatDate, formatEuro, formatKm, hasTwoProtokollSlots, tourTitel,
+  formatAnzahl, formatDate, formatEuro, formatKm, hasTwoProtokollSlots, tourTitel,
   type TourPriceBreakdown,
 } from '../../lib/touren';
 import {
@@ -721,8 +721,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
       setStatusMsg({ kind: 'err', text: 'Betrag ist ungültig.' });
       return;
     }
-    const anzahlNum = parseInt(neueAnzahl, 10);
-    const anzahl = Number.isFinite(anzahlNum) && anzahlNum >= 1 ? anzahlNum : 1;
+    const anzahlVal = parseDecimal(neueAnzahl);
+    const anzahl = anzahlVal !== null && anzahlVal >= 0.01 ? anzahlVal : 1;
     // Bei ABA/ABC-Touren ist das Kennzeichen-Feld sichtbar — und Pflicht,
     // damit der Admin nicht versehentlich ohne Zuordnung speichert. Bei
     // AB-Touren wird automatisch das einzige Kennzeichen genommen (oder
@@ -1006,9 +1006,8 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                 <input
                   id="z-anzahl"
                   className="input"
-                  type="number"
-                  min={1}
-                  step={1}
+                  type="text"
+                  inputMode="decimal"
                   value={neueAnzahl}
                   onChange={(e) => setNeueAnzahl(e.target.value)}
                 />
@@ -1069,7 +1068,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
           <div className="card overflow-hidden">
             <ul className="divide-y divide-maja-navy/10">
               {(zusaetze ?? []).map((z) => {
-                const anzahl = Math.max(1, Math.round(Number(z.anzahl ?? 1)));
+                const anzahl = Math.max(0.01, Number(z.anzahl ?? 1));
                 const betrag = Number(z.betrag);
                 const gesamt = Math.round(betrag * anzahl * 100) / 100;
                 return (
@@ -1086,9 +1085,9 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
                         )}
                         <span className="font-medium">{z.kategorie}</span>
                         <span className="text-maja-muted">: </span>
-                        {anzahl > 1 ? (
+                        {anzahl !== 1 ? (
                           <>
-                            {anzahl} × {formatEuro(betrag)} = <span className="font-semibold">{formatEuro(gesamt)}</span>
+                            {formatAnzahl(anzahl)} × {formatEuro(betrag)} = <span className="font-semibold">{formatEuro(gesamt)}</span>
                           </>
                         ) : (
                           <span className="font-semibold">{formatEuro(betrag)}</span>
@@ -1115,7 +1114,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
               <span className="font-semibold text-maja-navy">
                 {formatEuro(
                   (zusaetze ?? []).reduce(
-                    (acc, z) => acc + Number(z.betrag) * Math.max(1, Math.round(Number(z.anzahl ?? 1))),
+                    (acc, z) => acc + Number(z.betrag) * Math.max(0.01, Number(z.anzahl ?? 1)),
                     0,
                   ),
                 )}

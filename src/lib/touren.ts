@@ -28,6 +28,22 @@ export function formatKm(value: number | null | undefined): string {
   return `${NUM.format(value)} km`;
 }
 
+/**
+ * Formatiert eine Anzahl/Menge als deutsche Zahl: ganzzahlig "3",
+ * dezimal "2,5" oder "2,55" (trailing 0 wird abgeschnitten). Wird
+ * für Tour-Zusätze (anzahl) und Rechnungspositionen (menge) genutzt
+ * — Halb-Einheiten sind seit Migration 046 erlaubt.
+ */
+export function formatAnzahl(value: number | null | undefined): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return '0';
+  const rounded = Math.round(n * 100) / 100;
+  if (Number.isInteger(rounded)) return String(rounded);
+  let s = rounded.toFixed(2);
+  if (s.endsWith('0')) s = s.slice(0, -1);
+  return s.replace('.', ',');
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
