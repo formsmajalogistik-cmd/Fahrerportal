@@ -5,10 +5,13 @@ import { Spinner } from '../../../components/Spinner';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
 import { RECHNUNG_STATUS_LABEL } from './rechnungLabels';
-import type { Auftraggeber, Rechnung, RechnungStatus } from '../../../types/db';
+import type {
+  Auftraggeber, AuftraggeberKontakt, Rechnung, RechnungStatus,
+} from '../../../types/db';
 
 interface RechnungRow extends Rechnung {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name'> | null;
+  rechnungsempfaenger: Pick<AuftraggeberKontakt, 'id' | 'name'> | null;
   positionen_count: number;
 }
 
@@ -27,6 +30,11 @@ export function RechnungenListPage() {
   // Filter
   const [yearFilter, setYearFilter] = useState<number | 'alle'>(new Date().getFullYear());
   const [agFilter, setAgFilter] = useState<string>('');
+  /** Optionaler Rechnungsempfänger-Filter, abhängig vom Auftraggeber-Filter:
+   *  Auswahlmöglichkeiten kommen aus den Empfängern der Rechnungen des
+   *  aktuell gefilterten Auftraggebers. Bei agFilter="" ist das Feld
+   *  verborgen und der Filter wird ignoriert. */
+  const [empfaengerFilter, setEmpfaengerFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<RechnungStatus | 'alle'>('alle');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -41,6 +49,7 @@ export function RechnungenListPage() {
         .select(`
           *,
           auftraggeber:auftraggeber_id (id, name),
+          rechnungsempfaenger:rechnungsempfaenger_id (id, name),
           positionen:rechnungspositionen(count)
         `)
         .order('datum', { ascending: false })
@@ -52,6 +61,7 @@ export function RechnungenListPage() {
     if (aRes.error) { setError(aRes.error.message); setLoading(false); return; }
     type RawRow = Rechnung & {
       auftraggeber: { id: string; name: string } | null;
+      rechnungsempfaenger: { id: string; name: string } | null;
       positionen: Array<{ count: number }>;
     };
     const list: RechnungRow[] = ((rRes.data as unknown as RawRow[]) ?? []).map((r) => ({
@@ -94,17 +104,41 @@ export function RechnungenListPage() {
         if (y !== yearFilter) return false;
       }
       if (agFilter && r.auftraggeber_id !== agFilter) return false;
+      if (agFilter && empfaengerFilter && r.rechnungsempfaenger?.id !== empfaengerFilter) return false;
       if (statusFilter !== 'alle' && r.status !== statusFilter) return false;
       if (q) {
-        const hay = [r.rechnungsnummer, r.auftraggeber?.name ?? ''].join(' ').toLowerCase();
+        const hay = [
+          r.rechnungsnummer,
+          r.auftraggeber?.name ?? '',
+          r.rechnungsempfaenger?.name ?? '',
+        ].join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [rows, yearFilter, agFilter, statusFilter, search]);
+  }, [rows, yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
 
   // Reset Pagination bei Filter-Änderungen.
-  useEffect(() => { setPage(1); }, [yearFilter, agFilter, statusFilter, search]);
+  useEffect(() => { setPage(1); }, [yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
+
+  // Empfänger-Optionen aus den geladenen Rechnungen, sobald ein
+  // Auftraggeber gefiltert wird — eine Map nach Id mit Name.
+  const empfaengerOptions = useMemo(() => {
+    if (!agFilter) return [] as Array<{ id: string; name: string }>;
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      if (r.auftraggeber_id !== agFilter) continue;
+      const e = r.rechnungsempfaenger;
+      if (e?.id && e.name) map.set(e.id, e.name);
+    }
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }));
+  }, [rows, agFilter]);
+
+  // Auftraggeber-Wechsel räumt den Empfaenger-Filter direkt im
+  // onChange-Handler des Dropdowns auf — siehe weiter unten —
+  // damit der React-Linter (set-state-in-effect) zufrieden ist.
 
   const pageRows = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -178,15 +212,19 @@ export function RechnungenListPage() {
         ))}
       </div>
 
-      {/* Auftraggeber + Suche */}
-      <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">
+      {/* Auftraggeber + (optional) Rechnungsempfänger + Suche */}
+      <div className={`grid gap-2 ${
+        agFilter && empfaengerOptions.length > 0
+          ? 'sm:grid-cols-[1fr_1fr_1fr]'
+          : 'sm:grid-cols-[1fr_1fr]'
+      }`}>
         <div>
           <label htmlFor="ag-filter" className="label">Auftraggeber</label>
           <select
             id="ag-filter"
             className="input"
             value={agFilter}
-            onChange={(e) => setAgFilter(e.target.value)}
+            onChange={(e) => { setAgFilter(e.target.value); setEmpfaengerFilter(''); }}
           >
             <option value="">Alle</option>
             {auftraggeber.map((a) => (
@@ -194,12 +232,28 @@ export function RechnungenListPage() {
             ))}
           </select>
         </div>
+        {agFilter && empfaengerOptions.length > 0 && (
+          <div>
+            <label htmlFor="empf-filter" className="label">Rechnungsempfänger</label>
+            <select
+              id="empf-filter"
+              className="input"
+              value={empfaengerFilter}
+              onChange={(e) => setEmpfaengerFilter(e.target.value)}
+            >
+              <option value="">Alle</option>
+              {empfaengerOptions.map((e) => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label htmlFor="search" className="label">Suche</label>
           <input
             id="search"
             className="input"
-            placeholder="Rechnungsnummer oder Auftraggeber …"
+            placeholder="Rechnungsnummer, Auftraggeber, Empfänger …"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -278,7 +332,14 @@ export function RechnungenListPage() {
                     </div>
                   </td>
                   <td className="px-3 py-2 text-maja-ink">{formatDate(r.datum)}</td>
-                  <td className="px-3 py-2 text-maja-ink">{r.auftraggeber?.name ?? '—'}</td>
+                  <td className="px-3 py-2 text-maja-ink">
+                    {r.auftraggeber?.name ?? '—'}
+                    {r.rechnungsempfaenger?.name && (
+                      <div className="text-xs text-maja-muted">
+                        z. Hd. {r.rechnungsempfaenger.name}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-xs text-maja-muted">
                     {formatDate(r.leistungszeitraum_von)} – {formatDate(r.leistungszeitraum_bis)}
                   </td>

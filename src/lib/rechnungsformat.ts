@@ -54,6 +54,47 @@ export function parseRechnungsformat(raw: unknown): Rechnungsformat {
   return DEFAULT_RECHNUNGSFORMAT;
 }
 
+/**
+ * Baut die Brief-Anrede aus dem Namen eines Rechnungsempfängers.
+ *
+ *   "Herr Max Mustermann"   → "Sehr geehrter Herr Mustermann,"
+ *   "Frau Müller"           → "Sehr geehrte Frau Müller,"
+ *   "Dr. Hans Vogel"        → "Sehr geehrte Damen und Herren,"
+ *   ""/null                 → "Sehr geehrte Damen und Herren,"
+ *
+ * Geschlecht wird ausschließlich aus dem führenden "Herr"/"Frau"
+ * abgeleitet — sonst fällt der Aufruf auf die neutrale Variante.
+ * Der Admin kann das Feld jederzeit überschreiben.
+ */
+export function buildAnrede(name: string | null | undefined): string {
+  const fallback = 'Sehr geehrte Damen und Herren,';
+  const n = (name ?? '').trim();
+  if (!n) return fallback;
+  const lower = n.toLowerCase();
+  const matchHerr = lower.match(/^herr(?:n)?\s+(.+)$/i);
+  const matchFrau = lower.match(/^frau\s+(.+)$/i);
+  // Der Nachname ist das LETZTE Wort der Restzeichenkette — Vornamen,
+  // Doktortitel u.ä. werden bewusst weggelassen, weil die Brief-
+  // Anrede sonst lang und unförmig wird.
+  function nachname(rest: string): string {
+    const parts = rest.trim().split(/\s+/);
+    return parts[parts.length - 1] ?? '';
+  }
+  if (matchHerr) {
+    const original = n.replace(/^herr(?:n)?\s+/i, '');
+    const last = nachname(original);
+    if (!last) return fallback;
+    return `Sehr geehrter Herr ${last},`;
+  }
+  if (matchFrau) {
+    const original = n.replace(/^frau\s+/i, '');
+    const last = nachname(original);
+    if (!last) return fallback;
+    return `Sehr geehrte Frau ${last},`;
+  }
+  return fallback;
+}
+
 export const DEFAULT_RECHNUNGSFORMAT: Rechnungsformat = {
   format_typ: 'standard',
   tour_bezeichnung: '{start} nach {ziel} {datum}',

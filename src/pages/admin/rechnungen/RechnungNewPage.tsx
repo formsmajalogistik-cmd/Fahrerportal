@@ -5,6 +5,7 @@ import { Spinner } from '../../../components/Spinner';
 import { formatDate } from '../../../lib/touren';
 import {
   DEFAULT_RECHNUNGSFORMAT, auslagenRechnungsdatum, berechneSummenProUst,
+  buildAnrede,
   generatePositionenFromTouren, letzterWerktagVor, isoDate,
   type Rechnungsformat, type TourForRechnung, type TourenartReal,
 } from '../../../lib/rechnungsformat';
@@ -14,7 +15,7 @@ import { SummenBlock } from './SummenBlock';
 import {
   emptyManuellePosition, newKey, type EditorPosition,
 } from './positionUtils';
-import type { Auftraggeber, Rechnungsadresse } from '../../../types/db';
+import type { Auftraggeber, AuftraggeberKontakt, Rechnungsadresse } from '../../../types/db';
 import type { Database } from '../../../types/supabase';
 
 function todayIso(): string {
@@ -80,6 +81,18 @@ export function RechnungNewPage() {
 
   // Kopfdaten
   const [auftraggeberId, setAuftraggeberId] = useState<string>('');
+  /**
+   * Optionaler Filter auf einen einzelnen Rechnungsempfänger
+   * (auftraggeber_kontakte.id). Leer = "Alle" (Verhalten wie bisher).
+   * Wird zusammen mit dem Auftraggeber-Wechsel zurückgesetzt.
+   */
+  const [rechnungsempfaengerId, setRechnungsempfaengerId] = useState<string>('');
+  /**
+   * Liste der Rechnungsempfänger, die bei Touren dieses Auftraggebers
+   * tatsächlich vorkommen — nur die landen im Dropdown. Wird neu
+   * geladen, wenn der Auftraggeber wechselt.
+   */
+  const [empfaengerOptions, setEmpfaengerOptions] = useState<AuftraggeberKontakt[]>([]);
   const [rechnungsdatum, setRechnungsdatum] = useState<string>(todayIso());
   /** Vorbelegte (per RPC ermittelte) nächste freie Rechnungsnummer.
    *  Der Admin kann sie überschreiben, z.B. wenn er aus einem
@@ -203,7 +216,93 @@ export function RechnungNewPage() {
     setErstelleAuslagen(true);
     setAuslagenOnly(false);
     setSchnellInfo(null);
+    // Auch der Rechnungsempfänger-Filter wird zurückgesetzt, sonst
+    // greift er gegen den falschen Auftraggeber.
+    setRechnungsempfaengerId('');
   }, [auftraggeber, format.anrede, format.ust_satz]);
+
+  /**
+   * Rechnungsempfänger-Optionen für den aktuell gewählten Auftraggeber
+   * laden: nur die Kontakte, die mindestens einmal auf einer Tour
+   * dieses Auftraggebers als Rechnungsempfänger eingetragen sind. So
+   * sehen Admins im Dropdown nur die tatsächlich relevanten Kontakte
+   * und nicht den ganzen Adressbuch-Bestand.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    if (!auftraggeber) {
+      // Auch der leere Reset läuft async, damit der React-Linter
+      // (set-state-in-effect) nicht meckert.
+      void Promise.resolve().then(() => { if (!cancelled) setEmpfaengerOptions([]); });
+      return () => { cancelled = true; };
+    }
+    void (async () => {
+      const { data, error: err } = await supabase
+        .from('touren')
+        .select('kontakt:kontakt_id (id, auftraggeber_id, name, telefon, email, position, created_at)')
+        .eq('auftraggeber_id', auftraggeber.id)
+        .not('kontakt_id', 'is', null);
+      if (cancelled) return;
+      if (err) {
+        console.warn('[Rechnungen] Empfaenger-Optionen-Fehler', err.message);
+        setEmpfaengerOptions([]);
+        return;
+      }
+      type Row = { kontakt: AuftraggeberKontakt | null };
+      const map = new Map<string, AuftraggeberKontakt>();
+      for (const r of (data as unknown as Row[]) ?? []) {
+        if (r.kontakt) map.set(r.kontakt.id, r.kontakt);
+      }
+      // Sortierung nach Name; "ohne Namen" landet ans Ende.
+      const list = [...map.values()].sort((a, b) =>
+        (a.name ?? '').localeCompare(b.name ?? '', 'de', { sensitivity: 'base' }),
+      );
+      setEmpfaengerOptions(list);
+    })();
+    return () => { cancelled = true; };
+  }, [auftraggeber]);
+
+  /**
+   * Wenn ein konkreter Rechnungsempfänger gewählt wird:
+   *   - Adresse: falls eine rechnungsadressen-Zeile des Auftraggebers
+   *     denselben Ansprechpartner trägt, deren Adresse übernehmen.
+   *     Sonst Standard-Adresse + Ansprechpartner mit Empfänger-Namen.
+   *   - Anrede: aus dem Empfänger-Namen ableiten.
+   * Beim Wechsel auf "Alle" wird auf den Auftraggeber-Standard
+   * zurückgesetzt. Beide Felder bleiben jederzeit editierbar.
+   */
+  useEffect(() => {
+    if (!auftraggeber) return;
+    let cancelled = false;
+    // setState im Mikrotask, NICHT synchron im Effect-Body — React-19-
+    // Linter würde sonst "set-state-in-effect" werfen.
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      const adressen = auftraggeber.rechnungsadressen ?? [];
+      const std = adressen.find((a) => a.ist_standard);
+      if (!rechnungsempfaengerId) {
+        setSnapshot(std ? snapshotFromRechnungsadresse(std) : snapshotFromAuftraggeber(auftraggeber));
+        setAnrede(format.anrede ?? '');
+        return;
+      }
+      const empf = empfaengerOptions.find((k) => k.id === rechnungsempfaengerId);
+      if (!empf) return;
+      const matchAdresse = adressen.find((a) =>
+        (a.ansprechpartner ?? '').trim().toLowerCase() === (empf.name ?? '').trim().toLowerCase()
+        && (a.ansprechpartner ?? '').trim() !== '',
+      );
+      if (matchAdresse) {
+        setSnapshot(snapshotFromRechnungsadresse(matchAdresse));
+      } else {
+        const base = std
+          ? snapshotFromRechnungsadresse(std)
+          : snapshotFromAuftraggeber(auftraggeber);
+        setSnapshot({ ...base, ansprechpartner: empf.name ?? base.ansprechpartner });
+      }
+      setAnrede(buildAnrede(empf.name));
+    });
+    return () => { cancelled = true; };
+  }, [rechnungsempfaengerId, empfaengerOptions, auftraggeber, format.anrede]);
 
   const loadTouren = useCallback(async () => {
     if (!auftraggeber) return;
@@ -235,7 +334,7 @@ export function RechnungNewPage() {
       rechnungsdatum,
       filter: orFilter,
     });
-    const { data, error: err } = await supabase
+    let query = supabase
       .from('touren')
       .select(`
         id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -244,7 +343,13 @@ export function RechnungNewPage() {
         rechnungsdatum, rechnungsdatum_abweichend, status,
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
       `)
-      .eq('auftraggeber_id', auftraggeber.id)
+      .eq('auftraggeber_id', auftraggeber.id);
+    // Optionaler Filter auf einen konkreten Rechnungsempfänger — bei
+    // "Alle" bleibt das Verhalten wie bisher (kein zusätzlicher Filter).
+    if (rechnungsempfaengerId) {
+      query = query.eq('kontakt_id', rechnungsempfaengerId);
+    }
+    const { data, error: err } = await query
       .or(orFilter)
       .order('enddatum', { ascending: true });
     setLoadingTouren(false);
@@ -298,7 +403,7 @@ export function RechnungNewPage() {
       setHaupt(alle.map((p) => ({ ...p, key: newKey('p') })));
       setAuslagen([]);
     }
-  }, [auftraggeber, rechnungsdatum, format, getrennt]);
+  }, [auftraggeber, rechnungsdatum, format, getrennt, rechnungsempfaengerId]);
 
   /**
    * Schnell-Erstellung der CC-Auslagenrechnung zum letzten Touren-
@@ -489,6 +594,7 @@ export function RechnungNewPage() {
         rechnungsadresse_strasse: snapshot.strasse || null,
         rechnungsadresse_plz_ort: snapshot.plz_ort || null,
         rechnungsadresse_land:    snapshot.land    || null,
+        rechnungsempfaenger_id:   rechnungsempfaengerId || null,
       };
       // Manuelle Nummer nur, wenn der Admin sie nicht leer gelassen hat;
       // ansonsten vergibt der DB-Trigger die nächste freie Nummer.
@@ -604,6 +710,32 @@ export function RechnungNewPage() {
               ))}
             </select>
           </div>
+          {/* Optionaler Rechnungsempfänger-Filter. Wird nur eingeblendet,
+              sobald ein Auftraggeber gewählt ist UND es mindestens
+              einen Empfänger auf seinen Touren gibt — sonst wäre
+              das Feld nutzlos. */}
+          {auftraggeberId && empfaengerOptions.length > 0 && (
+            <div>
+              <label htmlFor="re-empf" className="label">Rechnungsempfänger</label>
+              <select
+                id="re-empf"
+                className="input"
+                value={rechnungsempfaengerId}
+                onChange={(e) => setRechnungsempfaengerId(e.target.value)}
+              >
+                <option value="">Alle</option>
+                {empfaengerOptions.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.name}{k.position ? ` · ${k.position}` : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-maja-muted">
+                Filtert "Touren laden" auf Touren mit diesem Empfänger
+                und füllt Adresse + Anrede passend voraus.
+              </p>
+            </div>
+          )}
           <div>
             <label htmlFor="rdat" className="label">Rechnungsdatum *</label>
             <input

@@ -714,6 +714,7 @@ export type Database = {
           rechnungsadresse_strasse: string | null;
           rechnungsadresse_plz_ort: string | null;
           rechnungsadresse_land: string | null;
+          rechnungsempfaenger_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -742,6 +743,7 @@ export type Database = {
           rechnungsadresse_strasse?: string | null;
           rechnungsadresse_plz_ort?: string | null;
           rechnungsadresse_land?: string | null;
+          rechnungsempfaenger_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -770,6 +772,7 @@ export type Database = {
           rechnungsadresse_strasse?: string | null;
           rechnungsadresse_plz_ort?: string | null;
           rechnungsadresse_land?: string | null;
+          rechnungsempfaenger_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -784,6 +787,12 @@ export type Database = {
             foreignKeyName: 'rechnungen_rechnungsadresse_id_fkey';
             columns: ['rechnungsadresse_id'];
             referencedRelation: 'rechnungsadressen';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'rechnungen_rechnungsempfaenger_id_fkey';
+            columns: ['rechnungsempfaenger_id'];
+            referencedRelation: 'auftraggeber_kontakte';
             referencedColumns: ['id'];
           },
         ];
