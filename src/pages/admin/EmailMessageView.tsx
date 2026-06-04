@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { XIcon } from '../../components/icons';
+import { PdfTextLayerViewer } from '../../components/PdfTextLayerViewer';
 import {
   fetchAttachmentBlob, formatBytes, formatMailDate, type MailDetail,
 } from '../../lib/emails';
@@ -187,11 +188,9 @@ function InlineAttachment({ mailbox, messageId, att }: AttProps) {
             </button>
           )}
           {!loading && !error && url && isPdf && (
-            <iframe
-              title={att.name}
-              src={url}
-              className="h-[500px] w-full rounded border-0"
-            />
+            // PDF.js mit Text-Layer (Aufgabe 2): Text bleibt markier- und
+            // kopierbar; iframe-Pfad würde das in Safari blockieren.
+            <PdfTextLayerViewer src={url} maxHeight="500px" />
           )}
           {!loading && !error && !isImage && !isPdf && (
             <p className="px-3 py-3 text-xs text-maja-muted">
@@ -232,7 +231,7 @@ function FullscreenPreview({
           {isImage ? (
             <img src={url} alt={name} className="mx-auto max-h-full max-w-full object-contain" />
           ) : isPdf ? (
-            <iframe title={name} src={url} className="h-full w-full border-0" />
+            <PdfTextLayerViewer src={url} scale={2.0} maxHeight="100%" />
           ) : (
             <p className="p-6 text-center text-sm text-maja-muted">
               Vollbild nicht verfügbar.

@@ -38,14 +38,27 @@ export function TourFromEmailPanel({ mail, mailbox, onClose, onCreated }: Props)
           </button>
         </div>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className={`${tab === 'mail' ? '' : 'hidden'} md:block`}>
-          <div className="card flex max-h-[80vh] flex-col overflow-y-auto p-5">
+      {/*
+        Side-by-Side mit unabhängigem Scrollverhalten (Aufgabe 1):
+        - Grid bekommt eine FESTE Höhe (Viewport minus Header) und
+          overflow-hidden — damit kann KEINE Seite den äußeren
+          Container scrollen lassen.
+        - Beide Panels: overflow-y-auto + overscroll-contain.
+          Damit greift weder Scroll-Chaining noch der Browser-Pull-to-
+          Refresh, wenn man rechts ans Listenende kommt.
+      */}
+      <div className="grid gap-4 md:grid-cols-2 md:h-[calc(100vh-12rem)] md:overflow-hidden">
+        <div
+          className={`${tab === 'mail' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}
+        >
+          <div className="card flex flex-col p-5">
             <EmailMessageHeader mail={mail} />
             <EmailMessageView mail={mail} mailbox={mailbox} />
           </div>
         </div>
-        <div className={`${tab === 'form' ? '' : 'hidden'} md:block`}>
+        <div
+          className={`${tab === 'form' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}
+        >
           <TourCreateDialog
             variant="embedded"
             initial={initial}

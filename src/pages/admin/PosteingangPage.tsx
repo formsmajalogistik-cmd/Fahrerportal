@@ -13,10 +13,18 @@ import { EmailMessageView, EmailMessageHeader } from './EmailMessageView';
 import { TourFromEmailPanel } from './TourFromEmailPanel';
 import { TourEditFromEmailPanel } from './TourEditFromEmailPanel';
 import { TourPickerDialog } from './TourPickerDialog';
+import { ZusaetzeFromEmailPanel } from './ZusaetzeFromEmailPanel';
 
 const PAGE_SIZE = 25;
 
-type PendingTour = { mode: 'create' } | { mode: 'edit'; tourId: string };
+type PendingTour =
+  | { mode: 'create' }
+  | { mode: 'edit'; tourId: string }
+  | { mode: 'zusaetze'; tourId: string }
+  | { mode: 'zusaetze-belege'; tourId: string };
+
+/** Welcher Picker-Workflow wartet auf eine Tour-Auswahl? */
+type PickerPurpose = 'open' | 'zusaetze' | 'zusaetze-belege';
 
 /**
  * Posteingang — Mailbox-Pills + Ordner-Sidebar (Aufgabe 3) + Liste +
@@ -52,7 +60,7 @@ export function PosteingangPage() {
     initial: Parameters<typeof EmailComposeDialog>[0]['initial'];
   }>(null);
   const [pendingTour, setPendingTour] = useState<PendingTour | null>(null);
-  const [tourPicker, setTourPicker] = useState(false);
+  const [tourPicker, setTourPicker] = useState<PickerPurpose | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -298,13 +306,21 @@ export function PosteingangPage() {
             onClose={() => setPendingTour(null)}
             onCreated={(label) => { setPendingTour(null); showToast(`Tour erstellt: ${label}`); }}
           />
-        ) : (
+        ) : pendingTour.mode === 'edit' ? (
           <TourEditFromEmailPanel
             mail={openMail}
             mailbox={activeMailbox}
             tourId={pendingTour.tourId}
             onClose={() => setPendingTour(null)}
             onSaved={() => { setPendingTour(null); showToast('Tour gespeichert.'); }}
+          />
+        ) : (
+          <ZusaetzeFromEmailPanel
+            mail={openMail}
+            mailbox={activeMailbox}
+            tourId={pendingTour.tourId}
+            mode={pendingTour.mode === 'zusaetze-belege' ? 'zusaetze-belege' : 'zusaetze'}
+            onClose={() => setPendingTour(null)}
           />
         )
       ) : (
@@ -339,7 +355,9 @@ export function PosteingangPage() {
             onReply={openReply}
             onForward={openForward}
             onCreateTour={() => setPendingTour({ mode: 'create' })}
-            onOpenTour={() => setTourPicker(true)}
+            onOpenTour={() => setTourPicker('open')}
+            onAddZusaetze={() => setTourPicker('zusaetze')}
+            onAddZusaetzeBelege={() => setTourPicker('zusaetze-belege')}
             onDelete={(id) => setConfirmDelete(id)}
             onMove={handleMove}
           />
@@ -363,10 +381,13 @@ export function PosteingangPage() {
       )}
       {tourPicker && (
         <TourPickerDialog
-          onClose={() => setTourPicker(false)}
+          onClose={() => setTourPicker(null)}
           onPick={(tourId) => {
-            setTourPicker(false);
-            setPendingTour({ mode: 'edit', tourId });
+            const purpose = tourPicker;
+            setTourPicker(null);
+            if (purpose === 'open') setPendingTour({ mode: 'edit', tourId });
+            else if (purpose === 'zusaetze') setPendingTour({ mode: 'zusaetze', tourId });
+            else if (purpose === 'zusaetze-belege') setPendingTour({ mode: 'zusaetze-belege', tourId });
           }}
         />
       )}
@@ -581,13 +602,16 @@ interface DetailPaneProps {
   onForward: () => void;
   onCreateTour: () => void;
   onOpenTour: () => void;
+  onAddZusaetze: () => void;
+  onAddZusaetzeBelege: () => void;
   onDelete: (id: string) => void;
   onMove: (id: string, destinationId: string) => void;
 }
 
 function DetailPane({
   mailbox, loading, error, mail, isPrimary, folders, activeFolderId,
-  onReply, onForward, onCreateTour, onOpenTour, onDelete, onMove,
+  onReply, onForward, onCreateTour, onOpenTour, onAddZusaetze, onAddZusaetzeBelege,
+  onDelete, onMove,
 }: DetailPaneProps) {
   if (loading) return <div className="card p-6"><Spinner label="E-Mail wird geladen …" /></div>;
   if (error) {
@@ -617,13 +641,22 @@ function DetailPane({
                   onClick={() => onDelete(mail.id)}>
             Löschen
           </button>
-          {isPrimary && (
+          {isPrimary ? (
             <>
               <button type="button" className="btn-secondary text-sm" onClick={onOpenTour}>
                 Tour öffnen
               </button>
               <button type="button" className="btn-primary text-sm" onClick={onCreateTour}>
                 Tour erstellen
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn-secondary text-sm" onClick={onAddZusaetze}>
+                Zusätze hinzufügen
+              </button>
+              <button type="button" className="btn-primary text-sm" onClick={onAddZusaetzeBelege}>
+                Zusätze + Belege
               </button>
             </>
           )}

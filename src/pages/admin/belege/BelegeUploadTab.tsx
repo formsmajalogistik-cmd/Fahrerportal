@@ -1,6 +1,10 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { compressImage } from '../../../lib/photo';
 import { pdfjsLib } from '../../../lib/pdfjs';
+import {
+  addBelege, clearBelege, listBelege, removeBeleg, reorderBelege,
+  updateBelegBlob,
+} from '../../../lib/belegeStorage';
 import { heicToJpeg } from './heic';
 import { ImageCropDialog } from './ImageCropDialog';
 import { downloadBlob, generateBelegePdf, type Layout } from './belegPdf';
@@ -74,7 +78,31 @@ export function BelegeUploadTab() {
   const [info, setInfo] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Beim Mount aus IndexedDB laden — Belege überleben Reiter-Wechsel
+  // und Tab-Refresh. Async-Wrapper, damit setState nicht synchron im
+  // Effect-Body landet (React-19-Linter).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (cancelled) return;
+      try {
+        const stored = await listBelege();
+        if (cancelled) return;
+        const restored: BelegItem[] = stored.map((r) => ({
+          id: r.id,
+          blob: r.blob,
+          url: URL.createObjectURL(r.blob),
+        }));
+        setItems(restored);
+      } catch (err) {
+        console.warn('[BelegeUploadTab] listBelege fehlgeschlagen', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     setError(null);
@@ -127,7 +155,25 @@ export function BelegeUploadTab() {
       } else if (extractedPages > 0) {
         setInfo(`${extractedPages} ${extractedPages === 1 ? 'Seite' : 'Seiten'} aus PDF extrahiert.`);
       }
-      setItems((prev) => [...prev, ...processed]);
+      // Mit den IDs aus der DB überschreiben — `processed` enthält noch
+      // die temporären `makeId`-Schlüssel, die für die Object-URL
+      // gepasst haben; die persistente position-Spalte vergibt die
+      // belegeStorage. So zeigt die UI sofort den finalen Stand.
+      if (processed.length > 0) {
+        const persisted = await addBelege(processed.map((p) => ({
+          blob: p.blob,
+          source: 'manuell',
+          name: null,
+        })));
+        const synced: BelegItem[] = persisted.map((r, i) => ({
+          id: r.id,
+          blob: r.blob,
+          // URL aus dem already-loaded processed-Eintrag wiederverwenden,
+          // damit kein zusätzlicher createObjectURL-Roundtrip nötig ist.
+          url: processed[i].url,
+        }));
+        setItems((prev) => [...prev, ...synced]);
+      }
     } finally {
       setBusy(null);
     }
@@ -139,6 +185,7 @@ export function BelegeUploadTab() {
       if (found) URL.revokeObjectURL(found.url);
       return prev.filter((i) => i.id !== id);
     });
+    void removeBeleg(id);
   }
 
   function move(id: string, delta: -1 | 1) {
@@ -150,8 +197,19 @@ export function BelegeUploadTab() {
       const next = prev.slice();
       const [it] = next.splice(idx, 1);
       next.splice(target, 0, it);
+      void reorderBelege(next.map((n) => n.id));
       return next;
     });
+  }
+
+  async function handleReset() {
+    setConfirmReset(false);
+    setItems((prev) => {
+      for (const it of prev) URL.revokeObjectURL(it.url);
+      return [];
+    });
+    try { await clearBelege(); }
+    catch (err) { console.warn('[BelegeUploadTab] clearBelege', err); }
   }
 
   // Drag-&-Drop-Reorder (Desktop, HTML5 Drag).
@@ -164,6 +222,7 @@ export function BelegeUploadTab() {
       return { ...i, blob, url: URL.createObjectURL(blob) };
     }));
     setEditingId(null);
+    void updateBelegBlob(id, blob);
   }
 
   async function handleGenerate() {
@@ -189,7 +248,22 @@ export function BelegeUploadTab() {
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-maja-muted">Belege hochladen und als PDF zusammenstellen.</p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-sm text-maja-muted">
+          Belege hochladen und als PDF zusammenstellen. Hochgeladene
+          Belege bleiben beim Reiter-Wechsel erhalten, bis sie über
+          „Belege zurücksetzen" entfernt werden.
+        </p>
+        {items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setConfirmReset(true)}
+            className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+          >
+            Belege zurücksetzen ({items.length})
+          </button>
+        )}
+      </div>
 
       {/* Schritt 1: Upload + Liste */}
       <section className="space-y-3">
@@ -268,6 +342,7 @@ export function BelegeUploadTab() {
                     const next = prev.slice();
                     const [s] = next.splice(srcIdx, 1);
                     next.splice(dstIdx, 0, s);
+                    void reorderBelege(next.map((n) => n.id));
                     return next;
                   });
                 }}
@@ -423,6 +498,28 @@ export function BelegeUploadTab() {
           onCancel={() => setEditingId(null)}
           onApply={(blob) => applyCrop(editingItem.id, blob)}
         />
+      )}
+      {confirmReset && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
+          <div className="card w-full max-w-md p-5">
+            <h3 className="text-base font-semibold text-maja-navy">Alle hochgeladenen Belege entfernen?</h3>
+            <p className="mt-2 text-sm text-maja-muted">
+              Alle {items.length} Belege werden aus dem Zwischenspeicher
+              gelöscht. Bereits erstellte PDFs sind davon nicht betroffen.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="btn-secondary"
+                      onClick={() => setConfirmReset(false)}>
+                Abbrechen
+              </button>
+              <button type="button"
+                      className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                      onClick={() => void handleReset()}>
+                Belege löschen
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
