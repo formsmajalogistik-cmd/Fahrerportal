@@ -484,6 +484,24 @@ export type Database = {
         };
         Relationships: [];
       };
+      app_settings: {
+        Row: {
+          key: string;
+          value: Json;
+          updated_at: string;
+        };
+        Insert: {
+          key: string;
+          value: Json;
+          updated_at?: string;
+        };
+        Update: {
+          key?: string;
+          value?: Json;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       greimel_zugaenge: {
         Row: {
           id: string;

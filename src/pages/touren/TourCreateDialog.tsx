@@ -14,6 +14,21 @@ type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nach
 interface Props {
   onClose: () => void;
   onCreated: () => void;
+  /**
+   * "modal" (Default): klassisches Overlay-Modal.
+   * "embedded": Inhalt wird in den Eltern-Container gerendert — ohne
+   * fixed/bg-Overlay. Wird vom Posteingang-Side-by-Side genutzt.
+   */
+  variant?: 'modal' | 'embedded';
+  /** Vorbelegung einzelner Felder aus dem Aufrufer (z.B. E-Mail). */
+  initial?: {
+    startStadt?: string;
+    zielStadt?: string;
+    kundenname?: string;
+    info?: string;
+    fin?: string;
+    kennzeichen?: string[];
+  };
 }
 
 function parseInteger(v: string): number | null {
@@ -32,10 +47,10 @@ function parseDecimal(input: string): number | null {
 }
 
 
-export function TourCreateDialog({ onClose, onCreated }: Props) {
+export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initial }: Props) {
   // Pflichtfelder
-  const [startStadt, setStartStadt] = useState('');
-  const [zielStadt, setZielStadt]   = useState('');
+  const [startStadt, setStartStadt] = useState(initial?.startStadt ?? '');
+  const [zielStadt, setZielStadt]   = useState(initial?.zielStadt ?? '');
 
   // Rückführung
   const [hatRueckfuehrung, setHatRueckfuehrung] = useState(false);
@@ -62,20 +77,20 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
   const [rechnungsdatum, setRechnungsdatum] = useState('');
 
   // Kennzeichen — 1 oder 2 Felder
-  const [kennzeichenHin, setKennzeichenHin]   = useState('');
-  const [kennzeichenRueck, setKennzeichenRueck] = useState('');
+  const [kennzeichenHin, setKennzeichenHin]   = useState(initial?.kennzeichen?.[0] ?? '');
+  const [kennzeichenRueck, setKennzeichenRueck] = useState(initial?.kennzeichen?.[1] ?? '');
 
   // Sondervereinbarung (Checkbox + manueller Preis + Anmerkung)
   const [istSondervereinbarung, setIstSondervereinbarung] = useState(false);
   const [sondervereinbarung, setSondervereinbarung] = useState('');
   const [verguetungInput, setVerguetungInput] = useState('');
 
-  const [kundenname, setKundenname] = useState('');
-  const [info, setInfo] = useState('');
+  const [kundenname, setKundenname] = useState(initial?.kundenname ?? '');
+  const [info, setInfo] = useState(initial?.info ?? '');
 
   // E-Fahrzeug + FIN + Kontakt
   const [istEFahrzeug, setIstEFahrzeug] = useState(false);
-  const [fin, setFin] = useState('');
+  const [fin, setFin] = useState(initial?.fin ?? '');
   const [kontaktId, setKontaktId] = useState('');
   const [kontakte, setKontakte] = useState<AuftraggeberKontakt[]>([]);
 
@@ -292,9 +307,19 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
     onCreated();
   }
 
+  // Wrapper-Klassen je nach variant:
+  //  - modal:     klassisches Overlay
+  //  - embedded:  einfache Card im Eltern-Container (für Side-by-Side
+  //               im Posteingang)
+  const outerCls = variant === 'embedded'
+    ? ''
+    : 'fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8';
+  const innerCls = variant === 'embedded'
+    ? 'card w-full p-5'
+    : 'card w-full max-w-2xl p-6';
   return (
-    <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
-      <div className="card w-full max-w-2xl p-6">
+    <div className={outerCls}>
+      <div className={innerCls}>
         <div className="mb-4 flex items-start justify-between">
           <div>
             <h2 className="text-lg font-semibold text-maja-navy">Neue Tour anlegen</h2>
@@ -303,14 +328,16 @@ export function TourCreateDialog({ onClose, onCreated }: Props) {
               anderen Felder sind optional.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
-            aria-label="Schließen"
-          >
-            <XIcon className="h-4 w-4" />
-          </button>
+          {variant === 'modal' && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-maja-muted hover:bg-maja-light"
+              aria-label="Schließen"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5" noValidate>

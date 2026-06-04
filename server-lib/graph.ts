@@ -296,6 +296,271 @@ export async function sendMail(args: {
   if (!resp.ok) throw new Error(`sendMail: ${resp.status} ${await resp.text()}`);
 }
 
+// ============================================================
+// Mail-Read / Reply / Forward / Attachment-Helpers für Posteingang
+// ------------------------------------------------------------
+// Die Funktionen sprechen mit Graph als der Server-App (client_
+// credentials). Die Azure-App-Registration braucht für Lesen
+// `Mail.Read` (Application-Permission) und für Antworten /
+// Weiterleiten `Mail.Send`/`Mail.ReadWrite` (Application-Permission).
+// Wenn die Berechtigungen fehlen, schlägt der Call mit 403/404 fehl —
+// die Endpunkte reichen den Fehler durch, damit die UI eine
+// klare Meldung anzeigen kann.
+// ============================================================
+
+export interface MailListItem {
+  id: string;
+  subject: string;
+  from: { name: string | null; address: string | null };
+  receivedDateTime: string;
+  bodyPreview: string;
+  hasAttachments: boolean;
+  isRead: boolean;
+}
+
+export interface MailDetail extends MailListItem {
+  to: Array<{ name: string | null; address: string | null }>;
+  cc: Array<{ name: string | null; address: string | null }>;
+  bodyHtml: string;
+  bodyContentType: 'html' | 'text';
+  attachments: Array<{
+    id: string;
+    name: string;
+    contentType: string;
+    size: number;
+  }>;
+}
+
+interface RawRecipient { name?: string; address?: string }
+interface RawGraphRecipient { emailAddress?: RawRecipient }
+interface RawAttachment {
+  id: string;
+  name: string;
+  contentType?: string;
+  size?: number;
+}
+interface RawMessage {
+  id: string;
+  subject?: string;
+  from?: RawGraphRecipient;
+  toRecipients?: RawGraphRecipient[];
+  ccRecipients?: RawGraphRecipient[];
+  receivedDateTime?: string;
+  bodyPreview?: string;
+  hasAttachments?: boolean;
+  isRead?: boolean;
+  body?: { contentType?: string; content?: string };
+}
+
+function recipient(r: RawGraphRecipient | undefined): { name: string | null; address: string | null } {
+  return {
+    name:    r?.emailAddress?.name    ?? null,
+    address: r?.emailAddress?.address ?? null,
+  };
+}
+function recipientList(rs: RawGraphRecipient[] | undefined) {
+  return (rs ?? []).map((r) => recipient(r));
+}
+
+/** Listet Nachrichten eines Postfachs (Posteingang-Folder). */
+export async function listMessages(args: {
+  mailbox: string;
+  folder?: string;
+  page?: number;
+  pageSize?: number;
+  search?: string | null;
+}): Promise<{ value: MailListItem[]; totalCount?: number }> {
+  const folder = args.folder ?? 'inbox';
+  const page = Math.max(1, args.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, args.pageSize ?? 20));
+  const skip = (page - 1) * pageSize;
+  const params = new URLSearchParams();
+  params.set('$top', String(pageSize));
+  params.set('$skip', String(skip));
+  params.set('$orderby', 'receivedDateTime desc');
+  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead');
+  params.set('$count', 'true');
+  // Graph $search: über Betreff/Absender. Wenn search gesetzt, kann
+  // $orderby nicht parallel genutzt werden — Graph akzeptiert das in
+  // diesem Endpunkt aber problemlos für inbox-Listing.
+  if (args.search) {
+    params.delete('$orderby');
+    params.set('$search', `"${args.search.replace(/"/g, '\\"')}"`);
+  }
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/mailFolders/${encodeURIComponent(folder)}/messages?${params.toString()}`;
+  const resp = await graphFetch('GET', url, undefined, { ConsistencyLevel: 'eventual' });
+  if (!resp.ok) {
+    throw new Error(`listMessages: ${resp.status} ${await resp.text()}`);
+  }
+  const j = await resp.json() as { value?: RawMessage[]; '@odata.count'?: number };
+  const value = (j.value ?? []).map((m): MailListItem => ({
+    id: m.id,
+    subject: m.subject ?? '',
+    from: recipient(m.from),
+    receivedDateTime: m.receivedDateTime ?? '',
+    bodyPreview: m.bodyPreview ?? '',
+    hasAttachments: !!m.hasAttachments,
+    isRead: !!m.isRead,
+  }));
+  return { value, totalCount: j['@odata.count'] };
+}
+
+/** Holt eine einzelne Nachricht inkl. Body + Anhangs-Metadaten. */
+export async function getMessage(args: {
+  mailbox: string;
+  messageId: string;
+}): Promise<MailDetail> {
+  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body';
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}?${select}`;
+  const resp = await graphFetch('GET', url, undefined, { Prefer: 'outlook.body-content-type="html"' });
+  if (!resp.ok) {
+    throw new Error(`getMessage: ${resp.status} ${await resp.text()}`);
+  }
+  const m = await resp.json() as RawMessage;
+  let attachments: MailDetail['attachments'] = [];
+  if (m.hasAttachments) {
+    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size`;
+    const aResp = await graphFetch('GET', aUrl);
+    if (aResp.ok) {
+      const aJson = await aResp.json() as { value?: RawAttachment[] };
+      attachments = (aJson.value ?? []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        contentType: a.contentType ?? 'application/octet-stream',
+        size: a.size ?? 0,
+      }));
+    }
+  }
+  const contentType = (m.body?.contentType ?? 'html').toLowerCase() === 'text'
+    ? 'text' as const : 'html' as const;
+  return {
+    id: m.id,
+    subject: m.subject ?? '',
+    from: recipient(m.from),
+    to: recipientList(m.toRecipients),
+    cc: recipientList(m.ccRecipients),
+    receivedDateTime: m.receivedDateTime ?? '',
+    bodyPreview: m.bodyPreview ?? '',
+    hasAttachments: !!m.hasAttachments,
+    isRead: !!m.isRead,
+    bodyHtml: m.body?.content ?? '',
+    bodyContentType: contentType,
+    attachments,
+  };
+}
+
+/** Lädt einen einzelnen Anhang als Binär (FileAttachment, decoded). */
+export async function getAttachmentBytes(args: {
+  mailbox: string;
+  messageId: string;
+  attachmentId: string;
+}): Promise<{ name: string; contentType: string; bytes: Uint8Array }> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(args.attachmentId)}`;
+  const resp = await graphFetch('GET', url);
+  if (!resp.ok) {
+    throw new Error(`getAttachment: ${resp.status} ${await resp.text()}`);
+  }
+  const a = await resp.json() as {
+    '@odata.type'?: string;
+    name: string;
+    contentType?: string;
+    contentBytes?: string;
+  };
+  if (a['@odata.type'] !== '#microsoft.graph.fileAttachment' || !a.contentBytes) {
+    throw new Error('Anhang nicht unterstützt (kein FileAttachment).');
+  }
+  const buf = typeof Buffer !== 'undefined'
+    ? new Uint8Array(Buffer.from(a.contentBytes, 'base64'))
+    : Uint8Array.from(atob(a.contentBytes), (c) => c.charCodeAt(0));
+  return {
+    name: a.name,
+    contentType: a.contentType ?? 'application/octet-stream',
+    bytes: buf,
+  };
+}
+
+/** Sendet eine neue Mail vom angegebenen Postfach aus. */
+export async function sendMailFrom(args: {
+  mailbox: string;
+  to: string[];
+  cc?: string[];
+  subject: string;
+  bodyHtml: string;
+  attachments?: Array<{ name: string; contentType: string; bytes: Uint8Array }>;
+}): Promise<void> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/sendMail`;
+  const recipients = (xs: string[]): MailRecipient[] =>
+    xs.map((a) => ({ emailAddress: { address: a } }));
+  const att: MailAttachment[] = (args.attachments ?? []).map((a) => ({
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    name: a.name,
+    contentType: a.contentType,
+    contentBytes: bytesToBase64(a.bytes),
+  }));
+  const payload = {
+    message: {
+      subject: args.subject,
+      body: { contentType: 'HTML', content: args.bodyHtml },
+      toRecipients: recipients(args.to),
+      ccRecipients: args.cc && args.cc.length > 0 ? recipients(args.cc) : undefined,
+      attachments: att.length > 0 ? att : undefined,
+    },
+    saveToSentItems: true,
+  };
+  const resp = await graphFetch('POST', url, payload);
+  if (!resp.ok) throw new Error(`sendMailFrom: ${resp.status} ${await resp.text()}`);
+}
+
+/** Antwortet auf eine Nachricht (an den Original-Absender). */
+export async function replyMail(args: {
+  mailbox: string;
+  messageId: string;
+  bodyHtml: string;
+  to?: string[];
+  cc?: string[];
+  attachments?: Array<{ name: string; contentType: string; bytes: Uint8Array }>;
+}): Promise<void> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/reply`;
+  const recipients = (xs: string[]): MailRecipient[] =>
+    xs.map((a) => ({ emailAddress: { address: a } }));
+  const att: MailAttachment[] = (args.attachments ?? []).map((a) => ({
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    name: a.name,
+    contentType: a.contentType,
+    contentBytes: bytesToBase64(a.bytes),
+  }));
+  const payload: Record<string, unknown> = {
+    message: {
+      body: { contentType: 'HTML', content: args.bodyHtml },
+      toRecipients: args.to && args.to.length > 0 ? recipients(args.to) : undefined,
+      ccRecipients: args.cc && args.cc.length > 0 ? recipients(args.cc) : undefined,
+      attachments: att.length > 0 ? att : undefined,
+    },
+  };
+  const resp = await graphFetch('POST', url, payload);
+  if (!resp.ok) throw new Error(`replyMail: ${resp.status} ${await resp.text()}`);
+}
+
+/** Leitet eine Nachricht weiter. */
+export async function forwardMail(args: {
+  mailbox: string;
+  messageId: string;
+  to: string[];
+  cc?: string[];
+  comment: string;
+}): Promise<void> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/forward`;
+  const recipients = (xs: string[]): MailRecipient[] =>
+    xs.map((a) => ({ emailAddress: { address: a } }));
+  const payload = {
+    toRecipients: recipients(args.to),
+    ccRecipients: args.cc && args.cc.length > 0 ? recipients(args.cc) : undefined,
+    comment: args.comment,
+  };
+  const resp = await graphFetch('POST', url, payload);
+  if (!resp.ok) throw new Error(`forwardMail: ${resp.status} ${await resp.text()}`);
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   // Server-Node hat Buffer
   if (typeof Buffer !== 'undefined') return Buffer.from(bytes).toString('base64');

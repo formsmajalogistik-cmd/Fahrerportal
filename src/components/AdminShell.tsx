@@ -28,6 +28,7 @@ const adminNav: NavItem[] = [
   { to: '/meine-formulare',  label: 'Formulare' },
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
   { to: '/eingaenge',        label: 'Eingänge' },
+  { to: '/posteingang',      label: 'Posteingang' },
   { to: '/belege',           label: 'Belege' },
   { to: '/aufstellung',      label: 'Aufstellung' },
   { to: '/rechnungen',       label: 'Rechnungen' },

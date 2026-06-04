@@ -19,6 +19,8 @@ import { EinstellungenPage } from './pages/admin/EinstellungenPage';
 import { TemplatesListPage } from './pages/admin/TemplatesListPage';
 import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { EingaengePage } from './pages/admin/EingaengePage';
+import { PosteingangPage } from './pages/admin/PosteingangPage';
+import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
 import { BelegePage } from './pages/admin/BelegePage';
 import { AufstellungPage } from './pages/admin/AufstellungPage';
 import { RechnungenListPage } from './pages/admin/rechnungen/RechnungenListPage';
@@ -74,6 +76,7 @@ export default function App() {
           <Route path="/meine-drafts" element={<Navigate to="/meine-formulare" replace />} />
           <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
           <Route path="/eingaenge" element={<EingaengePage />} />
+          <Route path="/posteingang" element={<PosteingangPage />} />
           <Route path="/belege" element={<BelegePage />} />
           <Route path="/aufstellung" element={<AufstellungPage />} />
           <Route path="/rechnungen" element={<RechnungenListPage />} />
@@ -86,6 +89,7 @@ export default function App() {
             <Route path="auftraggeber" element={<AuftraggeberListPage />} />
             <Route path="preislisten" element={<PreislistePage />} />
             <Route path="fahrer" element={<FahrerListPage />} />
+            <Route path="postfaecher" element={<PostfaecherSettingsPage />} />
           </Route>
           {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
           <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />

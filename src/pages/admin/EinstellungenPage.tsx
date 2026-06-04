@@ -6,6 +6,7 @@ const subNav: SubNavItem[] = [
   { to: '/einstellungen/auftraggeber', label: 'Auftraggeber' },
   { to: '/einstellungen/preislisten',  label: 'Preislisten' },
   { to: '/einstellungen/fahrer',       label: 'Fahrer' },
+  { to: '/einstellungen/postfaecher',  label: 'E-Mail-Postfächer' },
 ];
 
 export function EinstellungenPage() {

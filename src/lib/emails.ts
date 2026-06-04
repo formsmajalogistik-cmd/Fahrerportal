@@ -1,0 +1,217 @@
+// Client-Helper für die /api/emails*-Endpunkte. Alle Calls hängen
+// den Supabase-Bearer-Token automatisch an und schicken nur die
+// nötigsten Felder — der Graph-Token bleibt server-seitig.
+
+import { getValidToken } from './supabase';
+import { fetchWithRetry } from './fetchRetry';
+
+export interface MailListItem {
+  id: string;
+  subject: string;
+  from: { name: string | null; address: string | null };
+  receivedDateTime: string;
+  bodyPreview: string;
+  hasAttachments: boolean;
+  isRead: boolean;
+}
+
+export interface MailAttachmentMeta {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+}
+
+export interface MailDetail extends MailListItem {
+  to: Array<{ name: string | null; address: string | null }>;
+  cc: Array<{ name: string | null; address: string | null }>;
+  bodyHtml: string;
+  bodyContentType: 'html' | 'text';
+  attachments: MailAttachmentMeta[];
+}
+
+export class MailError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function authHeader(): Promise<Record<string, string>> {
+  const token = await getValidToken();
+  if (!token) throw new MailError(401, 'Sitzung abgelaufen — bitte neu anmelden.');
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function expectJson<T>(resp: Response): Promise<T> {
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try {
+      const j = await resp.json() as { error?: string };
+      if (j?.error) msg = j.error;
+    } catch { /* nicht JSON */ }
+    throw new MailError(resp.status, msg);
+  }
+  return resp.json() as Promise<T>;
+}
+
+export async function listEmails(args: {
+  mailbox: string; page?: number; pageSize?: number; search?: string;
+}): Promise<{ value: MailListItem[]; totalCount?: number }> {
+  const params = new URLSearchParams();
+  params.set('mailbox', args.mailbox);
+  if (args.page) params.set('page', String(args.page));
+  if (args.pageSize) params.set('pageSize', String(args.pageSize));
+  if (args.search) params.set('search', args.search);
+  const resp = await fetchWithRetry(`/api/emails?${params.toString()}`, {
+    headers: await authHeader(),
+    timeoutMs: 25_000,
+  });
+  return expectJson(resp);
+}
+
+export async function getEmail(mailbox: string, id: string): Promise<MailDetail> {
+  const params = new URLSearchParams({ mailbox, id });
+  const resp = await fetchWithRetry(`/api/email-message?${params.toString()}`, {
+    headers: await authHeader(),
+    timeoutMs: 25_000,
+  });
+  return expectJson(resp);
+}
+
+/**
+ * Baut eine URL zum Anhang-Endpoint inkl. Bearer-Token im Query —
+ * NICHT verwenden, sonst landet der Token in History/Logs. Stattdessen
+ * fetchAttachmentBlob nutzen und blob-URL im DOM zeigen.
+ */
+export async function fetchAttachmentBlob(args: {
+  mailbox: string; messageId: string; attachmentId: string;
+  disposition?: 'inline' | 'attachment';
+}): Promise<Blob> {
+  const params = new URLSearchParams({
+    mailbox: args.mailbox,
+    messageId: args.messageId,
+    attachmentId: args.attachmentId,
+  });
+  if (args.disposition) params.set('disposition', args.disposition);
+  const resp = await fetchWithRetry(`/api/email-attachment?${params.toString()}`, {
+    headers: await authHeader(),
+    timeoutMs: 40_000,
+  });
+  if (!resp.ok) {
+    throw new MailError(resp.status, `HTTP ${resp.status}`);
+  }
+  return resp.blob();
+}
+
+export interface OutboundAttachment {
+  name: string;
+  contentType: string;
+  content_base64: string;
+}
+
+export async function sendEmailFrom(args: {
+  mailbox: string;
+  to: string[];
+  cc?: string[];
+  subject: string;
+  bodyHtml: string;
+  attachments?: OutboundAttachment[];
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/emails', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+    timeoutMs: 60_000,
+  });
+  await expectJson(resp);
+}
+
+export async function replyToEmail(args: {
+  mailbox: string;
+  messageId: string;
+  bodyHtml: string;
+  to?: string[];
+  cc?: string[];
+  attachments?: OutboundAttachment[];
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/email-action', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...args, action: 'reply' }),
+    timeoutMs: 60_000,
+  });
+  await expectJson(resp);
+}
+
+export async function forwardEmail(args: {
+  mailbox: string;
+  messageId: string;
+  to: string[];
+  cc?: string[];
+  comment: string;
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/email-action', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...args, action: 'forward' }),
+    timeoutMs: 60_000,
+  });
+  await expectJson(resp);
+}
+
+/** Liest einen File-Blob in OutboundAttachment um. */
+export async function fileToOutboundAttachment(file: File): Promise<OutboundAttachment> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+  }
+  return {
+    name: file.name,
+    contentType: file.type || 'application/octet-stream',
+    content_base64: btoa(bin),
+  };
+}
+
+/**
+ * Formatiert ein ISO-Datum als deutsche relative oder absolute
+ * Zeitangabe. < 1 Std → "vor X Min.", < 24 h → "vor X Std.",
+ * heute → "Heute HH:MM", sonst "dd.mm.yyyy HH:MM".
+ */
+export function formatMailDate(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return 'gerade eben';
+  if (min < 60) return `vor ${min} Min.`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24 && d.getDate() === now.getDate()) {
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `Heute ${hh}:${mm}`;
+  }
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min2 = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}.${mm}.${yyyy} ${hh}:${min2}`;
+}
+
+/** Formatiert Byte-Größen knapp ("23 KB", "1,2 MB"). */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  const decimals = v < 10 && i > 0 ? 1 : 0;
+  return `${v.toFixed(decimals).replace('.', ',')} ${units[i]}`;
+}
