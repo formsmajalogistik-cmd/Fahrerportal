@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useMemo, useState, type ReactNode,
+  useCallback, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
@@ -45,6 +45,14 @@ interface Props {
   onClose: () => void;
   onChanged: () => void;
   onDeleted: () => void;
+  /**
+   * "modal" (Default): Overlay-Dialog. "embedded": ohne Overlay, das
+   * Panel wird vom Eltern-Layout positioniert (z.B. Side-by-Side im
+   * Posteingang).
+   */
+  variant?: 'modal' | 'embedded';
+  /** Bei true startet die Tour direkt im Edit-Modus (für Side-by-Side). */
+  startInEditMode?: boolean;
 }
 
 const STATUS_LABEL: Record<TourStatus, string> = {
@@ -276,7 +284,10 @@ function kontaktFromDraft(
 
 // ---------- Component ----------
 
-export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Props) {
+export function TourDetailDialog({
+  tourId, onClose, onChanged, onDeleted,
+  variant = 'modal', startInEditMode = false,
+}: Props) {
   const { profile } = useAuth();
   const fahrerCtx = useFahrerContext();
   const isAdmin = profile?.role === 'admin';
@@ -428,6 +439,18 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
     setEditing(true);
     setStatusMsg(null);
   }
+
+  // Side-by-Side / Posteingang: wenn das Eltern-Panel mit
+  // startInEditMode öffnet, fahren wir direkt in den Edit-Modus,
+  // sobald die Tour geladen ist. Damit greift der "Tour öffnen"-Pfad
+  // aus dem Posteingang sofort als Bearbeiten-Formular.
+  const autoEditedRef = useRef(false);
+  useEffect(() => {
+    if (!startInEditMode || !tour || editing || autoEditedRef.current) return;
+    autoEditedRef.current = true;
+    setDraft(draftFromTour(tour));
+    setEditing(true);
+  }, [startInEditMode, tour, editing]);
 
   function cancelEdit() {
     setEditing(false);
@@ -841,14 +864,14 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
 
   if (loading) {
     return (
-      <Shell onClose={onClose}>
+      <Shell onClose={onClose} variant={variant}>
         <Spinner label="Tour wird geladen …" />
       </Shell>
     );
   }
   if (error || !tour) {
     return (
-      <Shell onClose={onClose}>
+      <Shell onClose={onClose} variant={variant}>
         <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
           {error ?? 'Tour nicht gefunden.'}
         </div>
@@ -863,7 +886,7 @@ export function TourDetailDialog({ tourId, onClose, onChanged, onDeleted }: Prop
   const hatRueckfuehrung = !!tour.rueckfuehrung_stadt;
 
   return (
-    <Shell onClose={onClose}>
+    <Shell onClose={onClose} variant={variant}>
       {/* Header */}
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -1345,16 +1368,23 @@ function UnlinkProtokollDialog({ fields, busy, onConfirm, onClose }: UnlinkProps
 
 // ---------- Layout-Shell ----------
 
-function Shell({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  // ESC schließt
+function Shell({
+  children, onClose, variant = 'modal',
+}: { children: ReactNode; onClose: () => void; variant?: 'modal' | 'embedded' }) {
+  // ESC schließt nur im Modal — im embedded Side-by-Side soll Escape
+  // den Eltern-Container nicht stören.
   useEffect(() => {
+    if (variant !== 'modal') return;
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, variant]);
 
+  if (variant === 'embedded') {
+    return <div className="card w-full p-5">{children}</div>;
+  }
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
       <div className="card w-full max-w-3xl p-6">

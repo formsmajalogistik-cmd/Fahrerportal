@@ -13,6 +13,16 @@ export interface MailListItem {
   bodyPreview: string;
   hasAttachments: boolean;
   isRead: boolean;
+  flagged: boolean;
+}
+
+export interface MailFolder {
+  id: string;
+  displayName: string;
+  parentFolderId: string | null;
+  totalItemCount: number;
+  unreadItemCount: number;
+  wellKnown: string | null;
 }
 
 export interface MailAttachmentMeta {
@@ -57,18 +67,77 @@ async function expectJson<T>(resp: Response): Promise<T> {
 }
 
 export async function listEmails(args: {
-  mailbox: string; page?: number; pageSize?: number; search?: string;
+  mailbox: string; page?: number; pageSize?: number; search?: string; folder?: string;
 }): Promise<{ value: MailListItem[]; totalCount?: number }> {
   const params = new URLSearchParams();
   params.set('mailbox', args.mailbox);
   if (args.page) params.set('page', String(args.page));
   if (args.pageSize) params.set('pageSize', String(args.pageSize));
   if (args.search) params.set('search', args.search);
+  if (args.folder) params.set('folder', args.folder);
   const resp = await fetchWithRetry(`/api/emails?${params.toString()}`, {
     headers: await authHeader(),
     timeoutMs: 25_000,
   });
   return expectJson(resp);
+}
+
+export async function listFolders(mailbox: string): Promise<MailFolder[]> {
+  const params = new URLSearchParams({ mailbox });
+  const resp = await fetchWithRetry(`/api/email-folders?${params.toString()}`, {
+    headers: await authHeader(),
+    timeoutMs: 25_000,
+  });
+  const j = await expectJson<{ value: MailFolder[] }>(resp);
+  return j.value;
+}
+
+export async function moveEmail(args: {
+  mailbox: string; messageId: string; destinationId: string;
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/email-patch', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...args, action: 'move' }),
+    timeoutMs: 25_000,
+  });
+  await expectJson(resp);
+}
+
+export async function deleteEmail(args: {
+  mailbox: string; messageId: string;
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/email-patch', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...args, action: 'delete' }),
+    timeoutMs: 25_000,
+  });
+  await expectJson(resp);
+}
+
+export async function flagEmail(args: {
+  mailbox: string; messageId: string; flagged: boolean;
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/email-patch', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...args, action: 'flag' }),
+    timeoutMs: 25_000,
+  });
+  await expectJson(resp);
+}
+
+export async function markEmailRead(args: {
+  mailbox: string; messageId: string; isRead: boolean;
+}): Promise<void> {
+  const resp = await fetchWithRetry('/api/email-patch', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...args, action: 'markRead' }),
+    timeoutMs: 25_000,
+  });
+  await expectJson(resp);
 }
 
 export async function getEmail(mailbox: string, id: string): Promise<MailDetail> {

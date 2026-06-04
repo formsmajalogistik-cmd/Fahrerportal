@@ -308,6 +308,97 @@ export async function sendMail(args: {
 // klare Meldung anzeigen kann.
 // ============================================================
 
+export interface MailFolder {
+  id: string;
+  displayName: string;
+  parentFolderId: string | null;
+  totalItemCount: number;
+  unreadItemCount: number;
+  /** Well-known-Folder-Name in lowercase, wenn id ein well-known-Name
+   *  ist (inbox, sentitems, drafts, deleteditems). Sonst null. */
+  wellKnown: string | null;
+}
+
+/** Listet die Mail-Ordner eines Postfachs (inkl. WellKnown-Mapping). */
+export async function listFolders(mailbox: string): Promise<MailFolder[]> {
+  // Graph default $top ist 10 — reicht für Stammkunden meistens nicht
+  // (Inbox-Subfolder), also explizit $top=200 setzen.
+  const url = `${GRAPH}/users/${encodeURIComponent(mailbox)}/mailFolders?$top=200&$select=id,displayName,parentFolderId,totalItemCount,unreadItemCount`;
+  const resp = await graphFetch('GET', url);
+  if (!resp.ok) throw new Error(`listFolders: ${resp.status} ${await resp.text()}`);
+  const j = await resp.json() as { value?: Array<Record<string, unknown>> };
+  const out: MailFolder[] = (j.value ?? []).map((f) => ({
+    id: String(f.id),
+    displayName: String(f.displayName ?? ''),
+    parentFolderId: typeof f.parentFolderId === 'string' ? f.parentFolderId : null,
+    totalItemCount: Number(f.totalItemCount ?? 0),
+    unreadItemCount: Number(f.unreadItemCount ?? 0),
+    wellKnown: null,
+  }));
+  // Well-Known-Folder zusätzlich abholen — Graph akzeptiert die
+  // Namen als Folder-ID für POST /move u.ä. Wir liefern sie als
+  // separate Liste, damit das Frontend stable IDs für "inbox" etc.
+  // bekommt, ohne sie aus displayName raten zu müssen.
+  const wellKnownNames = ['inbox', 'sentitems', 'drafts', 'deleteditems', 'junkemail', 'archive'];
+  const wellKnownLabels: Record<string, string> = {
+    inbox: 'Posteingang',
+    sentitems: 'Gesendet',
+    drafts: 'Entwürfe',
+    deleteditems: 'Papierkorb',
+    junkemail: 'Junk',
+    archive: 'Archiv',
+  };
+  const wellKnownFolders: MailFolder[] = [];
+  for (const name of wellKnownNames) {
+    try {
+      const wkUrl = `${GRAPH}/users/${encodeURIComponent(mailbox)}/mailFolders/${name}?$select=id,displayName,parentFolderId,totalItemCount,unreadItemCount`;
+      const r = await graphFetch('GET', wkUrl);
+      if (!r.ok) continue;
+      const f = await r.json() as Record<string, unknown>;
+      wellKnownFolders.push({
+        id: String(f.id),
+        displayName: wellKnownLabels[name] ?? String(f.displayName ?? name),
+        parentFolderId: typeof f.parentFolderId === 'string' ? f.parentFolderId : null,
+        totalItemCount: Number(f.totalItemCount ?? 0),
+        unreadItemCount: Number(f.unreadItemCount ?? 0),
+        wellKnown: name,
+      });
+    } catch { /* einzelner WellKnown-Folder fehlt → ignorieren */ }
+  }
+  // Wenn ein well-known Folder denselben displayName wie ein Rohlisten-
+  // Folder hat (üblich bei "Posteingang"), behalten wir den well-known —
+  // sonst entsprechende Roh-Einträge anhängen.
+  const wkIds = new Set(wellKnownFolders.map((f) => f.id));
+  const rest = out.filter((f) => !wkIds.has(f.id));
+  return [...wellKnownFolders, ...rest];
+}
+
+/** Verschiebt eine Nachricht in einen anderen Ordner. */
+export async function moveMessage(args: {
+  mailbox: string; messageId: string; destinationId: string;
+}): Promise<void> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/move`;
+  const resp = await graphFetch('POST', url, { destinationId: args.destinationId });
+  if (!resp.ok) throw new Error(`moveMessage: ${resp.status} ${await resp.text()}`);
+}
+
+/** Setzt Flag/Read-Status auf einer Nachricht. */
+export async function patchMessage(args: {
+  mailbox: string;
+  messageId: string;
+  flagged?: boolean;
+  isRead?: boolean;
+}): Promise<void> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}`;
+  const body: Record<string, unknown> = {};
+  if (typeof args.flagged === 'boolean') {
+    body.flag = { flagStatus: args.flagged ? 'flagged' : 'notFlagged' };
+  }
+  if (typeof args.isRead === 'boolean') body.isRead = args.isRead;
+  const resp = await graphFetch('PATCH', url, body);
+  if (!resp.ok) throw new Error(`patchMessage: ${resp.status} ${await resp.text()}`);
+}
+
 export interface MailListItem {
   id: string;
   subject: string;
@@ -316,6 +407,8 @@ export interface MailListItem {
   bodyPreview: string;
   hasAttachments: boolean;
   isRead: boolean;
+  /** Graph-Flag-Status: "flagged" | "notFlagged" | "complete". */
+  flagged: boolean;
 }
 
 export interface MailDetail extends MailListItem {
@@ -350,6 +443,7 @@ interface RawMessage {
   hasAttachments?: boolean;
   isRead?: boolean;
   body?: { contentType?: string; content?: string };
+  flag?: { flagStatus?: string };
 }
 
 function recipient(r: RawGraphRecipient | undefined): { name: string | null; address: string | null } {
@@ -378,7 +472,7 @@ export async function listMessages(args: {
   params.set('$top', String(pageSize));
   params.set('$skip', String(skip));
   params.set('$orderby', 'receivedDateTime desc');
-  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead');
+  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead,flag');
   params.set('$count', 'true');
   // Graph $search: über Betreff/Absender. Wenn search gesetzt, kann
   // $orderby nicht parallel genutzt werden — Graph akzeptiert das in
@@ -401,6 +495,7 @@ export async function listMessages(args: {
     bodyPreview: m.bodyPreview ?? '',
     hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
+    flagged: m.flag?.flagStatus === 'flagged',
   }));
   return { value, totalCount: j['@odata.count'] };
 }
@@ -410,7 +505,7 @@ export async function getMessage(args: {
   mailbox: string;
   messageId: string;
 }): Promise<MailDetail> {
-  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body';
+  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body,flag';
   const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}?${select}`;
   const resp = await graphFetch('GET', url, undefined, { Prefer: 'outlook.body-content-type="html"' });
   if (!resp.ok) {
@@ -443,6 +538,7 @@ export async function getMessage(args: {
     bodyPreview: m.bodyPreview ?? '',
     hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
+    flagged: m.flag?.flagStatus === 'flagged',
     bodyHtml: m.body?.content ?? '',
     bodyContentType: contentType,
     attachments,

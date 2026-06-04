@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { XIcon } from '../../components/icons';
+import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro, formatKm, type TourPriceBreakdown } from '../../lib/touren';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
@@ -93,6 +94,27 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const [fin, setFin] = useState(initial?.fin ?? '');
   const [kontaktId, setKontaktId] = useState('');
   const [kontakte, setKontakte] = useState<AuftraggeberKontakt[]>([]);
+
+  // Adressen + Kontakte vor Ort (JSONB-Spalten auf touren). Wurden
+  // bisher nur im Tour-Detail-Panel im Edit-Modus angeboten — für den
+  // Side-by-Side aus dem Posteingang stehen sie ebenfalls hier zur
+  // Verfügung.
+  const [adresseStart, setAdresseStart] = useState('');
+  const [adresseZiel, setAdresseZiel] = useState('');
+  const [adresseRueckfuehrung, setAdresseRueckfuehrung] = useState('');
+  const [kontaktStartName, setKontaktStartName] = useState('');
+  const [kontaktStartTel, setKontaktStartTel] = useState('');
+  const [kontaktStartMail, setKontaktStartMail] = useState('');
+  const [kontaktZielName, setKontaktZielName] = useState('');
+  const [kontaktZielTel, setKontaktZielTel] = useState('');
+  const [kontaktZielMail, setKontaktZielMail] = useState('');
+  const [kontaktRueckName, setKontaktRueckName] = useState('');
+  const [kontaktRueckTel, setKontaktRueckTel] = useState('');
+  const [kontaktRueckMail, setKontaktRueckMail] = useState('');
+
+  // Routen-Dialog (km berechnen über Google Routes API). Identisches
+  // Verhalten wie im Tour-Detail-Panel.
+  const [routeDialog, setRouteDialog] = useState<null | 'hin' | 'rueck'>(null);
 
   // Protokoll
   const [protokollArt, setProtokollArt] = useState<ProtokollArt | null>(null);
@@ -292,6 +314,19 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       app_notiz: protokollArt === 'app' && appNotiz.trim() ? appNotiz.trim() : null,
       rechnungsdatum_abweichend: rechnungsdatumAbweichend,
       rechnungsdatum: rechnungsdatumAbweichend && rechnungsdatum ? rechnungsdatum : null,
+      adresse_start: adresseStart.trim() || null,
+      adresse_ziel: adresseZiel.trim() || null,
+      adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueckfuehrung.trim() || null) : null,
+      kontakt_start: kontaktStartName.trim() || kontaktStartTel.trim() || kontaktStartMail.trim()
+        ? { name: kontaktStartName.trim(), telefon: kontaktStartTel.trim(), email: kontaktStartMail.trim() }
+        : null,
+      kontakt_ziel: kontaktZielName.trim() || kontaktZielTel.trim() || kontaktZielMail.trim()
+        ? { name: kontaktZielName.trim(), telefon: kontaktZielTel.trim(), email: kontaktZielMail.trim() }
+        : null,
+      kontakt_rueckfuehrung: hatRueckfuehrung
+        && (kontaktRueckName.trim() || kontaktRueckTel.trim() || kontaktRueckMail.trim())
+        ? { name: kontaktRueckName.trim(), telefon: kontaktRueckTel.trim(), email: kontaktRueckMail.trim() }
+        : null,
     };
 
     const { error: err } = await supabase.from('touren').insert(payload);
@@ -385,25 +420,50 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             </div>
           )}
 
-          {/* km Felder */}
+          {/* km Felder + "Berechnen"-Button für Google Routes */}
           {isAba ? (
             <div>
               <label htmlFor="t-km-aba" className="label">Kilometer gesamt</label>
-              <input id="t-km-aba" className="input" type="number" min={0} step={1}
-                     value={kmGesamtAba} onChange={(e) => setKmGesamtAba(e.target.value)} />
+              <div className="flex items-stretch gap-2">
+                <input id="t-km-aba" className="input flex-1" type="number" min={0} step={1}
+                       value={kmGesamtAba} onChange={(e) => setKmGesamtAba(e.target.value)} />
+                <KmCalcButton
+                  disabled={!adresseStart.trim() || !adresseZiel.trim()}
+                  title="Adresse Start → Ziel berechnen"
+                  onClick={() => setRouteDialog('hin')}
+                />
+              </div>
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="t-km-hin" className="label">km Hin (Start → Ziel)</label>
-                <input id="t-km-hin" className="input" type="number" min={0} step={1}
-                       value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
+                <div className="flex items-stretch gap-2">
+                  <input id="t-km-hin" className="input flex-1" type="number" min={0} step={1}
+                         value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
+                  <KmCalcButton
+                    disabled={!adresseStart.trim() || !adresseZiel.trim()}
+                    title={adresseStart.trim() && adresseZiel.trim()
+                      ? 'Route Start → Ziel berechnen'
+                      : 'Adressen unten ausfüllen, dann verfügbar'}
+                    onClick={() => setRouteDialog('hin')}
+                  />
+                </div>
               </div>
               {hatRueckfuehrung && (
                 <div>
                   <label htmlFor="t-km-rueck" className="label">km Rück (Ziel → Rückführung)</label>
-                  <input id="t-km-rueck" className="input" type="number" min={0} step={1}
-                         value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
+                  <div className="flex items-stretch gap-2">
+                    <input id="t-km-rueck" className="input flex-1" type="number" min={0} step={1}
+                           value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
+                    <KmCalcButton
+                      disabled={!adresseZiel.trim() || !adresseRueckfuehrung.trim()}
+                      title={adresseZiel.trim() && adresseRueckfuehrung.trim()
+                        ? 'Route Ziel → Rückführung berechnen'
+                        : 'Adressen unten ausfüllen, dann verfügbar'}
+                      onClick={() => setRouteDialog('rueck')}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -643,7 +703,61 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             )}
           </div>
 
-          {/* Kundenname */}
+          {/* Adressen & Kontakte vor Ort — aufklappbar, weil oft leer */}
+          <details className="rounded-lg border border-maja-navy/15 bg-white">
+            <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-maja-navy">
+              Adressen &amp; Kontakte vor Ort
+            </summary>
+            <div className="space-y-4 border-t border-maja-navy/10 p-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="t-adr-start" className="label">Adresse Start</label>
+                  <input id="t-adr-start" className="input"
+                         value={adresseStart}
+                         onChange={(e) => setAdresseStart(e.target.value)} />
+                </div>
+                <div>
+                  <label htmlFor="t-adr-ziel" className="label">Adresse Ziel</label>
+                  <input id="t-adr-ziel" className="input"
+                         value={adresseZiel}
+                         onChange={(e) => setAdresseZiel(e.target.value)} />
+                </div>
+              </div>
+              {hatRueckfuehrung && (
+                <div>
+                  <label htmlFor="t-adr-rueck" className="label">Adresse Rückführung</label>
+                  <input id="t-adr-rueck" className="input"
+                         value={adresseRueckfuehrung}
+                         onChange={(e) => setAdresseRueckfuehrung(e.target.value)} />
+                </div>
+              )}
+              <KontaktVorOrtBlock
+                label="Kontakt vor Ort — Start"
+                idPrefix="ks"
+                name={kontaktStartName} setName={setKontaktStartName}
+                tel={kontaktStartTel}   setTel={setKontaktStartTel}
+                mail={kontaktStartMail} setMail={setKontaktStartMail}
+              />
+              <KontaktVorOrtBlock
+                label="Kontakt vor Ort — Ziel"
+                idPrefix="kz"
+                name={kontaktZielName} setName={setKontaktZielName}
+                tel={kontaktZielTel}   setTel={setKontaktZielTel}
+                mail={kontaktZielMail} setMail={setKontaktZielMail}
+              />
+              {hatRueckfuehrung && (
+                <KontaktVorOrtBlock
+                  label="Kontakt vor Ort — Rückführung"
+                  idPrefix="kr"
+                  name={kontaktRueckName} setName={setKontaktRueckName}
+                  tel={kontaktRueckTel}   setTel={setKontaktRueckTel}
+                  mail={kontaktRueckMail} setMail={setKontaktRueckMail}
+                />
+              )}
+            </div>
+          </details>
+
+          {/* Sonstiges: Kundenname + Info */}
           <div>
             <label htmlFor="t-kn" className="label">Kundenname</label>
             <input id="t-kn" className="input"
@@ -651,7 +765,6 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                    onChange={(e) => setKundenname(e.target.value)} />
           </div>
 
-          {/* Info */}
           <div>
             <label htmlFor="t-info" className="label">Info</label>
             <textarea id="t-info" className="input min-h-[5rem]"
@@ -678,6 +791,95 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
           </div>
         </form>
       </div>
+
+      {routeDialog && (() => {
+        const isHin = routeDialog === 'hin';
+        const origin = isHin ? adresseStart.trim() : adresseZiel.trim();
+        const destination = isHin ? adresseZiel.trim() : adresseRueckfuehrung.trim();
+        const title = isHin
+          ? (isAba ? 'Routen für ABA-Tour' : 'Routen für Hin-Strecke')
+          : 'Routen für Rück-Strecke';
+        return (
+          <RouteSelectorDialog
+            title={title}
+            origin={origin}
+            destination={destination}
+            onClose={() => setRouteDialog(null)}
+            onApply={(km) => {
+              if (isHin) {
+                if (isAba) setKmGesamtAba(String(km));
+                else setKmHin(String(km));
+              } else {
+                setKmRueck(String(km));
+              }
+              setRouteDialog(null);
+            }}
+          />
+        );
+      })()}
     </div>
+  );
+}
+
+function KmCalcButton({
+  disabled, onClick, title,
+}: { disabled: boolean; onClick: () => void; title: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label="km berechnen"
+      className="inline-flex items-center gap-1 rounded-md border border-maja-navy/20 bg-white px-3 text-xs font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <RouteSmallIcon className="h-4 w-4" />
+      Berechnen
+    </button>
+  );
+}
+
+function RouteSmallIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+         className={className} aria-hidden="true">
+      <circle cx="6" cy="19" r="2" />
+      <circle cx="18" cy="5" r="2" />
+      <path d="M8 19h6a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8h6" />
+    </svg>
+  );
+}
+
+function KontaktVorOrtBlock({
+  label, idPrefix, name, setName, tel, setTel, mail, setMail,
+}: {
+  label: string;
+  idPrefix: string;
+  name: string; setName: (v: string) => void;
+  tel: string;  setTel:  (v: string) => void;
+  mail: string; setMail: (v: string) => void;
+}) {
+  return (
+    <fieldset className="rounded-md border border-maja-navy/10 p-3">
+      <legend className="px-1 text-xs font-medium text-maja-navy">{label}</legend>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <label htmlFor={`${idPrefix}-name`} className="label">Name</label>
+          <input id={`${idPrefix}-name`} className="input"
+                 value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor={`${idPrefix}-tel`} className="label">Telefon</label>
+          <input id={`${idPrefix}-tel`} className="input" type="tel"
+                 value={tel} onChange={(e) => setTel(e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor={`${idPrefix}-mail`} className="label">E-Mail</label>
+          <input id={`${idPrefix}-mail`} className="input" type="email"
+                 value={mail} onChange={(e) => setMail(e.target.value)} />
+        </div>
+      </div>
+    </fieldset>
   );
 }

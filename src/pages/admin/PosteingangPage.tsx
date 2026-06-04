@@ -1,33 +1,40 @@
 import {
-  useCallback, useEffect, useMemo, useState,
+  useCallback, useEffect, useState,
 } from 'react';
-import DOMPurify from 'dompurify';
 import { Spinner } from '../../components/Spinner';
-import { MailIcon, XIcon } from '../../components/icons';
+import { MailIcon } from '../../components/icons';
 import {
-  fetchAttachmentBlob, formatBytes, formatMailDate, getEmail, listEmails,
-  type MailDetail, type MailListItem,
+  deleteEmail, flagEmail, formatMailDate, getEmail, listEmails, listFolders, moveEmail,
+  type MailDetail, type MailFolder, type MailListItem,
 } from '../../lib/emails';
 import { loadMailboxes, type MailboxConfig } from '../../lib/mailboxSettings';
 import { EmailComposeDialog, type ComposeMode } from './EmailComposeDialog';
+import { EmailMessageView, EmailMessageHeader } from './EmailMessageView';
 import { TourFromEmailPanel } from './TourFromEmailPanel';
+import { TourEditFromEmailPanel } from './TourEditFromEmailPanel';
+import { TourPickerDialog } from './TourPickerDialog';
 
 const PAGE_SIZE = 25;
 
+type PendingTour = { mode: 'create' } | { mode: 'edit'; tourId: string };
+
 /**
- * Posteingang — zeigt die zwei konfigurierten Postfächer als Pills,
- * darunter Split-Layout mit E-Mail-Liste links + E-Mail-Detail rechts.
- * Anhänge werden über das geschützte /api/email-attachment via blob-
- * URL angezeigt; HTML-Body wird mit DOMPurify gehärtet.
- *
- * Tour-Erstellung läuft entweder als Modal (Default) oder als Side-by-
- * Side-Panel (Aufgabe 5), das die geöffnete Mail neben dem Tour-
- * Formular einblendet.
+ * Posteingang — Mailbox-Pills + Ordner-Sidebar (Aufgabe 3) + Liste +
+ * Detail. Tour-Aktionen (erstellen, öffnen) sind nur bei dem primären
+ * Postfach (mail_inbox_1, conventionell info@) sichtbar — siehe
+ * Aufgabe 4.
  */
 export function PosteingangPage() {
   const [mailboxes, setMailboxes] = useState<MailboxConfig[]>([]);
   const [mailboxLoading, setMailboxLoading] = useState(true);
   const [activeMailbox, setActiveMailbox] = useState<string>('');
+
+  // Aktiver Ordner (Folder-ID — well-known wie "inbox" oder ein
+  // beliebiger Folder aus listFolders). Default "inbox".
+  const [folders, setFolders] = useState<MailFolder[]>([]);
+  const [foldersLoading, setFoldersLoading] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState<string>('inbox');
+
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [list, setList] = useState<MailListItem[]>([]);
@@ -44,15 +51,21 @@ export function PosteingangPage() {
     mode: ComposeMode;
     initial: Parameters<typeof EmailComposeDialog>[0]['initial'];
   }>(null);
-  const [tourPanel, setTourPanel] = useState(false);
+  const [pendingTour, setPendingTour] = useState<PendingTour | null>(null);
+  const [tourPicker, setTourPicker] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  // --- Mailboxen einmal laden, ersten als aktiv setzen ----------------
+  // Primäres Postfach = mailboxes[0] (Default / "info@"). Tour-Buttons
+  // erscheinen nur dann.
+  const isPrimaryMailbox = mailboxes[0]?.address === activeMailbox;
+
+  // --- Mailboxen laden ----------------------------------------------
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const list = await loadMailboxes();
-      const filled = list.filter((m) => m.address.trim() !== '');
+      const all = await loadMailboxes();
+      const filled = all.filter((m) => m.address.trim() !== '');
       if (!cancelled) {
         setMailboxes(filled);
         setActiveMailbox(filled[0]?.address ?? '');
@@ -62,7 +75,27 @@ export function PosteingangPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // --- Liste laden bei Mailbox-/Such-/Seitenwechsel ------------------
+  // --- Ordner pro Mailbox laden -------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (cancelled) return;
+      if (!activeMailbox) { setFolders([]); return; }
+      setFoldersLoading(true);
+      try {
+        const list = await listFolders(activeMailbox);
+        if (!cancelled) setFolders(list);
+      } catch (err) {
+        console.warn('[Posteingang] Ordner-Laden fehlgeschlagen', err);
+        if (!cancelled) setFolders([]);
+      } finally {
+        if (!cancelled) setFoldersLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeMailbox]);
+
+  // --- Liste laden -------------------------------------------------
   const loadList = useCallback(async () => {
     if (!activeMailbox) { setList([]); return; }
     setListLoading(true);
@@ -73,6 +106,7 @@ export function PosteingangPage() {
         page,
         pageSize: PAGE_SIZE,
         search: search.trim() || undefined,
+        folder: activeFolderId,
       });
       setList(r.value);
       setTotalCount(r.totalCount);
@@ -82,15 +116,13 @@ export function PosteingangPage() {
     } finally {
       setListLoading(false);
     }
-  }, [activeMailbox, page, search]);
+  }, [activeMailbox, page, search, activeFolderId]);
 
   useEffect(() => {
-    // Async-Wrapper, damit setState nicht synchron im Effect-Body
-    // landet (React-19 set-state-in-effect-Linter).
     void Promise.resolve().then(() => { void loadList(); });
   }, [loadList]);
 
-  // Detail laden, sobald openId gesetzt ist.
+  // --- Detail laden -----------------------------------------------
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -115,7 +147,16 @@ export function PosteingangPage() {
     setPage(1);
     setOpenId(null);
     setOpenMail(null);
-    setTourPanel(false);
+    setPendingTour(null);
+    setActiveFolderId('inbox');
+  }
+
+  function chooseFolder(id: string) {
+    setActiveFolderId(id);
+    setPage(1);
+    setOpenId(null);
+    setOpenMail(null);
+    setPendingTour(null);
   }
 
   function showToast(t: string) {
@@ -123,9 +164,77 @@ export function PosteingangPage() {
     window.setTimeout(() => setToast(null), 4000);
   }
 
-  // ---- UI ------------------------------------------------------------
-  if (mailboxLoading) return <Spinner label="Postfächer werden geladen …" />;
+  async function handleToggleFlag(m: MailListItem) {
+    if (!activeMailbox) return;
+    const next = !m.flagged;
+    // optimistic
+    setList((prev) => prev.map((x) => (x.id === m.id ? { ...x, flagged: next } : x)));
+    try {
+      await flagEmail({ mailbox: activeMailbox, messageId: m.id, flagged: next });
+    } catch (err) {
+      setList((prev) => prev.map((x) => (x.id === m.id ? { ...x, flagged: !next } : x)));
+      showToast(err instanceof Error ? err.message : 'Flag konnte nicht gesetzt werden.');
+    }
+  }
 
+  async function handleDelete(id: string) {
+    if (!activeMailbox) return;
+    try {
+      await deleteEmail({ mailbox: activeMailbox, messageId: id });
+      setList((prev) => prev.filter((x) => x.id !== id));
+      if (openId === id) { setOpenId(null); setOpenMail(null); }
+      showToast('In den Papierkorb verschoben.');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
+    } finally {
+      setConfirmDelete(null);
+    }
+  }
+
+  async function handleMove(id: string, destinationId: string) {
+    if (!activeMailbox) return;
+    try {
+      await moveEmail({ mailbox: activeMailbox, messageId: id, destinationId });
+      setList((prev) => prev.filter((x) => x.id !== id));
+      if (openId === id) { setOpenId(null); setOpenMail(null); }
+      const targetName = folders.find((f) => f.id === destinationId)?.displayName ?? 'Ordner';
+      showToast(`Verschoben nach „${targetName}".`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Verschieben fehlgeschlagen.');
+    }
+  }
+
+  // ---- Tour-Hooks (nur primäres Postfach) ----
+  function openReply() {
+    if (!openMail) return;
+    setComposer({
+      mode: 'reply',
+      initial: {
+        from: activeMailbox,
+        to: openMail.from.address ? [openMail.from.address] : [],
+        cc: [],
+        subject: openMail.subject.startsWith('Re:') ? openMail.subject : `Re: ${openMail.subject}`,
+        bodyHtml: '',
+        messageId: openMail.id,
+      },
+    });
+  }
+  function openForward() {
+    if (!openMail) return;
+    setComposer({
+      mode: 'forward',
+      initial: {
+        from: activeMailbox,
+        to: [],
+        cc: [],
+        subject: openMail.subject.startsWith('Fwd:') ? openMail.subject : `Fwd: ${openMail.subject}`,
+        bodyHtml: '',
+        messageId: openMail.id,
+      },
+    });
+  }
+
+  if (mailboxLoading) return <Spinner label="Postfächer werden geladen …" />;
   if (mailboxes.length === 0) {
     return (
       <div className="card p-6 text-sm text-maja-muted">
@@ -181,15 +290,31 @@ export function PosteingangPage() {
         })}
       </div>
 
-      {tourPanel && openMail ? (
-        <TourFromEmailPanel
-          mail={openMail}
-          mailbox={activeMailbox}
-          onClose={() => setTourPanel(false)}
-          onCreated={(label) => { setTourPanel(false); showToast(`Tour erstellt: ${label}`); }}
-        />
+      {pendingTour && openMail ? (
+        pendingTour.mode === 'create' ? (
+          <TourFromEmailPanel
+            mail={openMail}
+            mailbox={activeMailbox}
+            onClose={() => setPendingTour(null)}
+            onCreated={(label) => { setPendingTour(null); showToast(`Tour erstellt: ${label}`); }}
+          />
+        ) : (
+          <TourEditFromEmailPanel
+            mail={openMail}
+            mailbox={activeMailbox}
+            tourId={pendingTour.tourId}
+            onClose={() => setPendingTour(null)}
+            onSaved={() => { setPendingTour(null); showToast('Tour gespeichert.'); }}
+          />
+        )
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,2fr)_minmax(0,3fr)]">
+          <FolderSidebar
+            folders={folders}
+            loading={foldersLoading}
+            activeId={activeFolderId}
+            onChoose={chooseFolder}
+          />
           <ListPane
             list={list}
             loading={listLoading}
@@ -198,6 +323,7 @@ export function PosteingangPage() {
             onSearch={(s) => { setSearch(s); setPage(1); }}
             openId={openId}
             onOpen={(id) => setOpenId(id)}
+            onFlag={handleToggleFlag}
             page={page}
             onPage={setPage}
             totalCount={totalCount}
@@ -207,39 +333,15 @@ export function PosteingangPage() {
             loading={openLoading}
             error={openError}
             mail={openMail}
-            onReply={() => {
-              if (!openMail) return;
-              setComposer({
-                mode: 'reply',
-                initial: {
-                  from: activeMailbox,
-                  to: openMail.from.address ? [openMail.from.address] : [],
-                  cc: [],
-                  subject: openMail.subject.startsWith('Re:')
-                    ? openMail.subject
-                    : `Re: ${openMail.subject}`,
-                  bodyHtml: '',
-                  messageId: openMail.id,
-                },
-              });
-            }}
-            onForward={() => {
-              if (!openMail) return;
-              setComposer({
-                mode: 'forward',
-                initial: {
-                  from: activeMailbox,
-                  to: [],
-                  cc: [],
-                  subject: openMail.subject.startsWith('Fwd:')
-                    ? openMail.subject
-                    : `Fwd: ${openMail.subject}`,
-                  bodyHtml: '',
-                  messageId: openMail.id,
-                },
-              });
-            }}
-            onCreateTour={() => setTourPanel(true)}
+            isPrimary={isPrimaryMailbox}
+            folders={folders}
+            activeFolderId={activeFolderId}
+            onReply={openReply}
+            onForward={openForward}
+            onCreateTour={() => setPendingTour({ mode: 'create' })}
+            onOpenTour={() => setTourPicker(true)}
+            onDelete={(id) => setConfirmDelete(id)}
+            onMove={handleMove}
           />
         </div>
       )}
@@ -259,6 +361,21 @@ export function PosteingangPage() {
           }}
         />
       )}
+      {tourPicker && (
+        <TourPickerDialog
+          onClose={() => setTourPicker(false)}
+          onPick={(tourId) => {
+            setTourPicker(false);
+            setPendingTour({ mode: 'edit', tourId });
+          }}
+        />
+      )}
+      {confirmDelete && (
+        <DeleteConfirmDialog
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => void handleDelete(confirmDelete)}
+        />
+      )}
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
           {toast}
@@ -268,7 +385,80 @@ export function PosteingangPage() {
   );
 }
 
-// ---- Linke Spalte: Liste ----------------------------------------------
+// ---- Ordner-Sidebar ---------------------------------------------------
+
+function FolderSidebar({
+  folders, loading, activeId, onChoose,
+}: {
+  folders: MailFolder[];
+  loading: boolean;
+  activeId: string;
+  onChoose: (id: string) => void;
+}) {
+  // Reihenfolge: well-known zuerst (über server-listFolders bereits
+  // vorsortiert), dann benutzerdefinierte alphabetisch.
+  const wellKnown = folders.filter((f) => !!f.wellKnown);
+  const custom = folders
+    .filter((f) => !f.wellKnown)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'de', { sensitivity: 'base' }));
+  return (
+    <div className="card flex flex-col">
+      <h3 className="border-b border-maja-navy/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-maja-muted">
+        Ordner
+      </h3>
+      {loading ? (
+        <div className="p-3 text-xs text-maja-muted">Lade …</div>
+      ) : (
+        <ul className="divide-y divide-maja-navy/5 text-sm">
+          {wellKnown.map((f) => (
+            <FolderRow key={f.id} folder={f} active={isFolderActive(activeId, f)} onChoose={onChoose} />
+          ))}
+          {custom.length > 0 && (
+            <li className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-maja-muted">
+              Eigene Ordner
+            </li>
+          )}
+          {custom.map((f) => (
+            <FolderRow key={f.id} folder={f} active={isFolderActive(activeId, f)} onChoose={onChoose} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function isFolderActive(active: string, f: MailFolder): boolean {
+  return active === f.id || (!!f.wellKnown && active === f.wellKnown);
+}
+
+function FolderRow({
+  folder, active, onChoose,
+}: { folder: MailFolder; active: boolean; onChoose: (id: string) => void }) {
+  // well-known-IDs ("inbox" etc.) verwenden, sonst die Roh-ID
+  const id = folder.wellKnown ?? folder.id;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onChoose(id)}
+        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left ${
+          active ? 'bg-maja-navy text-white' : 'text-maja-ink hover:bg-maja-light'
+        }`}
+      >
+        <span className="truncate">{folder.displayName || '(unbenannt)'}</span>
+        {folder.unreadItemCount > 0 && (
+          <span className={`rounded-full px-1.5 text-[10px] font-semibold ${
+            active ? 'bg-white/20 text-white' : 'bg-maja-accent/20 text-maja-accent'
+          }`}>
+            {folder.unreadItemCount}
+          </span>
+        )}
+      </button>
+    </li>
+  );
+}
+
+// ---- Liste ------------------------------------------------------------
 
 interface ListPaneProps {
   list: MailListItem[];
@@ -278,13 +468,14 @@ interface ListPaneProps {
   onSearch: (s: string) => void;
   openId: string | null;
   onOpen: (id: string) => void;
+  onFlag: (m: MailListItem) => void;
   page: number;
   onPage: (n: number) => void;
   totalCount?: number;
 }
 
 function ListPane({
-  list, loading, error, search, onSearch, openId, onOpen, page, onPage, totalCount,
+  list, loading, error, search, onSearch, openId, onOpen, onFlag, page, onPage, totalCount,
 }: ListPaneProps) {
   return (
     <div className="card flex min-h-[24rem] flex-col">
@@ -311,11 +502,11 @@ function ListPane({
           {list.map((m) => {
             const active = m.id === openId;
             return (
-              <li key={m.id}>
+              <li key={m.id} className="relative">
                 <button
                   type="button"
                   onClick={() => onOpen(m.id)}
-                  className={`block w-full px-4 py-3 text-left transition ${
+                  className={`block w-full px-4 py-3 pl-9 text-left transition ${
                     active ? 'bg-maja-light' : 'hover:bg-maja-light/40'
                   } ${!m.isRead ? 'bg-blue-50/30' : ''}`}
                 >
@@ -334,6 +525,15 @@ function ListPane({
                   <div className="mt-0.5 truncate text-xs text-maja-muted">
                     {m.bodyPreview}
                   </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onFlag(m); }}
+                  className="absolute left-2 top-3 rounded p-0.5 text-maja-muted hover:bg-maja-light"
+                  aria-label={m.flagged ? 'Markierung entfernen' : 'Markieren'}
+                  title={m.flagged ? 'Markierung entfernen' : 'Markieren'}
+                >
+                  <FlagIcon className="h-4 w-4" filled={m.flagged} />
                 </button>
               </li>
             );
@@ -367,26 +567,31 @@ function ListPane({
   );
 }
 
-// ---- Rechte Spalte: Detail --------------------------------------------
+// ---- Detail-Pane ------------------------------------------------------
 
 interface DetailPaneProps {
   mailbox: string;
   loading: boolean;
   error: string | null;
   mail: MailDetail | null;
+  isPrimary: boolean;
+  folders: MailFolder[];
+  activeFolderId: string;
   onReply: () => void;
   onForward: () => void;
   onCreateTour: () => void;
+  onOpenTour: () => void;
+  onDelete: (id: string) => void;
+  onMove: (id: string, destinationId: string) => void;
 }
 
 function DetailPane({
-  mailbox, loading, error, mail, onReply, onForward, onCreateTour,
+  mailbox, loading, error, mail, isPrimary, folders, activeFolderId,
+  onReply, onForward, onCreateTour, onOpenTour, onDelete, onMove,
 }: DetailPaneProps) {
   if (loading) return <div className="card p-6"><Spinner label="E-Mail wird geladen …" /></div>;
   if (error) {
-    return (
-      <div role="alert" className="card p-4 text-sm text-red-700">{error}</div>
-    );
+    return <div role="alert" className="card p-4 text-sm text-red-700">{error}</div>;
   }
   if (!mail) {
     return (
@@ -398,199 +603,112 @@ function DetailPane({
   return (
     <div className="card flex flex-col gap-4 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold text-maja-navy">
-            {mail.subject || '(kein Betreff)'}
-          </h2>
-          <p className="mt-0.5 text-xs text-maja-muted">
-            Von: <span className="text-maja-ink">{mail.from.name ? `${mail.from.name} <${mail.from.address}>` : mail.from.address}</span>
-          </p>
-          <p className="text-xs text-maja-muted">
-            An: <span className="text-maja-ink">{mail.to.map((t) => t.address).filter(Boolean).join(', ')}</span>
-          </p>
-          {mail.cc.length > 0 && (
-            <p className="text-xs text-maja-muted">
-              CC: <span className="text-maja-ink">{mail.cc.map((t) => t.address).filter(Boolean).join(', ')}</span>
-            </p>
-          )}
-          <p className="text-xs text-maja-muted">
-            {formatMailDate(mail.receivedDateTime)}
-          </p>
-        </div>
+        <EmailMessageHeader mail={mail} />
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={onReply}>Antworten</button>
           <button type="button" className="btn-secondary text-sm" onClick={onForward}>Weiterleiten</button>
-          <button type="button" className="btn-primary text-sm" onClick={onCreateTour}>Tour erstellen</button>
-        </div>
-      </div>
-      <MailBody mail={mail} />
-      {mail.attachments.length > 0 && (
-        <Attachments mailbox={mailbox} messageId={mail.id} attachments={mail.attachments} />
-      )}
-    </div>
-  );
-}
-
-// ---- Subkomponenten ----------------------------------------------------
-
-function MailBody({ mail }: { mail: MailDetail }) {
-  const safe = useMemo(() => {
-    if (mail.bodyContentType === 'text') {
-      // Plain-Text → minimal-Whitespace-preserve.
-      return `<pre style="white-space:pre-wrap;font-family:inherit;margin:0;">${
-        DOMPurify.sanitize(mail.bodyHtml || mail.bodyPreview)
-      }</pre>`;
-    }
-    return DOMPurify.sanitize(mail.bodyHtml || '', {
-      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'class', 'colspan', 'rowspan', 'width', 'height', 'border', 'cellspacing', 'cellpadding'],
-      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
-    });
-  }, [mail]);
-  return (
-    <div
-      className="prose prose-sm max-w-none overflow-x-auto border-t border-maja-navy/10 pt-4 text-sm text-maja-ink"
-      dangerouslySetInnerHTML={{ __html: safe }}
-    />
-  );
-}
-
-function Attachments({
-  mailbox, messageId, attachments,
-}: {
-  mailbox: string; messageId: string; attachments: MailDetail['attachments'];
-}) {
-  return (
-    <div className="border-t border-maja-navy/10 pt-4">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-maja-muted">
-        Anhänge ({attachments.length})
-      </h3>
-      <ul className="flex flex-wrap gap-2">
-        {attachments.map((a) => (
-          <li key={a.id}>
-            <AttachmentChip mailbox={mailbox} messageId={messageId} att={a} />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function AttachmentChip({
-  mailbox, messageId, att,
-}: {
-  mailbox: string; messageId: string;
-  att: { id: string; name: string; contentType: string; size: number };
-}) {
-  const [busy, setBusy] = useState<'view' | 'download' | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
-
-  async function open() {
-    setBusy('view');
-    try {
-      const blob = await fetchAttachmentBlob({
-        mailbox, messageId, attachmentId: att.id, disposition: 'inline',
-      });
-      const url = URL.createObjectURL(blob);
-      setPreview(url);
-    } catch (e) {
-      alert(`Anhang konnte nicht geöffnet werden: ${e instanceof Error ? e.message : e}`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function download() {
-    setBusy('download');
-    try {
-      const blob = await fetchAttachmentBlob({
-        mailbox, messageId, attachmentId: att.id, disposition: 'attachment',
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = att.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) {
-      alert(`Download fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <>
-      <span className="inline-flex items-center gap-2 rounded-full border border-maja-navy/15 bg-white px-3 py-1 text-xs">
-        <PaperclipIcon className="h-3 w-3 text-maja-muted" />
-        <span className="truncate" title={`${att.name} (${formatBytes(att.size)})`}>
-          {att.name}
-        </span>
-        <span className="text-maja-muted">{formatBytes(att.size)}</span>
-        <button
-          type="button"
-          onClick={open}
-          disabled={busy !== null}
-          className="rounded px-1.5 py-0.5 text-maja-accent hover:bg-maja-light"
-        >
-          {busy === 'view' ? '…' : 'Anzeigen'}
-        </button>
-        <button
-          type="button"
-          onClick={download}
-          disabled={busy !== null}
-          className="rounded px-1.5 py-0.5 text-maja-navy hover:bg-maja-light"
-        >
-          {busy === 'download' ? '…' : 'Download'}
-        </button>
-      </span>
-      {preview && (
-        <PreviewModal
-          url={preview}
-          name={att.name}
-          contentType={att.contentType}
-          onClose={() => {
-            URL.revokeObjectURL(preview);
-            setPreview(null);
-          }}
-        />
-      )}
-    </>
-  );
-}
-
-function PreviewModal({
-  url, name, contentType, onClose,
-}: { url: string; name: string; contentType: string; onClose: () => void }) {
-  const isImage = contentType.startsWith('image/');
-  const isPdf = contentType === 'application/pdf';
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/60 p-4">
-      <div className="card flex h-[90vh] w-full max-w-5xl flex-col">
-        <div className="flex items-center justify-between border-b border-maja-navy/10 p-3">
-          <h4 className="truncate text-sm font-semibold text-maja-navy">{name}</h4>
-          <button type="button" onClick={onClose}
-                  className="rounded p-1 text-maja-muted hover:bg-maja-light"
-                  aria-label="Schließen">
-            <XIcon className="h-4 w-4" />
+          <MoveMenu
+            folders={folders}
+            activeFolderId={activeFolderId}
+            onMove={(dst) => onMove(mail.id, dst)}
+          />
+          <button type="button"
+                  className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                  onClick={() => onDelete(mail.id)}>
+            Löschen
           </button>
-        </div>
-        <div className="flex-1 overflow-auto bg-maja-light/30 p-2">
-          {isImage ? (
-            <img src={url} alt={name} className="mx-auto max-h-full max-w-full object-contain" />
-          ) : isPdf ? (
-            <iframe title={name} src={url} className="h-full w-full border-0" />
-          ) : (
-            <p className="p-6 text-center text-sm text-maja-muted">
-              Vorschau für {contentType} nicht möglich — bitte herunterladen.
-            </p>
+          {isPrimary && (
+            <>
+              <button type="button" className="btn-secondary text-sm" onClick={onOpenTour}>
+                Tour öffnen
+              </button>
+              <button type="button" className="btn-primary text-sm" onClick={onCreateTour}>
+                Tour erstellen
+              </button>
+            </>
           )}
         </div>
       </div>
+      <EmailMessageView mail={mail} mailbox={mailbox} />
     </div>
   );
 }
+
+// ---- Verschieben-Dropdown --------------------------------------------
+
+function MoveMenu({
+  folders, activeFolderId, onMove,
+}: {
+  folders: MailFolder[];
+  activeFolderId: string;
+  onMove: (destinationId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="btn-secondary text-sm"
+        onClick={() => setOpen((v) => !v)}
+      >
+        Verschieben …
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 z-10 mt-1 max-h-72 w-56 overflow-auto rounded-lg border border-maja-navy/15 bg-white shadow-lg"
+          onMouseLeave={() => setOpen(false)}
+        >
+          {folders.length === 0 && (
+            <p className="px-3 py-2 text-xs text-maja-muted">Keine Ordner geladen.</p>
+          )}
+          {folders.map((f) => {
+            const id = f.wellKnown ?? f.id;
+            const isActive = id === activeFolderId;
+            return (
+              <button
+                key={f.id}
+                type="button"
+                disabled={isActive}
+                onClick={() => { setOpen(false); onMove(id); }}
+                className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-maja-light disabled:cursor-not-allowed disabled:bg-maja-light/40 disabled:text-maja-muted`}
+              >
+                {f.displayName}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Delete-Confirm --------------------------------------------------
+
+function DeleteConfirmDialog({
+  onConfirm, onCancel,
+}: { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
+      <div className="card w-full max-w-md p-5">
+        <h3 className="text-base font-semibold text-maja-navy">E-Mail in den Papierkorb verschieben?</h3>
+        <p className="mt-2 text-sm text-maja-muted">
+          Die Nachricht wird in den Ordner „Papierkorb" verschoben und kann von
+          dort wiederhergestellt werden.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onCancel}>Abbrechen</button>
+          <button type="button"
+                  className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                  onClick={onConfirm}>
+            In Papierkorb verschieben
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- kleine Icons ----------------------------------------------------
 
 function PaperclipIcon({ className }: { className?: string }) {
   return (
@@ -598,6 +716,18 @@ function PaperclipIcon({ className }: { className?: string }) {
          strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"
          className={className} aria-hidden="true">
       <path d="M15 9.5 8.5 16a3.5 3.5 0 0 1-5-5L10 4.5a2.5 2.5 0 0 1 3.5 3.5L7 14.5a1.5 1.5 0 0 1-2-2l6-6" />
+    </svg>
+  );
+}
+
+function FlagIcon({ className, filled }: { className?: string; filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20"
+         fill={filled ? '#f59e0b' : 'none'}
+         stroke={filled ? '#d97706' : 'currentColor'}
+         strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"
+         className={className} aria-hidden="true">
+      <path d="M5 3v14M5 4h9l-2 3 2 3H5" />
     </svg>
   );
 }
