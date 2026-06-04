@@ -1,5 +1,16 @@
 {
   "rewrites": [
+    { "source": "/api/upload",          "destination": "/api/onedrive?action=upload" },
+    { "source": "/api/upload-session",  "destination": "/api/onedrive?action=upload-session" },
+    { "source": "/api/download",        "destination": "/api/onedrive?action=download" },
+    { "source": "/api/delete-pdf",      "destination": "/api/onedrive?action=delete-pdf" },
+    { "source": "/api/files",           "destination": "/api/onedrive?action=files" },
+    { "source": "/api/email",           "destination": "/api/emails?action=eingang-send" },
+    { "source": "/api/email-message",   "destination": "/api/emails?action=message" },
+    { "source": "/api/email-attachment","destination": "/api/emails?action=attachment" },
+    { "source": "/api/email-folders",   "destination": "/api/emails?action=folders" },
+    { "source": "/api/email-action",    "destination": "/api/emails" },
+    { "source": "/api/email-patch",     "destination": "/api/emails" },
     { "source": "/((?!api/).*)", "destination": "/" }
   ],
   "crons": [

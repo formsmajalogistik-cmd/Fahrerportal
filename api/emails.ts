@@ -98,7 +98,10 @@ export default async function handler(req: Req, res: Res) {
     if (user.role !== 'admin') throw new HttpError(403, 'Nur Admins');
     const token = (auth ?? '').replace(/^bearer\s+/i, '');
 
-    const action = qString(req.query?.action) ?? '';
+    const action = qString(req.query?.action)
+      ?? (typeof (req.body as Record<string, unknown> | null)?.action === 'string'
+            ? ((req.body as Record<string, unknown>).action as string)
+            : '');
     const body = (req.body && typeof req.body === 'object')
       ? req.body as Record<string, unknown>
       : {};
