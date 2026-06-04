@@ -400,7 +400,7 @@ function signatureFit(
 /**
  * Füllt eine PDF-Vorlage mit den Daten aus dem Formular und gibt die Bytes
  * zurück. `formularId` wird an den Foto-Download durchgereicht — der
- * /api/download-Proxy verlangt für Fahrer eine formular_id.
+ * /api/onedrive-Proxy verlangt für Fahrer eine formular_id.
  */
 export async function fillPdf(
   templateBytes: ArrayBuffer,

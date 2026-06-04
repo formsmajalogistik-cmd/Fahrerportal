@@ -83,7 +83,7 @@ async function bytesToBase64(bytes: Uint8Array): Promise<string> {
 }
 
 // Vercel-Function-Body-Limit: 4.5 MB. JSON+base64 inflieren um ~33 %,
-// also alles über ~3 MB binär nicht mehr durch /api/upload prügeln —
+// also alles über ~3 MB binär nicht mehr durch /api/onedrive?action=upload —
 // stattdessen Microsoft-Graph-Upload-Session: Server liefert nur die
 // signierte URL, der Browser PUTet die Datei direkt zu Microsoft.
 const DIRECT_UPLOAD_THRESHOLD = 3 * 1024 * 1024;
@@ -97,7 +97,7 @@ export async function uploadToOneDrive(
   const buf = await file.arrayBuffer();
   const b64 = await bytesToBase64(new Uint8Array(buf));
   // Uploads sind groß und langsam → längeres Timeout als der 15-s-Default.
-  const resp = await fetchWithAuthRetry('/api/upload', {
+  const resp = await fetchWithAuthRetry('/api/onedrive?action=upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -111,7 +111,7 @@ export async function uploadToOneDrive(
     const txt = await resp.text();
     // 413 → Datei doch zu groß für JSON-Pfad: einmal über Session retry.
     if (resp.status === 413) {
-      console.warn('[uploadToOneDrive] /api/upload 413 → Session-Fallback');
+      console.warn('[uploadToOneDrive] /api/onedrive?action=upload 413 → Session-Fallback');
       return await uploadViaSession(path, file);
     }
     throw new Error(`Upload (${resp.status}): ${txt.slice(0, 200)}`);
@@ -128,7 +128,7 @@ export async function uploadToOneDrive(
 async function uploadViaSession(
   path: string, file: Blob,
 ): Promise<{ ok: true; path: string; webUrl?: string }> {
-  const sess = await fetchWithAuthRetry('/api/upload-session', {
+  const sess = await fetchWithAuthRetry('/api/onedrive?action=upload-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
@@ -169,10 +169,10 @@ async function uploadViaSession(
 export async function downloadFromOneDrive(
   path: string, opts?: { formularId?: string | null },
 ): Promise<Blob> {
-  const qs = new URLSearchParams({ path });
+  const qs = new URLSearchParams({ action: 'download', path });
   if (opts?.formularId) qs.set('formular_id', opts.formularId);
   const resp = await fetchWithAuthRetry(
-    `/api/download?${qs.toString()}`,
+    `/api/onedrive?${qs.toString()}`,
     { timeoutMs: 60_000 },
   );
   if (!resp.ok) {
@@ -259,9 +259,9 @@ async function downloadViaWindowLocation(
     redirectToLoginOnce();
     return false;
   }
-  const qs = new URLSearchParams({ path, token });
+  const qs = new URLSearchParams({ action: 'download', path, token });
   if (opts?.formularId) qs.set('formular_id', opts.formularId);
-  window.location.href = `/api/download?${qs.toString()}`;
+  window.location.href = `/api/onedrive?${qs.toString()}`;
   return true;
 }
 
@@ -317,10 +317,10 @@ export async function previewOneDrivePdf(
   const placeholder = useModalDirectly ? null : window.open('about:blank', '_blank');
 
   try {
-    const qs = new URLSearchParams({ path, inline: '1' });
+    const qs = new URLSearchParams({ action: 'download', path, inline: '1' });
     if (opts?.formularId) qs.set('formular_id', opts.formularId);
     const resp = await fetchWithAuthRetry(
-      `/api/download?${qs.toString()}`,
+      `/api/onedrive?${qs.toString()}`,
       { timeoutMs: 60_000 },
     );
     if (!resp.ok) {
@@ -379,12 +379,12 @@ export async function getOneDriveObjectUrl(
 }
 
 /**
- * Löscht eine Datei aus OneDrive. Nutzt /api/delete-pdf mit derselben
- * Pro-Resource-Authorisierung wie der Download.
+ * Löscht eine Datei aus OneDrive. Nutzt /api/onedrive?action=delete-pdf
+ * mit derselben Pro-Resource-Authorisierung wie der Download.
  */
 export async function deleteFromOneDrive(path: string, formularId: string): Promise<boolean> {
   try {
-    const resp = await fetchWithAuthRetry('/api/delete-pdf', {
+    const resp = await fetchWithAuthRetry('/api/onedrive?action=delete-pdf', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, formular_id: formularId }),
@@ -411,7 +411,7 @@ export async function sendEmail(args: {
   body: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
 }): Promise<SendEmailResult> {
-  const resp = await fetchWithAuthRetry('/api/email', {
+  const resp = await fetchWithAuthRetry('/api/emails?action=eingang-send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(args),

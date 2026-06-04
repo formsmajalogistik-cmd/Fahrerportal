@@ -295,7 +295,7 @@ export function RechnungDetailPage() {
    * Löscht die Rechnung endgültig. Positions-CASCADE räumt die
    * Positionen mit.
    *
-   * PDF-Cleanup in OneDrive: Der bestehende /api/delete-pdf-Endpoint
+   * PDF-Cleanup in OneDrive: Der bestehende /api/onedrive?action=delete-pdf-Endpoint
    * arbeitet mit einer formular_id-basierten Auth (Pro-Resource-Check
    * für Formular-PDFs). Für Rechnungs-PDFs gibt es noch keine passende
    * Auth-Route — diese wird zusammen mit der PDF-Generierung im

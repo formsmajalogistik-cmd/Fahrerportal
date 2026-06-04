@@ -1,6 +1,6 @@
-// Client-Helper für die /api/emails*-Endpunkte. Alle Calls hängen
-// den Supabase-Bearer-Token automatisch an und schicken nur die
-// nötigsten Felder — der Graph-Token bleibt server-seitig.
+// Client-Helper für den konsolidierten /api/emails-Endpunkt. Alle
+// Aktionen routen via ?action=… auf dieselbe Vercel-Function (siehe
+// Vercel-Hobby-Limit von 12 Functions).
 
 import { getValidToken } from './supabase';
 import { fetchWithRetry } from './fetchRetry';
@@ -66,6 +66,25 @@ async function expectJson<T>(resp: Response): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+async function postAction(action: string, payload: Record<string, unknown>, timeoutMs = 60_000): Promise<void> {
+  const resp = await fetchWithRetry(`/api/emails?action=${encodeURIComponent(action)}`, {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    timeoutMs,
+  });
+  await expectJson(resp);
+}
+
+async function getAction<T>(action: string, params: URLSearchParams, timeoutMs = 25_000): Promise<T> {
+  params.set('action', action);
+  const resp = await fetchWithRetry(`/api/emails?${params.toString()}`, {
+    headers: await authHeader(),
+    timeoutMs,
+  });
+  return expectJson<T>(resp);
+}
+
 export async function listEmails(args: {
   mailbox: string; page?: number; pageSize?: number; search?: string; folder?: string;
 }): Promise<{ value: MailListItem[]; totalCount?: number }> {
@@ -75,96 +94,59 @@ export async function listEmails(args: {
   if (args.pageSize) params.set('pageSize', String(args.pageSize));
   if (args.search) params.set('search', args.search);
   if (args.folder) params.set('folder', args.folder);
-  const resp = await fetchWithRetry(`/api/emails?${params.toString()}`, {
-    headers: await authHeader(),
-    timeoutMs: 25_000,
-  });
-  return expectJson(resp);
+  return getAction('list', params);
 }
 
 export async function listFolders(mailbox: string): Promise<MailFolder[]> {
-  const params = new URLSearchParams({ mailbox });
-  const resp = await fetchWithRetry(`/api/email-folders?${params.toString()}`, {
-    headers: await authHeader(),
-    timeoutMs: 25_000,
-  });
-  const j = await expectJson<{ value: MailFolder[] }>(resp);
+  const j = await getAction<{ value: MailFolder[] }>('folders', new URLSearchParams({ mailbox }));
   return j.value;
 }
 
 export async function moveEmail(args: {
   mailbox: string; messageId: string; destinationId: string;
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/email-patch', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...args, action: 'move' }),
-    timeoutMs: 25_000,
-  });
-  await expectJson(resp);
+  await postAction('move', args, 25_000);
 }
 
 export async function deleteEmail(args: {
   mailbox: string; messageId: string;
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/email-patch', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...args, action: 'delete' }),
-    timeoutMs: 25_000,
-  });
-  await expectJson(resp);
+  await postAction('delete', args, 25_000);
 }
 
 export async function flagEmail(args: {
   mailbox: string; messageId: string; flagged: boolean;
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/email-patch', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...args, action: 'flag' }),
-    timeoutMs: 25_000,
-  });
-  await expectJson(resp);
+  await postAction('flag', args, 25_000);
 }
 
 export async function markEmailRead(args: {
   mailbox: string; messageId: string; isRead: boolean;
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/email-patch', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...args, action: 'markRead' }),
-    timeoutMs: 25_000,
-  });
-  await expectJson(resp);
+  await postAction('markRead', args, 25_000);
 }
 
 export async function getEmail(mailbox: string, id: string): Promise<MailDetail> {
-  const params = new URLSearchParams({ mailbox, id });
-  const resp = await fetchWithRetry(`/api/email-message?${params.toString()}`, {
-    headers: await authHeader(),
-    timeoutMs: 25_000,
-  });
-  return expectJson(resp);
+  return getAction('message', new URLSearchParams({ mailbox, id }));
 }
 
 /**
- * Baut eine URL zum Anhang-Endpoint inkl. Bearer-Token im Query —
- * NICHT verwenden, sonst landet der Token in History/Logs. Stattdessen
- * fetchAttachmentBlob nutzen und blob-URL im DOM zeigen.
+ * Lädt einen Anhang als Blob — die Bytes werden nicht über das DOM
+ * adressiert, sondern intern als blob-URL erzeugt; der Bearer-Token
+ * bleibt im Authorization-Header (nicht in der URL).
  */
 export async function fetchAttachmentBlob(args: {
   mailbox: string; messageId: string; attachmentId: string;
   disposition?: 'inline' | 'attachment';
 }): Promise<Blob> {
   const params = new URLSearchParams({
+    action: 'attachment',
     mailbox: args.mailbox,
     messageId: args.messageId,
     attachmentId: args.attachmentId,
   });
   if (args.disposition) params.set('disposition', args.disposition);
-  const resp = await fetchWithRetry(`/api/email-attachment?${params.toString()}`, {
+  const resp = await fetchWithRetry(`/api/emails?${params.toString()}`, {
     headers: await authHeader(),
     timeoutMs: 40_000,
   });
@@ -188,13 +170,7 @@ export async function sendEmailFrom(args: {
   bodyHtml: string;
   attachments?: OutboundAttachment[];
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/emails', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify(args),
-    timeoutMs: 60_000,
-  });
-  await expectJson(resp);
+  await postAction('send', args, 60_000);
 }
 
 export async function replyToEmail(args: {
@@ -205,13 +181,7 @@ export async function replyToEmail(args: {
   cc?: string[];
   attachments?: OutboundAttachment[];
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/email-action', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...args, action: 'reply' }),
-    timeoutMs: 60_000,
-  });
-  await expectJson(resp);
+  await postAction('reply', args, 60_000);
 }
 
 export async function forwardEmail(args: {
@@ -221,13 +191,7 @@ export async function forwardEmail(args: {
   cc?: string[];
   comment: string;
 }): Promise<void> {
-  const resp = await fetchWithRetry('/api/email-action', {
-    method: 'POST',
-    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...args, action: 'forward' }),
-    timeoutMs: 60_000,
-  });
-  await expectJson(resp);
+  await postAction('forward', args, 60_000);
 }
 
 /** Liest einen File-Blob in OutboundAttachment um. */

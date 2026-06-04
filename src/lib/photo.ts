@@ -148,7 +148,7 @@ export async function downloadFile(file: Blob, filename: string): Promise<boolea
  * fürs URL.revokeObjectURL.
  *
  * `formularId` MUSS für Fahrer mitgegeben werden: der Download-Proxy
- * (/api/download) verlangt seit der Pro-Resource-Auth eine formular_id und
+ * (/api/onedrive?action=download) verlangt seit der Pro-Resource-Auth eine formular_id und
  * antwortet sonst für Nicht-Admins mit 403 — die Foto-Vorschau bliebe
  * andernfalls leer, sobald die lokale Blob-URL nach Seitenwechsel weg ist.
  */
