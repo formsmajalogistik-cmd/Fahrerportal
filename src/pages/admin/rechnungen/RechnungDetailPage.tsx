@@ -7,13 +7,14 @@ import { formatDate } from '../../../lib/touren';
 import { berechneSummenProUst } from '../../../lib/rechnungsformat';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
+import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { generateRechnungPdf, rechnungPdfFilename, type RechnungPdfPosition } from './rechnungPdf';
 import {
   previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
 } from '../../../lib/onedrive';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
 import type { EditorPosition } from './positionUtils';
-import { emptyManuellePosition } from './positionUtils';
+import { emptyManuellePosition, newKey } from './positionUtils';
 import type {
   Auftraggeber, Rechnung, Rechnungsadresse, Rechnungsposition, RechnungStatus,
 } from '../../../types/db';
@@ -79,6 +80,7 @@ export function RechnungDetailPage() {
   const [editingPos, setEditingPos] = useState(false);
   const [posEditConfirmOpen, setPosEditConfirmOpen] = useState(false);
   const [savingPositions, setSavingPositions] = useState(false);
+  const [tourPickerOpen, setTourPickerOpen] = useState(false);
 
   // Notizen: Auto-Save bei Blur.
   const [notizen, setNotizen] = useState('');
@@ -569,7 +571,15 @@ export function RechnungDetailPage() {
                 <button
                   type="button" className="btn-secondary text-sm"
                   onClick={() => setPositionen((rows) => [...rows, emptyManuellePosition()])}
-                >+ Position hinzufügen</button>
+                >+ Leere Position</button>
+                <button
+                  type="button" className="btn-secondary text-sm"
+                  onClick={() => setTourPickerOpen(true)}
+                  disabled={!rechnung.auftraggeber_id}
+                  title={rechnung.auftraggeber_id
+                    ? 'Tour auswählen + Positionen automatisch erzeugen'
+                    : 'Rechnung ohne Auftraggeber — Tour-Auswahl nicht verfügbar'}
+                >+ Tour hinzufügen</button>
                 <button
                   type="button" className="btn-primary text-sm"
                   onClick={() => void speicherePositionen()}
@@ -686,6 +696,23 @@ export function RechnungDetailPage() {
           destructive
           onConfirm={async () => { await loescheRechnung(); }}
           onClose={() => setDeleteConfirm(false)}
+        />
+      )}
+      {tourPickerOpen && rechnung.auftraggeber_id && (
+        <AddTourPositionDialog
+          auftraggeberId={rechnung.auftraggeber_id}
+          leistungszeitraumVon={rechnung.leistungszeitraum_von}
+          leistungszeitraumBis={rechnung.leistungszeitraum_bis}
+          excludeRechnungId={rechnung.id}
+          modus="beides"
+          onClose={() => setTourPickerOpen(false)}
+          onAdd={(neueP) => {
+            setPositionen((rows) => [
+              ...rows,
+              ...neueP.map((p) => ({ ...p, key: newKey('tour') })),
+            ]);
+            setTourPickerOpen(false);
+          }}
         />
       )}
     </div>

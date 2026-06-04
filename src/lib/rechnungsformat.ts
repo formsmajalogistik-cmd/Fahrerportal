@@ -41,6 +41,19 @@ export interface Rechnungsformat {
   spalten: Array<'pos' | 'bezeichnung' | 'menge' | 'einzelpreis' | 'gesamtpreis'>;
 }
 
+/**
+ * Defensive Variante zum Lesen einer Rechnungsformat-JSON aus der DB
+ * (`auftraggeber.rechnungsformat`). Fehlende Felder fallen auf den
+ * Default zurück; ist die Eingabe nicht JSON-objekt-förmig, kommt der
+ * komplette Default raus.
+ */
+export function parseRechnungsformat(raw: unknown): Rechnungsformat {
+  if (raw && typeof raw === 'object') {
+    return { ...DEFAULT_RECHNUNGSFORMAT, ...(raw as Partial<Rechnungsformat>) };
+  }
+  return DEFAULT_RECHNUNGSFORMAT;
+}
+
 export const DEFAULT_RECHNUNGSFORMAT: Rechnungsformat = {
   format_typ: 'standard',
   tour_bezeichnung: '{start} nach {ziel} {datum}',

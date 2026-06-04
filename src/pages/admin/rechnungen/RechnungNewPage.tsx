@@ -9,6 +9,7 @@ import {
   type Rechnungsformat, type TourForRechnung, type TourenartReal,
 } from '../../../lib/rechnungsformat';
 import { PositionsTable } from './PositionsTable';
+import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { SummenBlock } from './SummenBlock';
 import {
   emptyManuellePosition, newKey, type EditorPosition,
@@ -116,6 +117,8 @@ export function RechnungNewPage() {
   const [auslagen, setAuslagen] = useState<EditorPosition[]>([]);
   const [touren, setTouren] = useState<TourForRechnung[]>([]);
   const [loadingTouren, setLoadingTouren] = useState(false);
+  /** Tour-Picker offen für "haupt" | "auslagen" — null = zu. */
+  const [tourPicker, setTourPicker] = useState<null | 'haupt' | 'auslagen'>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -794,15 +797,26 @@ export function RechnungNewPage() {
       {/* Haupt-Positionen — im "Auslagen-only"-Schnellmodus ausgeblendet */}
       {!auslagenOnly && (haupt.length > 0 || auslagen.length > 0) && (
         <section className="card space-y-3 p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-maja-navy">{hauptTitle}</h2>
-            <button
-              type="button"
-              className="btn-secondary text-sm"
-              onClick={() => setHaupt((rows) => [...rows, emptyManuellePosition()])}
-            >
-              + Position hinzufügen
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setHaupt((rows) => [...rows, emptyManuellePosition()])}
+              >
+                + Leere Position
+              </button>
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setTourPicker('haupt')}
+                disabled={!auftraggeber}
+                title={auftraggeber ? 'Tour auswählen + automatische Positionen' : 'Erst Auftraggeber wählen'}
+              >
+                + Tour hinzufügen
+              </button>
+            </div>
           </div>
           <PositionsTable positionen={haupt} defaultUstSatz={ustSatz} onChange={setHaupt} />
           <SummenBlock positionen={haupt} defaultSatz={ustSatz} prominent />
@@ -812,15 +826,26 @@ export function RechnungNewPage() {
       {/* Getrennte Auslagen */}
       {getrennt && auslagen.length > 0 && (
         <section className="card space-y-3 p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-maja-navy">Auslagen-Positionen</h2>
-            <button
-              type="button"
-              className="btn-secondary text-sm"
-              onClick={() => setAuslagen((rows) => [...rows, emptyManuellePosition()])}
-            >
-              + Position hinzufügen
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setAuslagen((rows) => [...rows, emptyManuellePosition()])}
+              >
+                + Leere Position
+              </button>
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setTourPicker('auslagen')}
+                disabled={!auftraggeber}
+                title={auftraggeber ? 'Tour auswählen + automatische Positionen' : 'Erst Auftraggeber wählen'}
+              >
+                + Tour hinzufügen
+              </button>
+            </div>
           </div>
           <PositionsTable positionen={auslagen} defaultUstSatz={ustSatz} onChange={setAuslagen} />
           <SummenBlock positionen={auslagen} defaultSatz={ustSatz} prominent />
@@ -861,6 +886,28 @@ export function RechnungNewPage() {
           {saving === 'offen' ? 'Erstellt …' : 'Rechnung erstellen'}
         </button>
       </div>
+
+      {tourPicker && auftraggeber && (
+        <AddTourPositionDialog
+          auftraggeberId={auftraggeber.id}
+          leistungszeitraumVon={leistungszeitraum.von}
+          leistungszeitraumBis={leistungszeitraum.bis}
+          modus={getrennt ? (tourPicker === 'auslagen' ? 'auslagen' : 'touren') : 'beides'}
+          onClose={() => setTourPicker(null)}
+          onAdd={(positionen) => {
+            const withKeys = positionen.map((p) => ({
+              ...p,
+              key: newKey(tourPicker === 'auslagen' ? 'aus' : 'tour'),
+            }));
+            if (tourPicker === 'auslagen') {
+              setAuslagen((rows) => [...rows, ...withKeys]);
+            } else {
+              setHaupt((rows) => [...rows, ...withKeys]);
+            }
+            setTourPicker(null);
+          }}
+        />
+      )}
     </div>
   );
 }
