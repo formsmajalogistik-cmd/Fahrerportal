@@ -73,16 +73,19 @@ export function FahrerDashboard() {
     if (!isAdminView) tplQuery = tplQuery.eq('sichtbar', true);
     const tplPromise = tplQuery.order('name');
 
-    // Drafts dieses Fahrers — daten-JSONB MUSS mit, weil die Draft-
-    // Card oben Kennzeichen + Übernahme/Übergabe-Adresse aus dem
-    // Formular-Inhalt zieht (summarizeEingang). FormularPage lädt
-    // beim Öffnen ohnehin separat mit .select('*'). pdf_paths +
-    // pdf_status / pdf_fehler bleiben weg — die werden für Drafts
-    // (Status='draft') noch nicht gebraucht.
+    // Drafts dieses Fahrers — wir laden bewusst `*`, weil
+    //   (a) die Tabelle ausgefuellte_formulare hat KEINE updated_at-
+    //       Spalte; eine selektive Liste mit "updated_at" wirft einen
+    //       PostgREST-400, draftRes.data wird null und die Drafts
+    //       erscheinen für den Fahrer "leer".
+    //   (b) das daten-JSONB muss sowieso mitkommen — die Draft-Card
+    //       zieht Kennzeichen + Übernahme-/Übergabe-Adresse daraus
+    //       via summarizeEingang.
+    // FormularPage lädt beim Öffnen ohnehin separat mit `*`.
     const draftPromise = fahrerRow
       ? supabase
           .from('ausgefuellte_formulare')
-          .select('id, fahrer_id, template_id, status, daten, created_at, updated_at, template:template_id (id, name)')
+          .select('*, template:template_id (id, name)')
           .eq('fahrer_id', fahrerRow.id)
           .eq('status', 'draft')
           .order('created_at', { ascending: false })
@@ -107,6 +110,14 @@ export function FahrerDashboard() {
 
     const [tplRes, draftRes, tourRes] = await Promise.all([tplPromise, draftPromise, tourPromise]);
     if (tplRes.error) setError(tplRes.error.message);
+    if (draftRes.error) {
+      // Vorher still geschluckt: ein PostgREST-400 (z.B. weil eine
+      // selektive Spaltenliste eine nicht-existente Spalte fragte)
+      // hätte den Fahrer mit leerer Entwurfs-Liste sitzen lassen, ohne
+      // dass er den Fehler je gesehen hätte. Jetzt landet er sichtbar.
+      console.warn('[FahrerDashboard] Drafts laden fehlgeschlagen', draftRes.error);
+      setError((prev) => prev ?? draftRes.error?.message ?? 'Entwürfe konnten nicht geladen werden.');
+    }
     setTemplates((Array.isArray(tplRes.data) ? tplRes.data : []) as unknown as AssignedTemplate[]);
     setDrafts((Array.isArray(draftRes.data) ? draftRes.data : []) as unknown as DraftRow[]);
 

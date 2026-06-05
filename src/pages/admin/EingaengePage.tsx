@@ -16,6 +16,7 @@ import {
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { EingangLinkDialog } from './EingangLinkDialog';
 import { EingangSendEmailDialog } from './EingangSendEmailDialog';
+import { EingangFormularViewDialog } from './EingangFormularViewDialog';
 import type {
   AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
 } from '../../types/db';
@@ -47,6 +48,14 @@ export function EingaengePage() {
   const [resending, setResending] = useState<Row | null>(null);
   const [hideLinked, setHideLinked] = useState(true);
   const [linkToast, setLinkToast] = useState<string | null>(null);
+  /** Status-Filter (Aufgabe 2B). Default "submitted" = wie bisher. */
+  const [statusFilter, setStatusFilter] = useState<'submitted' | 'draft' | 'alle'>('submitted');
+  /** Welcher Eingang/Entwurf ist im Read-Only-Viewer offen (Aufgabe 2A)? */
+  const [viewing, setViewing] = useState<string | null>(null);
+  /** Auswahl für Bulk-Löschen bei Entwürfen. */
+  const [selectedDrafts, setSelectedDrafts] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<null | { ids: string[]; mode: 'selected' | 'empty' }>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,8 +112,68 @@ export function EingaengePage() {
   }, [isAdmin, markEingangSeen]);
 
   const visibleRows = useMemo(() => {
-    return hideLinked ? rows.filter((r) => !r.tour) : rows;
-  }, [rows, hideLinked]);
+    return rows.filter((r) => {
+      // Status-Filter: bei "submitted" weiterhin auch hideLinked.
+      if (statusFilter !== 'alle' && r.status !== statusFilter) return false;
+      if (statusFilter === 'submitted' && hideLinked && r.tour) return false;
+      return true;
+    });
+  }, [rows, hideLinked, statusFilter]);
+
+  const draftRows = useMemo(() => rows.filter((r) => r.status === 'draft'), [rows]);
+  const submittedRows = useMemo(() => rows.filter((r) => r.status === 'submitted'), [rows]);
+
+  /**
+   * "Leerer Entwurf": daten ist leer oder enthält nur leere/false-y
+   * Werte. Wird für den "Alle leeren Entwürfe löschen"-Pfad genutzt
+   * (Aufgabe 2B Massenauswahl).
+   */
+  function isEmptyDraft(r: Row): boolean {
+    if (r.status !== 'draft') return false;
+    const d = (r.daten ?? {}) as Record<string, unknown>;
+    for (const v of Object.values(d)) {
+      if (v == null) continue;
+      if (typeof v === 'string' && v.trim() === '') continue;
+      if (typeof v === 'boolean' && !v) continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      if (typeof v === 'object' && v !== null && Object.keys(v as Record<string, unknown>).length === 0) continue;
+      // Ein nicht-trivialer Wert → Entwurf nicht leer.
+      return false;
+    }
+    return true;
+  }
+
+  function toggleDraftSelected(id: string) {
+    setSelectedDrafts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function performBulkDelete(ids: string[]) {
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const { error: err } = await supabase
+        .from('ausgefuellte_formulare')
+        .delete()
+        .in('id', ids);
+      if (err) { setError(err.message); return; }
+      setRows((prev) => prev.filter((r) => !ids.includes(r.id)));
+      setSelectedDrafts((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+      setLinkToast(`${ids.length} ${ids.length === 1 ? 'Entwurf' : 'Entwürfe'} gelöscht.`);
+      window.setTimeout(() => setLinkToast(null), 4000);
+    } finally {
+      setBulkBusy(false);
+      setBulkConfirm(null);
+    }
+  }
 
   async function regeneratePdfs(r: Row) {
     if (!r.template) return;
@@ -167,7 +236,7 @@ export function EingaengePage() {
               : 'Deine Protokolle. PDF-Downloads holen die Datei aus OneDrive.'}
           </p>
         </div>
-        {linkedCount > 0 && (
+        {statusFilter === 'submitted' && linkedCount > 0 && (
           <label className="flex items-center gap-2 text-sm text-maja-ink">
             <input
               type="checkbox"
@@ -179,6 +248,68 @@ export function EingaengePage() {
           </label>
         )}
       </div>
+
+      {/* Status-Filter (Aufgabe 2B) */}
+      {isAdmin && (
+        <div className="flex flex-wrap items-center gap-1">
+          {([
+            { id: 'submitted' as const, label: 'Eingereicht', cnt: submittedRows.length },
+            { id: 'draft' as const,     label: 'Entwürfe',    cnt: draftRows.length },
+            { id: 'alle' as const,      label: 'Alle',        cnt: rows.length },
+          ]).map((opt) => {
+            const active = statusFilter === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(opt.id);
+                  setSelectedDrafts(new Set());
+                }}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                  active
+                    ? 'bg-maja-navy text-white'
+                    : 'bg-white text-maja-navy border border-maja-navy/15 hover:bg-maja-light'
+                }`}
+              >
+                {opt.label} ({opt.cnt})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Bulk-Aktionen für Entwürfe */}
+      {isAdmin && statusFilter === 'draft' && draftRows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-maja-navy/10 bg-maja-light/40 px-3 py-2 text-sm">
+          <span className="text-maja-muted">
+            {selectedDrafts.size > 0
+              ? `${selectedDrafts.size} ausgewählt`
+              : `${draftRows.length} Entwurf${draftRows.length === 1 ? '' : 'e'} in der Liste`}
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={selectedDrafts.size === 0 || bulkBusy}
+              onClick={() => setBulkConfirm({ ids: [...selectedDrafts], mode: 'selected' })}
+              className="rounded-md border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Ausgewählte löschen
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => {
+                const emptyIds = draftRows.filter(isEmptyDraft).map((r) => r.id);
+                setBulkConfirm({ ids: emptyIds, mode: 'empty' });
+              }}
+              className="rounded-md border border-maja-navy/20 bg-white px-3 py-1 text-xs font-medium text-maja-navy hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Alle leeren Entwürfe löschen
+            </button>
+          </div>
+        </div>
+      )}
 
       {visibleRows.length === 0 ? (
         <div className="card p-6 text-sm text-maja-muted">
@@ -194,10 +325,15 @@ export function EingaengePage() {
               row={r}
               isAdmin={isAdmin}
               regenBusy={regen === r.id}
+              selectable={statusFilter === 'draft' && r.status === 'draft'}
+              selected={selectedDrafts.has(r.id)}
+              onToggleSelected={() => toggleDraftSelected(r.id)}
               onSeen={() => void handleSeen(r)}
+              onView={() => setViewing(r.id)}
               onRegenerate={() => { void handleSeen(r); void regeneratePdfs(r); }}
               onLink={() => { void handleSeen(r); setLinking(r); }}
               onResendEmail={() => { void handleSeen(r); setResending(r); }}
+              onDelete={() => setBulkConfirm({ ids: [r.id], mode: 'selected' })}
               onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
             />
           ))}
@@ -254,6 +390,45 @@ export function EingaengePage() {
           {linkToast}
         </div>
       )}
+
+      {viewing && (
+        <EingangFormularViewDialog
+          formularId={viewing}
+          onClose={() => setViewing(null)}
+        />
+      )}
+
+      {bulkConfirm && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
+          <div className="card w-full max-w-md p-5">
+            <h3 className="text-base font-semibold text-maja-navy">
+              {bulkConfirm.mode === 'empty'
+                ? `${bulkConfirm.ids.length} leere Entwürfe löschen?`
+                : `${bulkConfirm.ids.length === 1
+                    ? 'Entwurf löschen?'
+                    : `${bulkConfirm.ids.length} Entwürfe löschen?`}`}
+            </h3>
+            <p className="mt-2 text-sm text-maja-muted">
+              {bulkConfirm.mode === 'empty' && bulkConfirm.ids.length === 0
+                ? 'Keine leeren Entwürfe gefunden — nichts zu löschen.'
+                : 'Dies kann nicht rückgängig gemacht werden. Die Datensätze werden aus der Datenbank entfernt.'}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="btn-secondary"
+                      onClick={() => setBulkConfirm(null)}
+                      disabled={bulkBusy}>
+                Abbrechen
+              </button>
+              <button type="button"
+                      className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                      onClick={() => void performBulkDelete(bulkConfirm.ids)}
+                      disabled={bulkBusy || bulkConfirm.ids.length === 0}>
+                {bulkBusy ? 'Löscht …' : 'Löschen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -262,15 +437,24 @@ interface CardProps {
   row: Row;
   isAdmin: boolean;
   regenBusy: boolean;
+  /** Bulk-Select-Modus (nur Entwürfe): wenn !== null, ist die Card
+   *  im Auswahl-Modus mit Checkbox; sonst klassisch. */
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
   onSeen: () => void;
+  onView: () => void;
   onRegenerate: () => void;
   onLink: () => void;
   onResendEmail: () => void;
+  onDelete: () => void;
   onZwischenChanged: (patch: Partial<Row>) => void;
 }
 
 function EingangCard({
-  row, isAdmin, regenBusy, onSeen, onRegenerate, onLink, onResendEmail, onZwischenChanged,
+  row, isAdmin, regenBusy,
+  selectable, selected, onToggleSelected,
+  onSeen, onView, onRegenerate, onLink, onResendEmail, onDelete, onZwischenChanged,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
@@ -360,6 +544,36 @@ function EingangCard({
         </div>
 
         <div className="flex flex-col items-end gap-2">
+          {selectable && (
+            <label className="flex items-center gap-2 text-xs text-maja-muted">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                checked={selected}
+                onChange={onToggleSelected}
+                aria-label="Entwurf auswählen"
+              />
+              Auswählen
+            </label>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onView}
+              className="text-xs font-medium text-maja-accent hover:underline"
+            >
+              Formular ansehen
+            </button>
+          )}
+          {isAdmin && row.status === 'draft' && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+            >
+              Entwurf löschen
+            </button>
+          )}
           {isAdmin && row.status === 'submitted' && !row.tour && (
             <button type="button" onClick={onLink} className="btn-primary text-sm">
               Mit Tour verknüpfen
