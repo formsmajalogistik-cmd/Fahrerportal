@@ -408,7 +408,10 @@ export async function sendEmail(args: {
   to: string[];
   cc?: string[];
   subject: string;
+  /** Plain-Text-Body. Wird ignoriert, wenn bodyHtml gesetzt ist. */
   body: string;
+  /** Optional: HTML-Body (inkl. Signatur). Hat Vorrang vor body. */
+  bodyHtml?: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
 }): Promise<SendEmailResult> {
   const resp = await fetchWithAuthRetry('/api/emails?action=eingang-send', {

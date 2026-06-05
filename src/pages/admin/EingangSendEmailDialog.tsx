@@ -3,6 +3,8 @@ import {
 } from 'react';
 import { sendEmail } from '../../lib/onedrive';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../auth/AuthContext';
+import { bodyWithSignatureHtml, signatureFromProfile } from '../../lib/emailSignature';
 import { XIcon } from '../../components/icons';
 import {
   asPdfPathList, expectedOneDrivePath, resolveFilename, resolvePattern,
@@ -59,6 +61,8 @@ function splitList(s: string): string[] {
  *   Checkboxen.
  */
 export function EingangSendEmailDialog({ formular, template, onClose, onSent }: Props) {
+  const { profile } = useAuth();
+  const sig = useMemo(() => signatureFromProfile(profile), [profile]);
   // --- Adress-Quellen für die Dropdowns ------------------------------
   const [options, setOptions] = useState<EmailOption[]>([]);
   const [optionsLoading, setOptionsLoading] = useState(true);
@@ -242,11 +246,14 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
         }
       }
 
+      // Plain-Text wird HTML-escaped + Signatur angehängt (Aufgabe 1).
+      const bodyHtml = bodyWithSignatureHtml({ body, sig });
       const result = await sendEmail({
         to,
         cc: cc.length > 0 ? cc : undefined,
         subject,
         body,
+        bodyHtml,
         attachments: selected.map((a) => ({
           name: a.filename,
           contentType: 'application/pdf',

@@ -27,6 +27,8 @@ export type Database = {
           vorname: string | null;
           nachname: string | null;
           save_to_gallery: boolean;
+          telefon: string | null;
+          position: string | null;
         };
         Insert: {
           id: string;
@@ -35,6 +37,8 @@ export type Database = {
           vorname?: string | null;
           nachname?: string | null;
           save_to_gallery?: boolean;
+          telefon?: string | null;
+          position?: string | null;
         };
         Update: {
           id?: string;
@@ -43,6 +47,8 @@ export type Database = {
           vorname?: string | null;
           nachname?: string | null;
           save_to_gallery?: boolean;
+          telefon?: string | null;
+          position?: string | null;
         };
         Relationships: [
           {
@@ -723,6 +729,8 @@ export type Database = {
           status: 'entwurf' | 'offen' | 'bezahlt';
           bezahlt_am: string | null;
           pdf_url: string | null;
+          belege_pdf_url: string | null;
+          email_versendet_am: string | null;
           notizen: string | null;
           ist_auslagen_rechnung: boolean;
           ansprechpartner: string | null;
@@ -752,6 +760,8 @@ export type Database = {
           status?: 'entwurf' | 'offen' | 'bezahlt';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
+          belege_pdf_url?: string | null;
+          email_versendet_am?: string | null;
           notizen?: string | null;
           ist_auslagen_rechnung?: boolean;
           ansprechpartner?: string | null;
@@ -781,6 +791,8 @@ export type Database = {
           status?: 'entwurf' | 'offen' | 'bezahlt';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
+          belege_pdf_url?: string | null;
+          email_versendet_am?: string | null;
           notizen?: string | null;
           ist_auslagen_rechnung?: boolean;
           ansprechpartner?: string | null;

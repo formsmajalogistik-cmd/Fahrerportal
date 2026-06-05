@@ -1,6 +1,10 @@
 import {
-  useId, useRef, useState, type FormEvent, type KeyboardEvent,
+  useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent,
 } from 'react';
+import { useAuth } from '../../auth/AuthContext';
+import {
+  bodyWithSignatureHtml, signatureFromProfile,
+} from '../../lib/emailSignature';
 import { XIcon } from '../../components/icons';
 import {
   fileToOutboundAttachment, forwardEmail, replyToEmail, sendEmailFrom,
@@ -41,6 +45,8 @@ function splitList(s: string): string[] {
  * vor dem Senden auf base64 gehoben.
  */
 export function EmailComposeDialog({ mode, mailboxes, initial, onClose, onSent }: Props) {
+  const { profile } = useAuth();
+  const sig = useMemo(() => signatureFromProfile(profile), [profile]);
   const [from, setFrom] = useState(initial.from || mailboxes[0]?.address || '');
   const [to, setTo] = useState<string[]>(initial.to ?? []);
   const [cc, setCc] = useState<string[]>(initial.cc ?? []);
@@ -90,11 +96,17 @@ export function EmailComposeDialog({ mode, mailboxes, initial, onClose, onSent }
     if (!from.trim()) { setError('Postfach (Von) ist erforderlich.'); return; }
     setBusy(true);
     try {
+      // Signatur an alle ausgehenden Mails anhängen (Aufgabe 1).
+      // Plain-Text-Eingabe wird HTML-escaped + Zeilenumbrüche zu <br/>;
+      // Forward übergibt nur einen Kommentar oberhalb der Original-Mail,
+      // dort hängt Graph das Zitat selbst dran.
+      const bodyWithSig = bodyWithSignatureHtml({ body: bodyHtml, sig });
+      const forwardComment = bodyWithSignatureHtml({ body: bodyHtml, sig });
       if (mode === 'reply' && initial.messageId) {
         await replyToEmail({
           mailbox: from,
           messageId: initial.messageId,
-          bodyHtml,
+          bodyHtml: bodyWithSig,
           to, cc: cc.length > 0 ? cc : undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
         });
@@ -103,13 +115,13 @@ export function EmailComposeDialog({ mode, mailboxes, initial, onClose, onSent }
           mailbox: from,
           messageId: initial.messageId,
           to, cc: cc.length > 0 ? cc : undefined,
-          comment: bodyHtml,
+          comment: forwardComment,
         });
       } else {
         await sendEmailFrom({
           mailbox: from,
           to, cc: cc.length > 0 ? cc : undefined,
-          subject, bodyHtml,
+          subject, bodyHtml: bodyWithSig,
           attachments: attachments.length > 0 ? attachments : undefined,
         });
       }

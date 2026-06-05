@@ -8,6 +8,7 @@ import { berechneSummenProUst } from '../../../lib/rechnungsformat';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
+import { RechnungEmailDialog } from './RechnungEmailDialog';
 import { generateRechnungPdf, rechnungPdfFilename, type RechnungPdfPosition } from './rechnungPdf';
 import {
   previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
@@ -102,6 +103,24 @@ export function RechnungDetailPage() {
 
   // PDF-Generierung
   const [generatingPdf, setGeneratingPdf] = useState(false);
+
+  // E-Mail-Versand (Aufgabe 3)
+  const [emailOpen, setEmailOpen] = useState(false);
+
+  // Beleg-Zuordnung lösen (Aufgabe 2)
+  const handleRemoveBelege = useCallback(async () => {
+    if (!rechnung) return;
+    if (!confirm('Zuordnung der Beleg-PDF wirklich entfernen? Die Datei in OneDrive bleibt erhalten.')) return;
+    const { error: err } = await supabase
+      .from('rechnungen')
+      .update({ belege_pdf_url: null })
+      .eq('id', rechnung.id);
+    if (err) { setError(err.message); return; }
+    setRechnung({ ...rechnung, belege_pdf_url: null });
+  // rechnung wird verwendet, aber als Dep deklariert führt zu Loop —
+  // wir fangen das via if (!rechnung) ab.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rechnung?.id]);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -630,12 +649,26 @@ export function RechnungDetailPage() {
       <section className="card space-y-2 p-5">
         <h2 className="text-base font-semibold text-maja-navy">PDF</h2>
         {rechnung.pdf_url ? (
-          <RechnungPdfButtons
-            pdfUrl={rechnung.pdf_url}
-            filename={rechnungPdfFilename(rechnung.rechnungsnummer)}
-            onRegenerate={() => void generierePdf()}
-            regenerating={generatingPdf}
-          />
+          <div className="space-y-2">
+            <RechnungPdfButtons
+              pdfUrl={rechnung.pdf_url}
+              filename={rechnungPdfFilename(rechnung.rechnungsnummer)}
+              onRegenerate={() => void generierePdf()}
+              regenerating={generatingPdf}
+            />
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => setEmailOpen(true)}
+            >
+              Rechnung per E-Mail versenden
+            </button>
+            {rechnung.email_versendet_am && (
+              <p className="text-xs text-maja-muted">
+                Zuletzt per E-Mail versendet am {formatDate(rechnung.email_versendet_am)}.
+              </p>
+            )}
+          </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm text-maja-muted">Noch keine PDF generiert.</p>
@@ -645,6 +678,23 @@ export function RechnungDetailPage() {
               disabled={generatingPdf}
             >{generatingPdf ? 'Generiert …' : 'PDF generieren'}</button>
           </div>
+        )}
+      </section>
+
+      {/* Zugeordnete Belege (Aufgabe 2) */}
+      <section className="card space-y-2 p-5">
+        <h2 className="text-base font-semibold text-maja-navy">Zugeordnete Belege</h2>
+        {rechnung.belege_pdf_url ? (
+          <BelegeAttachmentRow
+            path={rechnung.belege_pdf_url}
+            rechnungsnummer={rechnung.rechnungsnummer}
+            onRemove={() => void handleRemoveBelege()}
+          />
+        ) : (
+          <p className="text-sm text-maja-muted">
+            Keine Belege zugeordnet. Im Belege-Reiter über „Rechnung zuordnen"
+            verknüpfen.
+          </p>
         )}
       </section>
 
@@ -712,6 +762,30 @@ export function RechnungDetailPage() {
               ...neueP.map((p) => ({ ...p, key: newKey('tour') })),
             ]);
             setTourPickerOpen(false);
+          }}
+        />
+      )}
+
+      {emailOpen && (
+        <RechnungEmailDialog
+          rechnung={{
+            id: rechnung.id,
+            rechnungsnummer: rechnung.rechnungsnummer,
+            datum: rechnung.datum,
+            brutto_summe: Number(rechnung.brutto_summe),
+            auftraggeber_id: rechnung.auftraggeber_id,
+            pdf_url: rechnung.pdf_url,
+            belege_pdf_url: rechnung.belege_pdf_url,
+            status: rechnung.status,
+          }}
+          onClose={() => setEmailOpen(false)}
+          onSent={({ newStatus }) => {
+            setEmailOpen(false);
+            setRechnung((r) => r ? {
+              ...r,
+              email_versendet_am: new Date().toISOString(),
+              status: newStatus ?? r.status,
+            } : r);
           }}
         />
       )}
@@ -848,6 +922,53 @@ function BezahltDialog({
             {busy ? 'Speichert …' : 'Bestätigen'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Zeigt eine zugeordnete Beleg-PDF mit Vorschau-/Download-Button und
+ * "Zuordnung entfernen". OneDrive-Aktionen laufen über den bestehenden
+ * Admin-Pfad — Admins dürfen jeden Pfad unter Maja-Logistik/ öffnen.
+ */
+function BelegeAttachmentRow({
+  path, rechnungsnummer, onRemove,
+}: { path: string; rechnungsnummer: string; onRemove: () => void }) {
+  const [busy, setBusy] = useState<'view' | 'download' | null>(null);
+  const filename = `Belege_${rechnungsnummer}.pdf`;
+  async function preview() {
+    setBusy('view');
+    const ok = await previewOneDrivePdf(path, { filename });
+    setBusy(null);
+    if (!ok) alert('Vorschau fehlgeschlagen.');
+  }
+  async function download() {
+    setBusy('download');
+    const ok = await triggerOneDriveDownload(path, filename);
+    setBusy(null);
+    if (!ok) alert('Download fehlgeschlagen.');
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-maja-navy/10 bg-white p-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-maja-ink">{filename}</p>
+        <p className="text-xs text-maja-muted">{path}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="btn-secondary text-sm"
+                onClick={() => void preview()} disabled={busy !== null}>
+          {busy === 'view' ? 'Lädt …' : 'Vorschau'}
+        </button>
+        <button type="button" className="btn-secondary text-sm"
+                onClick={() => void download()} disabled={busy !== null}>
+          {busy === 'download' ? 'Lädt …' : 'Herunterladen'}
+        </button>
+        <button type="button"
+                className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                onClick={onRemove}>
+          Zuordnung entfernen
+        </button>
       </div>
     </div>
   );

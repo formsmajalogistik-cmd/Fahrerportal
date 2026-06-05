@@ -241,7 +241,10 @@ export async function sendMail(args: {
   cc?: string[];
   bcc?: string[];
   subject: string;
+  /** Plain-Text-Inhalt. Wird verwendet, wenn bodyHtml nicht gesetzt ist. */
   bodyText: string;
+  /** Optional: HTML-Body. Hat Vorrang vor bodyText. */
+  bodyHtml?: string;
   attachments?: Array<{ name: string; contentType: string; bytes: Uint8Array }>;
 }): Promise<void> {
   const upn = env('ONEDRIVE_USER_EMAIL');
@@ -278,7 +281,9 @@ export async function sendMail(args: {
   const body = {
     message: {
       subject: args.subject,
-      body: { contentType: 'Text', content: args.bodyText },
+      body: args.bodyHtml
+        ? { contentType: 'HTML', content: args.bodyHtml }
+        : { contentType: 'Text', content: args.bodyText },
       from: { emailAddress: { address: upn } },
       toRecipients: recipients(finalTo),
       ccRecipients: finalCc ? recipients(finalCc) : undefined,

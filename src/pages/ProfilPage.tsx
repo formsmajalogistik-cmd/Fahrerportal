@@ -10,6 +10,8 @@ export function ProfilPage() {
 
   const [vorname, setVorname]   = useState(profile?.vorname ?? '');
   const [nachname, setNachname] = useState(profile?.nachname ?? '');
+  const [telefon, setTelefon]   = useState(profile?.telefon ?? '');
+  const [position, setPosition] = useState(profile?.position ?? '');
   const [saveGallery, setSaveGallery] = useState<boolean>(!!profile?.save_to_gallery);
 
   const [savingProfile, setSavingProfile] = useState(false);
@@ -36,6 +38,8 @@ export function ProfilPage() {
       p_vorname: vorname.trim() || null,
       p_nachname: nachname.trim() || null,
       p_save_to_gallery: saveGallery,
+      p_telefon: telefon.trim() || null,
+      p_position: position.trim() || null,
     });
     setSavingProfile(false);
     if (error) { setProfileErr(error.message); return; }
@@ -95,6 +99,26 @@ export function ProfilPage() {
             <label htmlFor="p-nachname" className="label">Nachname</label>
             <input id="p-nachname" className="input" value={nachname}
                    onChange={(e) => setNachname(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="p-telefon" className="label">Telefon</label>
+            <input id="p-telefon" className="input" type="tel"
+                   placeholder="z.B. 0173 8727757"
+                   value={telefon}
+                   onChange={(e) => setTelefon(e.target.value)} />
+            <p className="mt-1 text-xs text-maja-muted">
+              Wird in der E-Mail-Signatur angezeigt.
+            </p>
+          </div>
+          <div>
+            <label htmlFor="p-position" className="label">Position / Rolle</label>
+            <input id="p-position" className="input"
+                   placeholder="Maja-Logistik"
+                   value={position}
+                   onChange={(e) => setPosition(e.target.value)} />
+            <p className="mt-1 text-xs text-maja-muted">
+              Erscheint unter dem Namen in der E-Mail-Signatur. Default „Maja-Logistik".
+            </p>
           </div>
         </div>
 

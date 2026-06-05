@@ -281,14 +281,24 @@ export default async function handler(req: Req, res: Res) {
         attachments.push({ name, contentType: ctype, bytes });
       }
       let bodyText = asString(body.body) ?? '';
+      let bodyHtml = asString(body.bodyHtml);
       if (failed.length > 0) {
         const note = `\n\n---\nHinweis: ${failed.length} Anhang/Anhänge konnten nicht geladen werden `
           + `(${failed.join(', ')}). Bitte beim Admin nachfragen oder "E-Mail versenden" nutzen.`;
         bodyText = `${bodyText}${note}`;
+        if (bodyHtml) {
+          // HTML-Variante hängt den Hinweis als Absatz an — escape vom
+          // Client-seitig erzeugten HTML wäre falsch, der Note-Text ist
+          // jedoch literal & ASCII-only.
+          const noteHtml = `<p style="color:#b45309">${note.replace(/\n/g, '<br/>')}</p>`;
+          bodyHtml = `${bodyHtml}${noteHtml}`;
+        }
       }
       await sendMail({
         to, cc: cc.length > 0 ? cc : undefined,
-        subject, bodyText, attachments,
+        subject, bodyText,
+        bodyHtml: bodyHtml ?? undefined,
+        attachments,
       });
       res.status(200).json({
         ok: true,

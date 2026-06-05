@@ -5,8 +5,11 @@ import {
   addBelege, clearBelege, listBelege, removeBeleg, reorderBelege,
   updateBelegBlob,
 } from '../../../lib/belegeStorage';
+import { uploadToOneDrive } from '../../../lib/onedrive';
+import { supabase } from '../../../lib/supabase';
 import { heicToJpeg } from './heic';
 import { ImageCropDialog } from './ImageCropDialog';
+import { RechnungAssignDialog } from './RechnungAssignDialog';
 import { downloadBlob, generateBelegePdf, type Layout } from './belegPdf';
 
 interface BelegItem {
@@ -79,6 +82,8 @@ export function BelegeUploadTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignToast, setAssignToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Beim Mount aus IndexedDB laden — Belege überleben Reiter-Wechsel
@@ -238,6 +243,38 @@ export function BelegeUploadTab() {
       downloadBlob(pdf, `${cleanName}.pdf`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'PDF-Erstellung fehlgeschlagen');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * "Rechnung zuordnen" (Aufgabe 2): generiert die Beleg-PDF, lädt
+   * sie nach OneDrive und schreibt den Pfad als belege_pdf_url auf
+   * die gewählte Rechnung. Belege bleiben im Zwischenspeicher
+   * stehen, damit der Admin sie weiter bearbeiten kann.
+   */
+  async function handleAssignToRechnung(rechnung: { id: string; rechnungsnummer: string }) {
+    if (items.length === 0) return;
+    setAssignOpen(false);
+    setBusy(`Belege werden hochgeladen … (Rechnung ${rechnung.rechnungsnummer})`);
+    setError(null);
+    try {
+      const pdf = await generateBelegePdf({
+        images: items.map((i) => i.blob),
+        layout,
+      });
+      const onedrivePath = `Maja-Logistik/Belege/${rechnung.rechnungsnummer}_${todayIso()}.pdf`;
+      await uploadToOneDrive(onedrivePath, pdf);
+      const { error: err } = await supabase
+        .from('rechnungen')
+        .update({ belege_pdf_url: onedrivePath })
+        .eq('id', rechnung.id);
+      if (err) throw new Error(err.message);
+      setAssignToast(`Belege der Rechnung ${rechnung.rechnungsnummer} zugeordnet.`);
+      window.setTimeout(() => setAssignToast(null), 4500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Zuordnung fehlgeschlagen');
     } finally {
       setBusy(null);
     }
@@ -481,14 +518,25 @@ export function BelegeUploadTab() {
               onChange={(e) => setFilename(e.target.value)}
             />
           </div>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={items.length === 0 || busy !== null}
-            onClick={() => void handleGenerate()}
-          >
-            {busy ?? 'PDF erstellen'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={items.length === 0 || busy !== null}
+              onClick={() => void handleGenerate()}
+            >
+              {busy ?? 'PDF erstellen'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={items.length === 0 || busy !== null}
+              onClick={() => setAssignOpen(true)}
+              title="Generiert die PDF, lädt sie in OneDrive hoch und ordnet sie der gewählten Rechnung zu."
+            >
+              Rechnung zuordnen
+            </button>
+          </div>
         </div>
       </section>
 
@@ -498,6 +546,17 @@ export function BelegeUploadTab() {
           onCancel={() => setEditingId(null)}
           onApply={(blob) => applyCrop(editingItem.id, blob)}
         />
+      )}
+      {assignOpen && (
+        <RechnungAssignDialog
+          onClose={() => setAssignOpen(false)}
+          onPick={(r) => void handleAssignToRechnung(r)}
+        />
+      )}
+      {assignToast && (
+        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {assignToast}
+        </div>
       )}
       {confirmReset && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
