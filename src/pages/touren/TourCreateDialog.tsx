@@ -134,7 +134,8 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   useEffect(() => {
     void (async () => {
       const [agRes, faRes, tplRes, zRes] = await Promise.all([
-        supabase.from('auftraggeber').select('*').order('name'),
+        // Egress: nur die Felder, die das Dropdown + greimel-Check braucht.
+        supabase.from('auftraggeber').select('id, name, kontakt, externe_app_name, externe_app_url').order('name'),
         supabase
           .from('fahrer')
           .select('*, user:user_id (email, vorname, nachname)')
@@ -142,7 +143,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
         supabase.from('formular_templates').select('id, name').order('name'),
         supabase.from('greimel_zugaenge').select('*'),
       ]);
-      setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
+      setAuftraggeber(Array.isArray(agRes.data) ? (agRes.data as unknown as Auftraggeber[]) : []);
       const faList = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
       setFahrer(faList);
       setTemplates(Array.isArray(tplRes.data) ? (tplRes.data as Array<Pick<FormularTemplate, 'id' | 'name'>>) : []);

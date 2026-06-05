@@ -121,7 +121,8 @@ export function PreislistePage() {
     setLoading(true);
     setError(null);
     const [agRes, psRes] = await Promise.all([
-      supabase.from('auftraggeber').select('*').order('name'),
+      // Egress: nur die Felder, die die Preislisten-Übersicht braucht.
+      supabase.from('auftraggeber').select('id, name, aba_aufschlag_prozent').order('name'),
       supabase.from('preisstufen').select('auftraggeber_id'),
     ]);
     if (agRes.error) { setError(agRes.error.message); setLoading(false); return; }
@@ -130,7 +131,7 @@ export function PreislistePage() {
     for (const row of psRes.data ?? []) {
       c[row.auftraggeber_id] = (c[row.auftraggeber_id] ?? 0) + 1;
     }
-    setAuftraggeber(agRes.data ?? []);
+    setAuftraggeber((agRes.data ?? []) as unknown as Auftraggeber[]);
     setCounts(c);
     setLoading(false);
   }, []);

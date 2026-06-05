@@ -2,6 +2,7 @@ import {
   useCallback, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import { supabase } from '../../lib/supabase';
+import { cachedQuery } from '../../lib/queryCache';
 import { useAuth } from '../../auth/AuthContext';
 import { useFahrerContext } from '../../auth/FahrerContext';
 import { Spinner } from '../../components/Spinner';
@@ -363,7 +364,14 @@ export function TourDetailDialog({
         .select('*')
         .eq('tour_id', tourId)
         .order('created_at', { ascending: true }),
-      supabase.from('auftraggeber').select('*').order('name'),
+      // Egress: nur Felder für das Dropdown + Anzeige in der Tour-Detail.
+      // Cache reduziert den Round-Trip bei jedem Klick auf eine Tour.
+      cachedQuery('auftraggeber.list.lite', async () =>
+        await supabase.from('auftraggeber')
+          .select('id, name, kontakt, externe_app_name, externe_app_url')
+          .order('name'),
+        60_000,
+      ),
       supabase
         .from('fahrer')
         .select('id, user_id, aktiv, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
@@ -384,7 +392,7 @@ export function TourDetailDialog({
     setBarauslagenInput(decimalToInput(full.barauslagen));
     setHonorarInput(decimalToInput(full.fahrer_honorar));
     setZusaetze(Array.isArray(zRes.data) ? (zRes.data as TourZusatz[]) : []);
-    setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
+    setAuftraggeber(Array.isArray(agRes.data) ? (agRes.data as unknown as Auftraggeber[]) : []);
     const rawFahrer = Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : [];
     // Nicht-Admin: nur eigene Konten (Haupt + eigene Unterkonten) als
     // Zuweisungs-Optionen anbieten — Admin sieht alle.

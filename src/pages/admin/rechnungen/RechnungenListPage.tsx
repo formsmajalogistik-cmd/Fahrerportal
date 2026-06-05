@@ -46,8 +46,16 @@ export function RechnungenListPage() {
     const [rRes, aRes] = await Promise.all([
       supabase
         .from('rechnungen')
+        // Egress-Optimierung: nur die Spalten, die die Listen-Ansicht
+        // tatsächlich anzeigt + Filter braucht. Notizen, Adress-
+        // Snapshot-Felder, anrede, sachbearbeiter, kundennummer,
+        // ust_betrag, bezahlt_am, ust_satz, pdf_url, belege_pdf_url,
+        // email_versendet_am sind nur im Detail relevant — Detail-
+        // Page lädt sich ihre Zeile separat mit *.
         .select(`
-          *,
+          id, rechnungsnummer, auftraggeber_id, datum,
+          leistungszeitraum_von, leistungszeitraum_bis,
+          netto_summe, brutto_summe, status, ist_auslagen_rechnung,
           auftraggeber:auftraggeber_id (id, name),
           rechnungsempfaenger:rechnungsempfaenger_id (id, name),
           positionen:rechnungspositionen(count)

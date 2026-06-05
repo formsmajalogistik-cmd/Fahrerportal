@@ -180,14 +180,15 @@ export function TourImportDialog({ onClose, onImported }: Props) {
   useEffect(() => {
     void (async () => {
       const [agRes, faRes, tRes] = await Promise.all([
-        supabase.from('auftraggeber').select('*').order('name'),
+        // Egress: nur id + name, mehr braucht der Import-Dropdown nicht.
+        supabase.from('auftraggeber').select('id, name').order('name'),
         supabase
           .from('fahrer')
           .select('*, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true),
         supabase.from('touren').select('startdatum, start_stadt, ziel_stadt, auftraggeber_id'),
       ]);
-      setAuftraggeber(Array.isArray(agRes.data) ? agRes.data : []);
+      setAuftraggeber(Array.isArray(agRes.data) ? (agRes.data as unknown as Auftraggeber[]) : []);
       setFahrer(Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : []);
       const set = new Set<string>();
       for (const t of tRes.data ?? []) {

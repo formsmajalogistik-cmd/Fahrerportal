@@ -63,17 +63,23 @@ export function FahrerDashboard() {
     // Fahrer nur sichtbar=true. Tour-verknüpfte versteckte Templates
     // werden für Fahrer separat als Tour-Protokoll-Karte gerendert.
     const isAdminView = profile?.role === 'admin';
+    // Egress: nur die Felder, die die Dashboard-Karten brauchen. Das
+    // schema-/pdfs-/email_config-JSONB der Template-Definition kommt
+    // erst, wenn das Formular tatsächlich geöffnet wird (FormularPage
+    // lädt es separat).
     let tplQuery = supabase
       .from('formular_templates')
-      .select('*');
+      .select('id, name, sichtbar');
     if (!isAdminView) tplQuery = tplQuery.eq('sichtbar', true);
     const tplPromise = tplQuery.order('name');
 
-    // Drafts dieses Fahrers
+    // Drafts dieses Fahrers — daten-JSONB (Formular-Inhalt mit allen
+    // Foto-Referenzen) wird hier nicht gebraucht, die Draft-Card zeigt
+    // nur Datum + Template-Name. FormularPage lädt daten beim Öffnen.
     const draftPromise = fahrerRow
       ? supabase
           .from('ausgefuellte_formulare')
-          .select('*, template:template_id (id, name)')
+          .select('id, fahrer_id, template_id, status, created_at, updated_at, template:template_id (id, name)')
           .eq('fahrer_id', fahrerRow.id)
           .eq('status', 'draft')
           .order('created_at', { ascending: false })

@@ -14,12 +14,11 @@ import {
 } from '../lib/touren';
 import { letzterWerktagVor, naechsterWerktagNach } from '../lib/rechnungsformat';
 import {
-  asPdfPathList, downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
+  asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../lib/pdfGenerate';
 import {
   CheckBoxCheckedIcon, CheckBoxEmptyIcon, DownloadIcon, EyeIcon,
 } from '../components/icons';
-import type { FormularTemplate, AusgefuelltesFormular } from '../types/db';
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
 } from '../types/db';
@@ -39,8 +38,6 @@ interface TourRow extends Tour {
 interface EingangLite {
   id: string;
   status: 'draft' | 'submitted';
-  daten: Record<string, unknown> | null;
-  created_at: string | null;
   pdf_paths: unknown;
   template: { id: string; name: string; pdfs: import('../types/db').TemplatePdf[] | null } | null;
 }
@@ -159,13 +156,27 @@ export function TourenlistePage() {
       try { await supabase.rpc('release_completed_greimel_zugaenge'); }
       catch { /* RPC-Fehler ignorieren — RLS / Berechtigungen */ }
     }
-    // Sensible Spalten (verguetung, km_*, fahrer_honorar, barauslagen,
-    // sondervereinbarung, info, rechnungsdatum_*) für Nicht-Admins NICHT
-    // mit selektieren — sie kommen damit gar nicht erst beim Client an.
-    // Auch tour_zusaetze wird nur für Admins eingebettet.
+    // Egress-Optimierung: Nur die Spalten laden, die die Listen-Ansicht
+    // tatsächlich rendert (siehe TourCard + Filter + KPIs). Sensible
+    // Felder (verguetung, barauslagen, fahrer_honorar, zusaetze) bleiben
+    // bei Admins; für Fahrer fallen sie ohnehin raus. JSONB-Spalten
+    // (kontakt_start/ziel/rueck, eingang.daten) und Detail-Felder
+    // (adresse_*, km_hin/rueck, app_notiz, info, sondervereinbarung,
+    // protokoll_daten_felder*) werden NICHT mit geladen — sie kommen
+    // erst beim Öffnen des Tour-Detail-Panels (das lädt explizit *).
+    const baseCols = `
+      id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+      kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
+      tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
+      greimel_zugang_id, ist_e_fahrzeug, fin,
+      eingang_id, eingang_id_bc, km_gesamt,
+      bearbeitet_markiert_am, created_at
+    `;
+    const adminCols = `${baseCols},
+      verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung`;
     const cols = isAdmin
       ? `
-        *,
+        ${adminCols},
         auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
         fahrer:fahrer_id (
           id, user_id, aktiv, vorname, nachname,
@@ -173,19 +184,13 @@ export function TourenlistePage() {
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
         eingang:eingang_id (
-          id, status, daten, created_at, pdf_paths,
+          id, status, pdf_paths,
           template:template_id (id, name, pdfs)
         ),
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
       `
       : `
-        id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-        kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
-        tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
-        greimel_zugang_id, ist_e_fahrzeug, fin, kontakt_id, eingang_id,
-        adresse_start, adresse_ziel, adresse_rueckfuehrung,
-        kontakt_start, kontakt_ziel, kontakt_rueckfuehrung, app_notiz,
-        created_at, updated_at,
+        ${baseCols},
         auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
         fahrer:fahrer_id (
           id, user_id, aktiv, vorname, nachname,
@@ -193,7 +198,7 @@ export function TourenlistePage() {
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
         eingang:eingang_id (
-          id, status, daten, created_at, pdf_paths,
+          id, status, pdf_paths,
           template:template_id (id, name, pdfs)
         )
       `;
@@ -941,34 +946,17 @@ function TourCard({
 function TourEingangPdfButtons({ eingang }: { eingang: EingangLite }) {
   if (!eingang.template) return null;
   // pdf_paths ist die Wahrheit für die TATSÄCHLICH erzeugten PDFs.
-  // Legacy-Eingänge (vor Migration 037) haben das Feld leer → wir
-  // fallen auf das berechnete template-pdfs-Mapping zurück.
+  // Legacy-Eingänge ohne pdf_paths (vor Migration 037) sind hier nicht
+  // verlinkt — sie lassen sich weiterhin im Detail-Panel/Eingaenge-
+  // Reiter laden, wo daten + schema vorhanden sind. Wir verzichten in
+  // der Touren-Liste auf den Legacy-Fallback, um egress-intensive
+  // JSONB-Felder (eingang.daten) nicht für jeden Tour-Card-Render zu
+  // laden — siehe Egress-Optimierung.
   const persisted = asPdfPathList(eingang.pdf_paths);
-  let list: Array<{ id: string; name: string; filename: string; onedrive_path: string }>;
-  if (persisted.length > 0) {
-    list = persisted.map((p) => ({
-      id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
-    }));
-  } else {
-    const tpl: FormularTemplate = {
-      id: eingang.template.id,
-      name: eingang.template.name,
-      schema: { sections: [] } as unknown as FormularTemplate['schema'],
-      pdfs: eingang.template.pdfs ?? [],
-      email_config: null,
-      sichtbar: true,
-    };
-    const formular = {
-      id: eingang.id,
-      daten: eingang.daten ?? {},
-      created_at: eingang.created_at ?? new Date().toISOString(),
-    } as unknown as AusgefuelltesFormular;
-    list = (tpl.pdfs ?? []).map((p) => ({
-      id: p.id, name: p.name,
-      filename: resolveFilename(p.filename_pattern, formular.daten, p.id),
-      onedrive_path: expectedOneDrivePath(tpl, formular, p),
-    }));
-  }
+  if (persisted.length === 0) return null;
+  const list = persisted.map((p) => ({
+    id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
+  }));
   if (list.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
