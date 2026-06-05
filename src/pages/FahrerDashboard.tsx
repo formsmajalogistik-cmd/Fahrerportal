@@ -73,13 +73,16 @@ export function FahrerDashboard() {
     if (!isAdminView) tplQuery = tplQuery.eq('sichtbar', true);
     const tplPromise = tplQuery.order('name');
 
-    // Drafts dieses Fahrers — daten-JSONB (Formular-Inhalt mit allen
-    // Foto-Referenzen) wird hier nicht gebraucht, die Draft-Card zeigt
-    // nur Datum + Template-Name. FormularPage lädt daten beim Öffnen.
+    // Drafts dieses Fahrers — daten-JSONB MUSS mit, weil die Draft-
+    // Card oben Kennzeichen + Übernahme/Übergabe-Adresse aus dem
+    // Formular-Inhalt zieht (summarizeEingang). FormularPage lädt
+    // beim Öffnen ohnehin separat mit .select('*'). pdf_paths +
+    // pdf_status / pdf_fehler bleiben weg — die werden für Drafts
+    // (Status='draft') noch nicht gebraucht.
     const draftPromise = fahrerRow
       ? supabase
           .from('ausgefuellte_formulare')
-          .select('id, fahrer_id, template_id, status, created_at, updated_at, template:template_id (id, name)')
+          .select('id, fahrer_id, template_id, status, daten, created_at, updated_at, template:template_id (id, name)')
           .eq('fahrer_id', fahrerRow.id)
           .eq('status', 'draft')
           .order('created_at', { ascending: false })
