@@ -689,12 +689,12 @@ function PdfDownloadButton({
     if (!ok) alert('PDF konnte nicht geöffnet werden. Beim Einreichen werden die PDFs automatisch erzeugt.');
   }
   return (
-    <span className="inline-flex items-stretch overflow-hidden rounded-full bg-maja-light text-xs text-maja-navy">
+    <span className="inline-flex items-stretch overflow-hidden rounded-full border border-slate-300 bg-maja-light text-xs text-maja-navy dark:border-slate-600 dark:bg-surface-700">
       <button
         type="button"
         onClick={preview}
         disabled={busy !== null}
-        className="flex items-center px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center px-2 py-1 hover:bg-maja-accent/20 dark:hover:bg-surface-600"
         title={`Vorschau: ${filename}`}
         aria-label="Vorschau"
       >
@@ -704,7 +704,7 @@ function PdfDownloadButton({
         type="button"
         onClick={download}
         disabled={busy !== null}
-        className="flex items-center gap-1 border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center gap-1 border-l border-slate-300 px-2 py-1 hover:bg-maja-accent/20 dark:border-slate-600 dark:hover:bg-surface-600"
         title={`Download: ${filename}\n${path}`}
       >
         {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}

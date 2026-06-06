@@ -886,10 +886,9 @@ function TourCard({
       </button>
       {hasZusaetze && (
         <div
-          className={`border-t border-maja-navy/10 text-sm text-maja-ink ${
+          className={`border-t border-maja-navy/10 bg-[#E8F0F8] text-sm text-maja-ink dark:border-surface-700 dark:bg-surface-700 dark:text-slate-200 ${
             zusaetzeOpen ? '' : 'rounded-b-xl'
           }`}
-          style={{ backgroundColor: '#E8F0F8' }}
         >
           <button
             type="button"
@@ -993,12 +992,12 @@ function TourPdfButton({
     if (!ok) alert('Vorschau fehlgeschlagen.');
   }
   return (
-    <span className="inline-flex items-stretch overflow-hidden rounded-full bg-maja-light text-xs text-maja-navy">
+    <span className="inline-flex items-stretch overflow-hidden rounded-full border border-slate-300 bg-maja-light text-xs text-maja-navy dark:border-slate-600 dark:bg-surface-700">
       <button
         type="button"
         onClick={preview}
         disabled={busy !== null}
-        className="flex items-center px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center px-2 py-1 hover:bg-maja-accent/20 dark:hover:bg-surface-600"
         title={`Vorschau: ${filename}`}
         aria-label="Vorschau"
       >{busy === 'preview' ? <span>…</span> : <EyeIcon className="h-4 w-4" />}</button>
@@ -1006,7 +1005,7 @@ function TourPdfButton({
         type="button"
         onClick={download}
         disabled={busy !== null}
-        className="flex items-center gap-1 border-l border-maja-navy/10 px-2 py-1 hover:bg-maja-accent/20"
+        className="flex items-center gap-1 border-l border-slate-300 px-2 py-1 hover:bg-maja-accent/20 dark:border-slate-600 dark:hover:bg-surface-600"
         title={`Download: ${filename}\n${path}`}
       >
         {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
