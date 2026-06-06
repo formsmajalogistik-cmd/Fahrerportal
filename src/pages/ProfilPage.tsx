@@ -1,12 +1,24 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Spinner } from '../components/Spinner';
+import {
+  applyTheme, loadThemePreference, saveThemePreference, type ThemePreference,
+} from '../lib/theme';
 
 export function ProfilPage() {
   const { profile, refreshProfile, updatePassword } = useAuth();
   const navigate = useNavigate();
+
+  const [theme, setTheme] = useState<ThemePreference>(loadThemePreference());
+  // Wenn der User die Auswahl ändert: lokal merken + sofort anwenden.
+  // Aufgabe 4: keine Server-Persistenz, weil jedes Gerät seine eigene
+  // Vorliebe haben darf.
+  useEffect(() => {
+    saveThemePreference(theme);
+    applyTheme(theme);
+  }, [theme]);
 
   const [vorname, setVorname]   = useState(profile?.vorname ?? '');
   const [nachname, setNachname] = useState(profile?.nachname ?? '');
@@ -157,6 +169,41 @@ export function ProfilPage() {
           </button>
         </div>
       </form>
+
+      {/* Darstellung — Light/Dark/System (Aufgabe 4). Preference lebt
+          in localStorage; pro Gerät individuell. */}
+      <section className="card space-y-3 p-5">
+        <div>
+          <h2 className="text-sm font-semibold text-maja-navy">Darstellung</h2>
+          <p className="mt-1 text-xs text-maja-muted">
+            Hell, Dunkel oder dem Betriebssystem folgen. Wird nur für
+            dieses Gerät gespeichert.
+          </p>
+        </div>
+        <div className="inline-flex rounded-lg border border-maja-navy/15 bg-white p-0.5 dark:border-surface-700 dark:bg-surface-800">
+          {([
+            { id: 'light' as const,  label: 'Hell' },
+            { id: 'dark'  as const,  label: 'Dunkel' },
+            { id: 'system' as const, label: 'System' },
+          ]).map((opt) => {
+            const active = theme === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setTheme(opt.id)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                  active
+                    ? 'bg-maja-navy text-white dark:bg-blue-600'
+                    : 'text-maja-navy hover:bg-maja-light dark:text-slate-200 dark:hover:bg-surface-700'
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       <form onSubmit={changePassword} className="card space-y-4 p-5" noValidate>
         <h2 className="text-sm font-semibold text-maja-navy">Passwort ändern</h2>

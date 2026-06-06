@@ -20,6 +20,22 @@
       rel="stylesheet"
     />
     <title>Maja-Logistik — Fahrerportal</title>
+    <!--
+      Dark-Mode-Init: muss SYNCHRON vor dem App-Bundle laufen, damit
+      es keinen Flash von Light → Dark gibt. Liest dieselbe
+      localStorage-Quelle wie src/lib/theme.ts.
+    -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('maja-theme') || 'system';
+          var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (t === 'dark' || (t === 'system' && sysDark)) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) { /* localStorage blocked → bleibt Light */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

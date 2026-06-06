@@ -9,10 +9,18 @@ import { EingaengeProvider } from './sync/EingaengeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
 import './index.css';
+import { applyTheme, watchSystemTheme } from './lib/theme';
 
 // PWA-Service-Worker registrieren (autoUpdate, siehe vite.config.ts).
 // Der SW wird im Production-Build erzeugt; im Dev-Modus ist er deaktiviert.
 registerSW({ immediate: true });
+
+// Dark-Mode: Inline-Script in index.html setzt die Klasse bereits
+// SYNCHRON vor dem Bundle. Hier reapplizieren wir (deckt Edge-Case ab,
+// dass das Inline-Script aus PWA-Cache nicht gegriffen hat) und
+// abonnieren System-Wechsel, damit "system" live mitwandert.
+applyTheme();
+watchSystemTheme(() => applyTheme());
 
 // Globale Error-Listener: zeigen unhandled JS-Fehler & abgelehnte Promises
 // in der Browser-Konsole, damit sie diagnostizierbar sind, statt die App
