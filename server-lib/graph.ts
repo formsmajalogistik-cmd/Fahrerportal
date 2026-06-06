@@ -235,7 +235,9 @@ interface MailAttachment {
   contentBytes: string;  // base64
 }
 
-/** Versendet eine Email vom konfigurierten Postfach aus. */
+/** Versendet eine Email — Default-Absender ist ONEDRIVE_USER_EMAIL,
+ *  per `from` lässt sich pro Aufruf ein anderes Postfach wählen
+ *  (siehe Aufgabe 3: Rechnungs-Mails über info@ statt protokollierung@). */
 export async function sendMail(args: {
   to: string[];
   cc?: string[];
@@ -245,9 +247,11 @@ export async function sendMail(args: {
   bodyText: string;
   /** Optional: HTML-Body. Hat Vorrang vor bodyText. */
   bodyHtml?: string;
+  /** Absende-Postfach (UPN). Default: ONEDRIVE_USER_EMAIL aus Env. */
+  from?: string;
   attachments?: Array<{ name: string; contentType: string; bytes: Uint8Array }>;
 }): Promise<void> {
-  const upn = env('ONEDRIVE_USER_EMAIL');
+  const upn = (args.from && args.from.trim()) ? args.from.trim() : env('ONEDRIVE_USER_EMAIL');
   const url = `${GRAPH}/users/${encodeURIComponent(upn)}/sendMail`;
   const recipients = (xs: string[]): MailRecipient[] =>
     xs.map((a) => ({ emailAddress: { address: a } }));

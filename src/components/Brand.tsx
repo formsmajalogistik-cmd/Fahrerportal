@@ -7,10 +7,10 @@ export function MajaLogo({ className = 'h-10' }: { className?: string }) {
         className="h-full w-auto object-contain"
       />
       <div className="hidden sm:flex flex-col leading-tight">
-        <span className="text-base font-semibold tracking-tight text-maja-navy">
+        <span className="text-base font-semibold tracking-tight text-maja-navy dark:text-slate-200">
           Maja-Logistik
         </span>
-        <span className="text-xs font-medium text-maja-muted">Business-Portal</span>
+        <span className="text-xs font-medium text-maja-muted dark:text-slate-400">Business-Portal</span>
       </div>
     </div>
   );

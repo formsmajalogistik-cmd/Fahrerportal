@@ -9,6 +9,7 @@ import { XIcon } from '../../components/icons';
 import {
   asPdfPathList, expectedOneDrivePath, resolveFilename, resolvePattern,
 } from '../../lib/pdfGenerate';
+import { loadMailboxes, type MailboxConfig } from '../../lib/mailboxSettings';
 import type {
   AusgefuelltesFormular, EmailFavorit, FormularTemplate,
 } from '../../types/db';
@@ -174,6 +175,17 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
   const [attachments, setAttachments] = useState<AttachmentDraft[]>(initial.attachments);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Aufgabe 3: Eingangs-Mails standardmäßig aus mail_inbox_2 (protokollierung@).
+  const [mailboxes, setMailboxes] = useState<MailboxConfig[]>([]);
+  const [from, setFrom] = useState<string>('');
+  useEffect(() => {
+    void loadMailboxes().then((mbs) => {
+      const usable = mbs.filter((m) => m.address.trim() !== '');
+      setMailboxes(usable);
+      const def = usable.find((m) => m.key === 'mail_inbox_2') ?? usable[0];
+      if (def) setFrom(def.address);
+    });
+  }, []);
   // Optional „Als Favorit speichern" pro NEUER Adresse beim Senden.
   // Map: normalisierte E-Mail → boolean
   const [saveAsFav, setSaveAsFav] = useState<Record<string, boolean>>({});
@@ -254,6 +266,7 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
         subject,
         body,
         bodyHtml,
+        from: from || undefined,
         attachments: selected.map((a) => ({
           name: a.filename,
           contentType: 'application/pdf',
@@ -292,6 +305,24 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          {mailboxes.length > 0 && (
+            <div>
+              <label htmlFor="re-from" className="label">Von</label>
+              <select
+                id="re-from"
+                className="input"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                disabled={mailboxes.length === 1}
+              >
+                {mailboxes.map((m) => (
+                  <option key={m.key} value={m.address}>
+                    {m.address}{m.label ? ` (${m.label})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <EmailRecipientField
             label="An"
             value={to}

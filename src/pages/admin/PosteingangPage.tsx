@@ -269,7 +269,12 @@ export function PosteingangPage() {
           className="btn-primary"
           onClick={() => setComposer({
             mode: 'new',
-            initial: { from: activeMailbox, to: [], cc: [], subject: '', bodyHtml: '' },
+            initial: {
+              // Aufgabe 3: Neue E-Mails standardmäßig aus mail_inbox_1
+              // (info@). Reply/Forward bleiben am aktiven Postfach.
+              from: mailboxes.find((m) => m.key === 'mail_inbox_1')?.address || activeMailbox,
+              to: [], cc: [], subject: '', bodyHtml: '',
+            },
           })}
         >
           + Neue E-Mail

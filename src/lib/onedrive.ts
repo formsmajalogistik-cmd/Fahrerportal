@@ -412,6 +412,9 @@ export async function sendEmail(args: {
   body: string;
   /** Optional: HTML-Body (inkl. Signatur). Hat Vorrang vor body. */
   bodyHtml?: string;
+  /** Optional: Absende-Postfach (UPN). Default: serverseitig hinterlegtes
+   *  ONEDRIVE_USER_EMAIL. Muss in der Mailbox-Whitelist stehen. */
+  from?: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
 }): Promise<SendEmailResult> {
   const resp = await fetchWithAuthRetry('/api/emails?action=eingang-send', {

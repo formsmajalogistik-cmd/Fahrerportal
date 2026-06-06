@@ -8,6 +8,7 @@ import { bodyWithSignatureHtml, signatureFromProfile } from '../../../lib/emailS
 import { XIcon } from '../../../components/icons';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import { rechnungPdfFilename } from './rechnungPdf';
+import { loadMailboxes, type MailboxConfig } from '../../../lib/mailboxSettings';
 import type { EmailFavorit } from '../../../types/db';
 
 interface Props {
@@ -60,6 +61,17 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
   const [setOpen, setSetOpen] = useState(rechnung.status === 'entwurf');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Aufgabe 3: Rechnungs-Mails standardmäßig aus mail_inbox_1 (info@).
+  const [mailboxes, setMailboxes] = useState<MailboxConfig[]>([]);
+  const [from, setFrom] = useState<string>('');
+  useEffect(() => {
+    void loadMailboxes().then((mbs) => {
+      const usable = mbs.filter((m) => m.address.trim() !== '');
+      setMailboxes(usable);
+      const def = usable.find((m) => m.key === 'mail_inbox_1') ?? usable[0];
+      if (def) setFrom(def.address);
+    });
+  }, []);
 
   const loadOptions = useCallback(async () => {
     setOptionsLoading(true);
@@ -153,6 +165,7 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
       const result = await sendEmail({
         to, cc: cc.length > 0 ? cc : undefined,
         subject, body, bodyHtml,
+        from: from || undefined,
         attachments,
       });
       if (result.missing.length > 0) {
@@ -208,6 +221,24 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+          {mailboxes.length > 0 && (
+            <div>
+              <label htmlFor="re-from" className="label">Von</label>
+              <select
+                id="re-from"
+                className="input"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                disabled={mailboxes.length === 1}
+              >
+                {mailboxes.map((m) => (
+                  <option key={m.key} value={m.address}>
+                    {m.address}{m.label ? ` (${m.label})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <EmailRecipientField label="An" value={to} onChange={setTo}
                                options={options} optionsLoading={optionsLoading}
                                onToggleFavorit={toggleFavorit} />

@@ -27,16 +27,16 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-maja-light via-white to-maja-light">
+    <div className="min-h-screen bg-gradient-to-br from-maja-light via-white to-maja-light dark:from-slate-900 dark:via-slate-900 dark:to-slate-900">
       <div className="mx-auto flex min-h-screen max-w-md items-center px-6 py-12">
         <div className="w-full">
           <div className="mb-8 flex justify-center">
             <MajaLogo className="h-12" />
           </div>
 
-          <div className="card p-8">
-            <h1 className="mb-1 text-2xl font-semibold text-maja-navy">Anmelden</h1>
-            <p className="mb-6 text-sm text-maja-muted">
+          <div className="card p-8 dark:border dark:border-slate-700">
+            <h1 className="mb-1 text-2xl font-semibold text-maja-navy dark:text-slate-200">Anmelden</h1>
+            <p className="mb-6 text-sm text-maja-muted dark:text-slate-400">
               Melde dich mit deiner geschäftlichen E-Mail-Adresse an.
             </p>
 
@@ -79,13 +79,13 @@ export function LoginPage() {
             </form>
 
             <div className="mt-6 text-center text-sm">
-              <Link to="/passwort-reset" className="text-maja-accent hover:underline">
+              <Link to="/passwort-reset" className="text-maja-accent hover:underline dark:text-blue-400">
                 Passwort vergessen?
               </Link>
             </div>
           </div>
 
-          <p className="mt-6 text-center text-xs text-maja-muted">
+          <p className="mt-6 text-center text-xs text-maja-muted dark:text-slate-500">
             © {new Date().getFullYear()} Maja-Logistik · Business-Portal
           </p>
         </div>

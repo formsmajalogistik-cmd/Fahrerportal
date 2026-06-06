@@ -367,6 +367,20 @@ function FieldEditor({
           Pflichtfeld
         </label>
 
+        {/* Datumsfelder können optional auf "nur Datum" gestellt werden —
+            default ist "mit Uhrzeit + Jetzt-Button" (Aufgabe 2). */}
+        {field.type === 'date' && (
+          <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+              checked={field.includeTime !== false}
+              onChange={(e) => onChange({ includeTime: e.target.checked })}
+            />
+            Mit Uhrzeit + „Jetzt"
+          </label>
+        )}
+
         {needsOptions && (
           <div className="flex-1 min-w-[240px]">
             <label className="label">Optionen (eine pro Zeile)</label>

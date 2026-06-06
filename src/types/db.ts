@@ -67,6 +67,12 @@ export interface FormField {
   options?: string[];
   placeholder?: string;
   vehicleImage?: string;
+  /**
+   * Nur für type='date': wenn false → reines Datum (kein Uhrzeit-
+   * Input, kein "Jetzt"-Button). Default = true (= Datum + Uhrzeit),
+   * damit bestehende Templates ihr aktuelles Verhalten behalten.
+   */
+  includeTime?: boolean;
 }
 
 export interface FormSection {

@@ -9,7 +9,10 @@ interface Props {
 }
 
 /**
- * Datums-Feld mit optionaler Uhrzeit + "Jetzt"-Shortcut (Aufgabe 3).
+ * Datums-Feld. Standardmäßig MIT Uhrzeit-Input + "Jetzt"-Button
+ * (field.includeTime !== false). Wird das Flag im Template auf
+ * `false` gesetzt, rendert das Feld nur den Datums-Picker — für
+ * Felder wie "Erstzulassung", die naturgemäß keine Uhrzeit haben.
  *
  * Speicherformat:
  *   - reines Datum:        "YYYY-MM-DD"
@@ -22,11 +25,14 @@ interface Props {
  */
 export function DateField({ field, value, onChange, disabled }: Props) {
   const { datePart, timePart } = useMemo(() => parseValue(value), [value]);
+  // Default true: bestehende Templates ohne includeTime-Flag behalten
+  // ihr aktuelles "Datum + Uhrzeit"-Verhalten.
+  const withTime = field.includeTime !== false;
 
   function emit(date: string, time: string) {
     if (!date && !time) { onChange(''); return; }
     if (!date) { onChange(''); return; }
-    if (!time) { onChange(date); return; }
+    if (!time || !withTime) { onChange(date); return; }
     onChange(`${date}T${time}`);
   }
 
@@ -36,6 +42,25 @@ export function DateField({ field, value, onChange, disabled }: Props) {
     const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
     emit(date, time);
+  }
+
+  if (!withTime) {
+    return (
+      <div>
+        <label htmlFor={field.id} className="label">
+          {field.label}{field.required && <span className="text-red-600"> *</span>}
+        </label>
+        <input
+          id={field.id}
+          type="date"
+          className="input"
+          value={datePart}
+          onChange={(e) => emit(e.target.value, '')}
+          required={field.required}
+          disabled={disabled}
+        />
+      </div>
+    );
   }
 
   return (

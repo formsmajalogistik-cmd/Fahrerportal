@@ -254,14 +254,18 @@ export default async function handler(req: Req, res: Res) {
     }
 
     if (action === 'eingang-send') {
-      // Legacy-Pfad: Eingangs-PDFs aus OneDrive anhängen + via default-
-      // Postfach (ONEDRIVE_USER_EMAIL) verschicken. Whitelist-Check
-      // entfällt hier — das Postfach ist serverseitig fest.
+      // Legacy-Pfad: Eingangs-PDFs aus OneDrive anhängen.
+      // Default-Postfach ist ONEDRIVE_USER_EMAIL; per `from` lässt sich
+      // ein anderes Postfach wählen (z. B. info@ für Rechnungs-Mails).
+      // Whitelist-Check, wenn `from` gesetzt wurde — sonst nutzt sendMail
+      // den serverseitig fest hinterlegten Default.
       const to = asStringArray(body.to);
       if (to.length === 0) throw new HttpError(400, 'Mindestens ein Empfänger nötig');
       const cc = asStringArray(body.cc);
       const subject = asString(body.subject);
       if (!subject) throw new HttpError(400, 'Betreff fehlt');
+      const fromMailbox = asString(body.from);
+      if (fromMailbox) await assertMailboxAllowed(token, fromMailbox);
       type RawAtt = { name?: unknown; contentType?: unknown; onedrive_path?: unknown };
       const requested = Array.isArray(body.attachments)
         ? (body.attachments as RawAtt[]).filter((a) =>
@@ -298,6 +302,7 @@ export default async function handler(req: Req, res: Res) {
         to, cc: cc.length > 0 ? cc : undefined,
         subject, bodyText,
         bodyHtml: bodyHtml ?? undefined,
+        from: fromMailbox ?? undefined,
         attachments,
       });
       res.status(200).json({
