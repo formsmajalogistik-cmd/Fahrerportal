@@ -103,6 +103,9 @@ export function DynamicPhotosField({
 
       <input
         ref={cameraRef}
+        // Stabile ID, damit das Schadensdiagramm-Modal die Kamera-
+        // Aufnahme dieses Feldes per .click() triggern kann (Aufgabe 4).
+        id={`dynphotos-${field.id}-camera`}
         type="file"
         accept="image/*"
         capture="environment"
@@ -115,6 +118,7 @@ export function DynamicPhotosField({
       />
       <input
         ref={galleryRef}
+        id={`dynphotos-${field.id}-gallery`}
         type="file"
         accept="image/*"
         className="hidden"

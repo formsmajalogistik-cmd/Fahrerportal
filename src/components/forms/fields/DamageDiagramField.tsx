@@ -256,7 +256,18 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
       title={`Schäden — ${title}`}
       hint="Tippen platziert einen Marker. Mit zwei Fingern zoomen, mit einem Finger verschieben."
       onCancel={onCancel}
-      onConfirm={() => onConfirm(markers)}
+      onConfirm={() => {
+        // Foto-Aufforderung (Aufgabe 4): wenn neue Marker hinzugekommen
+        // sind, signalisiert das Diagramm dem FormRenderer, wie viele
+        // — der entscheidet dann, ob er den DynamicPhotos-Prompt zeigt.
+        const newCount = Math.max(0, markers.length - initial.length);
+        if (newCount > 0) {
+          window.dispatchEvent(new CustomEvent('maja:damage-points-added', {
+            detail: { count: newCount },
+          }));
+        }
+        onConfirm(markers);
+      }}
       destructiveAction={markers.length > 0 ? { label: 'Alle löschen', onClick: () => { setMarkers([]); setSelectedIdx(null); } } : undefined}
     >
       <div className="flex h-full w-full flex-col">

@@ -53,6 +53,9 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
   const [search, setSearch] = useState('');
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Default-Zeitfenster: letzte 90 Tage. Wenn der Admin sucht, fällt
+   *  der Datums-Filter weg und alle Touren sind erreichbar (Aufgabe 1). */
+  const [includeAll, setIncludeAll] = useState(false);
   /** Bei ABA/ABC mit zwei freien Slots: Tour, deren Abschnitt gerade gewählt wird. */
   const [abschnittPick, setAbschnittPick] = useState<TourRow | null>(null);
   /**
@@ -83,28 +86,50 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
       // Touren laden, bei denen mindestens ein Protokoll-Slot frei ist:
       //   AB-Touren: eingang_id IS NULL
       //   ABA/ABC: AB-Slot ODER BC-Slot frei (2 Protokolle pro Tour)
-      // PostgREST kann das mit `.or(...)` als kombinierter Filter:
-      //   eingang_id IS NULL OR
-      //   (tourenart in (ABA,ABC) AND eingang_id_bc IS NULL)
-      const { data, error: err } = await supabase
+      //
+      // Egress + UX: Default zeigen wir die LETZTEN 90 TAGE (statt
+      // .limit(200) ohne Datum, was bei vollen Tagen schon nach ~10
+      // Tagen "abschneidet" — Aufgabe 1). Sobald der Admin sucht ODER
+      // explizit "alle Touren anzeigen" wählt, fällt das Zeitfenster
+      // weg und es kommen ältere Touren mit.
+      const hasSearch = search.trim().length >= 2;
+      const showAll = includeAll || hasSearch;
+      const cutoffDate = (() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 90);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      })();
+      setLoading(true);
+      let q = supabase
         .from('touren')
         .select(`
-          *,
+          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+          startdatum, enddatum, tourenart, kennzeichen, kundenname, fin,
+          adresse_start, adresse_ziel, adresse_rueckfuehrung,
+          kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
+          protokoll_daten_felder, protokoll_daten_felder_bc,
+          km_gesamt, eingang_id, eingang_id_bc, auftraggeber_id, fahrer_id,
           auftraggeber:auftraggeber_id (name),
           fahrer:fahrer_id (id, user_id, aktiv,
             user:user_id (email, vorname, nachname))
         `)
         .or('eingang_id.is.null,and(tourenart.in.(ABA,ABC),eingang_id_bc.is.null)')
         .order('startdatum', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .limit(200);
+        .order('created_at', { ascending: false });
+      if (!showAll) {
+        q = q.gte('enddatum', cutoffDate).limit(200);
+      } else {
+        q = q.limit(500);
+      }
+      const { data, error: err } = await q;
       if (cancelled) return;
       if (err) setError(err.message);
       else setTouren(((data as unknown) as TourRow[]) ?? []);
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [search, includeAll]);
 
   const filteredTouren = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -328,6 +353,26 @@ export function EingangLinkDialog({ formular, template: _template, onClose, onLi
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-maja-muted">
+              <span>
+                {search.trim().length >= 2
+                  ? 'Suche über alle Touren — kein Datums-Filter.'
+                  : includeAll
+                    ? 'Alle offenen Touren werden geladen.'
+                    : 'Zeige Touren der letzten 90 Tage. Suche zeigt auch ältere.'}
+              </span>
+              {search.trim().length < 2 && (
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-maja-navy/30 text-maja-navy"
+                    checked={includeAll}
+                    onChange={(e) => setIncludeAll(e.target.checked)}
+                  />
+                  Auch ältere Touren anzeigen
+                </label>
+              )}
+            </div>
             {loading ? (
               <p className="text-sm text-maja-muted">Touren werden geladen …</p>
             ) : filteredTouren.length === 0 ? (

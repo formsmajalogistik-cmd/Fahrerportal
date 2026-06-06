@@ -120,7 +120,16 @@ export function formatGermanDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('de-DE', {
+  // Wenn die ISO-/Form-Eingabe eine Uhrzeit enthält ("YYYY-MM-DDTHH:MM"),
+  // hängen wir die Stundenangabe an die deutsche Anzeige an (Aufgabe 3).
+  const date = d.toLocaleDateString('de-DE', {
     day: '2-digit', month: '2-digit', year: 'numeric',
   });
+  if (typeof iso === 'string' && iso.includes('T')) {
+    const time = d.toLocaleTimeString('de-DE', {
+      hour: '2-digit', minute: '2-digit',
+    });
+    return `${date}, ${time}`;
+  }
+  return date;
 }

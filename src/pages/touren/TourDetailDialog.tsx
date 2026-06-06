@@ -1242,21 +1242,35 @@ export function TourDetailDialog({
         </div>
       </div>
 
-      {confirmDelete && (
-        <ConfirmDialog
-          title="Tour löschen?"
-          message={
-            <>
-              Soll Tour <strong>{tour.tour_id ?? tour.id.slice(0, 8)}</strong> wirklich
-              gelöscht werden? Alle erfassten Zusätze werden mitgelöscht.
-            </>
-          }
-          confirmLabel="Löschen"
-          destructive
-          onConfirm={handleDeleteTour}
-          onClose={() => setConfirmDelete(false)}
-        />
-      )}
+      {confirmDelete && (() => {
+        // Eingangs-Verknüpfungs-Anzahl für die Warnung (Aufgabe 2):
+        // Bei AB-Touren maximal 1 (eingang_id), bei ABA/ABC bis zu 2
+        // (eingang_id + eingang_id_bc).
+        const linkedCount = (tour.eingang_id ? 1 : 0) + (tour.eingang_id_bc ? 1 : 0);
+        const routeLabel = `${tour.start_stadt} → ${tour.ziel_stadt}`
+          + (tour.rueckfuehrung_stadt ? ` → ${tour.rueckfuehrung_stadt}` : '');
+        return (
+          <ConfirmDialog
+            title="Tour löschen?"
+            message={
+              <>
+                Tour <strong>{tour.tour_id ?? tour.id.slice(0, 8)}</strong> ({routeLabel})
+                unwiderruflich löschen? Alle erfassten Zusätze werden ebenfalls gelöscht.
+                {linkedCount > 0 && (
+                  <span className="mt-2 block rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Diese Tour ist mit {linkedCount} {linkedCount === 1 ? 'Eingang' : 'Eingängen'} verknüpft.
+                    Die Verknüpfung wird automatisch gelöst — die Eingänge bleiben erhalten.
+                  </span>
+                )}
+              </>
+            }
+            confirmLabel="Löschen"
+            destructive
+            onConfirm={handleDeleteTour}
+            onClose={() => setConfirmDelete(false)}
+          />
+        );
+      })()}
 
       {unlinkOpen && (
         <UnlinkProtokollDialog

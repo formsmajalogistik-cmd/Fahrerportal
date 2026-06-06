@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import type { FormField, FormSchema, FormSection } from '../../types/db';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { TextField } from './fields/TextField';
@@ -29,6 +30,49 @@ interface Props {
 
 export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder, formularId, sections }: Props) {
   const visible = sections ?? schema.sections ?? [];
+
+  // Aufgabe 4: Erstes dynamic_photos-Feld im Schema bestimmen — dort
+  // landen automatisch Schaden-Fotos, wenn das Schadensdiagramm einen
+  // neuen Punkt setzt.
+  const firstDynamicPhotosField = useMemo(() => {
+    for (const sec of schema.sections ?? []) {
+      for (const f of sec.fields ?? []) {
+        if (f?.type === 'dynamic_photos') return f;
+      }
+    }
+    return null;
+  }, [schema]);
+
+  // Wenn das Diagramm meldet, dass neue Punkte gesetzt wurden, fragen
+  // wir kurz nach, ob jetzt ein Foto vom Schaden gemacht werden soll.
+  const [photoPrompt, setPhotoPrompt] = useState<{ count: number } | null>(null);
+  useEffect(() => {
+    if (disabled || !firstDynamicPhotosField) return;
+    function onAdded(ev: Event) {
+      const detail = (ev as CustomEvent<{ count: number }>).detail;
+      if (!detail || detail.count <= 0) return;
+      setPhotoPrompt({ count: detail.count });
+    }
+    window.addEventListener('maja:damage-points-added', onAdded);
+    return () => window.removeEventListener('maja:damage-points-added', onAdded);
+  }, [disabled, firstDynamicPhotosField]);
+
+  function triggerInput(suffix: 'camera' | 'gallery') {
+    if (!firstDynamicPhotosField) return;
+    const el = document.getElementById(
+      `dynphotos-${firstDynamicPhotosField.id}-${suffix}`,
+    ) as HTMLInputElement | null;
+    if (el) el.click();
+    setPhotoPrompt(null);
+  }
+  function scrollToDynamicPhotos() {
+    if (!firstDynamicPhotosField) return;
+    const labelTarget = document.getElementById(`dynphotos-${firstDynamicPhotosField.id}-camera`);
+    // Das hidden-Input liegt direkt neben den sichtbaren Buttons —
+    // wir scrollen den Eltern-Container in den Viewport.
+    labelTarget?.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   return (
     <div className="space-y-6">
       {visible.map((section) => {
@@ -79,6 +123,39 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
           </section>
         );
       })}
+
+      {photoPrompt && firstDynamicPhotosField && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-maja-ink/40 px-4 pb-6 pt-12 sm:items-center">
+          <div className="card w-full max-w-sm p-5">
+            <h3 className="text-base font-semibold text-maja-navy">
+              {photoPrompt.count === 1
+                ? 'Foto vom Schaden aufnehmen?'
+                : `${photoPrompt.count} neue Schäden — Fotos aufnehmen?`}
+            </h3>
+            <p className="mt-1 text-xs text-maja-muted">
+              Die Aufnahme wird automatisch zum Foto-Feld
+              „{firstDynamicPhotosField.label}" hinzugefügt.
+            </p>
+            <div className="mt-4 grid gap-2">
+              <button type="button"
+                      className="btn-primary"
+                      onClick={() => triggerInput('camera')}>
+                Foto aufnehmen
+              </button>
+              <button type="button"
+                      className="btn-secondary"
+                      onClick={() => triggerInput('gallery')}>
+                Aus Galerie wählen
+              </button>
+              <button type="button"
+                      className="text-xs text-maja-muted hover:underline"
+                      onClick={() => { scrollToDynamicPhotos(); setPhotoPrompt(null); }}>
+                Überspringen — Punkt(e) ohne Foto belassen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

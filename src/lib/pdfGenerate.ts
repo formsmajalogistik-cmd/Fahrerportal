@@ -82,6 +82,23 @@ function asString(v: unknown): string {
 }
 
 /**
+ * Formatiert einen Date-Field-Wert für PDFs (Aufgabe 3).
+ * Unterstützt "YYYY-MM-DD" und "YYYY-MM-DDTHH:MM[:SS]".
+ */
+function formatDateValue(v: unknown): string {
+  if (v == null) return '';
+  const s = typeof v === 'string' ? v.trim() : '';
+  if (!s) return '';
+  // Datum + Uhrzeit
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(s);
+  if (!m) return asString(s);
+  const [, y, mo, d, hh, mm] = m;
+  const datePart = `${d}.${mo}.${y}`;
+  if (hh && mm) return `${datePart}, ${hh}:${mm}`;
+  return datePart;
+}
+
+/**
  * Liest einen Wert aus dem Formular-`daten`-JSON. Unterstützt zusätzlich
  * Sub-Field-Schlüssel mit Punktnotation (z.B. `adresse.strasse`) — dabei
  * wird zuerst der Top-Level-Schlüssel geprüft, danach das gleichnamige
@@ -445,7 +462,12 @@ export async function fillPdf(
     const meta = fields.get(fieldId);
 
     if (isTextEntry(entry)) {
-      const rawText = asString(value);
+      // Datums-Felder mit optionaler Uhrzeit (Aufgabe 3): rohe
+      // "YYYY-MM-DD"- oder "YYYY-MM-DDTHH:MM"-Strings in deutsche
+      // Anzeige ("21.05.2026" bzw. "21.05.2026, 14:30") umwandeln.
+      const rawText = meta?.type === 'date'
+        ? formatDateValue(value)
+        : asString(value);
       if (!rawText) continue;
       const text = winAnsi(rawText);
       const defaultSize = entry.fontSize ?? TEXT_DEFAULT_FONT;
