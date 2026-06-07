@@ -24,10 +24,11 @@ import {
 } from '../lib/offlineDb';
 import { uploadToOneDrive } from '../lib/onedrive';
 import { supabase } from '../lib/supabase';
-import {
-  deleteFormPdf, generateAndUploadFormPdfs, sendTemplateEmail,
-} from '../lib/pdfGenerate';
-import type { FormularTemplate, PhotoValue } from '../types/db';
+import { deleteFormPdf } from '../lib/pdfGenerate';
+import { runSubmissionEmails } from '../lib/submissionEmails';
+import type {
+  AusgefuelltesFormular, FormularTemplate, PhotoValue,
+} from '../types/db';
 
 /**
  * Pendings + Drainer für Foto-Uploads und Formular-Einreichungen.
@@ -226,7 +227,7 @@ async function processPendingSubmissions(): Promise<void> {
         .from('ausgefuellte_formulare')
         .update({ daten: sub.data as never, status: 'submitted' })
         .eq('id', sub.formularId)
-        .select('template_id, zwischenprotokoll_url')
+        .select('template_id, zwischenprotokoll_url, created_at')
         .single();
       if (linkErr || !tplLink) throw linkErr ?? new Error('Submit fehlgeschlagen');
 
@@ -234,7 +235,11 @@ async function processPendingSubmissions(): Promise<void> {
         .from('formular_templates').select('*').eq('id', tplLink.template_id).single();
       if (tplErr || !tpl) throw tplErr ?? new Error('Template nicht gefunden');
       const template = tpl as unknown as FormularTemplate;
-      const formularStub = { id: sub.formularId, daten: sub.data } as never;
+      const formularStub = {
+        id: sub.formularId,
+        daten: sub.data,
+        created_at: tplLink.created_at,
+      } as unknown as AusgefuelltesFormular;
       // Zwischenprotokoll aufräumen (falls vorhanden) — gleiche Logik wie
       // beim Online-Submit in FormularPage.
       if (tplLink.zwischenprotokoll_url) {
@@ -248,33 +253,17 @@ async function processPendingSubmissions(): Promise<void> {
           console.warn('Zwischenprotokoll-Aufräumen nach Offline-Submit fehlgeschlagen', cleanupErr);
         }
       }
+      // Automatische E-Mails (Bestätigung + Schieberegler) — Fehler hier
+      // brechen den Submit NICHT ab. Das Ergebnis landet im email_send_log
+      // der Formular-Zeile.
       try {
-        const generated = await generateAndUploadFormPdfs(template, formularStub);
-        const r = await sendTemplateEmail(template, formularStub, generated, sub.submitterEmail ?? null);
-        if (r.missing && r.missing.length > 0) {
-          console.warn('[SyncDrain] E-Mail abgesendet, fehlende Anhänge:', r.missing);
-        }
-        try {
-          await supabase.from('ausgefuellte_formulare')
-            .update({ pdf_status: 'ok', pdf_fehler: null })
-            .eq('id', sub.formularId);
-        } catch { /* Status-Update nicht kritisch */ }
+        await runSubmissionEmails(
+          template,
+          formularStub,
+          { submitterEmail: sub.submitterEmail ?? null, fahrerEmail: sub.submitterEmail ?? null },
+        );
       } catch (postErr) {
-        // PDF/Email-Fehler nach erfolgtem Submit nur loggen — Status
-        // ist bereits "submitted". Fehlerstatus markieren, damit der
-        // Admin in der Eingänge-Liste die manuelle Nachgenerierung sieht.
-        console.error('[Auto-PDF] Offline-Submit-Nachbereitung fehlgeschlagen', {
-          formularId: sub.formularId,
-          error: postErr instanceof Error ? postErr.message : String(postErr),
-        });
-        try {
-          await supabase.from('ausgefuellte_formulare')
-            .update({
-              pdf_status: 'fehlgeschlagen',
-              pdf_fehler: (postErr instanceof Error ? postErr.message : String(postErr)).slice(0, 500),
-            })
-            .eq('id', sub.formularId);
-        } catch { /* noop */ }
+        console.warn('[SyncDrain] Submit-E-Mails fehlgeschlagen', postErr);
       }
       await removePendingSubmission(sub.formularId);
       window.dispatchEvent(new CustomEvent('maja:submission-completed', {

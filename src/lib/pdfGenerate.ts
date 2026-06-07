@@ -797,6 +797,9 @@ function isImageOnlyAndEmpty(
 export async function generateAndUploadFormPdfs(
   template: FormularTemplate,
   formular: AusgefuelltesFormular,
+  /** Optionaler Filter: nur diese PDF-IDs erzeugen (z.B. nur die für
+   *  einen Schieberegler konfigurierten). `undefined` = alle. */
+  pdfIds?: string[],
 ): Promise<GeneratedPdf[]> {
   const isoDate = formular.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
   const kennzeichenRaw = formular.daten?.['kennzeichen'] ?? formular.daten?.['Kennzeichen'];
@@ -808,11 +811,16 @@ export async function generateAndUploadFormPdfs(
   });
 
   const allPdfs = template.pdfs ?? [];
+  const filterSet = pdfIds ? new Set(pdfIds) : null;
+  const selected = filterSet
+    ? allPdfs.filter((p) => filterSet.has(p.id))
+    : allPdfs;
   console.info(
-    `[generateAndUploadFormPdfs] Template "${template.name}": ${allPdfs.length} PDF-Vorlagen konfiguriert`,
+    `[generateAndUploadFormPdfs] Template "${template.name}": ${selected.length} `
+    + `von ${allPdfs.length} PDF-Vorlagen werden erzeugt`,
   );
   const generated: GeneratedPdf[] = [];
-  for (const tplPdf of allPdfs) {
+  for (const tplPdf of selected) {
     if (!tplPdf.path) {
       console.info(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: SKIP (keine PDF-Datei hochgeladen)`);
       continue;

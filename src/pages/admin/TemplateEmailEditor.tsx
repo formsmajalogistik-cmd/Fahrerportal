@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { loadMailboxes, type MailboxConfig } from '../../lib/mailboxSettings';
 import type { EmailConfig, TemplatePdf } from '../../types/db';
 import type { PlaceholderToken } from './TemplateEditorPage';
 
@@ -8,129 +10,453 @@ interface Props {
   placeholders: PlaceholderToken[];
 }
 
-const EMPTY: EmailConfig = {
-  to: '', cc: '', subject_pattern: '', body_pattern: '', attach_pdf_ids: [],
-};
-
+/**
+ * Drei E-Mail-Vorlagen pro Template:
+ *
+ *   1. Bestätigung — automatisch bei Submit, geht an Self/Fahrer/Extra.
+ *   2. Schieberegler — automatisch bei Submit, geht an die vom Fahrer
+ *      eingetragene Adresse, mit den im Template konfigurierten PDFs.
+ *   3. Manuell — wird im Eingänge-Dialog vorausgefüllt; Empfänger wählt
+ *      der Admin dort selbst.
+ *
+ * Alle drei teilen sich `template.email_config` (jsonb), historische Felder
+ * (`to`, `cc`, `subject_pattern`, `body_pattern`) gehören zu Vorlage 3.
+ */
 export function TemplateEmailEditor({ config, onChange, pdfs, placeholders }: Props) {
-  const cfg = config ?? EMPTY;
+  const cfg = config ?? ({} as EmailConfig);
   const setCfg = (patch: Partial<EmailConfig>) => onChange({ ...cfg, ...patch });
 
-  const isEnabled = !!(cfg.to && cfg.to.trim());
-
-  function toggleAttach(id: string) {
-    const list = cfg.attach_pdf_ids ?? [];
-    setCfg({
-      attach_pdf_ids: list.includes(id) ? list.filter((x) => x !== id) : [...list, id],
+  const [mailboxes, setMailboxes] = useState<MailboxConfig[]>([]);
+  useEffect(() => {
+    void loadMailboxes().then((mbs) => {
+      setMailboxes(mbs.filter((m) => m.address.trim() !== ''));
     });
-  }
+  }, []);
+  const defaultMailbox = mailboxes.find((m) => m.key === 'mail_inbox_2')?.address
+    || mailboxes[0]?.address || '';
 
-  function appendPlaceholder(field: 'to' | 'cc' | 'subject_pattern' | 'body_pattern', token: string) {
-    const cur = (cfg[field] ?? '') as string;
-    setCfg({ [field]: cur + token } as Partial<EmailConfig>);
+  // ---- Confirmation -----------------------------------------------
+  const conf = cfg.confirmation ?? {
+    enabled: false,
+    recipient_self: true,
+    recipient_fahrer: false,
+    recipient_extra: '',
+    from: defaultMailbox,
+    subject: '',
+    body: '',
+    attach_pdf_ids: [],
+  };
+  const setConf = (patch: Partial<NonNullable<EmailConfig['confirmation']>>) =>
+    setCfg({ confirmation: { ...conf, ...patch } });
+
+  // ---- Sliders ----------------------------------------------------
+  const sliders = cfg.sliders ?? {
+    enabled: false,
+    count: 1 as 1 | 2,
+    labels: ['Protokoll an Übergeber senden', 'Protokoll an Empfänger senden'] as [string, string],
+    from: defaultMailbox,
+    subject: '',
+    body: '',
+    attach_pdf_ids: [],
+  };
+  const setSliders = (patch: Partial<NonNullable<EmailConfig['sliders']>>) =>
+    setCfg({ sliders: { ...sliders, ...patch } });
+
+  return (
+    <div className="space-y-6">
+      <ConfirmationPanel
+        conf={conf}
+        setConf={setConf}
+        pdfs={pdfs}
+        placeholders={placeholders}
+        mailboxes={mailboxes}
+      />
+      <SlidersPanel
+        sliders={sliders}
+        setSliders={setSliders}
+        pdfs={pdfs}
+        placeholders={placeholders}
+        mailboxes={mailboxes}
+      />
+      <ManualPanel
+        cfg={cfg}
+        setCfg={setCfg}
+        pdfs={pdfs}
+        placeholders={placeholders}
+        mailboxes={mailboxes}
+      />
+    </div>
+  );
+}
+
+// ====================================================================
+// Vorlage 1: Bestätigungs-E-Mail
+// ====================================================================
+
+function ConfirmationPanel({
+  conf, setConf, pdfs, placeholders, mailboxes,
+}: {
+  conf: NonNullable<EmailConfig['confirmation']>;
+  setConf: (patch: Partial<NonNullable<EmailConfig['confirmation']>>) => void;
+  pdfs: TemplatePdf[];
+  placeholders: PlaceholderToken[];
+  mailboxes: MailboxConfig[];
+}) {
+  return (
+    <section className="card space-y-4 p-5">
+      <header>
+        <h3 className="text-sm font-semibold text-maja-navy">
+          E-Mail 1: Bestätigung bei Formularabschluss
+        </h3>
+        <p className="mt-0.5 text-xs text-maja-muted">
+          Wird beim Einreichen automatisch versendet. Standardmäßig ohne Anhang.
+        </p>
+      </header>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+          checked={conf.enabled}
+          onChange={(e) => setConf({ enabled: e.target.checked })}
+        />
+        <span className="font-medium text-maja-ink">Bestätigungs-E-Mail bei Abschluss senden</span>
+      </label>
+
+      {conf.enabled && (
+        <div className="space-y-4 border-l-2 border-maja-accent/30 pl-4">
+          <fieldset className="space-y-1">
+            <legend className="label">Empfänger</legend>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                checked={conf.recipient_self}
+                onChange={(e) => setConf({ recipient_self: e.target.checked })}
+              />
+              <span>An den eingeloggten Fahrer (Self)</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                checked={conf.recipient_fahrer}
+                onChange={(e) => setConf({ recipient_fahrer: e.target.checked })}
+              />
+              <span>An die im Fahrer-Profil hinterlegte E-Mail</span>
+            </label>
+            <div>
+              <input
+                className="input mt-1"
+                placeholder="An weitere Adresse(n) — kommasepariert, Platzhalter erlaubt"
+                value={conf.recipient_extra}
+                onChange={(e) => setConf({ recipient_extra: e.target.value })}
+              />
+              <PlaceholderHelper
+                placeholders={placeholders}
+                onPick={(t) => setConf({ recipient_extra: (conf.recipient_extra || '') + t })}
+              />
+            </div>
+          </fieldset>
+
+          <FromPicker
+            value={conf.from}
+            onChange={(v) => setConf({ from: v })}
+            mailboxes={mailboxes}
+          />
+
+          <FieldRow label="Betreff">
+            <input
+              className="input"
+              value={conf.subject}
+              onChange={(e) => setConf({ subject: e.target.value })}
+              placeholder="z.B. Bestätigung — {template_name} {kennzeichen}"
+            />
+            <PlaceholderHelper
+              placeholders={placeholders}
+              onPick={(t) => setConf({ subject: conf.subject + t })}
+            />
+          </FieldRow>
+
+          <FieldRow label="Body">
+            <textarea
+              className="input min-h-[100px]"
+              value={conf.body}
+              onChange={(e) => setConf({ body: e.target.value })}
+              placeholder={"Hallo {fahrer_name},\n\ndein Protokoll für {kennzeichen} wurde eingereicht.\n\nViele Grüße"}
+            />
+            <PlaceholderHelper
+              placeholders={placeholders}
+              onPick={(t) => setConf({ body: conf.body + t })}
+            />
+          </FieldRow>
+
+          <AttachmentList
+            label="Anhänge (optional)"
+            pdfs={pdfs}
+            selected={conf.attach_pdf_ids ?? []}
+            onChange={(next) => setConf({ attach_pdf_ids: next })}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ====================================================================
+// Vorlage 2: Schieberegler-E-Mail
+// ====================================================================
+
+function SlidersPanel({
+  sliders, setSliders, pdfs, placeholders, mailboxes,
+}: {
+  sliders: NonNullable<EmailConfig['sliders']>;
+  setSliders: (patch: Partial<NonNullable<EmailConfig['sliders']>>) => void;
+  pdfs: TemplatePdf[];
+  placeholders: PlaceholderToken[];
+  mailboxes: MailboxConfig[];
+}) {
+  function setLabel(i: 0 | 1, v: string) {
+    const next: [string, string] = [sliders.labels[0], sliders.labels[1]];
+    next[i] = v;
+    setSliders({ labels: next });
   }
 
   return (
-    <div className="space-y-4">
-      <div className="card space-y-4 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-maja-navy">Email-Versand nach Submit</h3>
-          <button
-            type="button"
-            onClick={() => onChange(isEnabled ? null : { ...EMPTY })}
-            className="text-xs font-medium text-red-600 hover:underline"
-          >
-            {isEnabled ? 'Email-Versand deaktivieren' : 'Standardwerte einsetzen'}
-          </button>
-        </div>
-        <p className="text-xs text-maja-muted">
-          Wenn „An" ausgefüllt ist, wird nach dem Einreichen automatisch eine Email
-          mit den ausgewählten PDFs versendet (Absender:
-          {' '}<code className="rounded bg-maja-light px-1">protokollierung@maja-logistik.de</code>).
-          Platzhalter <code className="rounded bg-maja-light px-1">{'{feld_id}'}</code> werden
-          durch die Werte aus dem ausgefüllten Formular ersetzt.
+    <section className="card space-y-4 p-5">
+      <header>
+        <h3 className="text-sm font-semibold text-maja-navy">
+          E-Mail 2: Schieberegler-E-Mail
+        </h3>
+        <p className="mt-0.5 text-xs text-maja-muted">
+          Fahrer entscheidet im Formular per Schieberegler, ob das Protokoll an
+          eine eingegebene Adresse versendet wird. EINE Vorlage für alle
+          Schieberegler — nur die Empfänger-Adresse ist pro Schieberegler
+          unterschiedlich.
         </p>
+      </header>
 
-        <FieldRow label="An (kommasepariert)">
-          <input
-            className="input"
-            placeholder="z.B. {email_kunde}, dispo@maja-logistik.de"
-            value={cfg.to ?? ''}
-            onChange={(e) => setCfg({ to: e.target.value })}
-          />
-          <PlaceholderHelper
-            placeholders={placeholders}
-            onPick={(t) => appendPlaceholder('to', t)}
-          />
-        </FieldRow>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+          checked={sliders.enabled}
+          onChange={(e) => setSliders({ enabled: e.target.checked })}
+        />
+        <span className="font-medium text-maja-ink">Schieberegler-E-Mail aktivieren</span>
+      </label>
 
-        <FieldRow label="CC (optional)">
-          <input
-            className="input"
-            placeholder="z.B. archiv@maja-logistik.de"
-            value={cfg.cc ?? ''}
-            onChange={(e) => setCfg({ cc: e.target.value })}
-          />
-          <PlaceholderHelper
-            placeholders={placeholders}
-            onPick={(t) => appendPlaceholder('cc', t)}
-          />
-        </FieldRow>
+      {sliders.enabled && (
+        <div className="space-y-4 border-l-2 border-maja-accent/30 pl-4">
+          <FieldRow label="Anzahl Schieberegler im Formular">
+            <select
+              className="input"
+              value={sliders.count}
+              onChange={(e) => setSliders({ count: (Number(e.target.value) === 2 ? 2 : 1) })}
+            >
+              <option value={1}>1 Schieberegler</option>
+              <option value={2}>2 Schieberegler</option>
+            </select>
+          </FieldRow>
 
-        <FieldRow label="Betreff-Muster">
-          <input
-            className="input"
-            placeholder="z.B. Fahrzeugprotokoll {kennzeichen} — {datum}"
-            value={cfg.subject_pattern ?? ''}
-            onChange={(e) => setCfg({ subject_pattern: e.target.value })}
-          />
-          <PlaceholderHelper
-            placeholders={placeholders}
-            onPick={(t) => appendPlaceholder('subject_pattern', t)}
-          />
-        </FieldRow>
+          <FieldRow label="Label Schieberegler 1">
+            <input
+              className="input"
+              value={sliders.labels[0]}
+              onChange={(e) => setLabel(0, e.target.value)}
+              placeholder="z.B. Protokoll an Übergeber senden"
+            />
+          </FieldRow>
 
-        <FieldRow label="Email-Text-Muster">
-          <textarea
-            className="input min-h-[120px]"
-            placeholder="Hallo,&#10;&#10;anbei das Protokoll für {kennzeichen}, Fahrer {fahrername}.&#10;&#10;Viele Grüße"
-            value={cfg.body_pattern ?? ''}
-            onChange={(e) => setCfg({ body_pattern: e.target.value })}
-          />
-          <PlaceholderHelper
-            placeholders={placeholders}
-            onPick={(t) => appendPlaceholder('body_pattern', t)}
-          />
-        </FieldRow>
-
-        <div>
-          <span className="label">Anhänge</span>
-          {pdfs.length === 0 ? (
-            <p className="text-xs text-maja-muted">
-              Noch keine PDF-Vorlagen am Template definiert. Lege sie im Tab
-              „PDF-Mapping" an.
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {pdfs.map((p) => {
-                const checked = (cfg.attach_pdf_ids ?? []).includes(p.id);
-                return (
-                  <label key={p.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-                      checked={checked}
-                      onChange={() => toggleAttach(p.id)}
-                    />
-                    <span className="font-medium text-maja-ink">{p.name}</span>
-                    <span className="text-xs text-maja-muted">({p.id})</span>
-                  </label>
-                );
-              })}
-            </div>
+          {sliders.count === 2 && (
+            <FieldRow label="Label Schieberegler 2">
+              <input
+                className="input"
+                value={sliders.labels[1]}
+                onChange={(e) => setLabel(1, e.target.value)}
+                placeholder="z.B. Protokoll an Empfänger senden"
+              />
+            </FieldRow>
           )}
+
+          <FromPicker
+            value={sliders.from}
+            onChange={(v) => setSliders({ from: v })}
+            mailboxes={mailboxes}
+          />
+
+          <FieldRow label="Betreff">
+            <input
+              className="input"
+              value={sliders.subject}
+              onChange={(e) => setSliders({ subject: e.target.value })}
+              placeholder="z.B. Protokoll {kennzeichen} — {datum}"
+            />
+            <PlaceholderHelper
+              placeholders={placeholders}
+              onPick={(t) => setSliders({ subject: sliders.subject + t })}
+            />
+          </FieldRow>
+
+          <FieldRow label="Body">
+            <textarea
+              className="input min-h-[100px]"
+              value={sliders.body}
+              onChange={(e) => setSliders({ body: e.target.value })}
+              placeholder={"Sehr geehrte Damen und Herren,\n\nanbei das Protokoll für {kennzeichen}.\n\nViele Grüße"}
+            />
+            <PlaceholderHelper
+              placeholders={placeholders}
+              onPick={(t) => setSliders({ body: sliders.body + t })}
+            />
+          </FieldRow>
+
+          <AttachmentList
+            label="Anhänge"
+            pdfs={pdfs}
+            selected={sliders.attach_pdf_ids ?? []}
+            onChange={(next) => setSliders({ attach_pdf_ids: next })}
+          />
         </div>
-      </div>
+      )}
+    </section>
+  );
+}
+
+// ====================================================================
+// Vorlage 3: Manuelle E-Mail (aus Eingänge)
+// ====================================================================
+
+function ManualPanel({
+  cfg, setCfg, pdfs, placeholders, mailboxes,
+}: {
+  cfg: EmailConfig;
+  setCfg: (patch: Partial<EmailConfig>) => void;
+  pdfs: TemplatePdf[];
+  placeholders: PlaceholderToken[];
+  mailboxes: MailboxConfig[];
+}) {
+  return (
+    <section className="card space-y-4 p-5">
+      <header>
+        <h3 className="text-sm font-semibold text-maja-navy">
+          E-Mail 3: Manueller Versand aus Eingänge
+        </h3>
+        <p className="mt-0.5 text-xs text-maja-muted">
+          Wird im Eingänge-Dialog vorausgefüllt. Der Empfänger wird im Modal
+          gewählt — hier nur die Vorlage.
+        </p>
+      </header>
+
+      <FromPicker
+        value={cfg.from ?? ''}
+        onChange={(v) => setCfg({ from: v })}
+        mailboxes={mailboxes}
+      />
+
+      <FieldRow label="Betreff-Muster">
+        <input
+          className="input"
+          placeholder="z.B. Fahrzeugprotokoll {kennzeichen} — {datum}"
+          value={cfg.subject_pattern ?? ''}
+          onChange={(e) => setCfg({ subject_pattern: e.target.value })}
+        />
+        <PlaceholderHelper
+          placeholders={placeholders}
+          onPick={(t) => setCfg({ subject_pattern: (cfg.subject_pattern ?? '') + t })}
+        />
+      </FieldRow>
+
+      <FieldRow label="Body-Muster">
+        <textarea
+          className="input min-h-[100px]"
+          placeholder={"Hallo,\n\nanbei das Protokoll für {kennzeichen}.\n\nViele Grüße"}
+          value={cfg.body_pattern ?? ''}
+          onChange={(e) => setCfg({ body_pattern: e.target.value })}
+        />
+        <PlaceholderHelper
+          placeholders={placeholders}
+          onPick={(t) => setCfg({ body_pattern: (cfg.body_pattern ?? '') + t })}
+        />
+      </FieldRow>
+
+      <AttachmentList
+        label="Anhänge (Default-Auswahl im Modal)"
+        pdfs={pdfs}
+        selected={cfg.attach_pdf_ids ?? []}
+        onChange={(next) => setCfg({ attach_pdf_ids: next })}
+      />
+    </section>
+  );
+}
+
+// ====================================================================
+// Subkomponenten
+// ====================================================================
+
+function FromPicker({
+  value, onChange, mailboxes,
+}: { value: string; onChange: (v: string) => void; mailboxes: MailboxConfig[] }) {
+  if (mailboxes.length === 0) {
+    return (
+      <FieldRow label="Absender (Von)">
+        <p className="text-xs text-maja-muted">
+          Noch keine Postfächer konfiguriert — siehe Einstellungen → Postfächer.
+        </p>
+      </FieldRow>
+    );
+  }
+  return (
+    <FieldRow label="Absender (Von)">
+      <select
+        className="input"
+        value={value || mailboxes[0]?.address || ''}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {mailboxes.map((m) => (
+          <option key={m.key} value={m.address}>
+            {m.address}{m.label ? ` (${m.label})` : ''}
+          </option>
+        ))}
+      </select>
+    </FieldRow>
+  );
+}
+
+function AttachmentList({
+  label, pdfs, selected, onChange,
+}: {
+  label: string;
+  pdfs: TemplatePdf[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  function toggle(id: string) {
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  }
+  return (
+    <div>
+      <span className="label">{label}</span>
+      {pdfs.length === 0 ? (
+        <p className="text-xs text-maja-muted">
+          Noch keine PDF-Vorlagen am Template — lege sie im Tab „PDF-Mapping" an.
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {pdfs.map((p) => (
+            <label key={p.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                checked={selected.includes(p.id)}
+                onChange={() => toggle(p.id)}
+              />
+              <span className="font-medium text-maja-ink">{p.name}</span>
+              <span className="text-xs text-maja-muted">({p.id})</span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -159,7 +485,7 @@ function PlaceholderHelper({
             key={p.token}
             type="button"
             onClick={() => onPick(p.token)}
-            title={p.label ? p.label : undefined}
+            title={p.label}
             className="rounded-full bg-maja-light px-2 py-0.5 text-[11px] text-maja-navy hover:bg-maja-accent/20"
           >
             {p.token}

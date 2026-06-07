@@ -179,11 +179,55 @@ export interface TemplatePdf {
 }
 
 export interface EmailConfig {
-  to?: string;               // Komma-getrennt, Platzhalter erlaubt
-  cc?: string;               // Komma-getrennt, Platzhalter erlaubt
-  subject_pattern?: string;  // Platzhalter erlaubt
-  body_pattern?: string;     // Platzhalter erlaubt
-  attach_pdf_ids?: string[]; // Welche pdf.id's anhängen
+  // ---- Vorlage 3: Manuelle E-Mail (aus Eingänge) ----
+  // Diese Felder werden im Eingänge-Dialog vorausgefüllt; der Admin wählt
+  // die Empfänger dort selbst.
+  to?: string;               // historisch — Kompatibilität für alte Templates
+  cc?: string;
+  subject_pattern?: string;
+  body_pattern?: string;
+  attach_pdf_ids?: string[];
+  /** Absende-Postfach (UPN) für die manuelle E-Mail. */
+  from?: string;
+
+  /** Vorlage 1: Bestätigungs-E-Mail bei Formularabschluss. */
+  confirmation?: {
+    enabled: boolean;
+    recipient_self: boolean;   // an den eingeloggten Fahrer (CC)
+    recipient_fahrer: boolean; // an die hinterlegte Fahrer-E-Mail
+    recipient_extra: string;   // freie Zusatz-Empfänger (komma-separiert, Platzhalter erlaubt)
+    from: string;              // Absende-Postfach
+    subject: string;
+    body: string;
+    attach_pdf_ids?: string[]; // optional Anhänge
+  };
+
+  /** Vorlage 2: Schieberegler-E-Mail (Fahrer-gesteuerter Versand). */
+  sliders?: {
+    enabled: boolean;
+    count: 1 | 2;
+    labels: [string, string];  // [Label Schieberegler 1, Label Schieberegler 2]
+    from: string;              // Absende-Postfach
+    subject: string;
+    body: string;
+    attach_pdf_ids?: string[]; // welche PDFs angehängt werden sollen
+  };
+}
+
+/**
+ * Ergebnis-Log eines automatisch versendeten E-Mail-Versuchs nach
+ * Formularabschluss. Wird auf ausgefuellte_formulare.email_send_log
+ * persistiert, damit der Admin in Eingänge nachvollziehen kann, ob
+ * Bestätigungen / Schieberegler-Mails rausgingen.
+ */
+export interface EmailSendLogEntry {
+  type: 'confirmation' | 'slider';
+  /** Schieberegler-Index 0 oder 1 — nur bei type='slider'. */
+  slider_index?: number;
+  recipients: string[];
+  sent_at: string;
+  success: boolean;
+  error?: string;
 }
 
 type TemplateRow = Database['public']['Tables']['formular_templates']['Row'];

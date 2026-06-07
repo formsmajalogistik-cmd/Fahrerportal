@@ -9,17 +9,19 @@ import { PdfPreviewModal } from '../components/forms/PdfPreviewModal';
 import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
-import {
-  deleteFormPdf, generateAndUploadFormPdfs, sendTemplateEmail,
-} from '../lib/pdfGenerate';
+import { deleteFormPdf } from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
+import { runSubmissionEmails, readSliderState, sliderKey } from '../lib/submissionEmails';
 import {
   deleteFormDraft, enqueueSubmission, getFormDraft, getUploadsForFormular,
   saveFormDraft,
 } from '../lib/offlineDb';
 import { useAuth } from '../auth/AuthContext';
 import { useSync } from '../sync/SyncContext';
-import type { AusgefuelltesFormular, FormSchema, FormularTemplate } from '../types/db';
+import { displayName } from '../lib/names';
+import type {
+  AusgefuelltesFormular, FormSchema, FormularTemplate,
+} from '../types/db';
 import type { Json } from '../types/supabase';
 
 function parseTime(s: string | null | undefined): number {
@@ -40,100 +42,6 @@ function parseSchema(raw: unknown): FormSchema {
 }
 
 const REDIRECT_AFTER_SUBMIT_MS = 3000;
-const PDF_RETRY_DELAY_MS = 10_000;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/**
- * Führt nach dem Einreichen die PDF-Generierung + den E-Mail-Versand aus —
- * mit umfassendem Error-Handling, EINEM automatischen Retry nach 10 s und
- * Persistenz des Ergebnis-Status auf dem Eingang (pdf_status / pdf_fehler).
- *
- * Schlägt die Generierung auch im Retry fehl (z.B. sehr große iPhone-Bilder,
- * Memory-/Timeout-Probleme), bleibt das Formular eingereicht, aber der Admin
- * sieht in der Eingänge-Liste den Fehlerhinweis und kann "PDFs neu erzeugen"
- * nutzen. Gibt den anzuzeigenden Summary-Text zurück.
- */
-async function runPdfPipeline(
-  template: FormularTemplate,
-  submitted: AusgefuelltesFormular,
-  formularId: string,
-  submitterEmail: string | null,
-): Promise<string> {
-  async function attempt(): Promise<{ generated: number; emailNote: string }> {
-    console.info('[Submit] Starte PDF-Generierung …', { formularId });
-    const generated = await generateAndUploadFormPdfs(template, submitted);
-    console.info('[Submit] PDFs fertig hochgeladen:', generated.map((g) => g.filename));
-
-    let emailNote = '';
-    try {
-      console.info('[Submit] Sende E-Mail mit Anhängen …');
-      const r = await sendTemplateEmail(template, submitted, generated, submitterEmail);
-      if (r.sent) {
-        if (r.missing && r.missing.length > 0) {
-          console.warn('[Submit] E-Mail versendet, fehlende Anhänge:', r.missing);
-          emailNote = ` Email versendet, aber ${r.missing.length} Anhang/Anhänge fehlten`
-            + ` (${r.missing.join(', ')}). Admin kann sie nachsenden.`;
-        } else {
-          console.info('[Submit] E-Mail versendet.');
-          emailNote = ' Email versendet.';
-        }
-      } else if (r.reason) {
-        console.info('[Submit] E-Mail nicht versendet:', r.reason);
-      }
-    } catch (emailErr) {
-      // E-Mail-Fehler ist NICHT kritisch für den PDF-Status — die PDFs
-      // liegen bereits in OneDrive, der Admin kann manuell nachsenden.
-      console.warn('[Submit] Email-Versand fehlgeschlagen', emailErr);
-      emailNote = ' Email-Versand schlug fehl — siehe Konsole.';
-    }
-    return { generated: generated.length, emailNote };
-  }
-
-  let lastErr: unknown = null;
-  for (let tryNo = 1; tryNo <= 2; tryNo += 1) {
-    try {
-      const { generated, emailNote } = await attempt();
-      // Erfolg → Status auf dem Eingang vermerken.
-      try {
-        await supabase.from('ausgefuellte_formulare')
-          .update({ pdf_status: 'ok', pdf_fehler: null })
-          .eq('id', formularId);
-      } catch { /* Status-Update nicht kritisch */ }
-      const base = generated > 0
-        ? `Formular erfolgreich eingereicht — ${generated} PDF${generated === 1 ? '' : 's'} erzeugt und gespeichert.`
-        : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
-      return base + emailNote;
-    } catch (err) {
-      lastErr = err;
-      console.error('[Auto-PDF] Fehlgeschlagen:', {
-        versuch: tryNo,
-        error: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
-        formularId,
-        template: template.name,
-      });
-      if (tryNo === 1) {
-        console.info(`[Auto-PDF] Retry in ${PDF_RETRY_DELAY_MS / 1000} s …`);
-        await delay(PDF_RETRY_DELAY_MS);
-      }
-    }
-  }
-
-  // Beide Versuche fehlgeschlagen → Fehlerstatus persistieren.
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-  try {
-    await supabase.from('ausgefuellte_formulare')
-      .update({ pdf_status: 'fehlgeschlagen', pdf_fehler: msg.slice(0, 500) })
-      .eq('id', formularId);
-  } catch (statusErr) {
-    console.warn('[Auto-PDF] Fehlerstatus konnte nicht gespeichert werden', statusErr);
-  }
-  return 'Formular eingereicht. Die PDFs konnten nicht automatisch erzeugt werden — '
-    + 'die Administration wird benachrichtigt und erzeugt sie manuell nach.';
-}
 
 export function FormularPage() {
   const { id } = useParams();
@@ -149,7 +57,7 @@ export function FormularPage() {
   // Kurzer Auto-Save-Hinweis ("Automatisch gespeichert"), verschwindet nach 3s.
   const [autoSaveHint, setAutoSaveHint] = useState<string | null>(null);
   const { triggerSync } = useSync();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   // E-Mail des aktuell eingeloggten Nutzers — bekommt automatisch eine
   // Kopie jeder Submission als CC.
   const submitterEmail = session?.user?.email ?? null;
@@ -391,10 +299,11 @@ export function FormularPage() {
     const submitted = { ...formular, daten: data, status: 'submitted' as const };
     setFormular(submitted);
     setSavedDataJson(JSON.stringify(data));
-    setStatusMsg('Protokoll eingereicht. PDFs werden erzeugt …');
+    setStatusMsg('Formular wird eingereicht …');
 
-    // Eventuell hinterlegtes Zwischenprotokoll aufräumen — die finalen
-    // PDFs ersetzen den Entwurf. Fehler hier sind nicht kritisch.
+    // Eventuell hinterlegtes Zwischenprotokoll aufräumen — bei manueller
+    // PDF-Generierung in Eingänge werden neue PDFs erzeugt; der Entwurf
+    // hat ausgedient.
     const formularAny = formular as unknown as { zwischenprotokoll_url?: string | null };
     if (formularAny.zwischenprotokoll_url) {
       try {
@@ -408,9 +317,24 @@ export function FormularPage() {
       }
     }
 
-    const summary = await runPdfPipeline(template, submitted, formular.id, submitterEmail);
+    // Automatische E-Mails (Bestätigung + Schieberegler) — Fehler hier
+    // brechen den Submit NICHT ab, sondern landen im email_send_log.
+    const fahrerName = profile ? displayName(profile) : null;
+    const log = await runSubmissionEmails(template, submitted, {
+      submitterEmail,
+      fahrerEmail: submitterEmail, // Fahrer-Profil-Mail = eingeloggte Mail
+      fahrerName,
+    });
     setSaving('idle');
     setStatusMsg(null);
+
+    const failed = log.filter((l) => !l.success);
+    let summary = 'Formular wurde eingereicht.';
+    if (failed.length > 0) {
+      const addrs = failed.flatMap((l) => l.recipients).join(', ');
+      summary += ` E-Mail an ${addrs} konnte nicht versendet werden. `
+        + 'Die PDFs können über Eingänge manuell generiert und versendet werden.';
+    }
     setSubmittedSummary(summary);
     // Auto-Redirect: 3-Sekunden-Countdown.
     setRedirectIn(REDIRECT_AFTER_SUBMIT_MS);
@@ -629,6 +553,15 @@ export function FormularPage() {
         />
       </ErrorBoundary>
 
+      {isLastPage && template.email_config?.sliders?.enabled && (
+        <SlidersSection
+          config={template.email_config.sliders}
+          data={data}
+          onChange={handleChange}
+          disabled={readonly}
+        />
+      )}
+
       {hasMultiplePages && (
         <div className="flex flex-wrap justify-between gap-2 border-t border-maja-navy/10 pt-3">
           <button
@@ -722,6 +655,120 @@ export function FormularPage() {
           data={data}
           onClose={() => setPreviewOpen(false)}
         />
+      )}
+    </div>
+  );
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Schieberegler-Block — wird beim letzten Tab gerendert, wenn das Template
+ * E-Mail 2 aktiviert hat. Pro Schieberegler ein Toggle + ein E-Mail-Input.
+ * Werte werden unter den Reserved-Keys `_slider_0` / `_slider_1` in
+ * `daten` abgelegt (siehe `submissionEmails.ts`).
+ */
+function SlidersSection({
+  config, data, onChange, disabled,
+}: {
+  config: NonNullable<import('../types/db').EmailConfig['sliders']>;
+  data: Record<string, unknown>;
+  onChange: (id: string, value: unknown) => void;
+  disabled?: boolean;
+}) {
+  const indexes: (0 | 1)[] = config.count === 2 ? [0, 1] : [0];
+  return (
+    <section className="card space-y-4 p-6">
+      <h2 className="text-lg font-semibold text-maja-navy">Protokoll versenden</h2>
+      <p className="text-xs text-maja-muted">
+        Aktiviere den Schieberegler, wenn das Protokoll nach dem Abschluss an
+        eine zusätzliche Adresse versendet werden soll.
+      </p>
+      <div className="space-y-4">
+        {indexes.map((i) => (
+          <SliderRow
+            key={i}
+            label={config.labels[i] || `Schieberegler ${i + 1}`}
+            stateKey={sliderKey(i)}
+            data={data}
+            onChange={onChange}
+            disabled={disabled}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SliderRow({
+  label, stateKey, data, onChange, disabled,
+}: {
+  label: string;
+  stateKey: string;
+  data: Record<string, unknown>;
+  onChange: (id: string, value: unknown) => void;
+  disabled?: boolean;
+}) {
+  const idx = stateKey === '_slider_0' ? 0 : 1;
+  const state = readSliderState(data, idx);
+  const invalid = state.enabled && state.email.trim() !== '' && !EMAIL_RE.test(state.email.trim());
+
+  function toggle(next: boolean) {
+    onChange(stateKey, { enabled: next, email: state.email });
+  }
+  function setEmail(v: string) {
+    onChange(stateKey, { enabled: state.enabled, email: v });
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-maja-navy/10 p-3">
+      <label className="flex items-center gap-3 text-sm">
+        <span
+          role="switch"
+          aria-checked={state.enabled}
+          tabIndex={disabled ? -1 : 0}
+          onClick={() => { if (!disabled) toggle(!state.enabled); }}
+          onKeyDown={(e) => {
+            if (disabled) return;
+            if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(!state.enabled); }
+          }}
+          className={
+            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition '
+            + (state.enabled ? 'bg-maja-accent' : 'bg-maja-navy/20')
+            + (disabled ? ' opacity-50 cursor-not-allowed' : '')
+          }
+        >
+          <span
+            className={
+              'inline-block h-5 w-5 transform rounded-full bg-white shadow transition '
+              + (state.enabled ? 'translate-x-5' : 'translate-x-0.5')
+            }
+          />
+        </span>
+        <span className="font-medium text-maja-ink">{label}</span>
+      </label>
+
+      {state.enabled && (
+        <div>
+          <label htmlFor={`${stateKey}-email`} className="label">
+            E-Mail-Adresse
+          </label>
+          <input
+            id={`${stateKey}-email`}
+            type="email"
+            className="input"
+            value={state.email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="z.B. kunde@example.com"
+            disabled={disabled}
+          />
+          {invalid && (
+            <p className="mt-1 text-xs text-amber-700">
+              Bitte eine gültige E-Mail-Adresse eingeben — sonst geht keine
+              Nachricht raus.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

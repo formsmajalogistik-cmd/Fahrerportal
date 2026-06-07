@@ -668,6 +668,7 @@ export type Database = {
           pdf_paths: Json;
           pdf_status: string | null;
           pdf_fehler: string | null;
+          email_send_log: Json;
         };
         Insert: {
           id?: string;
@@ -682,6 +683,7 @@ export type Database = {
           pdf_paths?: Json;
           pdf_status?: string | null;
           pdf_fehler?: string | null;
+          email_send_log?: Json;
         };
         Update: {
           id?: string;
@@ -696,6 +698,7 @@ export type Database = {
           pdf_paths?: Json;
           pdf_status?: string | null;
           pdf_fehler?: string | null;
+          email_send_log?: Json;
         };
         Relationships: [
           {

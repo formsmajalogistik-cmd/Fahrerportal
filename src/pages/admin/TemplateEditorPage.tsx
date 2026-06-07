@@ -223,24 +223,43 @@ export function TemplateEditorPage() {
   /**
    * Verfügbare Platzhalter inkl. Sub-Felder für zusammengesetzte Feld-
    * typen (Adresse → strasse / plz / stadt). Wird im Email-Editor und
-   * im Dateiname-Pattern angezeigt.
+   * im Dateiname-Pattern angezeigt. Zusätzlich werden ein paar
+   * abgeleitete Platzhalter (template_name, datum, fahrer_name)
+   * vorgeschlagen, die der submissionEmails-Helper beim Versand
+   * automatisch auflöst.
    */
   const placeholderTokens = useMemo<PlaceholderToken[]>(() => {
     const out: PlaceholderToken[] = [];
+    const seen = new Set<string>();
+    const add = (token: string, label?: string) => {
+      if (seen.has(token)) return;
+      seen.add(token);
+      out.push({ token, label });
+    };
+    // Schema-Felder
     for (const s of schema.sections ?? []) {
       for (const f of s.fields ?? []) {
         if (f.type === 'address') {
           for (const sub of ADDRESS_SUBFIELDS) {
-            out.push({
-              token: `{${f.id}.${sub}}`,
-              label: `${f.id}.${ADDRESS_LABEL[sub].toLowerCase()}`,
-            });
+            add(`{${f.id}.${sub}}`, `${f.id}.${ADDRESS_LABEL[sub].toLowerCase()}`);
           }
         } else {
-          out.push({ token: `{${f.id}}` });
+          add(`{${f.id}}`);
         }
       }
     }
+    // Abgeleitete Platzhalter — sind nicht im Schema, der submissionEmails
+    // Helper befüllt sie aus dem Template / Profil. Schema-Felder mit
+    // gleichem Namen überschreiben sie beim Auflösen.
+    add('{template_name}', 'Template-Name');
+    add('{datum}', 'Einreichungs-Datum');
+    add('{fahrer_name}', 'Fahrer-Anzeigename');
+    add('{kennzeichen}', 'KFZ-Kennzeichen (Feld kennzeichen)');
+    add('{stadt_start}');
+    add('{stadt_ziel}');
+    add('{fin}');
+    add('{kundenname}');
+    add('{auftraggeber}');
     return out;
   }, [schema]);
 

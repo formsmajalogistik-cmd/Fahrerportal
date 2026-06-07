@@ -18,7 +18,8 @@ import { EingangLinkDialog } from './EingangLinkDialog';
 import { EingangSendEmailDialog } from './EingangSendEmailDialog';
 import { EingangFormularViewDialog } from './EingangFormularViewDialog';
 import type {
-  AppUser, AusgefuelltesFormular, FormularTemplate, TemplatePdf,
+  AppUser, AusgefuelltesFormular, EmailSendLogEntry,
+  FormularTemplate, TemplatePdf,
 } from '../../types/db';
 
 interface Row extends AusgefuelltesFormular {
@@ -541,6 +542,10 @@ function EingangCard({
               )}
             </div>
           )}
+
+          {isAdmin && row.status === 'submitted' && (
+            <EmailSendLog log={row.email_send_log as unknown as EmailSendLogEntry[] | null | undefined} />
+          )}
         </div>
 
         <div className="flex flex-col items-end gap-2">
@@ -850,5 +855,40 @@ function ZwischenprotokollSection({
       )}
       {error && <span className="text-red-700">{error}</span>}
     </div>
+  );
+}
+
+/**
+ * Kompakte Anzeige des automatischen E-Mail-Versand-Logs nach Submit
+ * (Bestätigung + Schieberegler). Pro Versuch eine Zeile mit Empfänger
+ * und Status. Damit der Admin in Eingänge sieht, welche Mails rausgingen.
+ */
+function EmailSendLog({ log }: { log: EmailSendLogEntry[] | null | undefined }) {
+  if (!Array.isArray(log) || log.length === 0) return null;
+  return (
+    <details className="mt-3 text-xs">
+      <summary className="cursor-pointer text-maja-muted hover:text-maja-navy">
+        Automatischer E-Mail-Versand ({log.length})
+      </summary>
+      <ul className="mt-1 space-y-1">
+        {log.map((entry, i) => {
+          const kind = entry.type === 'confirmation'
+            ? 'Bestätigung'
+            : `Schieberegler ${typeof entry.slider_index === 'number' ? entry.slider_index + 1 : '?'}`;
+          return (
+            <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className={entry.success ? 'text-emerald-700' : 'text-red-700'}>
+                {entry.success ? 'OK' : 'FEHLER'}
+              </span>
+              <span className="font-medium text-maja-ink">{kind}</span>
+              <span className="text-maja-muted">→ {entry.recipients.join(', ') || '—'}</span>
+              {entry.error && (
+                <span className="block w-full text-[11px] text-red-700">{entry.error}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }

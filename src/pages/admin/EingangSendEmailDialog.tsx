@@ -175,17 +175,20 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
   const [attachments, setAttachments] = useState<AttachmentDraft[]>(initial.attachments);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Aufgabe 3: Eingangs-Mails standardmäßig aus mail_inbox_2 (protokollierung@).
+  // Absender: bevorzugt das im Template (E-Mail 3) konfigurierte Postfach,
+  // sonst mail_inbox_2 (protokollierung@) als globaler Default.
   const [mailboxes, setMailboxes] = useState<MailboxConfig[]>([]);
   const [from, setFrom] = useState<string>('');
+  const templateFrom = template.email_config?.from ?? '';
   useEffect(() => {
     void loadMailboxes().then((mbs) => {
       const usable = mbs.filter((m) => m.address.trim() !== '');
       setMailboxes(usable);
-      const def = usable.find((m) => m.key === 'mail_inbox_2') ?? usable[0];
+      const tplMatch = templateFrom && usable.find((m) => m.address === templateFrom);
+      const def = tplMatch ?? usable.find((m) => m.key === 'mail_inbox_2') ?? usable[0];
       if (def) setFrom(def.address);
     });
-  }, []);
+  }, [templateFrom]);
   // Optional „Als Favorit speichern" pro NEUER Adresse beim Senden.
   // Map: normalisierte E-Mail → boolean
   const [saveAsFav, setSaveAsFav] = useState<Record<string, boolean>>({});
