@@ -161,6 +161,7 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
 }
 
 function FieldErrorWrapper({ field, children }: { field: FormField; children: React.ReactNode }) {
+  const showPrefillHint = field.prefill?.enabled && !field.prefill?.editable;
   return (
     <ErrorBoundary
       fallback={({ error, reset }) => (
@@ -176,7 +177,14 @@ function FieldErrorWrapper({ field, children }: { field: FormField; children: Re
         </div>
       )}
     >
-      {children}
+      <div className="relative">
+        {children}
+        {showPrefillHint && (
+          <span className="pointer-events-none absolute right-2 top-0 -translate-y-2 rounded bg-maja-light px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-maja-muted dark:bg-slate-700 dark:text-slate-300">
+            vorgegeben
+          </span>
+        )}
+      </div>
     </ErrorBoundary>
   );
 }
@@ -191,45 +199,50 @@ interface FieldProps {
 }
 
 function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder, formularId }: FieldProps) {
+  // Read-only-Prefill: Wenn das Feld als „vorausfüllbar" markiert ist und
+  // der Fahrer es NICHT ändern darf, wird es zusätzlich zum form-level
+  // disabled gesperrt.
+  const effDisabled = disabled
+    || (field.prefill?.enabled === true && field.prefill?.editable !== true);
   switch (field.type) {
     case 'text':
-      return <TextField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <TextField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'number':
-      return <NumberField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <NumberField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'date':
-      return <DateField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <DateField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'select':
-      return <SelectField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <SelectField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'checkboxes':
-      return <CheckboxesField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <CheckboxesField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'checkboxes_with_text':
-      return <CheckboxesWithTextField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <CheckboxesWithTextField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'textarea':
-      return <TextareaField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <TextareaField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'photo':
       return (
         <PhotoField
           field={field} value={value}
           oneDriveFolder={oneDriveFolder}
           formularId={formularId}
-          onChange={onChange} disabled={disabled}
+          onChange={onChange} disabled={effDisabled}
         />
       );
     case 'signature':
-      return <SignatureField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <SignatureField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'damage_diagram':
-      return <DamageDiagramField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <DamageDiagramField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     case 'dynamic_photos':
       return (
         <DynamicPhotosField
           field={field} value={value}
           oneDriveFolder={oneDriveFolder}
           formularId={formularId}
-          onChange={onChange} disabled={disabled}
+          onChange={onChange} disabled={effDisabled}
         />
       );
     case 'address':
-      return <AddressField field={field} value={value} onChange={onChange} disabled={disabled} />;
+      return <AddressField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
     default:
       return (
         <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">

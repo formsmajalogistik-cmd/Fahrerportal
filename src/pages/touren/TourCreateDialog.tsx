@@ -593,6 +593,11 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
 
           {/* Protokoll */}
           <ProtokollSection
+            // Beim Anlegen existiert die Tour noch nicht — Vorausfüllung ist
+            // erst nach dem Speichern via Tour-Detail-Panel möglich.
+            tourId={null}
+            vorgefuellteDaten={null}
+            onVorgefuellteDatenChange={() => { /* no-op vor Tour-Save */ }}
             protokollArt={protokollArt}
             schriftlichesProtokollId={schriftlichesProtokollId}
             greimelZugangId={greimelZugangId}

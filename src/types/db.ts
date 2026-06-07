@@ -73,6 +73,19 @@ export interface FormField {
    * damit bestehende Templates ihr aktuelles Verhalten behalten.
    */
   includeTime?: boolean;
+  /**
+   * Vorausfüllung bei Tour-Zuweisung — der Admin trägt Werte für dieses
+   * Feld vorab ein, die Vorgabe landet in `touren.vorgefuellte_daten`.
+   * Beim Öffnen des Formulars wird der Wert in den Initial-State gemergt.
+   *
+   * - `enabled=true, editable=false`  → Read-only beim Fahrer („vorgegeben").
+   * - `enabled=true, editable=true`   → Wert vorausgefüllt, aber editierbar.
+   * - `enabled=false`                 → Keine Vorausfüllung.
+   */
+  prefill?: {
+    enabled: boolean;
+    editable: boolean;
+  };
 }
 
 export interface FormSection {

@@ -10,6 +10,7 @@ import { computeTourStatus, formatDate, tourTitel } from '../lib/touren';
 import type {
   Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../types/db';
+import type { Json } from '../types/supabase';
 
 type AssignedTemplate = FormularTemplate;
 
@@ -99,7 +100,7 @@ export function FahrerDashboard() {
           .select(`
             id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
             startdatum, enddatum, fahrer_id, protokoll_art,
-            schriftliches_protokoll_id,
+            schriftliches_protokoll_id, vorgefuellte_daten,
             template:schriftliches_protokoll_id (id, name),
             auftraggeber:auftraggeber_id (name)
           `)
@@ -129,6 +130,7 @@ export function FahrerDashboard() {
       fahrer_id: string | null;
       protokoll_art: string | null;
       schriftliches_protokoll_id: string | null;
+      vorgefuellte_daten: unknown;
       template: Pick<FormularTemplate, 'id' | 'name'> | null;
       auftraggeber: Pick<Auftraggeber, 'name'> | null;
     };
@@ -159,13 +161,29 @@ export function FahrerDashboard() {
    * Vorhandene Drafts werden weiterhin im "In Bearbeitung"-Bereich
    * separat aufgelistet.
    */
-  async function openOrStart(templateId: string, busyKey: string) {
+  async function openOrStart(
+    templateId: string,
+    busyKey: string,
+    /** Optionale Tour-Quelle: Vorgaben werden in den Initial-State gemergt,
+     *  die Tour-ID landet als `_tour_id` in daten, damit die FormularPage
+     *  spätere Admin-Prefill-Updates nachziehen kann. */
+    tourPrefill?: { tourId: string; vorgefuellteDaten: Record<string, unknown> | null } | null,
+  ) {
     if (!fahrer) return;
     setOpening(busyKey);
     try {
+      const prefill = (tourPrefill?.vorgefuellteDaten && typeof tourPrefill.vorgefuellteDaten === 'object')
+        ? tourPrefill.vorgefuellteDaten
+        : {};
+      const initialDaten: Record<string, unknown> = { ...prefill };
+      if (tourPrefill?.tourId) initialDaten._tour_id = tourPrefill.tourId;
       const { data, error: err } = await supabase
         .from('ausgefuellte_formulare')
-        .insert({ fahrer_id: fahrer.id, template_id: templateId, daten: {} })
+        .insert({
+          fahrer_id: fahrer.id,
+          template_id: templateId,
+          daten: initialDaten as Json,
+        })
         .select('id')
         .single();
       if (err || !data) { setError(err?.message ?? 'Anlegen fehlgeschlagen'); return; }
@@ -243,7 +261,16 @@ export function FahrerDashboard() {
                 key={tp.tour.id}
                 item={tp}
                 opening={opening === `tour:${tp.tour.id}`}
-                onOpen={() => void openOrStart(tp.template.id, `tour:${tp.tour.id}`)}
+                onOpen={() => {
+                  const raw = (tp.tour as unknown as { vorgefuellte_daten?: unknown }).vorgefuellte_daten;
+                  const prefill = raw && typeof raw === 'object'
+                    ? raw as Record<string, unknown>
+                    : null;
+                  void openOrStart(tp.template.id, `tour:${tp.tour.id}`, {
+                    tourId: tp.tour.id,
+                    vorgefuellteDaten: prefill,
+                  });
+                }}
               />
             ))}
           </ul>

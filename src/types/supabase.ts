@@ -279,6 +279,7 @@ export type Database = {
           bearbeitet_markiert_am: string | null;
           created_at: string;
           updated_at: string;
+          vorgefuellte_daten: Json | null;
         };
         Insert: {
           id?: string;
@@ -325,6 +326,7 @@ export type Database = {
           bearbeitet_markiert_am?: string | null;
           created_at?: string;
           updated_at?: string;
+          vorgefuellte_daten?: Json | null;
         };
         Update: {
           id?: string;
@@ -371,6 +373,7 @@ export type Database = {
           bearbeitet_markiert_am?: string | null;
           created_at?: string;
           updated_at?: string;
+          vorgefuellte_daten?: Json | null;
         };
         Relationships: [
           {

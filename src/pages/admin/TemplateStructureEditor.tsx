@@ -381,6 +381,34 @@ function FieldEditor({
           </label>
         )}
 
+        <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+            checked={!!field.prefill?.enabled}
+            onChange={(e) => onChange({
+              prefill: e.target.checked
+                ? { enabled: true, editable: field.prefill?.editable ?? false }
+                : undefined,
+            })}
+          />
+          Vorausfüllbar
+        </label>
+
+        {field.prefill?.enabled && (
+          <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+              checked={!!field.prefill?.editable}
+              onChange={(e) => onChange({
+                prefill: { enabled: true, editable: e.target.checked },
+              })}
+            />
+            Vom Fahrer änderbar
+          </label>
+        )}
+
         {needsOptions && (
           <div className="flex-1 min-w-[240px]">
             <label className="label">Optionen (eine pro Zeile)</label>

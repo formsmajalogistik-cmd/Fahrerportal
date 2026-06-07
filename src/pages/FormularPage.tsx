@@ -148,6 +148,32 @@ export function FormularPage() {
       // Legacy: alten sessionStorage-Eintrag — falls vorhanden — räumen.
       try { sessionStorage.removeItem(`formular-draft-${af.id}`); } catch { /* ignore */ }
 
+      // Vorausgefüllte Daten der verknüpften Tour (sofern bekannt) mergen.
+      // Felder, die der Fahrer schon angefasst hat (_touched), bleiben.
+      const tourId = typeof nextData._tour_id === 'string' ? nextData._tour_id : null;
+      if (tourId) {
+        try {
+          const { data: tour } = await supabase
+            .from('touren')
+            .select('vorgefuellte_daten')
+            .eq('id', tourId)
+            .maybeSingle();
+          const prefill = tour?.vorgefuellte_daten as Record<string, unknown> | null;
+          if (prefill && typeof prefill === 'object') {
+            const touched = (nextData._touched && typeof nextData._touched === 'object')
+              ? nextData._touched as Record<string, unknown>
+              : {};
+            const merged: Record<string, unknown> = { ...nextData };
+            for (const [k, v] of Object.entries(prefill)) {
+              if (!touched[k]) merged[k] = v;
+            }
+            nextData = merged;
+          }
+        } catch (err) {
+          console.warn('[FormularPage] Prefill-Refresh fehlgeschlagen', err);
+        }
+      }
+
       setData(nextData);
       // Saved-State spiegelt das, was tatsächlich in der DB liegt.
       setSavedDataJson(JSON.stringify(serverData));
@@ -163,7 +189,20 @@ export function FormularPage() {
   const readonly = formular?.status === 'submitted';
 
   const handleChange = useCallback((fieldId: string, value: unknown) => {
-    setData((prev) => ({ ...prev, [fieldId]: value }));
+    setData((prev) => {
+      const next = { ...prev, [fieldId]: value };
+      // Felder, die der Fahrer aktiv geändert hat, merken — damit
+      // nachgelagerte Admin-Prefill-Updates sie nicht überschreiben.
+      // Reserved-Keys (z.B. `_slider_0`, `_tour_id`, `_touched`) sind
+      // intern und werden NICHT als Fahrer-Touch markiert.
+      if (!fieldId.startsWith('_')) {
+        const touched = (prev._touched && typeof prev._touched === 'object')
+          ? prev._touched as Record<string, unknown>
+          : {};
+        next._touched = { ...touched, [fieldId]: true };
+      }
+      return next;
+    });
   }, []);
 
   // Auto-Save: debounced 2 s nach der letzten Änderung in IndexedDB.
@@ -491,7 +530,7 @@ export function FormularPage() {
       {void redirectIn /* nur Re-Render-Trigger */}
 
       {hasMultiplePages && (
-        <div className="sticky top-0 z-10 -mx-4 border-b border-maja-navy/10 bg-white/95 px-4 py-2 backdrop-blur">
+        <div className="sticky top-0 z-10 -mx-4 border-b border-maja-navy/10 bg-white/95 px-4 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
           <nav className="flex gap-1 overflow-x-auto">
             {pages.map((p) => {
               const status = pageCompletion(p, template.schema.sections ?? [], data);
@@ -502,8 +541,11 @@ export function FormularPage() {
                   type="button"
                   onClick={() => setCurrentPageId(p.id)}
                   className={
-                    'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ' +
-                    (active ? 'bg-maja-navy text-white' : 'bg-maja-light text-maja-navy hover:bg-maja-light/70')
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition '
+                    + (active
+                      ? 'bg-maja-navy text-white'
+                      : 'bg-maja-light text-maja-navy hover:bg-maja-light/70 '
+                        + 'dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600')
                   }
                   aria-current={active ? 'page' : undefined}
                 >
@@ -733,8 +775,10 @@ function SliderRow({
             if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(!state.enabled); }
           }}
           className={
-            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition '
-            + (state.enabled ? 'bg-maja-accent' : 'bg-maja-navy/20')
+            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border transition '
+            + (state.enabled
+              ? 'bg-maja-accent border-maja-accent dark:bg-blue-500 dark:border-blue-400'
+              : 'bg-maja-navy/20 border-maja-navy/30 dark:bg-slate-600 dark:border-slate-500')
             + (disabled ? ' opacity-50 cursor-not-allowed' : '')
           }
         >

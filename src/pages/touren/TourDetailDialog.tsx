@@ -959,6 +959,11 @@ export function TourDetailDialog({
           zugaenge={zugaenge}
           kontakte={editKontakte}
           onOpenRouteDialog={setRouteDialog}
+          tourId={tour.id}
+          vorgefuellteDaten={(tour.vorgefuellte_daten as Record<string, unknown> | null) ?? null}
+          onVorgefuellteDatenChange={(next) => setTour((cur) =>
+            cur ? { ...cur, vorgefuellte_daten: next as unknown as FullTour['vorgefuellte_daten'] } : cur,
+          )}
         />
       )}
 
@@ -1622,6 +1627,11 @@ interface EditModeProps {
   zugaenge: GreimelZugang[];
   kontakte: AuftraggeberKontakt[];
   onOpenRouteDialog: (which: 'hin' | 'rueck') => void;
+  /** Aktuelle Tour-ID — Pflicht für den Prefill-Dialog (touren-Update). */
+  tourId: string | null;
+  /** Aktuell hinterlegte Vorgaben (touren.vorgefuellte_daten). */
+  vorgefuellteDaten: Record<string, unknown> | null;
+  onVorgefuellteDatenChange: (next: Record<string, unknown> | null) => void;
 }
 
 function KmBerechnenButton({
@@ -1855,6 +1865,9 @@ function EditMode(p: EditModeProps) {
 
       {/* Protokoll */}
       <ProtokollSection
+        tourId={p.tourId ?? null}
+        vorgefuellteDaten={p.vorgefuellteDaten}
+        onVorgefuellteDatenChange={p.onVorgefuellteDatenChange}
         protokollArt={draft.protokollArt}
         schriftlichesProtokollId={draft.schriftlichesProtokollId}
         greimelZugangId={draft.greimelZugangId}
