@@ -78,6 +78,14 @@ export default async function handler(req: Req, res: Res) {
       const formularId = qString(req.query?.formular_id);
       const inline = qString(req.query?.inline) === '1';
 
+      console.info('[Download] User:', {
+        userId: user.id,
+        role: user.role,
+        isAdmin: user.role === 'admin',
+        formularId,
+        path,
+      });
+
       if (formularId) {
         await assertCanAccessPdfPath(user, token, formularId, path);
       } else if (user.role === 'admin') {

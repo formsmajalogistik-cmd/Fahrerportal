@@ -232,8 +232,8 @@ export function EingaengePage() {
           <h1 className="text-2xl font-semibold text-maja-navy">Eingänge</h1>
           <p className="text-sm text-maja-muted">
             {isAdmin
-              ? 'Alle Protokolle. Mit Tour verknüpfen oder PDF-Downloads aus OneDrive.'
-              : 'Deine Protokolle. PDF-Downloads holen die Datei aus OneDrive.'}
+              ? 'Alle Protokolle. Mit Tour verknüpfen oder PDFs herunterladen.'
+              : 'Deine Protokolle. PDFs als Vorschau öffnen oder herunterladen.'}
           </p>
         </div>
         {statusFilter === 'submitted' && linkedCount > 0 && (

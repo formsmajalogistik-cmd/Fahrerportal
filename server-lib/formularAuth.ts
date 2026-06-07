@@ -3,12 +3,12 @@
 // Der Client schickt formular_id + path. Auf dem Server:
 //   1) Wir laden die Zeile MIT dem JWT des Users — RLS entscheidet,
 //      ob er sie sehen darf. Findet der SELECT die Zeile, ist der
-//      User berechtigt; sonst 404.
-//   2) Pfad-Sanity: wir akzeptieren jeden Pfad unter dem Maja-Wurzel-
-//      Ordner ODER den exakten zwischenprotokoll_url-Eintrag. Strenge
-//      Folder-Name-Checks (Datum/Kennzeichen/Template-Name) sind
-//      brüchig, sobald sich Stammdaten (z.B. Template-Name) nach der
-//      PDF-Erzeugung ändern — alte PDFs sollen weiter ladbar bleiben.
+//      User berechtigt; sonst 404. Damit funktioniert die Prüfung
+//      auch für Haupt-User mit Unterkonto, ohne dass die brüchige
+//      `fahrer.user_id === user.id`-Doppelprüfung greift.
+//   2) Pfad-Sanity: pro Rolle eine eigene Whitelist erlaubter
+//      Wurzel-Ordner. Fahrer dürfen NUR Formulare/Zwischenprotokolle
+//      sehen — keine Belege, keine Rechnungen, keine Preislisten.
 
 import { createClient } from '@supabase/supabase-js';
 import { HttpError } from './auth.js';
@@ -19,12 +19,15 @@ interface FormularRow {
   id: string;
   fahrer_id: string;
   zwischenprotokoll_url: string | null;
-  fahrer: { user_id: string } | null;
 }
 
-const ALLOWED_ROOTS = [
+const FAHRER_ALLOWED_ROOTS = [
   'Maja-Logistik/Formulare/',
   'Maja-Logistik/Zwischenprotokolle/',
+];
+
+const ADMIN_ALLOWED_ROOTS = [
+  ...FAHRER_ALLOWED_ROOTS,
   'Maja-Logistik/Belege/',
 ];
 
@@ -48,30 +51,37 @@ export async function assertCanAccessPdfPath(
   user: AuthedUser, token: string, formularId: string, path: string,
 ): Promise<void> {
   const supa = userClient(token);
+  // RLS auf ausgefuellte_formulare:
+  //   - Admin sieht alles.
+  //   - Fahrer (auch Haupt mit Unterkonto) sieht eigene Zeilen via
+  //     fahrer_belongs_to_me(fahrer_id).
+  // Findet der SELECT die Zeile → Zugriff freigegeben.
   const { data, error } = await supa
     .from('ausgefuellte_formulare')
-    .select('id, fahrer_id, zwischenprotokoll_url, fahrer:fahrer_id (user_id)')
+    .select('id, fahrer_id, zwischenprotokoll_url')
     .eq('id', formularId)
     .maybeSingle();
+
+  console.info('[assertCanAccessPdfPath]', {
+    userId: user.id,
+    role: user.role,
+    isAdmin: user.role === 'admin',
+    formularId,
+    path,
+    rowFound: !!data,
+    rlsError: error?.message ?? null,
+  });
 
   if (error) throw new HttpError(500, `DB-Fehler: ${error.message}`);
   if (!data) throw new HttpError(404, 'Formular nicht gefunden oder kein Zugriff');
 
   const formular = data as unknown as FormularRow;
 
-  // RLS hat bereits Admin vs. Fahrer-eigene-Zeile geprüft. Defensive
-  // Doppel-Prüfung für Fahrer, falls eine künftige Migration die RLS
-  // lockert.
-  if (user.role !== 'admin' && user.role !== null) {
-    if (!formular.fahrer || formular.fahrer.user_id !== user.id) {
-      throw new HttpError(403, 'Keine Berechtigung für dieses Formular');
-    }
-  }
-
   const normalized = path.replace(/^\/+/, '');
   const isZwischen = !!formular.zwischenprotokoll_url
     && formular.zwischenprotokoll_url.replace(/^\/+/, '') === normalized;
-  const inAllowedRoot = ALLOWED_ROOTS.some((r) => normalized.startsWith(r));
+  const allowedRoots = user.role === 'admin' ? ADMIN_ALLOWED_ROOTS : FAHRER_ALLOWED_ROOTS;
+  const inAllowedRoot = allowedRoots.some((r) => normalized.startsWith(r));
   if (!isZwischen && !inAllowedRoot) {
     throw new HttpError(403, 'Pfad nicht erlaubt');
   }

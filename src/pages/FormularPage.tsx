@@ -103,7 +103,7 @@ async function runPdfPipeline(
           .eq('id', formularId);
       } catch { /* Status-Update nicht kritisch */ }
       const base = generated > 0
-        ? `Formular erfolgreich eingereicht — ${generated} PDF${generated === 1 ? '' : 's'} in OneDrive abgelegt.`
+        ? `Formular erfolgreich eingereicht — ${generated} PDF${generated === 1 ? '' : 's'} erzeugt und gespeichert.`
         : 'Formular erfolgreich eingereicht. (Keine PDF-Vorlagen am Template.)';
       return base + emailNote;
     } catch (err) {

@@ -21,7 +21,7 @@ export function OfflineBanner() {
   if (pending > 0) {
     return (
       <div className="sticky top-0 z-20 bg-blue-100 px-3 py-1.5 text-center text-xs font-medium text-blue-900">
-        {syncing ? 'Synchronisiere …' : 'Warte auf Sync …'}
+        {syncing ? 'Synchronisiere …' : 'Warte auf Upload …'}
         {pendingUploads > 0 && ` ${pendingUploads} ${pendingUploads === 1 ? 'Bild' : 'Bilder'}`}
         {pendingUploads > 0 && pendingSubmissions > 0 && ', '}
         {pendingSubmissions > 0 && ` ${pendingSubmissions} ${pendingSubmissions === 1 ? 'Formular' : 'Formulare'}`}

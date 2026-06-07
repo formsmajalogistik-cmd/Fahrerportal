@@ -532,7 +532,7 @@ export function BelegeUploadTab() {
               className="btn-secondary"
               disabled={items.length === 0 || busy !== null}
               onClick={() => setAssignOpen(true)}
-              title="Generiert die PDF, lädt sie in OneDrive hoch und ordnet sie der gewählten Rechnung zu."
+              title="Generiert die PDF, lädt sie hoch und ordnet sie der gewählten Rechnung zu."
             >
               Rechnung zuordnen
             </button>

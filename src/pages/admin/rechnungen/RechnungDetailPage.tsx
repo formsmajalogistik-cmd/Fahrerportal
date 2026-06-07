@@ -110,7 +110,7 @@ export function RechnungDetailPage() {
   // Beleg-Zuordnung lösen (Aufgabe 2)
   const handleRemoveBelege = useCallback(async () => {
     if (!rechnung) return;
-    if (!confirm('Zuordnung der Beleg-PDF wirklich entfernen? Die Datei in OneDrive bleibt erhalten.')) return;
+    if (!confirm('Zuordnung der Beleg-PDF wirklich entfernen? Die Datei bleibt gespeichert.')) return;
     const { error: err } = await supabase
       .from('rechnungen')
       .update({ belege_pdf_url: null })
