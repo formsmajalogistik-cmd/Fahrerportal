@@ -56,6 +56,10 @@ export function EmailMessageView({ mail, mailbox }: Props) {
     }
     return DOMPurify.sanitize(mail.bodyHtml || '', {
       FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+      // Inline-Bilder werden serverseitig in data:-URLs aufgelöst —
+      // wir whitelisten data:image/* explizit, damit DOMPurify sie
+      // nicht herausfiltert.
+      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data:image\/[a-z0-9+.-]+;base64,):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
     });
   }, [mail]);
   return (

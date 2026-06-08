@@ -440,6 +440,10 @@ interface RawAttachment {
   name: string;
   contentType?: string;
   size?: number;
+  isInline?: boolean;
+  contentId?: string | null;
+  contentBytes?: string;
+  '@odata.type'?: string;
 }
 interface RawMessage {
   id: string;
@@ -509,7 +513,13 @@ export async function listMessages(args: {
   return { value, totalCount: j['@odata.count'] };
 }
 
-/** Holt eine einzelne Nachricht inkl. Body + Anhangs-Metadaten. */
+/** Holt eine einzelne Nachricht inkl. Body + Anhangs-Metadaten.
+ *
+ *  Inline-Bilder (Attachment.isInline + Attachment.contentId) werden
+ *  serverseitig zu data:-URLs aufgelöst und im HTML-Body anstelle der
+ *  `cid:`-Referenzen eingesetzt — sonst zeigt das Frontend nur kaputte
+ *  Bild-Icons. Reguläre File-Attachments bleiben unter `attachments`
+ *  separat aufgelistet. */
 export async function getMessage(args: {
   mailbox: string;
   messageId: string;
@@ -522,19 +532,42 @@ export async function getMessage(args: {
   }
   const m = await resp.json() as RawMessage;
   let attachments: MailDetail['attachments'] = [];
+  let bodyHtml = m.body?.content ?? '';
+
   if (m.hasAttachments) {
-    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size`;
+    // Inline-Bilder brauchen contentBytes — wir holen sie für inline-Attachments
+    // direkt mit, für reguläre Anhänge reichen die Metadaten.
+    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId,contentBytes`;
     const aResp = await graphFetch('GET', aUrl);
     if (aResp.ok) {
       const aJson = await aResp.json() as { value?: RawAttachment[] };
-      attachments = (aJson.value ?? []).map((a) => ({
-        id: a.id,
-        name: a.name,
-        contentType: a.contentType ?? 'application/octet-stream',
-        size: a.size ?? 0,
-      }));
+      const raw = aJson.value ?? [];
+
+      // bodyHtml: cid:-Referenzen durch data:-URLs ersetzen.
+      for (const a of raw) {
+        if (!a.isInline || !a.contentId || !a.contentBytes) continue;
+        const ct = a.contentType ?? 'application/octet-stream';
+        const dataUrl = `data:${ct};base64,${a.contentBytes}`;
+        // contentId kann Sonderzeichen enthalten (z.B. „@", „."); regex
+        // escapen.
+        const cidEsc = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`src=["']cid:${cidEsc}["']`, 'gi');
+        bodyHtml = bodyHtml.replace(re, `src="${dataUrl}"`);
+      }
+
+      // Sichtbare Attachments: inline-Bilder ausblenden, reguläre Datei-
+      // Anhänge bleiben sichtbar.
+      attachments = raw
+        .filter((a) => !a.isInline)
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          contentType: a.contentType ?? 'application/octet-stream',
+          size: a.size ?? 0,
+        }));
     }
   }
+
   const contentType = (m.body?.contentType ?? 'html').toLowerCase() === 'text'
     ? 'text' as const : 'html' as const;
   return {
@@ -545,10 +578,12 @@ export async function getMessage(args: {
     cc: recipientList(m.ccRecipients),
     receivedDateTime: m.receivedDateTime ?? '',
     bodyPreview: m.bodyPreview ?? '',
-    hasAttachments: !!m.hasAttachments,
+    // hasAttachments spiegelt nur die SICHTBAREN Anhänge — reine
+    // Inline-Bilder zählen nicht (verwirrt sonst das UI).
+    hasAttachments: attachments.length > 0,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
-    bodyHtml: m.body?.content ?? '',
+    bodyHtml,
     bodyContentType: contentType,
     attachments,
   };
