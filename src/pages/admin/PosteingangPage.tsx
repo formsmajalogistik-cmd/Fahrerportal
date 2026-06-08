@@ -15,7 +15,11 @@ import { TourEditFromEmailPanel } from './TourEditFromEmailPanel';
 import { TourPickerDialog } from './TourPickerDialog';
 import { ZusaetzeFromEmailPanel } from './ZusaetzeFromEmailPanel';
 
-const PAGE_SIZE = 25;
+// API-Seitengröße — wir laden mehr als angezeigt, damit nach dem
+// clientseitigen Klassifizierungs-Filter (Relevant/Sonstige) genug für
+// die Anzeige-Seitengröße übrig ist.
+const API_PAGE_SIZE = 100;
+const DISPLAY_PAGE_SIZE = 25;
 
 type PendingTour =
   | { mode: 'create' }
@@ -44,8 +48,15 @@ export function PosteingangPage() {
   const [activeFolderId, setActiveFolderId] = useState<string>('inbox');
 
   const [search, setSearch] = useState('');
+  // Anzeige-Pagination (clientseitig, in DISPLAY_PAGE_SIZE-Schritten).
   const [page, setPage] = useState(1);
+  // Akkumulierte Liste über alle bislang geladenen API-Seiten —
+  // notwendig, damit nach dem Klassifizierungs-Filter (Relevant/Sonstige)
+  // genug Einträge für eine UI-Seite übrig bleiben. Pagination zieht
+  // sich daraus, neue API-Seiten werden bei Bedarf nachgeladen.
   const [list, setList] = useState<MailListItem[]>([]);
+  const [apiPage, setApiPage] = useState(1);
+  const [hasMoreFromApi, setHasMoreFromApi] = useState(true);
   const [totalCount, setTotalCount] = useState<number | undefined>(undefined);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -111,40 +122,95 @@ export function PosteingangPage() {
   }, [activeMailbox]);
 
   // --- Liste laden -------------------------------------------------
-  const loadList = useCallback(async () => {
-    if (!activeMailbox) { setList([]); return; }
+  // Erste API-Seite holen, akkumulierte Liste resetten. Wird ausgelöst,
+  // sobald Mailbox / Ordner / Suche / Klassifizierung wechseln.
+  const loadFirstPage = useCallback(async () => {
+    if (!activeMailbox) {
+      setList([]);
+      setApiPage(1);
+      setHasMoreFromApi(false);
+      setTotalCount(undefined);
+      return;
+    }
     setListLoading(true);
     setListError(null);
     try {
       const r = await listEmails({
         mailbox: activeMailbox,
-        page,
-        pageSize: PAGE_SIZE,
+        page: 1,
+        pageSize: API_PAGE_SIZE,
         search: search.trim() || undefined,
         folder: activeFolderId,
       });
       setList(r.value);
+      setApiPage(1);
+      setHasMoreFromApi(r.value.length >= API_PAGE_SIZE);
       setTotalCount(r.totalCount);
     } catch (err) {
       setListError(err instanceof Error ? err.message : 'Liste konnte nicht geladen werden.');
       setList([]);
+      setHasMoreFromApi(false);
     } finally {
       setListLoading(false);
     }
-  }, [activeMailbox, page, search, activeFolderId]);
+  }, [activeMailbox, search, activeFolderId]);
 
   useEffect(() => {
-    void Promise.resolve().then(() => { void loadList(); });
-  }, [loadList]);
+    void Promise.resolve().then(() => { void loadFirstPage(); });
+  }, [loadFirstPage]);
+
+  // --- Weitere API-Seite nachladen ---------------------------------
+  // Hängt eine Seite an `list` an und stoppt, wenn Graph weniger als
+  // API_PAGE_SIZE liefert (= keine weiteren Seiten mehr).
+  const loadMoreFromApi = useCallback(async () => {
+    if (!activeMailbox || !hasMoreFromApi || listLoading) return;
+    setListLoading(true);
+    setListError(null);
+    try {
+      const nextApi = apiPage + 1;
+      const r = await listEmails({
+        mailbox: activeMailbox,
+        page: nextApi,
+        pageSize: API_PAGE_SIZE,
+        search: search.trim() || undefined,
+        folder: activeFolderId,
+      });
+      setList((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const fresh = r.value.filter((m) => !seen.has(m.id));
+        return [...prev, ...fresh];
+      });
+      setApiPage(nextApi);
+      setHasMoreFromApi(r.value.length >= API_PAGE_SIZE);
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : 'Liste konnte nicht geladen werden.');
+    } finally {
+      setListLoading(false);
+    }
+  }, [activeMailbox, hasMoreFromApi, listLoading, apiPage, search, activeFolderId]);
 
   // --- Focused-Inbox: clientseitiges Filtern + Badge-Counts -------
   const classificationSupported = activeFolderId === 'inbox'
     && list.some((m) => m.inferenceClassification != null);
   const showClassificationTabs = classificationSupported;
-  const visibleList = useMemo(() => {
+  const filteredList = useMemo(() => {
     if (!showClassificationTabs) return list;
     return list.filter((m) => m.inferenceClassification === classification);
   }, [list, showClassificationTabs, classification]);
+  // Anzeige-Seite aus der gefilterten Liste schneiden.
+  const visibleList = useMemo(() => {
+    const start = (page - 1) * DISPLAY_PAGE_SIZE;
+    return filteredList.slice(start, start + DISPLAY_PAGE_SIZE);
+  }, [filteredList, page]);
+  // Falls die aktuelle Seite kein „Sichtfeld voll" liefert UND die API
+  // noch weitere Seiten hat: automatisch nachladen, bis genug
+  // gefilterte Einträge da sind oder die API erschöpft ist.
+  useEffect(() => {
+    if (listLoading || !hasMoreFromApi) return;
+    const needed = page * DISPLAY_PAGE_SIZE;
+    if (filteredList.length >= needed) return;
+    void Promise.resolve().then(() => { void loadMoreFromApi(); });
+  }, [page, filteredList.length, hasMoreFromApi, listLoading, loadMoreFromApi]);
   const focusedUnread = useMemo(
     () => (showClassificationTabs
       ? list.filter((m) => m.inferenceClassification === 'focused' && !m.isRead).length
@@ -157,6 +223,9 @@ export function PosteingangPage() {
       : 0),
     [list, showClassificationTabs],
   );
+  // „Weiter"-Button aktiv, wenn entweder gefilterte Einträge für die
+  // nächste Seite vorliegen ODER die API noch nicht erschöpft ist.
+  const hasNextPage = filteredList.length > page * DISPLAY_PAGE_SIZE || hasMoreFromApi;
 
   // --- Detail laden -----------------------------------------------
   useEffect(() => {
@@ -387,6 +456,8 @@ export function PosteingangPage() {
             page={page}
             onPage={setPage}
             totalCount={showClassificationTabs ? undefined : totalCount}
+            filteredCount={showClassificationTabs ? filteredList.length : undefined}
+            hasNextPage={hasNextPage}
             classification={classification}
             onClassification={chooseClassification}
             focusedUnread={focusedUnread}
@@ -424,7 +495,8 @@ export function PosteingangPage() {
             showToast(composer.mode === 'reply' ? 'Antwort verschickt.'
               : composer.mode === 'forward' ? 'Weitergeleitet.'
               : 'E-Mail verschickt.');
-            void loadList();
+            setPage(1);
+            void loadFirstPage();
           }}
         />
       )}
@@ -541,7 +613,15 @@ interface ListPaneProps {
   onFlag: (m: MailListItem) => void;
   page: number;
   onPage: (n: number) => void;
+  /** Server-Total (rohe Mailbox-Größe) — wird angezeigt, wenn keine
+   *  clientseitige Klassifizierungs-Filterung aktiv ist. */
   totalCount?: number;
+  /** Anzahl Einträge in der gefilterten Liste (über alle bereits
+   *  geladenen API-Seiten). Wird in der Pagination-Zeile angezeigt. */
+  filteredCount?: number;
+  /** True, wenn entweder noch gefilterte Seiten vor uns liegen oder die
+   *  API noch weitere Seiten nachladen kann. */
+  hasNextPage: boolean;
   classification: 'focused' | 'other';
   onClassification: (c: 'focused' | 'other') => void;
   focusedUnread: number;
@@ -551,6 +631,7 @@ interface ListPaneProps {
 
 function ListPane({
   list, loading, error, search, onSearch, openId, onOpen, onFlag, page, onPage, totalCount,
+  filteredCount, hasNextPage,
   classification, onClassification, focusedUnread, otherUnread, showClassificationTabs,
 }: ListPaneProps) {
   return (
@@ -634,7 +715,11 @@ function ListPane({
       )}
       <div className="flex items-center justify-between gap-2 border-t border-maja-navy/10 p-2 text-xs text-maja-muted">
         <span>
-          {totalCount != null ? `${totalCount} E-Mails` : `Seite ${page}`}
+          {filteredCount != null
+            ? `Seite ${page} — ${filteredCount} E-Mail${filteredCount === 1 ? '' : 's'}`
+            : totalCount != null
+              ? `${totalCount} E-Mails`
+              : `Seite ${page}`}
         </span>
         <div className="flex gap-1">
           <button
@@ -648,7 +733,7 @@ function ListPane({
           <button
             type="button"
             className="rounded px-2 py-1 hover:bg-maja-light disabled:opacity-40"
-            disabled={loading || list.length < PAGE_SIZE}
+            disabled={loading || !hasNextPage}
             onClick={() => onPage(page + 1)}
           >
             Weiter
