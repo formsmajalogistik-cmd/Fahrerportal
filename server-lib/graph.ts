@@ -515,11 +515,15 @@ export async function listMessages(args: {
 
 /** Holt eine einzelne Nachricht inkl. Body + Anhangs-Metadaten.
  *
- *  Inline-Bilder (Attachment.isInline + Attachment.contentId) werden
- *  serverseitig zu data:-URLs aufgelöst und im HTML-Body anstelle der
- *  `cid:`-Referenzen eingesetzt — sonst zeigt das Frontend nur kaputte
- *  Bild-Icons. Reguläre File-Attachments bleiben unter `attachments`
- *  separat aufgelistet. */
+ *  Anhangs-Liste: ALLE Anhänge der Mail werden so zurückgeliefert wie
+ *  Microsoft Graph sie meldet — keine Filterung nach `isInline`. Der
+ *  Anhangs-Bereich unter der Mail im Frontend bleibt damit so wie er
+ *  vor dem Inline-Bild-Fix war.
+ *
+ *  Inline-Bilder: wenn der HTML-Body `cid:<id>`-Referenzen enthält und
+ *  ein zugehöriger Anhang isInline=true + dieselbe contentId hat, wird
+ *  NUR der HTML-String mutiert (cid: → data:base64). Die Anhangs-Liste
+ *  selbst bleibt unverändert. */
 export async function getMessage(args: {
   mailbox: string;
   messageId: string;
@@ -535,84 +539,26 @@ export async function getMessage(args: {
   let bodyHtml = m.body?.content ?? '';
 
   if (m.hasAttachments) {
-    // Schritt 1: Metadaten aller Anhänge — KEIN contentBytes, sonst
-    // wird die Antwort bei großen Attachments riesig oder Microsoft
-    // Graph dropt das Feld unter bestimmten Umständen still. Daraus
-    // alleine wissen wir noch nicht, welche Anhänge inline gezeigt
-    // werden müssen.
-    const metaUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`;
-    const metaResp = await graphFetch('GET', metaUrl);
-    if (metaResp.ok) {
-      const metaJson = await metaResp.json() as { value?: RawAttachment[] };
-      const meta = metaJson.value ?? [];
+    // 1) Metadaten holen — inkl. isInline + contentId, damit wir
+    // Inline-Bilder erkennen können. KEIN contentBytes hier, das wäre
+    // unzuverlässig und bläht die Antwort auf.
+    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`;
+    const aResp = await graphFetch('GET', aUrl);
+    if (aResp.ok) {
+      const aJson = await aResp.json() as { value?: RawAttachment[] };
+      const meta = aJson.value ?? [];
 
-      console.info(
-        '[graph.getMessage] attachments:',
-        meta.map((a) => ({
-          name: a.name, isInline: !!a.isInline, contentId: a.contentId ?? null,
-          contentType: a.contentType, size: a.size,
-        })),
-      );
+      // 2) Anhangs-Liste = ALLE Anhänge (wie vor dem Inline-Fix).
+      attachments = meta.map((a) => ({
+        id: a.id,
+        name: a.name,
+        contentType: a.contentType ?? 'application/octet-stream',
+        size: a.size ?? 0,
+      }));
 
-      // Schritt 2: welche `cid:`-Referenzen stehen tatsächlich im Body?
-      // Nur die werden später gegen ein data:-URL ersetzt — alle anderen
-      // Attachments bleiben als reguläre Datei-Anhänge sichtbar.
-      const cidsInBody = new Set<string>();
-      const cidRe = /src=["']cid:([^"']+)["']/gi;
-      let mc: RegExpExecArray | null;
-      while ((mc = cidRe.exec(bodyHtml)) !== null) {
-        cidsInBody.add(mc[1]);
-      }
-      console.info('[graph.getMessage] cid refs in body:', [...cidsInBody]);
-
-      // Schritt 3: nur für Inline-Anhänge, die im Body referenziert sind,
-      // jetzt einzeln die Bytes nachladen und in data:-URLs einbetten.
-      const consumedIds = new Set<string>();
-      for (const a of meta) {
-        if (!a.isInline || !a.contentId) continue;
-        const stripped = a.contentId.replace(/^<|>$/g, '');
-        const referenced = cidsInBody.has(a.contentId) || cidsInBody.has(stripped);
-        if (!referenced) continue;
-        try {
-          const fullUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(a.id)}`;
-          const fullResp = await graphFetch('GET', fullUrl);
-          if (!fullResp.ok) {
-            console.warn(`[graph.getMessage] inline-bytes fetch ${a.id} HTTP ${fullResp.status}`);
-            continue;
-          }
-          const full = await fullResp.json() as RawAttachment;
-          if (!full.contentBytes) {
-            console.warn(`[graph.getMessage] inline ${a.id} ohne contentBytes`);
-            continue;
-          }
-          const ct = full.contentType ?? a.contentType ?? 'application/octet-stream';
-          const dataUrl = `data:${ct};base64,${full.contentBytes}`;
-          const rawEsc = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const stripEsc = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          bodyHtml = bodyHtml
-            .replace(new RegExp(`src=["']cid:${rawEsc}["']`, 'gi'), `src="${dataUrl}"`)
-            .replace(new RegExp(`src=["']cid:${stripEsc}["']`, 'gi'), `src="${dataUrl}"`);
-          consumedIds.add(a.id);
-        } catch (err) {
-          console.warn('[graph.getMessage] inline-bytes fetch fehlgeschlagen', err);
-        }
-      }
-
-      // Schritt 4: alle Anhänge bleiben sichtbar, ausser die, die wir
-      // erfolgreich in den Body eingebettet haben. Dadurch:
-      //   - normale PDFs / Bilder als Anhang → sichtbar
-      //   - „inline" markierte Files ohne cid-Referenz → sichtbar (defensiv)
-      //   - Signatur-Logos mit cid im Body → in Body, NICHT in der Liste
-      attachments = meta
-        .filter((a) => !consumedIds.has(a.id))
-        .map((a) => ({
-          id: a.id,
-          name: a.name,
-          contentType: a.contentType ?? 'application/octet-stream',
-          size: a.size ?? 0,
-        }));
-    } else {
-      console.warn(`[graph.getMessage] attachment-meta HTTP ${metaResp.status}`);
+      // 3) Inline-Bilder im Body auflösen — separater, minimaler Pass.
+      // Mutiert NUR bodyHtml; die Anhangs-Liste wird nicht angefasst.
+      bodyHtml = await resolveInlineImages(args.mailbox, args.messageId, bodyHtml, meta);
     }
   }
 
@@ -626,13 +572,57 @@ export async function getMessage(args: {
     cc: recipientList(m.ccRecipients),
     receivedDateTime: m.receivedDateTime ?? '',
     bodyPreview: m.bodyPreview ?? '',
-    hasAttachments: attachments.length > 0,
+    hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
     bodyHtml,
     bodyContentType: contentType,
     attachments,
   };
+}
+
+/**
+ * Ersetzt im HTML-Body `cid:<contentId>`-Referenzen durch
+ * `data:<mime>;base64,...` — pro inline-flagged Anhang, dessen contentId
+ * im Body referenziert ist. Lädt die Bytes pro Anhang einzeln nach (das
+ * Sammel-Select für contentBytes ist unzuverlässig). Wenn etwas
+ * schiefgeht, bleibt der Body unverändert — die normale Anhangs-Liste
+ * ist davon NICHT betroffen.
+ */
+async function resolveInlineImages(
+  mailbox: string,
+  messageId: string,
+  htmlBody: string,
+  attachments: RawAttachment[],
+): Promise<string> {
+  if (!htmlBody || attachments.length === 0) return htmlBody;
+  let resolved = htmlBody;
+  for (const a of attachments) {
+    if (!a.isInline || !a.contentId) continue;
+    const stripped = a.contentId.replace(/^<|>$/g, '');
+    if (!resolved.includes(`cid:${a.contentId}`) && !resolved.includes(`cid:${stripped}`)) continue;
+    try {
+      const fullUrl = `${GRAPH}/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(a.id)}`;
+      const fullResp = await graphFetch('GET', fullUrl);
+      if (!fullResp.ok) {
+        console.warn(`[graph.resolveInlineImages] ${a.id} HTTP ${fullResp.status}`);
+        continue;
+      }
+      const full = await fullResp.json() as RawAttachment;
+      if (!full.contentBytes) {
+        console.warn(`[graph.resolveInlineImages] ${a.id} ohne contentBytes`);
+        continue;
+      }
+      const ct = full.contentType ?? a.contentType ?? 'application/octet-stream';
+      const dataUrl = `data:${ct};base64,${full.contentBytes}`;
+      // split/join: keine regex-Escape-Sorgen, ersetzt alle Vorkommen.
+      resolved = resolved.split(`cid:${a.contentId}`).join(dataUrl);
+      resolved = resolved.split(`cid:${stripped}`).join(dataUrl);
+    } catch (err) {
+      console.warn('[graph.resolveInlineImages] Fehler', err);
+    }
+  }
+  return resolved;
 }
 
 /** Lädt einen einzelnen Anhang als Binär (FileAttachment, decoded). */
