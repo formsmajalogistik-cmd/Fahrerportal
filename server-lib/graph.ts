@@ -535,36 +535,84 @@ export async function getMessage(args: {
   let bodyHtml = m.body?.content ?? '';
 
   if (m.hasAttachments) {
-    // Inline-Bilder brauchen contentBytes — wir holen sie für inline-Attachments
-    // direkt mit, für reguläre Anhänge reichen die Metadaten.
-    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId,contentBytes`;
-    const aResp = await graphFetch('GET', aUrl);
-    if (aResp.ok) {
-      const aJson = await aResp.json() as { value?: RawAttachment[] };
-      const raw = aJson.value ?? [];
+    // Schritt 1: Metadaten aller Anhänge — KEIN contentBytes, sonst
+    // wird die Antwort bei großen Attachments riesig oder Microsoft
+    // Graph dropt das Feld unter bestimmten Umständen still. Daraus
+    // alleine wissen wir noch nicht, welche Anhänge inline gezeigt
+    // werden müssen.
+    const metaUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`;
+    const metaResp = await graphFetch('GET', metaUrl);
+    if (metaResp.ok) {
+      const metaJson = await metaResp.json() as { value?: RawAttachment[] };
+      const meta = metaJson.value ?? [];
 
-      // bodyHtml: cid:-Referenzen durch data:-URLs ersetzen.
-      for (const a of raw) {
-        if (!a.isInline || !a.contentId || !a.contentBytes) continue;
-        const ct = a.contentType ?? 'application/octet-stream';
-        const dataUrl = `data:${ct};base64,${a.contentBytes}`;
-        // contentId kann Sonderzeichen enthalten (z.B. „@", „."); regex
-        // escapen.
-        const cidEsc = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const re = new RegExp(`src=["']cid:${cidEsc}["']`, 'gi');
-        bodyHtml = bodyHtml.replace(re, `src="${dataUrl}"`);
+      console.info(
+        '[graph.getMessage] attachments:',
+        meta.map((a) => ({
+          name: a.name, isInline: !!a.isInline, contentId: a.contentId ?? null,
+          contentType: a.contentType, size: a.size,
+        })),
+      );
+
+      // Schritt 2: welche `cid:`-Referenzen stehen tatsächlich im Body?
+      // Nur die werden später gegen ein data:-URL ersetzt — alle anderen
+      // Attachments bleiben als reguläre Datei-Anhänge sichtbar.
+      const cidsInBody = new Set<string>();
+      const cidRe = /src=["']cid:([^"']+)["']/gi;
+      let mc: RegExpExecArray | null;
+      while ((mc = cidRe.exec(bodyHtml)) !== null) {
+        cidsInBody.add(mc[1]);
+      }
+      console.info('[graph.getMessage] cid refs in body:', [...cidsInBody]);
+
+      // Schritt 3: nur für Inline-Anhänge, die im Body referenziert sind,
+      // jetzt einzeln die Bytes nachladen und in data:-URLs einbetten.
+      const consumedIds = new Set<string>();
+      for (const a of meta) {
+        if (!a.isInline || !a.contentId) continue;
+        const stripped = a.contentId.replace(/^<|>$/g, '');
+        const referenced = cidsInBody.has(a.contentId) || cidsInBody.has(stripped);
+        if (!referenced) continue;
+        try {
+          const fullUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(a.id)}`;
+          const fullResp = await graphFetch('GET', fullUrl);
+          if (!fullResp.ok) {
+            console.warn(`[graph.getMessage] inline-bytes fetch ${a.id} HTTP ${fullResp.status}`);
+            continue;
+          }
+          const full = await fullResp.json() as RawAttachment;
+          if (!full.contentBytes) {
+            console.warn(`[graph.getMessage] inline ${a.id} ohne contentBytes`);
+            continue;
+          }
+          const ct = full.contentType ?? a.contentType ?? 'application/octet-stream';
+          const dataUrl = `data:${ct};base64,${full.contentBytes}`;
+          const rawEsc = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const stripEsc = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          bodyHtml = bodyHtml
+            .replace(new RegExp(`src=["']cid:${rawEsc}["']`, 'gi'), `src="${dataUrl}"`)
+            .replace(new RegExp(`src=["']cid:${stripEsc}["']`, 'gi'), `src="${dataUrl}"`);
+          consumedIds.add(a.id);
+        } catch (err) {
+          console.warn('[graph.getMessage] inline-bytes fetch fehlgeschlagen', err);
+        }
       }
 
-      // Sichtbare Attachments: inline-Bilder ausblenden, reguläre Datei-
-      // Anhänge bleiben sichtbar.
-      attachments = raw
-        .filter((a) => !a.isInline)
+      // Schritt 4: alle Anhänge bleiben sichtbar, ausser die, die wir
+      // erfolgreich in den Body eingebettet haben. Dadurch:
+      //   - normale PDFs / Bilder als Anhang → sichtbar
+      //   - „inline" markierte Files ohne cid-Referenz → sichtbar (defensiv)
+      //   - Signatur-Logos mit cid im Body → in Body, NICHT in der Liste
+      attachments = meta
+        .filter((a) => !consumedIds.has(a.id))
         .map((a) => ({
           id: a.id,
           name: a.name,
           contentType: a.contentType ?? 'application/octet-stream',
           size: a.size ?? 0,
         }));
+    } else {
+      console.warn(`[graph.getMessage] attachment-meta HTTP ${metaResp.status}`);
     }
   }
 
@@ -578,8 +626,6 @@ export async function getMessage(args: {
     cc: recipientList(m.ccRecipients),
     receivedDateTime: m.receivedDateTime ?? '',
     bodyPreview: m.bodyPreview ?? '',
-    // hasAttachments spiegelt nur die SICHTBAREN Anhänge — reine
-    // Inline-Bilder zählen nicht (verwirrt sonst das UI).
     hasAttachments: attachments.length > 0,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
