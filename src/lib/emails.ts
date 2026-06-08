@@ -86,14 +86,24 @@ async function getAction<T>(action: string, params: URLSearchParams, timeoutMs =
 }
 
 export async function listEmails(args: {
-  mailbox: string; page?: number; pageSize?: number; search?: string; folder?: string;
-}): Promise<{ value: MailListItem[]; totalCount?: number }> {
+  mailbox: string;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  folder?: string;
+  /** Focused Inbox: 'focused' = Relevant, 'other' = Sonstige. */
+  classification?: 'focused' | 'other';
+  /** Nur ungelesene Nachrichten — wird für Tab-Badge-Counts genutzt. */
+  onlyUnread?: boolean;
+}): Promise<{ value: MailListItem[]; totalCount?: number; classificationSupported?: boolean }> {
   const params = new URLSearchParams();
   params.set('mailbox', args.mailbox);
   if (args.page) params.set('page', String(args.page));
-  if (args.pageSize) params.set('pageSize', String(args.pageSize));
+  if (args.pageSize != null) params.set('pageSize', String(args.pageSize));
   if (args.search) params.set('search', args.search);
   if (args.folder) params.set('folder', args.folder);
+  if (args.classification) params.set('classification', args.classification);
+  if (args.onlyUnread) params.set('onlyUnread', '1');
   return getAction('list', params);
 }
 

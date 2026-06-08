@@ -49,6 +49,14 @@ export function PosteingangPage() {
   const [totalCount, setTotalCount] = useState<number | undefined>(undefined);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  // Focused Inbox: nur im "inbox"-Ordner relevant. Server liefert
+  // `classificationSupported=false` zurück, wenn das Konto die
+  // Klassifizierung nicht hat → Tabs werden ausgeblendet.
+  const [classification, setClassification] = useState<'focused' | 'other'>('focused');
+  const [classificationSupported, setClassificationSupported] = useState(true);
+  const [focusedUnread, setFocusedUnread] = useState<number | null>(null);
+  const [otherUnread, setOtherUnread] = useState<number | null>(null);
+  const showClassificationTabs = activeFolderId === 'inbox' && classificationSupported;
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [openMail, setOpenMail] = useState<MailDetail | null>(null);
@@ -109,26 +117,68 @@ export function PosteingangPage() {
     setListLoading(true);
     setListError(null);
     try {
+      const isInbox = activeFolderId === 'inbox';
       const r = await listEmails({
         mailbox: activeMailbox,
         page,
         pageSize: PAGE_SIZE,
         search: search.trim() || undefined,
         folder: activeFolderId,
+        classification: isInbox ? classification : undefined,
       });
       setList(r.value);
       setTotalCount(r.totalCount);
+      if (isInbox) {
+        // Server-Flag: false → Konto hat keine Focused-Inbox → Tabs aus.
+        setClassificationSupported(r.classificationSupported !== false);
+      }
     } catch (err) {
       setListError(err instanceof Error ? err.message : 'Liste konnte nicht geladen werden.');
       setList([]);
     } finally {
       setListLoading(false);
     }
-  }, [activeMailbox, page, search, activeFolderId]);
+  }, [activeMailbox, page, search, activeFolderId, classification]);
 
   useEffect(() => {
     void Promise.resolve().then(() => { void loadList(); });
   }, [loadList]);
+
+  // --- Unread-Counts für die Klassifizierungs-Tabs ------------------
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeMailbox || activeFolderId !== 'inbox' || !classificationSupported) {
+      void Promise.resolve().then(() => {
+        if (cancelled) return;
+        setFocusedUnread(null);
+        setOtherUnread(null);
+      });
+      return () => { cancelled = true; };
+    }
+    void (async () => {
+      try {
+        const [f, o] = await Promise.all([
+          listEmails({
+            mailbox: activeMailbox, folder: 'inbox',
+            classification: 'focused', onlyUnread: true, pageSize: 0,
+          }),
+          listEmails({
+            mailbox: activeMailbox, folder: 'inbox',
+            classification: 'other', onlyUnread: true, pageSize: 0,
+          }),
+        ]);
+        if (cancelled) return;
+        setFocusedUnread(typeof f.totalCount === 'number' ? f.totalCount : null);
+        setOtherUnread(typeof o.totalCount === 'number' ? o.totalCount : null);
+      } catch {
+        if (!cancelled) {
+          setFocusedUnread(null);
+          setOtherUnread(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeMailbox, activeFolderId, classificationSupported]);
 
   // --- Detail laden -----------------------------------------------
   useEffect(() => {
@@ -157,6 +207,8 @@ export function PosteingangPage() {
     setOpenMail(null);
     setPendingTour(null);
     setActiveFolderId('inbox');
+    setClassification('focused');
+    setClassificationSupported(true);
   }
 
   function chooseFolder(id: string) {
@@ -165,6 +217,14 @@ export function PosteingangPage() {
     setOpenId(null);
     setOpenMail(null);
     setPendingTour(null);
+    setClassification('focused');
+  }
+
+  function chooseClassification(c: 'focused' | 'other') {
+    setClassification(c);
+    setPage(1);
+    setOpenId(null);
+    setOpenMail(null);
   }
 
   function showToast(t: string) {
@@ -255,7 +315,7 @@ export function PosteingangPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-[calc(100vh-7rem)] min-h-[28rem] flex-col gap-4 overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-maja-navy">Posteingang</h1>
@@ -329,7 +389,7 @@ export function PosteingangPage() {
           />
         )
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,2fr)_minmax(0,3fr)]">
+        <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[14rem_minmax(0,2fr)_minmax(0,3fr)]">
           <FolderSidebar
             folders={folders}
             loading={foldersLoading}
@@ -348,6 +408,11 @@ export function PosteingangPage() {
             page={page}
             onPage={setPage}
             totalCount={totalCount}
+            classification={classification}
+            onClassification={chooseClassification}
+            focusedUnread={focusedUnread}
+            otherUnread={otherUnread}
+            showClassificationTabs={showClassificationTabs}
           />
           <DetailPane
             mailbox={activeMailbox}
@@ -428,14 +493,14 @@ function FolderSidebar({
     .filter((f) => !f.wellKnown)
     .sort((a, b) => a.displayName.localeCompare(b.displayName, 'de', { sensitivity: 'base' }));
   return (
-    <div className="card flex flex-col">
+    <div className="card flex min-h-0 flex-col overflow-hidden">
       <h3 className="border-b border-maja-navy/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-maja-muted">
         Ordner
       </h3>
       {loading ? (
         <div className="p-3 text-xs text-maja-muted">Lade …</div>
       ) : (
-        <ul className="divide-y divide-maja-navy/5 text-sm">
+        <ul className="flex-1 divide-y divide-maja-navy/5 overflow-y-auto overscroll-contain text-sm">
           {wellKnown.map((f) => (
             <FolderRow key={f.id} folder={f} active={isFolderActive(activeId, f)} onChoose={onChoose} />
           ))}
@@ -498,13 +563,19 @@ interface ListPaneProps {
   page: number;
   onPage: (n: number) => void;
   totalCount?: number;
+  classification: 'focused' | 'other';
+  onClassification: (c: 'focused' | 'other') => void;
+  focusedUnread: number | null;
+  otherUnread: number | null;
+  showClassificationTabs: boolean;
 }
 
 function ListPane({
   list, loading, error, search, onSearch, openId, onOpen, onFlag, page, onPage, totalCount,
+  classification, onClassification, focusedUnread, otherUnread, showClassificationTabs,
 }: ListPaneProps) {
   return (
-    <div className="card flex min-h-[24rem] flex-col">
+    <div className="card flex min-h-0 flex-col overflow-hidden">
       <div className="border-b border-maja-navy/10 p-3">
         <input
           className="input"
@@ -514,6 +585,22 @@ function ListPane({
           onChange={(e) => onSearch(e.target.value)}
         />
       </div>
+      {showClassificationTabs && (
+        <div className="flex border-b border-maja-navy/10 px-3">
+          <ClassificationTab
+            label="Relevant"
+            active={classification === 'focused'}
+            unread={focusedUnread}
+            onClick={() => onClassification('focused')}
+          />
+          <ClassificationTab
+            label="Sonstige"
+            active={classification === 'other'}
+            unread={otherUnread}
+            onClick={() => onClassification('other')}
+          />
+        </div>
+      )}
       {error && (
         <div role="alert" className="m-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -524,7 +611,7 @@ function ListPane({
       ) : list.length === 0 ? (
         <p className="p-6 text-center text-sm text-maja-muted">Keine E-Mails gefunden.</p>
       ) : (
-        <ul className="flex-1 overflow-y-auto divide-y divide-maja-navy/5">
+        <ul className="flex-1 divide-y divide-maja-navy/5 overflow-y-auto overscroll-contain">
           {list.map((m) => {
             const active = m.id === openId;
             return (
@@ -618,19 +705,19 @@ function DetailPane({
   onReply, onForward, onCreateTour, onOpenTour, onAddZusaetze, onAddZusaetzeBelege,
   onDelete, onMove,
 }: DetailPaneProps) {
-  if (loading) return <div className="card p-6"><Spinner label="E-Mail wird geladen …" /></div>;
+  if (loading) return <div className="card flex min-h-0 overflow-y-auto overscroll-contain p-6"><Spinner label="E-Mail wird geladen …" /></div>;
   if (error) {
-    return <div role="alert" className="card p-4 text-sm text-red-700">{error}</div>;
+    return <div role="alert" className="card min-h-0 overflow-y-auto overscroll-contain p-4 text-sm text-red-700">{error}</div>;
   }
   if (!mail) {
     return (
-      <div className="card flex items-center justify-center p-12 text-sm text-maja-muted">
+      <div className="card flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain p-12 text-sm text-maja-muted">
         Wähle links eine E-Mail aus.
       </div>
     );
   }
   return (
-    <div className="card flex flex-col gap-4 p-5">
+    <div className="card flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <EmailMessageHeader mail={mail} />
         <div className="flex flex-wrap gap-2">
@@ -747,6 +834,37 @@ function DeleteConfirmDialog({
 }
 
 // ---- kleine Icons ----------------------------------------------------
+
+function ClassificationTab({
+  label, active, unread, onClick,
+}: {
+  label: string;
+  active: boolean;
+  unread: number | null;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
+        active
+          ? 'border-maja-navy text-maja-navy'
+          : 'border-transparent text-maja-muted hover:text-maja-navy'
+      }`}
+      aria-current={active ? 'page' : undefined}
+    >
+      {label}
+      {unread != null && unread > 0 && (
+        <span className={`rounded-full px-1.5 text-[10px] font-semibold ${
+          active ? 'bg-maja-navy text-white' : 'bg-maja-accent/20 text-maja-accent'
+        }`}>
+          {unread}
+        </span>
+      )}
+    </button>
+  );
+}
 
 function PaperclipIcon({ className }: { className?: string }) {
   return (
