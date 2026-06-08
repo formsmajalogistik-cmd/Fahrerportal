@@ -23,7 +23,7 @@ export function TourFromEmailPanel({ mail, mailbox, onClose, onCreated }: Props)
     info: `Aus E-Mail: ${mail.subject}`,
   }), [mail]);
   return (
-    <div className="space-y-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-maja-navy">
           Tour aus E-Mail erstellen
@@ -39,17 +39,15 @@ export function TourFromEmailPanel({ mail, mailbox, onClose, onCreated }: Props)
         </div>
       </div>
       {/*
-        Side-by-Side mit unabhängigem Scrollverhalten (Aufgabe 1):
-        - Grid bekommt eine FESTE Höhe (Viewport minus Header) und
-          overflow-hidden — damit kann KEINE Seite den äußeren
-          Container scrollen lassen.
-        - Beide Panels: overflow-y-auto + overscroll-contain.
-          Damit greift weder Scroll-Chaining noch der Browser-Pull-to-
-          Refresh, wenn man rechts ans Listenende kommt.
+        Side-by-Side mit unabhängigem Scrollverhalten. Das Grid bekommt
+        `flex-1 min-h-0`, damit es den verbleibenden Raum des Eltern-
+        Containers ausfüllt — KEINE eigene viewport-Höhenrechnung. So
+        wird der Speichern-Button am Ende des Formulars rechts nicht
+        mehr abgeschnitten.
       */}
-      <div className="grid gap-4 md:grid-cols-2 md:h-[calc(100vh-12rem)] md:overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-4 overflow-hidden md:grid-cols-2">
         <div
-          className={`${tab === 'mail' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}
+          className={`${tab === 'mail' ? '' : 'hidden'} min-h-0 md:block md:overflow-y-auto md:overscroll-contain`}
         >
           <div className="card flex flex-col p-5">
             <EmailMessageHeader mail={mail} />
@@ -57,7 +55,7 @@ export function TourFromEmailPanel({ mail, mailbox, onClose, onCreated }: Props)
           </div>
         </div>
         <div
-          className={`${tab === 'form' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}
+          className={`${tab === 'form' ? '' : 'hidden'} min-h-0 pb-12 md:block md:overflow-y-auto md:overscroll-contain`}
         >
           <TourCreateDialog
             variant="embedded"

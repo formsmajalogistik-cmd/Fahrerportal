@@ -341,30 +341,32 @@ export function PosteingangPage() {
       </div>
 
       {pendingTour && openMail ? (
-        pendingTour.mode === 'create' ? (
-          <TourFromEmailPanel
-            mail={openMail}
-            mailbox={activeMailbox}
-            onClose={() => setPendingTour(null)}
-            onCreated={(label) => { setPendingTour(null); showToast(`Tour erstellt: ${label}`); }}
-          />
-        ) : pendingTour.mode === 'edit' ? (
-          <TourEditFromEmailPanel
-            mail={openMail}
-            mailbox={activeMailbox}
-            tourId={pendingTour.tourId}
-            onClose={() => setPendingTour(null)}
-            onSaved={() => { setPendingTour(null); showToast('Tour gespeichert.'); }}
-          />
-        ) : (
-          <ZusaetzeFromEmailPanel
-            mail={openMail}
-            mailbox={activeMailbox}
-            tourId={pendingTour.tourId}
-            mode={pendingTour.mode === 'zusaetze-belege' ? 'zusaetze-belege' : 'zusaetze'}
-            onClose={() => setPendingTour(null)}
-          />
-        )
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {pendingTour.mode === 'create' ? (
+            <TourFromEmailPanel
+              mail={openMail}
+              mailbox={activeMailbox}
+              onClose={() => setPendingTour(null)}
+              onCreated={(label) => { setPendingTour(null); showToast(`Tour erstellt: ${label}`); }}
+            />
+          ) : pendingTour.mode === 'edit' ? (
+            <TourEditFromEmailPanel
+              mail={openMail}
+              mailbox={activeMailbox}
+              tourId={pendingTour.tourId}
+              onClose={() => setPendingTour(null)}
+              onSaved={() => { setPendingTour(null); showToast('Tour gespeichert.'); }}
+            />
+          ) : (
+            <ZusaetzeFromEmailPanel
+              mail={openMail}
+              mailbox={activeMailbox}
+              tourId={pendingTour.tourId}
+              mode={pendingTour.mode === 'zusaetze-belege' ? 'zusaetze-belege' : 'zusaetze'}
+              onClose={() => setPendingTour(null)}
+            />
+          )}
+        </div>
       ) : (
         <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[14rem_minmax(0,2fr)_minmax(0,3fr)]">
           <FolderSidebar

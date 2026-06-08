@@ -239,7 +239,7 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
   const twoSlots = tour?.tourenart === 'ABA' || tour?.tourenart === 'ABC';
 
   return (
-    <div className="space-y-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-maja-navy">
           {mode === 'zusaetze-belege' ? 'Zusätze hinzufügen + Belege übernehmen' : 'Zusätze hinzufügen'}
@@ -255,14 +255,14 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 md:h-[calc(100vh-12rem)] md:overflow-hidden">
-        <div className={`${tab === 'mail' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}>
+      <div className="grid min-h-0 flex-1 gap-4 overflow-hidden md:grid-cols-2">
+        <div className={`${tab === 'mail' ? '' : 'hidden'} min-h-0 md:block md:overflow-y-auto md:overscroll-contain`}>
           <div className="card flex flex-col p-5">
             <EmailMessageHeader mail={mail} />
             <EmailMessageView mail={mail} mailbox={mailbox} />
           </div>
         </div>
-        <div className={`${tab === 'form' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}>
+        <div className={`${tab === 'form' ? '' : 'hidden'} min-h-0 pb-12 md:block md:overflow-y-auto md:overscroll-contain`}>
           <div className="card space-y-4 p-5">
             {loading ? <Spinner label="Tour wird geladen …" /> : !tour ? (
               <p className="text-sm text-red-700">Tour nicht gefunden.</p>

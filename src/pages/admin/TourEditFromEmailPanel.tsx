@@ -22,7 +22,7 @@ export function TourEditFromEmailPanel({ mail, mailbox, tourId, onClose, onSaved
   // Wenn die Tour gelöscht wird, schließen wir das Panel — das ist
   // dieselbe Semantik wie im normalen TourDetailDialog.
   return (
-    <div className="space-y-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-maja-navy">
           Tour bearbeiten — aus E-Mail
@@ -37,9 +37,9 @@ export function TourEditFromEmailPanel({ mail, mailbox, tourId, onClose, onSaved
           </button>
         </div>
       </div>
-      <div className="grid gap-4 md:grid-cols-2 md:h-[calc(100vh-12rem)] md:overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-4 overflow-hidden md:grid-cols-2">
         <div
-          className={`${tab === 'mail' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}
+          className={`${tab === 'mail' ? '' : 'hidden'} min-h-0 md:block md:overflow-y-auto md:overscroll-contain`}
         >
           <div className="card flex flex-col p-5">
             <EmailMessageHeader mail={mail} />
@@ -47,7 +47,7 @@ export function TourEditFromEmailPanel({ mail, mailbox, tourId, onClose, onSaved
           </div>
         </div>
         <div
-          className={`${tab === 'form' ? '' : 'hidden'} md:block md:h-full md:overflow-y-auto md:overscroll-contain`}
+          className={`${tab === 'form' ? '' : 'hidden'} min-h-0 pb-12 md:block md:overflow-y-auto md:overscroll-contain`}
         >
           <TourDetailDialog
             tourId={tourId}
