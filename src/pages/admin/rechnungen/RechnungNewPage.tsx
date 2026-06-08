@@ -132,6 +132,21 @@ export function RechnungNewPage() {
   const [loadingTouren, setLoadingTouren] = useState(false);
   /** Tour-Picker offen für "haupt" | "auslagen" — null = zu. */
   const [tourPicker, setTourPicker] = useState<null | 'haupt' | 'auslagen'>(null);
+  /** Tour-Infos der via Dialog hinzugefügten Touren — landen on-the-fly
+   *  in der Map, ohne den gesamten Touren-State zu mutieren. */
+  const [addedTourInfos, setAddedTourInfos] = useState<Map<string, string>>(new Map());
+  /** tour_id → info-Freitext. Wird aus den geladenen Touren UND den
+   *  manuell hinzugefügten Touren gespeist und nur im Editor angezeigt. */
+  const tourInfoById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of touren) {
+      if (t.info && t.info.trim()) m.set(t.id, t.info.trim());
+    }
+    for (const [id, info] of addedTourInfos) {
+      if (info && info.trim()) m.set(id, info.trim());
+    }
+    return m;
+  }, [touren, addedTourInfos]);
 
   useEffect(() => {
     let cancelled = false;
@@ -339,7 +354,7 @@ export function RechnungNewPage() {
       .select(`
         id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
         startdatum, enddatum, tourenart, kennzeichen,
-        kundenname, fin, sondervereinbarung, verguetung,
+        kundenname, fin, sondervereinbarung, verguetung, info,
         rechnungsdatum, rechnungsdatum_abweichend, status,
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
       `)
@@ -365,6 +380,7 @@ export function RechnungNewPage() {
       tourenart: TourenartReal; kennzeichen: string[] | null;
       kundenname: string | null; fin: string | null;
       sondervereinbarung: string | null; verguetung: number | null;
+      info: string | null;
       rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
       status: string | null;
       zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
@@ -383,6 +399,7 @@ export function RechnungNewPage() {
       fin: t.fin,
       sondervereinbarung: t.sondervereinbarung,
       verguetung: t.verguetung,
+      info: t.info,
       zusaetze: t.zusaetze ?? [],
     }));
     console.info('[Rechnungen] Ergebnis:', {
@@ -467,7 +484,7 @@ export function RechnungNewPage() {
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, sondervereinbarung, verguetung,
+          kundenname, fin, sondervereinbarung, verguetung, info,
           rechnungsdatum, rechnungsdatum_abweichend,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
@@ -482,6 +499,7 @@ export function RechnungNewPage() {
         tourenart: TourenartReal; kennzeichen: string[] | null;
         kundenname: string | null; fin: string | null;
         sondervereinbarung: string | null; verguetung: number | null;
+        info: string | null;
         rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
         zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
       };
@@ -494,6 +512,7 @@ export function RechnungNewPage() {
         kundenname: t.kundenname, fin: t.fin,
         sondervereinbarung: t.sondervereinbarung,
         verguetung: t.verguetung,
+        info: t.info,
         zusaetze: t.zusaetze ?? [],
       }));
 
@@ -950,7 +969,12 @@ export function RechnungNewPage() {
               </button>
             </div>
           </div>
-          <PositionsTable positionen={haupt} defaultUstSatz={ustSatz} onChange={setHaupt} />
+          <PositionsTable
+            positionen={haupt}
+            defaultUstSatz={ustSatz}
+            tourInfoById={tourInfoById}
+            onChange={setHaupt}
+          />
           <SummenBlock positionen={haupt} defaultSatz={ustSatz} prominent />
         </section>
       )}
@@ -979,7 +1003,12 @@ export function RechnungNewPage() {
               </button>
             </div>
           </div>
-          <PositionsTable positionen={auslagen} defaultUstSatz={ustSatz} onChange={setAuslagen} />
+          <PositionsTable
+            positionen={auslagen}
+            defaultUstSatz={ustSatz}
+            tourInfoById={tourInfoById}
+            onChange={setAuslagen}
+          />
           <SummenBlock positionen={auslagen} defaultSatz={ustSatz} prominent />
         </section>
       )}
@@ -1000,7 +1029,7 @@ export function RechnungNewPage() {
       )}
 
       {/* Aktionen */}
-      <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t border-maja-navy/10 bg-white/95 px-2 py-3 backdrop-blur">
+      <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t border-maja-navy/10 bg-white/95 px-2 py-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
         <button
           type="button"
           className="btn-secondary"
@@ -1026,7 +1055,7 @@ export function RechnungNewPage() {
           leistungszeitraumBis={leistungszeitraum.bis}
           modus={getrennt ? (tourPicker === 'auslagen' ? 'auslagen' : 'touren') : 'beides'}
           onClose={() => setTourPicker(null)}
-          onAdd={(positionen) => {
+          onAdd={(positionen, tour) => {
             const withKeys = positionen.map((p) => ({
               ...p,
               key: newKey(tourPicker === 'auslagen' ? 'aus' : 'tour'),
@@ -1035,6 +1064,13 @@ export function RechnungNewPage() {
               setAuslagen((rows) => [...rows, ...withKeys]);
             } else {
               setHaupt((rows) => [...rows, ...withKeys]);
+            }
+            if (tour.info && tour.info.trim()) {
+              setAddedTourInfos((m) => {
+                const next = new Map(m);
+                next.set(tour.id, tour.info!.trim());
+                return next;
+              });
             }
             setTourPicker(null);
           }}

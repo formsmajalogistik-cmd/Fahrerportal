@@ -370,6 +370,9 @@ export interface TourForRechnung {
   fin: string | null;
   sondervereinbarung: string | null;
   verguetung: number | null;
+  /** Freitext-Notiz aus der Tour. Wird im Rechnungs-Editor als Hinweis
+   *  unter der Position angezeigt — nicht in die PDF gerendert. */
+  info?: string | null;
   zusaetze: Array<{
     id: string;
     kategorie: string;

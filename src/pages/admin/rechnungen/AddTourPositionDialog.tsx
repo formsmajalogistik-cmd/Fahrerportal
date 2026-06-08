@@ -28,7 +28,10 @@ interface Props {
    */
   modus?: 'touren' | 'auslagen' | 'beides';
   onClose: () => void;
-  onAdd: (positionen: GeneratedRechnungsposition[]) => void;
+  onAdd: (
+    positionen: GeneratedRechnungsposition[],
+    tour: Pick<TourRow, 'id' | 'info'>,
+  ) => void;
 }
 
 interface TourRow {
@@ -45,6 +48,7 @@ interface TourRow {
   fin: string | null;
   sondervereinbarung: string | null;
   verguetung: number | null;
+  info: string | null;
   zusaetze: Array<{
     id: string; kategorie: string; anzahl: number; betrag: number;
     notiz: string | null; kennzeichen: string | null;
@@ -111,7 +115,7 @@ export function AddTourPositionDialog({
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, sondervereinbarung, verguetung,
+          kundenname, fin, sondervereinbarung, verguetung, info,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
         .eq('auftraggeber_id', auftraggeberId)
@@ -194,6 +198,7 @@ export function AddTourPositionDialog({
       fin: t.fin,
       sondervereinbarung: t.sondervereinbarung,
       verguetung: t.verguetung,
+      info: t.info,
       zusaetze: t.zusaetze,
     };
     const positionen = generatePositionenFromTouren([tourForFmt], format, { modus });
@@ -201,7 +206,7 @@ export function AddTourPositionDialog({
       setError('Diese Tour erzeugt im aktuellen Modus keine Position (keine Vergütung & keine passenden Zusätze).');
       return;
     }
-    onAdd(positionen);
+    onAdd(positionen, { id: t.id, info: t.info });
   }
 
   return (

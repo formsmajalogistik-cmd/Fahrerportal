@@ -75,6 +75,8 @@ export function RechnungDetailPage() {
   const navigate = useNavigate();
   const [rechnung, setRechnung] = useState<RechnungFull | null>(null);
   const [positionen, setPositionen] = useState<EditorPosition[]>([]);
+  /** tour_id → info-Freitext. Für die Anzeige im Edit-Modus. */
+  const [tourInfoById, setTourInfoById] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,6 +166,21 @@ export function RechnungDetailPage() {
       ist_manuell: p.ist_manuell,
       ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
     })));
+
+    // Tour-Infos für die referenzierten Touren nachladen — werden im
+    // Edit-Modus unter der Position angezeigt (NICHT auf der PDF).
+    const tourIds = Array.from(new Set(rows.map((p) => p.tour_id).filter(Boolean) as string[]));
+    if (tourIds.length > 0) {
+      const { data: tourRows } = await supabase
+        .from('touren').select('id, info').in('id', tourIds);
+      const m = new Map<string, string>();
+      for (const t of (tourRows ?? []) as Array<{ id: string; info: string | null }>) {
+        if (t.info && t.info.trim()) m.set(t.id, t.info.trim());
+      }
+      setTourInfoById(m);
+    } else {
+      setTourInfoById(new Map());
+    }
     setLoading(false);
   }, [id]);
 
@@ -622,6 +639,7 @@ export function RechnungDetailPage() {
           positionen={positionen}
           readOnly={!editingPos}
           defaultUstSatz={Number(rechnung.ust_satz) || 0}
+          tourInfoById={tourInfoById}
           onChange={setPositionen}
         />
         <SummenBlock
@@ -756,11 +774,18 @@ export function RechnungDetailPage() {
           excludeRechnungId={rechnung.id}
           modus="beides"
           onClose={() => setTourPickerOpen(false)}
-          onAdd={(neueP) => {
+          onAdd={(neueP, tour) => {
             setPositionen((rows) => [
               ...rows,
               ...neueP.map((p) => ({ ...p, key: newKey('tour') })),
             ]);
+            if (tour.info && tour.info.trim()) {
+              setTourInfoById((m) => {
+                const next = new Map(m);
+                next.set(tour.id, tour.info!.trim());
+                return next;
+              });
+            }
             setTourPickerOpen(false);
           }}
         />

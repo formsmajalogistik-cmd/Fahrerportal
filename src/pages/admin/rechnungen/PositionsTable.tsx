@@ -22,6 +22,9 @@ interface Props {
   /** Standard-USt-Satz der Rechnung — wird als Platzhalter angezeigt,
    *  wenn die Position keinen eigenen Satz hat. */
   defaultUstSatz?: number;
+  /** Tour-Info pro tour_id — wird im Edit-Modus als dezenter Hinweis
+   *  unter der Bezeichnung gerendert (NICHT für Read-only oder PDF). */
+  tourInfoById?: Map<string, string>;
   onChange: (next: EditorPosition[]) => void;
 }
 
@@ -45,7 +48,7 @@ function formatUst(v: number | null | undefined): string {
  * weiterhin ohne Drag-Auslöser editierbar sind. Die Position-Nummern
  * werden bei jedem onChange aus dem neuen Index neu vergeben.
  */
-export function PositionsTable({ positionen, readOnly, defaultUstSatz, onChange }: Props) {
+export function PositionsTable({ positionen, readOnly, defaultUstSatz, tourInfoById, onChange }: Props) {
   // dnd-kit-Sensoren: PointerSensor (Maus + Stift), TouchSensor mit
   // 150 ms Long-Press / 5 px Tolerance (verhindert versehentliches
   // Drag beim Scrollen) und Keyboard für Tastaturbedienung.
@@ -110,6 +113,7 @@ export function PositionsTable({ positionen, readOnly, defaultUstSatz, onChange 
   const rowCtx: RowCtx = {
     readOnly: !!readOnly,
     defaultUstSatz,
+    tourInfoById,
     patch,
     remove,
     updateUnterzeile,
@@ -169,6 +173,7 @@ export function PositionsTable({ positionen, readOnly, defaultUstSatz, onChange 
 interface RowCtx {
   readOnly: boolean;
   defaultUstSatz?: number;
+  tourInfoById?: Map<string, string>;
   patch: (key: string, p: Partial<EditorPosition>) => void;
   remove: (key: string) => void;
   updateUnterzeile: (key: string, idx: number, text: string) => void;
@@ -231,6 +236,11 @@ function SortableRow({
               onChange={(e) => ctx.patch(p.key, { bezeichnung: e.target.value })}
               placeholder="Bezeichnung"
             />
+            {p.tour_id && ctx.tourInfoById?.get(p.tour_id)?.trim() && (
+              <p className="text-xs italic text-maja-muted" title="Aus dem Info-Feld der Tour — wird NICHT auf die Rechnung gedruckt">
+                Info: {ctx.tourInfoById.get(p.tour_id)}
+              </p>
+            )}
             {p.unterzeilen.map((u, i) => (
               <div key={i} className="flex items-center gap-1">
                 <input
