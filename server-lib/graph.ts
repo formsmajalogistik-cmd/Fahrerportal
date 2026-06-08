@@ -418,6 +418,11 @@ export interface MailListItem {
   isRead: boolean;
   /** Graph-Flag-Status: "flagged" | "notFlagged" | "complete". */
   flagged: boolean;
+  /** Focused Inbox: 'focused' | 'other' | null (unbekannt / nicht
+   *  unterstützt). Wird im Frontend für die Relevant/Sonstige-Tabs
+   *  ausgewertet — clientseitiges Filtern statt $filter, weil
+   *  inferenceClassification + $orderby = InefficientFilter. */
+  inferenceClassification: 'focused' | 'other' | null;
 }
 
 export interface MailDetail extends MailListItem {
@@ -453,6 +458,7 @@ interface RawMessage {
   isRead?: boolean;
   body?: { contentType?: string; content?: string };
   flag?: { flagStatus?: string };
+  inferenceClassification?: 'focused' | 'other' | string;
 }
 
 function recipient(r: RawGraphRecipient | undefined): { name: string | null; address: string | null } {
@@ -467,44 +473,32 @@ function recipientList(rs: RawGraphRecipient[] | undefined) {
 
 /** Listet Nachrichten eines Postfachs (Posteingang-Folder).
  *
- *  Wenn `classification` gesetzt ist, wird `inferenceClassification eq
- *  'focused'|'other'` als `$filter` angehängt — dadurch trennt Graph die
- *  Inbox in „Relevant" / „Sonstige" (Focused Inbox). Konten ohne diese
- *  Klassifizierung lehnen den Filter mit 400 ab; die Liste-Action im
- *  /api/emails-Endpoint fängt das ab und ruft uns ohne Filter erneut auf.
- *
- *  `onlyUnread` setzt zusätzlich `isRead eq false` — wird im Frontend
- *  benutzt, um die Badge-Counts pro Tab günstig (\$top=0) zu holen. */
+ *  `inferenceClassification` (Focused Inbox: focused/other) wird IMMER
+ *  mitgeladen, aber nie als $filter benutzt — Graph wirft sonst
+ *  `InefficientFilter` in Kombination mit $orderby, und $filter ist
+ *  zusätzlich nicht mit $search kompatibel. Die Tabs „Relevant"/
+ *  „Sonstige" filtern darum clientseitig. */
 export async function listMessages(args: {
   mailbox: string;
   folder?: string;
   page?: number;
   pageSize?: number;
   search?: string | null;
-  classification?: 'focused' | 'other';
-  onlyUnread?: boolean;
 }): Promise<{ value: MailListItem[]; totalCount?: number }> {
   const folder = args.folder ?? 'inbox';
   const page = Math.max(1, args.page ?? 1);
-  const pageSize = Math.min(100, Math.max(0, args.pageSize ?? 20));
+  const pageSize = Math.min(100, Math.max(1, args.pageSize ?? 20));
   const skip = (page - 1) * pageSize;
   const params = new URLSearchParams();
   params.set('$top', String(pageSize));
-  if (pageSize > 0) params.set('$skip', String(skip));
+  params.set('$skip', String(skip));
   params.set('$orderby', 'receivedDateTime desc');
-  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead,flag');
+  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead,flag,inferenceClassification');
   params.set('$count', 'true');
 
-  // $filter — kombiniert classification + onlyUnread mit AND.
-  const filters: string[] = [];
-  if (args.classification === 'focused') filters.push("inferenceClassification eq 'focused'");
-  else if (args.classification === 'other') filters.push("inferenceClassification eq 'other'");
-  if (args.onlyUnread) filters.push('isRead eq false');
-  if (filters.length > 0) params.set('$filter', filters.join(' and '));
-
-  // Graph $search: über Betreff/Absender. Wenn search gesetzt, kann
-  // $orderby nicht parallel genutzt werden — Graph akzeptiert das in
-  // diesem Endpunkt aber problemlos für inbox-Listing.
+  // Graph: $search + $filter / $orderby ist nicht kompatibel. Bei einer
+  // aktiven Suche fallen $orderby und alle $filter weg; die Sortierung
+  // erfolgt clientseitig.
   if (args.search) {
     params.delete('$orderby');
     params.set('$search', `"${args.search.replace(/"/g, '\\"')}"`);
@@ -512,17 +506,7 @@ export async function listMessages(args: {
   const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/mailFolders/${encodeURIComponent(folder)}/messages?${params.toString()}`;
   const resp = await graphFetch('GET', url, undefined, { ConsistencyLevel: 'eventual' });
   if (!resp.ok) {
-    const text = await resp.text();
-    // Spezial-Fall: Konten ohne Focused-Inbox lehnen den
-    // inferenceClassification-Filter mit 400 ab. Den Caller einen
-    // erkennbaren Fehler werfen, damit /api/emails ihn auf den
-    // ungefilterten Pfad umlenken kann.
-    if (args.classification && resp.status === 400 && text.includes('inferenceClassification')) {
-      const err = new Error('inferenceClassification not supported') as Error & { unsupportedClassification?: boolean };
-      err.unsupportedClassification = true;
-      throw err;
-    }
-    throw new Error(`listMessages: ${resp.status} ${text}`);
+    throw new Error(`listMessages: ${resp.status} ${await resp.text()}`);
   }
   const j = await resp.json() as { value?: RawMessage[]; '@odata.count'?: number };
   const value = (j.value ?? []).map((m): MailListItem => ({
@@ -534,7 +518,18 @@ export async function listMessages(args: {
     hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
+    inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
+      : m.inferenceClassification === 'other' ? 'other'
+      : null,
   }));
+  // Bei aktiver Suche fällt Graph-$orderby weg → clientseitig
+  // nach receivedDateTime DESC sortieren, damit die Liste konsistent
+  // bleibt.
+  if (args.search) {
+    value.sort((a, b) =>
+      (b.receivedDateTime || '').localeCompare(a.receivedDateTime || ''),
+    );
+  }
   return { value, totalCount: j['@odata.count'] };
 }
 
@@ -543,7 +538,7 @@ export async function getMessage(args: {
   mailbox: string;
   messageId: string;
 }): Promise<MailDetail> {
-  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body,flag';
+  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body,flag,inferenceClassification';
   const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}?${select}`;
   const resp = await graphFetch('GET', url, undefined, { Prefer: 'outlook.body-content-type="html"' });
   if (!resp.ok) {
@@ -577,6 +572,9 @@ export async function getMessage(args: {
     hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
+    inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
+      : m.inferenceClassification === 'other' ? 'other'
+      : null,
     bodyHtml: m.body?.content ?? '',
     bodyContentType: contentType,
     attachments,

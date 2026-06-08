@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useState,
+  useCallback, useEffect, useMemo, useState,
 } from 'react';
 import { Spinner } from '../../components/Spinner';
 import { MailIcon } from '../../components/icons';
@@ -49,14 +49,13 @@ export function PosteingangPage() {
   const [totalCount, setTotalCount] = useState<number | undefined>(undefined);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  // Focused Inbox: nur im "inbox"-Ordner relevant. Server liefert
-  // `classificationSupported=false` zurück, wenn das Konto die
-  // Klassifizierung nicht hat → Tabs werden ausgeblendet.
+  // Focused Inbox: clientseitiges Filtern, weil
+  // `$filter=inferenceClassification ...` mit $orderby (InefficientFilter)
+  // und mit $search (SearchWithFilter) kollidiert. Tabs werden nur im
+  // Posteingang-Ordner gezeigt UND nur, wenn die geladene Liste
+  // mindestens eine Mail mit klassifizierungs-tag enthält (Konten ohne
+  // Focused Inbox liefern für jede Mail `inferenceClassification=null`).
   const [classification, setClassification] = useState<'focused' | 'other'>('focused');
-  const [classificationSupported, setClassificationSupported] = useState(true);
-  const [focusedUnread, setFocusedUnread] = useState<number | null>(null);
-  const [otherUnread, setOtherUnread] = useState<number | null>(null);
-  const showClassificationTabs = activeFolderId === 'inbox' && classificationSupported;
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [openMail, setOpenMail] = useState<MailDetail | null>(null);
@@ -117,68 +116,47 @@ export function PosteingangPage() {
     setListLoading(true);
     setListError(null);
     try {
-      const isInbox = activeFolderId === 'inbox';
       const r = await listEmails({
         mailbox: activeMailbox,
         page,
         pageSize: PAGE_SIZE,
         search: search.trim() || undefined,
         folder: activeFolderId,
-        classification: isInbox ? classification : undefined,
       });
       setList(r.value);
       setTotalCount(r.totalCount);
-      if (isInbox) {
-        // Server-Flag: false → Konto hat keine Focused-Inbox → Tabs aus.
-        setClassificationSupported(r.classificationSupported !== false);
-      }
     } catch (err) {
       setListError(err instanceof Error ? err.message : 'Liste konnte nicht geladen werden.');
       setList([]);
     } finally {
       setListLoading(false);
     }
-  }, [activeMailbox, page, search, activeFolderId, classification]);
+  }, [activeMailbox, page, search, activeFolderId]);
 
   useEffect(() => {
     void Promise.resolve().then(() => { void loadList(); });
   }, [loadList]);
 
-  // --- Unread-Counts für die Klassifizierungs-Tabs ------------------
-  useEffect(() => {
-    let cancelled = false;
-    if (!activeMailbox || activeFolderId !== 'inbox' || !classificationSupported) {
-      void Promise.resolve().then(() => {
-        if (cancelled) return;
-        setFocusedUnread(null);
-        setOtherUnread(null);
-      });
-      return () => { cancelled = true; };
-    }
-    void (async () => {
-      try {
-        const [f, o] = await Promise.all([
-          listEmails({
-            mailbox: activeMailbox, folder: 'inbox',
-            classification: 'focused', onlyUnread: true, pageSize: 0,
-          }),
-          listEmails({
-            mailbox: activeMailbox, folder: 'inbox',
-            classification: 'other', onlyUnread: true, pageSize: 0,
-          }),
-        ]);
-        if (cancelled) return;
-        setFocusedUnread(typeof f.totalCount === 'number' ? f.totalCount : null);
-        setOtherUnread(typeof o.totalCount === 'number' ? o.totalCount : null);
-      } catch {
-        if (!cancelled) {
-          setFocusedUnread(null);
-          setOtherUnread(null);
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeMailbox, activeFolderId, classificationSupported]);
+  // --- Focused-Inbox: clientseitiges Filtern + Badge-Counts -------
+  const classificationSupported = activeFolderId === 'inbox'
+    && list.some((m) => m.inferenceClassification != null);
+  const showClassificationTabs = classificationSupported;
+  const visibleList = useMemo(() => {
+    if (!showClassificationTabs) return list;
+    return list.filter((m) => m.inferenceClassification === classification);
+  }, [list, showClassificationTabs, classification]);
+  const focusedUnread = useMemo(
+    () => (showClassificationTabs
+      ? list.filter((m) => m.inferenceClassification === 'focused' && !m.isRead).length
+      : 0),
+    [list, showClassificationTabs],
+  );
+  const otherUnread = useMemo(
+    () => (showClassificationTabs
+      ? list.filter((m) => m.inferenceClassification === 'other' && !m.isRead).length
+      : 0),
+    [list, showClassificationTabs],
+  );
 
   // --- Detail laden -----------------------------------------------
   useEffect(() => {
@@ -208,7 +186,6 @@ export function PosteingangPage() {
     setPendingTour(null);
     setActiveFolderId('inbox');
     setClassification('focused');
-    setClassificationSupported(true);
   }
 
   function chooseFolder(id: string) {
@@ -397,7 +374,7 @@ export function PosteingangPage() {
             onChoose={chooseFolder}
           />
           <ListPane
-            list={list}
+            list={visibleList}
             loading={listLoading}
             error={listError}
             search={search}
@@ -407,7 +384,7 @@ export function PosteingangPage() {
             onFlag={handleToggleFlag}
             page={page}
             onPage={setPage}
-            totalCount={totalCount}
+            totalCount={showClassificationTabs ? undefined : totalCount}
             classification={classification}
             onClassification={chooseClassification}
             focusedUnread={focusedUnread}
@@ -565,8 +542,8 @@ interface ListPaneProps {
   totalCount?: number;
   classification: 'focused' | 'other';
   onClassification: (c: 'focused' | 'other') => void;
-  focusedUnread: number | null;
-  otherUnread: number | null;
+  focusedUnread: number;
+  otherUnread: number;
   showClassificationTabs: boolean;
 }
 
@@ -840,7 +817,7 @@ function ClassificationTab({
 }: {
   label: string;
   active: boolean;
-  unread: number | null;
+  unread: number;
   onClick: () => void;
 }) {
   return (
@@ -855,7 +832,7 @@ function ClassificationTab({
       aria-current={active ? 'page' : undefined}
     >
       {label}
-      {unread != null && unread > 0 && (
+      {unread > 0 && (
         <span className={`rounded-full px-1.5 text-[10px] font-semibold ${
           active ? 'bg-maja-navy text-white' : 'bg-maja-accent/20 text-maja-accent'
         }`}>

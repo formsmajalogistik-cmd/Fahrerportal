@@ -113,34 +113,11 @@ export default async function handler(req: Req, res: Res) {
         if (!mailbox) throw new HttpError(400, 'mailbox-Query fehlt');
         await assertMailboxAllowed(token, mailbox);
         const page = Number(qString(req.query?.page) ?? '1') || 1;
-        const pageSizeQ = qString(req.query?.pageSize);
-        const pageSize = pageSizeQ != null ? (Number(pageSizeQ) || 0) : 20;
+        const pageSize = Number(qString(req.query?.pageSize) ?? '20') || 20;
         const search = qString(req.query?.search);
         const folder = qString(req.query?.folder) ?? 'inbox';
-        const classificationQ = qString(req.query?.classification);
-        const classification = classificationQ === 'focused' || classificationQ === 'other'
-          ? classificationQ as 'focused' | 'other'
-          : undefined;
-        const onlyUnread = qString(req.query?.onlyUnread) === '1';
-        try {
-          const result = await listMessages({
-            mailbox, folder, page, pageSize, search, classification, onlyUnread,
-          });
-          res.status(200).json(result);
-        } catch (err) {
-          // Konten ohne Focused-Inbox → ohne Klassifizierung erneut
-          // versuchen; ein 1-mal-Retry ohne Filter, damit das Frontend
-          // nicht in einen Loop läuft.
-          const flag = (err as { unsupportedClassification?: boolean } | null)?.unsupportedClassification;
-          if (flag && classification) {
-            const fallback = await listMessages({
-              mailbox, folder, page, pageSize, search, onlyUnread,
-            });
-            res.status(200).json({ ...fallback, classificationSupported: false });
-            return;
-          }
-          throw err;
-        }
+        const result = await listMessages({ mailbox, folder, page, pageSize, search });
+        res.status(200).json(result);
         return;
       }
       if (action === 'folders') {
