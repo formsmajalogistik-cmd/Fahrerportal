@@ -4,8 +4,7 @@ import { pdfjsLib } from '../../../lib/pdfjs';
 import {
   addBelege, clearBelege, DEFAULT_KENNZEICHEN_POSITION, listBelege,
   removeBeleg, reorderBelege, updateBelegBlob, updateBelegKennzeichen,
-} from '../../../lib/belegeStorage';
-import { uploadToOneDrive } from '../../../lib/onedrive';
+} from '../../../lib/belegeStorage';import { uploadToOneDrive } from '../../../lib/onedrive';
 import { supabase } from '../../../lib/supabase';
 import { heicToJpeg } from './heic';
 import { ImageCropDialog } from './ImageCropDialog';
@@ -18,8 +17,6 @@ interface BelegItem {
   url: string;
   /** Optionaler Kennzeichen-Text als Overlay auf diesem Beleg. */
   kennzeichen: string;
-  /** Position in Prozent vom linken/oberen Rand des Bildes. */
-  kennzeichenPosition: { x: number; y: number };
 }
 
 // Render-Auflösung für aus PDFs extrahierte Seiten. PDFs sind
@@ -94,17 +91,11 @@ export function BelegeUploadTab() {
     setItems((prev) => prev.map((i) =>
       i.id === id ? { ...i, kennzeichen } : i,
     ));
-    const target = items.find((i) => i.id === id);
-    const pos = target?.kennzeichenPosition ?? DEFAULT_KENNZEICHEN_POSITION;
-    void updateBelegKennzeichen(id, kennzeichen.trim() || null, pos);
-  }
-  function setItemKennzeichenPosition(id: string, position: { x: number; y: number }) {
-    setItems((prev) => prev.map((i) =>
-      i.id === id ? { ...i, kennzeichenPosition: position } : i,
-    ));
-    const target = items.find((i) => i.id === id);
-    const text = target?.kennzeichen.trim() || null;
-    void updateBelegKennzeichen(id, text, position);
+    void updateBelegKennzeichen(
+      id,
+      kennzeichen.trim() || null,
+      DEFAULT_KENNZEICHEN_POSITION,
+    );
   }
 
   // Beim Mount aus IndexedDB laden — Belege überleben Reiter-Wechsel
@@ -122,7 +113,6 @@ export function BelegeUploadTab() {
           blob: r.blob,
           url: URL.createObjectURL(r.blob),
           kennzeichen: r.kennzeichen ?? '',
-          kennzeichenPosition: r.kennzeichen_position ?? DEFAULT_KENNZEICHEN_POSITION,
         }));
         setItems(restored);
       } catch (err) {
@@ -160,7 +150,6 @@ export function BelegeUploadTab() {
                 blob: compressed,
                 url: URL.createObjectURL(compressed),
                 kennzeichen: '',
-                kennzeichenPosition: DEFAULT_KENNZEICHEN_POSITION,
               });
             } catch (e) {
               console.warn('PDF-Seite konnte nicht verarbeitet werden', pageFile.name, e);
@@ -183,7 +172,6 @@ export function BelegeUploadTab() {
             blob: compressed,
             url: URL.createObjectURL(compressed),
             kennzeichen: '',
-            kennzeichenPosition: DEFAULT_KENNZEICHEN_POSITION,
           });
         } catch (e) {
           console.warn('Bild konnte nicht verarbeitet werden', f.name, e);
@@ -212,7 +200,6 @@ export function BelegeUploadTab() {
           // damit kein zusätzlicher createObjectURL-Roundtrip nötig ist.
           url: processed[i].url,
           kennzeichen: '',
-          kennzeichenPosition: DEFAULT_KENNZEICHEN_POSITION,
         }));
         setItems((prev) => [...prev, ...synced]);
       }
@@ -276,7 +263,6 @@ export function BelegeUploadTab() {
         images: items.map((i) => ({
           blob: i.blob,
           kennzeichen: i.kennzeichen.trim() || null,
-          kennzeichenPosition: i.kennzeichenPosition,
         })),
         layout,
       });
@@ -305,7 +291,6 @@ export function BelegeUploadTab() {
         images: items.map((i) => ({
           blob: i.blob,
           kennzeichen: i.kennzeichen.trim() || null,
-          kennzeichenPosition: i.kennzeichenPosition,
         })),
         layout,
       });
@@ -449,11 +434,7 @@ export function BelegeUploadTab() {
                     draggable={false}
                   />
                   {item.kennzeichen.trim() && (
-                    <KennzeichenOverlayLabel
-                      text={item.kennzeichen}
-                      position={item.kennzeichenPosition}
-                      onPositionChange={(pos) => setItemKennzeichenPosition(item.id, pos)}
-                    />
+                    <KennzeichenOverlayLabel text={item.kennzeichen} />
                   )}
                 </div>
                 <input
@@ -661,58 +642,14 @@ function IconCrop() {
 }
 
 /**
- * Kennzeichen-Text als Overlay über einem Beleg-Bild. Per Pointer-Drag
- * verschiebbar (Pointer-Events decken Maus + Touch ab). Die Position
- * wird in Prozent relativ zum gerenderten Bild gespeichert und greift
- * für ALLE Belege.
+ * Kennzeichen-Text als Overlay-Vorschau über einem Beleg-Bild — feste
+ * Position oben links. Kein Drag, keine Pointer-Handler. Die finale
+ * PDF rendert denselben Text an derselben relativen Position.
  */
-function KennzeichenOverlayLabel({
-  text, position, onPositionChange,
-}: {
-  text: string;
-  position: { x: number; y: number };
-  onPositionChange: (next: { x: number; y: number }) => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
-    e.preventDefault();
-    const node = ref.current;
-    if (!node) return;
-    const parent = node.parentElement;
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    const overlayRect = node.getBoundingClientRect();
-    const offsetX = e.clientX - overlayRect.left;
-    const offsetY = e.clientY - overlayRect.top;
-    node.setPointerCapture(e.pointerId);
-    function move(ev: PointerEvent) {
-      const xPx = ev.clientX - rect.left - offsetX;
-      const yPx = ev.clientY - rect.top - offsetY;
-      const xPct = Math.max(0, Math.min(95, (xPx / rect.width) * 100));
-      const yPct = Math.max(0, Math.min(95, (yPx / rect.height) * 100));
-      onPositionChange({ x: xPct, y: yPct });
-    }
-    function end(ev: PointerEvent) {
-      node?.releasePointerCapture(ev.pointerId);
-      node?.removeEventListener('pointermove', move);
-      node?.removeEventListener('pointerup', end);
-      node?.removeEventListener('pointercancel', end);
-    }
-    node.addEventListener('pointermove', move);
-    node.addEventListener('pointerup', end);
-    node.addEventListener('pointercancel', end);
-  }
+function KennzeichenOverlayLabel({ text }: { text: string }) {
   return (
     <div
-      ref={ref}
-      onPointerDown={startDrag}
-      style={{
-        position: 'absolute',
-        left: `${position.x}%`,
-        top: `${position.y}%`,
-      }}
-      className="cursor-grab touch-none select-none rounded bg-white/75 px-1.5 py-0.5 text-xs font-semibold text-black shadow-sm active:cursor-grabbing"
-      title="Ziehen, um zu verschieben"
+      className="pointer-events-none absolute left-1 top-1 select-none rounded bg-white/75 px-1.5 py-0.5 text-xs font-semibold text-black shadow-sm"
     >
       {text}
     </div>
