@@ -24,7 +24,7 @@ export function SignatureField({ field, value, onChange, disabled }: Props) {
         type="button"
         onClick={() => setOverlayOpen(true)}
         disabled={disabled}
-        className="block w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-white text-left transition hover:bg-maja-light/40 disabled:opacity-50"
+        className="block w-full overflow-hidden rounded-lg border border-maja-navy/20 !bg-white text-left transition hover:bg-maja-light/40 disabled:opacity-50 dark:border-slate-400"
       >
         {dataUrl ? (
           <img src={dataUrl} alt={field.label} className="block max-h-32 w-full object-contain p-2" />
@@ -214,7 +214,14 @@ function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps)
       destructiveAction={hasContent ? { label: 'Löschen', onClick: clear } : undefined}
     >
       <div className="h-full w-full p-3">
-        <div className="h-full w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-white">
+        {/* Canvas-Container: IMMER weißer Hintergrund — auch im Dark
+            Mode. Sonst geht der schwarze Strich auf der getönten
+            Surface unter. Inline-Style + !-Modifier setzen das gegen
+            den Bulk-Override in index.css durch. */}
+        <div
+          className="h-full w-full overflow-hidden rounded-lg border border-maja-navy/20 !bg-white dark:border-slate-400"
+          style={{ backgroundColor: '#FFFFFF' }}
+        >
           <canvas
             ref={canvasRef}
             onPointerDown={onDown}
