@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { compressImage } from '../../../lib/photo';
 import { pdfjsLib } from '../../../lib/pdfjs';
 import {
-  addBelege, clearBelege, listBelege, removeBeleg, reorderBelege,
-  updateBelegBlob,
+  addBelege, clearBelege, listBelege, loadKennzeichenOverlay,
+  removeBeleg, reorderBelege, saveKennzeichenOverlay, updateBelegBlob,
+  type KennzeichenOverlay,
 } from '../../../lib/belegeStorage';
 import { uploadToOneDrive } from '../../../lib/onedrive';
 import { supabase } from '../../../lib/supabase';
@@ -85,6 +86,25 @@ export function BelegeUploadTab() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignToast, setAssignToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Kennzeichen-Overlay (Aufgabe 2): Text + relative Position auf dem
+  // Bild. Wird in der Vorschau gerendert und in die PDF gezeichnet.
+  const [overlay, setOverlay] = useState<KennzeichenOverlay>({
+    text: '',
+    position: { x: 4, y: 3 },
+  });
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const loaded = await loadKennzeichenOverlay();
+      if (cancelled) return;
+      setOverlay(loaded);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  function updateOverlay(next: KennzeichenOverlay) {
+    setOverlay(next);
+    void saveKennzeichenOverlay(next);
+  }
 
   // Beim Mount aus IndexedDB laden — Belege überleben Reiter-Wechsel
   // und Tab-Refresh. Async-Wrapper, damit setState nicht synchron im
@@ -238,6 +258,7 @@ export function BelegeUploadTab() {
       const pdf = await generateBelegePdf({
         images: items.map((i) => i.blob),
         layout,
+        kennzeichen: overlay.text.trim() ? overlay : null,
       });
       const cleanName = filename.trim().replace(/\.pdf$/i, '') || `Auslagen_${todayIso()}`;
       downloadBlob(pdf, `${cleanName}.pdf`);
@@ -263,6 +284,7 @@ export function BelegeUploadTab() {
       const pdf = await generateBelegePdf({
         images: items.map((i) => i.blob),
         layout,
+        kennzeichen: overlay.text.trim() ? overlay : null,
       });
       const onedrivePath = `Maja-Logistik/Belege/${rechnung.rechnungsnummer}_${todayIso()}.pdf`;
       await uploadToOneDrive(onedrivePath, pdf);
@@ -360,6 +382,27 @@ export function BelegeUploadTab() {
         )}
 
         {items.length > 0 && (
+          <div className="card flex flex-wrap items-center gap-3 p-3 text-sm">
+            <label htmlFor="beleg-kennzeichen" className="font-medium text-maja-ink">
+              Kennzeichen
+            </label>
+            <input
+              id="beleg-kennzeichen"
+              className="input flex-1 min-w-[14rem]"
+              placeholder="z.B. M-CC4783E"
+              value={overlay.text}
+              onChange={(e) => updateOverlay({ ...overlay, text: e.target.value })}
+            />
+            <p className="basis-full text-xs text-maja-muted">
+              Wenn ausgefüllt, wird der Text als Overlay auf jedem Beleg-Bild
+              gezeigt. Ziehe den Text auf einem der Bilder an die gewünschte
+              Stelle — die Position wird für ALLE Belege übernommen und auch
+              in der finalen PDF gerendert.
+            </p>
+          </div>
+        )}
+
+        {items.length > 0 && (
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {items.map((item, idx) => (
               <li
@@ -396,12 +439,20 @@ export function BelegeUploadTab() {
                 >
                   ×
                 </button>
-                <img
-                  src={item.url}
-                  alt={`Beleg ${idx + 1}`}
-                  className="aspect-[3/4] w-full rounded-md object-cover"
-                  draggable={false}
-                />
+                <div className="relative">
+                  <img
+                    src={item.url}
+                    alt={`Beleg ${idx + 1}`}
+                    className="aspect-[3/4] w-full rounded-md object-cover"
+                    draggable={false}
+                  />
+                  {overlay.text.trim() && (
+                    <KennzeichenOverlayLabel
+                      overlay={overlay}
+                      onChange={updateOverlay}
+                    />
+                  )}
+                </div>
                 <div className="mt-2 flex items-center justify-between gap-1">
                   <div className="flex gap-1">
                     <button
@@ -596,5 +647,65 @@ function IconCrop() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
       <path d="M6 2v16h16M2 6h16v16" />
     </svg>
+  );
+}
+
+/**
+ * Kennzeichen-Text als Overlay über einem Beleg-Bild. Per Pointer-Drag
+ * verschiebbar (Pointer-Events decken Maus + Touch ab). Die Position
+ * wird in Prozent relativ zum gerenderten Bild gespeichert und greift
+ * für ALLE Belege.
+ */
+function KennzeichenOverlayLabel({
+  overlay, onChange,
+}: {
+  overlay: KennzeichenOverlay;
+  onChange: (next: KennzeichenOverlay) => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const node = ref.current;
+    if (!node) return;
+    const parent = node.parentElement;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    // Offset vom Cursor zur linken/oberen Ecke des Overlays — sonst
+    // springt das Label beim Klick zur Cursor-Mitte.
+    const overlayRect = node.getBoundingClientRect();
+    const offsetX = e.clientX - overlayRect.left;
+    const offsetY = e.clientY - overlayRect.top;
+    node.setPointerCapture(e.pointerId);
+    function move(ev: PointerEvent) {
+      const xPx = ev.clientX - rect.left - offsetX;
+      const yPx = ev.clientY - rect.top - offsetY;
+      const xPct = Math.max(0, Math.min(95, (xPx / rect.width) * 100));
+      const yPct = Math.max(0, Math.min(95, (yPx / rect.height) * 100));
+      onChange({ ...overlay, position: { x: xPct, y: yPct } });
+    }
+    function end(ev: PointerEvent) {
+      node?.releasePointerCapture(ev.pointerId);
+      node?.removeEventListener('pointermove', move);
+      node?.removeEventListener('pointerup', end);
+      node?.removeEventListener('pointercancel', end);
+    }
+    node.addEventListener('pointermove', move);
+    node.addEventListener('pointerup', end);
+    node.addEventListener('pointercancel', end);
+  }
+  return (
+    <div
+      ref={ref}
+      onPointerDown={startDrag}
+      style={{
+        position: 'absolute',
+        left: `${overlay.position.x}%`,
+        top: `${overlay.position.y}%`,
+      }}
+      className="cursor-grab touch-none select-none rounded bg-white/75 px-1.5 py-0.5 text-xs font-semibold text-black shadow-sm active:cursor-grabbing"
+      title="Ziehen, um zu verschieben"
+    >
+      {overlay.text}
+    </div>
   );
 }

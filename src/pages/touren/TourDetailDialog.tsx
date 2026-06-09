@@ -24,7 +24,10 @@ import {
 } from '../../lib/pdfGenerate';
 import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
-import { ProtokollSection } from './ProtokollSection';
+import {
+  loadTourProtokollZuweisungen, ProtokollSection,
+  type TourProtokollZuweisung,
+} from './ProtokollSection';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, AusgefuelltesFormular, Fahrer,
   FormularTemplate, GreimelZugang, ProtokollArt, TemplatePdf, Tour, TourenArt,
@@ -625,8 +628,12 @@ export function TourDetailDialog({
     if (draft.protokollArt === 'app' && isGreimelTour && !willComplete) {
       nextGreimelId = draft.greimelZugangId ?? null;
     }
+    // Protokoll-Zuweisungen leben jetzt in `tour_protokoll_zuweisungen`.
+    // Die alte Spalte `schriftliches_protokoll_id` wird beim Wechsel auf
+    // protokoll_art != 'schriftlich' geleert und sonst beibehalten —
+    // sie ist nur noch Legacy für nicht migrierte Lesepfade.
     const nextSchriftlichesId = draft.protokollArt === 'schriftlich'
-      ? (draft.schriftlichesProtokollId ?? null)
+      ? (tour.schriftliches_protokoll_id ?? null)
       : null;
 
     const previousGreimelId = tour.greimel_zugang_id ?? null;
@@ -943,7 +950,7 @@ export function TourDetailDialog({
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} templates={templates} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
+        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
       ) : (
         <EditMode
           draft={draft}
@@ -960,10 +967,6 @@ export function TourDetailDialog({
           kontakte={editKontakte}
           onOpenRouteDialog={setRouteDialog}
           tourId={tour.id}
-          vorgefuellteDaten={(tour.vorgefuellte_daten as Record<string, unknown> | null) ?? null}
-          onVorgefuellteDatenChange={(next) => setTour((cur) =>
-            cur ? { ...cur, vorgefuellte_daten: next as unknown as FullTour['vorgefuellte_daten'] } : cur,
-          )}
         />
       )}
 
@@ -1427,14 +1430,12 @@ interface ViewModeProps {
   tour: FullTour;
   fahrerName: string;
   hatRueckfuehrung: boolean;
-  templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
   zugaenge: GreimelZugang[];
   isAdmin: boolean;
   viewBreakdown: TourPriceBreakdown | null;
 }
 
-function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isAdmin, viewBreakdown }: ViewModeProps) {
-  const linkedTemplate = templates.find((t) => t.id === tour.schriftliches_protokoll_id) ?? null;
+function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewBreakdown }: ViewModeProps) {
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
 
@@ -1578,11 +1579,7 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, templates, zugaenge, isA
         ) : (
           <div className="space-y-1">
             <div className="font-medium">Schriftlich</div>
-            <div className="text-maja-muted">
-              {linkedTemplate
-                ? <>Verknüpft: <span className="font-medium text-maja-ink">{linkedTemplate.name}</span></>
-                : 'Noch kein Protokoll verknüpft.'}
-            </div>
+            <ViewModeProtokollList tourId={tour.id} />
           </div>
         )}
       </div>
@@ -1627,11 +1624,9 @@ interface EditModeProps {
   zugaenge: GreimelZugang[];
   kontakte: AuftraggeberKontakt[];
   onOpenRouteDialog: (which: 'hin' | 'rueck') => void;
-  /** Aktuelle Tour-ID — Pflicht für den Prefill-Dialog (touren-Update). */
+  /** Aktuelle Tour-ID — Pflicht für die ProtokollSection (Protokoll-
+   *  Zuweisungen werden direkt in tour_protokoll_zuweisungen persistiert). */
   tourId: string | null;
-  /** Aktuell hinterlegte Vorgaben (touren.vorgefuellte_daten). */
-  vorgefuellteDaten: Record<string, unknown> | null;
-  onVorgefuellteDatenChange: (next: Record<string, unknown> | null) => void;
 }
 
 function KmBerechnenButton({
@@ -1866,16 +1861,12 @@ function EditMode(p: EditModeProps) {
       {/* Protokoll */}
       <ProtokollSection
         tourId={p.tourId ?? null}
-        vorgefuellteDaten={p.vorgefuellteDaten}
-        onVorgefuellteDatenChange={p.onVorgefuellteDatenChange}
         protokollArt={draft.protokollArt}
-        schriftlichesProtokollId={draft.schriftlichesProtokollId}
         greimelZugangId={draft.greimelZugangId}
         appNotiz={draft.appNotiz}
         onChange={(p) => {
           const patch: Partial<EditDraft> = {};
           if ('protokoll_art' in p) patch.protokollArt = p.protokoll_art ?? null;
-          if ('schriftliches_protokoll_id' in p) patch.schriftlichesProtokollId = p.schriftliches_protokoll_id ?? null;
           if ('greimel_zugang_id' in p) patch.greimelZugangId = p.greimel_zugang_id ?? null;
           if ('app_notiz' in p) patch.appNotiz = p.app_notiz ?? '';
           patchDraft(patch);
@@ -2481,5 +2472,44 @@ function RelinkLauncher({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Read-only-Anzeige aller Protokoll-Zuweisungen der Tour. Liest direkt
+ * aus tour_protokoll_zuweisungen — gerendert wird nur die Liste der
+ * Template-Namen, das Editieren passiert ausschließlich im Edit-Modus
+ * über die `ProtokollSection`.
+ */
+function ViewModeProtokollList({ tourId }: { tourId: string }) {
+  const [items, setItems] = useState<TourProtokollZuweisung[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const list = await loadTourProtokollZuweisungen(tourId);
+      if (cancelled) return;
+      setItems(list);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [tourId]);
+  if (loading) return <div className="text-maja-muted text-sm">Lade …</div>;
+  if (items.length === 0) {
+    return <div className="text-maja-muted text-sm">Noch kein Protokoll verknüpft.</div>;
+  }
+  return (
+    <ul className="space-y-0.5 text-sm">
+      {items.map((a) => (
+        <li key={a.id} className="text-maja-ink">
+          <span className="font-medium">{a.template_name}</span>
+          {a.vorgefuellte_daten && Object.keys(a.vorgefuellte_daten).length > 0 && (
+            <span className="ml-2 text-xs text-maja-muted">
+              ({Object.keys(a.vorgefuellte_daten).length} Vorgabe(n))
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }

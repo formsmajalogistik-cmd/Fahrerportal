@@ -92,21 +92,22 @@ export function FahrerDashboard() {
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
-    // Tour-Protokolle: schriftliche Protokolle aus Touren, die diesem Fahrer
-    // zugewiesen sind und (computed) den Status geplant/aktiv haben.
+    // Tour-Protokolle: alle Templates, die einer der Touren dieses Fahrers
+    // zugewiesen sind (über tour_protokoll_zuweisungen) und deren Tour
+    // den Status geplant/aktiv hat.
     const tourPromise = fahrerRow
       ? supabase
-          .from('touren')
+          .from('tour_protokoll_zuweisungen')
           .select(`
-            id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-            startdatum, enddatum, fahrer_id, protokoll_art,
-            schriftliches_protokoll_id, vorgefuellte_daten,
-            template:schriftliches_protokoll_id (id, name),
-            auftraggeber:auftraggeber_id (name)
+            id, template_id, vorgefuellte_daten,
+            template:template_id (id, name),
+            tour:tour_id (
+              id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+              startdatum, enddatum, fahrer_id, protokoll_art,
+              auftraggeber:auftraggeber_id (name)
+            )
           `)
-          .eq('fahrer_id', fahrerRow.id)
-          .eq('protokoll_art', 'schriftlich')
-          .not('schriftliches_protokoll_id', 'is', null)
+          .order('sort_order', { ascending: true })
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
     const [tplRes, draftRes, tourRes] = await Promise.all([tplPromise, draftPromise, tourPromise]);
@@ -122,28 +123,40 @@ export function FahrerDashboard() {
     setTemplates((Array.isArray(tplRes.data) ? tplRes.data : []) as unknown as AssignedTemplate[]);
     setDrafts((Array.isArray(draftRes.data) ? draftRes.data : []) as unknown as DraftRow[]);
 
-    // Tour-Protokolle clientseitig auf Status filtern.
-    type RawTour = {
-      id: string; tour_id: string | null;
-      start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
-      startdatum: string | null; enddatum: string | null;
-      fahrer_id: string | null;
-      protokoll_art: string | null;
-      schriftliches_protokoll_id: string | null;
+    // Tour-Protokoll-Zuweisungen clientseitig auf Status der Tour
+    // filtern und pro Zuweisung als eigenständiger Eintrag rendern —
+    // bei ABA/ABC-Touren kann eine Tour mehrere Protokoll-Karten
+    // erzeugen.
+    type RawAssignment = {
+      id: string;
+      template_id: string;
       vorgefuellte_daten: unknown;
       template: Pick<FormularTemplate, 'id' | 'name'> | null;
-      auftraggeber: Pick<Auftraggeber, 'name'> | null;
+      tour: {
+        id: string; tour_id: string | null;
+        start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
+        startdatum: string | null; enddatum: string | null;
+        fahrer_id: string | null;
+        protokoll_art: string | null;
+        auftraggeber: Pick<Auftraggeber, 'name'> | null;
+      } | null;
     };
-    const tourList: RawTour[] = (Array.isArray(tourRes.data) ? tourRes.data : []) as unknown as RawTour[];
+    const rawList: RawAssignment[] = (Array.isArray(tourRes.data) ? tourRes.data : []) as unknown as RawAssignment[];
     const filtered: TourProtokoll[] = [];
-    for (const t of tourList) {
-      if (!t.template || !t.schriftliches_protokoll_id) continue;
-      const s = computeTourStatus(t.startdatum, t.enddatum);
+    for (const a of rawList) {
+      if (!a.template || !a.tour) continue;
+      if (a.tour.protokoll_art !== 'schriftlich') continue;
+      if (a.tour.fahrer_id !== fahrerRow?.id) continue;
+      const s = computeTourStatus(a.tour.startdatum, a.tour.enddatum);
       if (s !== 'geplant' && s !== 'aktiv') continue;
       filtered.push({
-        tour: t as unknown as TourProtokoll['tour'],
-        template: t.template,
-        auftraggeber: t.auftraggeber,
+        tour: {
+          ...a.tour,
+          vorgefuellte_daten: a.vorgefuellte_daten,
+          assignment_id: a.id,
+        } as unknown as TourProtokoll['tour'],
+        template: a.template,
+        auftraggeber: a.tour.auftraggeber,
       });
     }
     setTourProtokolle(filtered);
@@ -256,23 +269,28 @@ export function FahrerDashboard() {
             Tour-Protokolle
           </h2>
           <ul className="grid gap-3 sm:grid-cols-2">
-            {tourProtokolle.map((tp) => (
-              <TourProtokollCard
-                key={tp.tour.id}
-                item={tp}
-                opening={opening === `tour:${tp.tour.id}`}
-                onOpen={() => {
-                  const raw = (tp.tour as unknown as { vorgefuellte_daten?: unknown }).vorgefuellte_daten;
-                  const prefill = raw && typeof raw === 'object'
-                    ? raw as Record<string, unknown>
-                    : null;
-                  void openOrStart(tp.template.id, `tour:${tp.tour.id}`, {
-                    tourId: tp.tour.id,
-                    vorgefuellteDaten: prefill,
-                  });
-                }}
-              />
-            ))}
+            {tourProtokolle.map((tp) => {
+              const assignmentId = (tp.tour as unknown as { assignment_id?: string }).assignment_id
+                ?? `${tp.tour.id}-${tp.template.id}`;
+              const busyKey = `tour:${assignmentId}`;
+              return (
+                <TourProtokollCard
+                  key={assignmentId}
+                  item={tp}
+                  opening={opening === busyKey}
+                  onOpen={() => {
+                    const raw = (tp.tour as unknown as { vorgefuellte_daten?: unknown }).vorgefuellte_daten;
+                    const prefill = raw && typeof raw === 'object'
+                      ? raw as Record<string, unknown>
+                      : null;
+                    void openOrStart(tp.template.id, busyKey, {
+                      tourId: tp.tour.id,
+                      vorgefuellteDaten: prefill,
+                    });
+                  }}
+                />
+              );
+            })}
           </ul>
         </section>
       )}

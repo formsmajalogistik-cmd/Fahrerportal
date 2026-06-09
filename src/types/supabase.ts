@@ -587,6 +587,46 @@ export type Database = {
           },
         ];
       };
+      tour_protokoll_zuweisungen: {
+        Row: {
+          id: string;
+          tour_id: string;
+          template_id: string;
+          vorgefuellte_daten: Json | null;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tour_id: string;
+          template_id: string;
+          vorgefuellte_daten?: Json | null;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string;
+          template_id?: string;
+          vorgefuellte_daten?: Json | null;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'tour_protokoll_zuweisungen_tour_id_fkey';
+            columns: ['tour_id'];
+            referencedRelation: 'touren';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'tour_protokoll_zuweisungen_template_id_fkey';
+            columns: ['template_id'];
+            referencedRelation: 'formular_templates';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       fahrer: {
         Row: {
           id: string;

@@ -31,6 +31,12 @@ interface TourRow extends Tour {
   auftraggeber: Pick<Auftraggeber, 'name' | 'kontakt' | 'externe_app_name' | 'externe_app_url'> | null;
   fahrer: FahrerWithUser | null;
   schriftliches_protokoll: { id: string; name: string } | null;
+  /** Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — die
+   *  alte single-id-Spalte oben bleibt nur für Legacy-Reads. */
+  protokoll_zuweisungen: Array<{
+    id: string;
+    template: { id: string; name: string } | null;
+  }>;
   eingang: EingangLite | null;
   zusaetze: TourZusatzLite[];
 }
@@ -95,21 +101,36 @@ export function TourenlistePage() {
    * unverändert im Formulare-Reiter sichtbar und können dort einzeln
    * fortgesetzt oder gelöscht werden.
    */
-  async function openSchriftlichesProtokoll(t: TourRow) {
-    const tplId = t.schriftliches_protokoll?.id ?? t.schriftliches_protokoll_id;
+  async function openSchriftlichesProtokoll(t: TourRow, templateId?: string) {
+    const tplId = templateId
+      ?? t.schriftliches_protokoll?.id
+      ?? t.schriftliches_protokoll_id;
     if (!tplId || !session) return;
-    setOpeningProtokoll(t.id);
+    setOpeningProtokoll(`${t.id}:${tplId}`);
     try {
       const { data: fahrerRow } = await supabase
         .from('fahrer').select('id').eq('user_id', session.user.id).maybeSingle();
       if (!fahrerRow?.id) {
-        // Kein Fahrer-Profil → fallback: nichts tun
         setOpeningProtokoll(null);
         return;
       }
+      // Prefill-Daten der Zuweisung mitnehmen, sofern vorhanden.
+      const { data: assignment } = await supabase
+        .from('tour_protokoll_zuweisungen')
+        .select('vorgefuellte_daten')
+        .eq('tour_id', t.id).eq('template_id', tplId).maybeSingle();
+      const prefillRaw = assignment?.vorgefuellte_daten;
+      const initialDaten: Record<string, unknown> = (prefillRaw && typeof prefillRaw === 'object')
+        ? { ...(prefillRaw as Record<string, unknown>) }
+        : {};
+      initialDaten._tour_id = t.id;
       const { data: created, error } = await supabase
         .from('ausgefuellte_formulare')
-        .insert({ fahrer_id: fahrerRow.id, template_id: tplId, daten: {} })
+        .insert({
+          fahrer_id: fahrerRow.id,
+          template_id: tplId,
+          daten: initialDaten as unknown as never,
+        })
         .select('id').single();
       if (error || !created) {
         console.warn('Konnte Protokoll-Draft nicht anlegen', error);
@@ -183,6 +204,9 @@ export function TourenlistePage() {
           user:user_id (email, vorname, nachname)
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+        protokoll_zuweisungen:tour_protokoll_zuweisungen (
+          id, template:template_id (id, name)
+        ),
         eingang:eingang_id (
           id, status, pdf_paths,
           template:template_id (id, name, pdfs)
@@ -197,6 +221,9 @@ export function TourenlistePage() {
           user:user_id (email, vorname, nachname)
         ),
         schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+        protokoll_zuweisungen:tour_protokoll_zuweisungen (
+          id, template:template_id (id, name)
+        ),
         eingang:eingang_id (
           id, status, pdf_paths,
           template:template_id (id, name, pdfs)
@@ -615,8 +642,8 @@ export function TourenlistePage() {
               key={t.id}
               tour={t}
               onOpen={() => setOpenTourId(t.id)}
-              onOpenProtokoll={() => void openSchriftlichesProtokoll(t)}
-              opening={openingProtokoll === t.id}
+              onOpenProtokoll={(templateId) => void openSchriftlichesProtokoll(t, templateId)}
+              opening={openingProtokoll}
               isAdmin={isAdmin}
               todayYmd={todayYmd}
               onToggleBearbeitet={() => void toggleBearbeitet(t.id, t.bearbeitet_markiert_am ?? null)}
@@ -694,8 +721,10 @@ function KpiCard({ title, value, hint, accent }: KpiProps) {
 interface CardProps {
   tour: TourRow;
   onOpen: () => void;
-  onOpenProtokoll: () => void;
-  opening: boolean;
+  onOpenProtokoll: (templateId: string) => void;
+  /** Busy-Key der Form `${tour.id}:${templateId}` für den gerade öffnenden
+   *  Button, sonst null. */
+  opening: string | null;
   isAdmin: boolean;
   todayYmd: string;
   onToggleBearbeitet: () => void;
@@ -703,8 +732,19 @@ interface CardProps {
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
 }: CardProps) {
-  const protokollName = tour.schriftliches_protokoll?.name ?? null;
-  const hasSchriftlich = tour.protokoll_art === 'schriftlich' && !!tour.schriftliches_protokoll_id;
+  // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
+  // Zuweisung ein eigener Open-Button. Fallback auf die Legacy-Spalte,
+  // wenn die Zuweisungen noch nicht geladen / migriert sind.
+  const protokollItems = (tour.protokoll_zuweisungen ?? [])
+    .filter((p) => p.template != null)
+    .map((p) => ({ id: p.template!.id, name: p.template!.name }));
+  if (protokollItems.length === 0 && tour.schriftliches_protokoll_id) {
+    protokollItems.push({
+      id: tour.schriftliches_protokoll_id,
+      name: tour.schriftliches_protokoll?.name ?? 'Protokoll',
+    });
+  }
+  const hasSchriftlich = tour.protokoll_art === 'schriftlich' && protokollItems.length > 0;
   const fahrerName = resolveFahrerName(tour.fahrer ?? null, tour.fahrer?.user ?? null) || '— kein Fahrer —';
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const bearbeitetHeute = tour.bearbeitet_markiert_am === todayYmd;
@@ -810,26 +850,35 @@ function TourCard({
               </div>
             )}
 
-            {/* Schriftliches Protokoll: für Fahrer als Direkt-Link öffnen */}
+            {/* Schriftliches Protokoll: pro Zuweisung ein Pill — Admins
+                sehen nur den Template-Namen, Fahrer öffnen direkt. */}
             {hasSchriftlich && (
-              isAdmin ? (
-                <div className="mt-3 inline-flex items-center gap-1 rounded-full bg-maja-light px-3 py-1 text-xs font-medium text-maja-navy">
-                  <IconClipboard /> Protokoll: {protokollName ?? 'verknüpft'}
-                </div>
-              ) : (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => { e.stopPropagation(); onOpenProtokoll(); }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onOpenProtokoll(); }
-                  }}
-                  className="mt-3 inline-flex cursor-pointer items-center gap-1 rounded-full bg-maja-navy px-3 py-1 text-xs font-medium text-white transition hover:bg-maja-accent"
-                >
-                  <IconClipboard />
-                  {opening ? 'Öffne …' : `Protokoll öffnen${protokollName ? `: ${protokollName}` : ''}`}
-                </div>
-              )
+              <div className="mt-3 flex flex-wrap gap-2">
+                {protokollItems.map((p) => (
+                  isAdmin ? (
+                    <div
+                      key={p.id}
+                      className="inline-flex items-center gap-1 rounded-full bg-maja-light px-3 py-1 text-xs font-medium text-maja-navy"
+                    >
+                      <IconClipboard /> {p.name}
+                    </div>
+                  ) : (
+                    <div
+                      key={p.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); onOpenProtokoll(p.id); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onOpenProtokoll(p.id); }
+                      }}
+                      className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-maja-navy px-3 py-1 text-xs font-medium text-white transition hover:bg-maja-accent"
+                    >
+                      <IconClipboard />
+                      {opening === `${tour.id}:${p.id}` ? 'Öffne …' : `Protokoll: ${p.name}`}
+                    </div>
+                  )
+                ))}
+              </div>
             )}
           </div>
 

@@ -118,7 +118,10 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
 
   // Protokoll
   const [protokollArt, setProtokollArt] = useState<ProtokollArt | null>(null);
-  const [schriftlichesProtokollId, setSchriftlichesProtokollId] = useState<string | null>(null);
+  // Protokoll-Zuweisungen werden erst nach dem Tour-Save möglich
+  // (brauchen die Tour-ID). Die Legacy-Spalte `schriftliches_protokoll_id`
+  // bleibt beim Neuanlegen NULL — Zuweisungen passieren danach im
+  // Tour-Detail-Panel.
   const [greimelZugangId, setGreimelZugangId] = useState<string | null>(null);
   const [appNotiz, setAppNotiz] = useState('');
   const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
@@ -284,7 +287,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app' && !willBeCompleted
       ? greimelZugangId
       : null;
-    const schriftlichEffective = protokollArt === 'schriftlich' ? schriftlichesProtokollId : null;
+    const schriftlichEffective: string | null = null;
 
     const payload = {
       start_stadt: start,
@@ -591,20 +594,14 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             </div>
           )}
 
-          {/* Protokoll */}
+          {/* Protokoll — Zuweisungen erst nach Save möglich (Tour-ID nötig). */}
           <ProtokollSection
-            // Beim Anlegen existiert die Tour noch nicht — Vorausfüllung ist
-            // erst nach dem Speichern via Tour-Detail-Panel möglich.
             tourId={null}
-            vorgefuellteDaten={null}
-            onVorgefuellteDatenChange={() => { /* no-op vor Tour-Save */ }}
             protokollArt={protokollArt}
-            schriftlichesProtokollId={schriftlichesProtokollId}
             greimelZugangId={greimelZugangId}
             appNotiz={appNotiz}
             onChange={(p) => {
               if ('protokoll_art' in p) setProtokollArt(p.protokoll_art ?? null);
-              if ('schriftliches_protokoll_id' in p) setSchriftlichesProtokollId(p.schriftliches_protokoll_id ?? null);
               if ('greimel_zugang_id' in p) setGreimelZugangId(p.greimel_zugang_id ?? null);
               if ('app_notiz' in p) setAppNotiz(p.app_notiz ?? '');
             }}

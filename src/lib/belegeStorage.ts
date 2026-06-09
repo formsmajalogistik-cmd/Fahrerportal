@@ -125,3 +125,51 @@ export async function reorderBelege(ids: string[]): Promise<void> {
 function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+// ============================================================
+// Kennzeichen-Overlay (Aufgabe 2): Text + relative Position als
+// einfacher Meta-Key. Wird beim Render der Vorschau UND beim PDF-Export
+// angewendet.
+// ============================================================
+
+export interface KennzeichenOverlay {
+  text: string;
+  /** Position in Prozent (0..100) vom linken bzw. oberen Rand des Bildes. */
+  position: { x: number; y: number };
+}
+
+const KENNZEICHEN_META_KEY = 'kennzeichen-overlay';
+const DEFAULT_OVERLAY: KennzeichenOverlay = {
+  text: '',
+  position: { x: 4, y: 3 },
+};
+
+export async function loadKennzeichenOverlay(): Promise<KennzeichenOverlay> {
+  try {
+    const db = await getDb();
+    const stored = await db.get(META, KENNZEICHEN_META_KEY);
+    const raw = stored?.value;
+    if (raw && typeof raw === 'object') {
+      const r = raw as Partial<KennzeichenOverlay>;
+      return {
+        text: typeof r.text === 'string' ? r.text : '',
+        position: {
+          x: typeof r.position?.x === 'number' ? r.position.x : DEFAULT_OVERLAY.position.x,
+          y: typeof r.position?.y === 'number' ? r.position.y : DEFAULT_OVERLAY.position.y,
+        },
+      };
+    }
+  } catch (err) {
+    console.warn('[belegeStorage.loadKennzeichenOverlay]', err);
+  }
+  return DEFAULT_OVERLAY;
+}
+
+export async function saveKennzeichenOverlay(overlay: KennzeichenOverlay): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.put(META, { value: overlay }, KENNZEICHEN_META_KEY);
+  } catch (err) {
+    console.warn('[belegeStorage.saveKennzeichenOverlay]', err);
+  }
+}

@@ -1,12 +1,20 @@
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 export type Layout = 12 | 16;
+
+export interface KennzeichenOverlayOptions {
+  text: string;
+  /** Position in Prozent (0..100), relativ zum gezeichneten Bild — top/left. */
+  position: { x: number; y: number };
+}
 
 interface PdfOptions {
   /** Bilder als Blobs (JPEG/PNG). Reihenfolge = Reihenfolge im PDF. */
   images: Blob[];
   /** 12 = 3×4-Raster, 16 = 4×4-Raster. */
   layout: Layout;
+  /** Optionaler Kennzeichen-Text-Overlay pro Beleg-Bild (Aufgabe 2). */
+  kennzeichen?: KennzeichenOverlayOptions | null;
 }
 
 // A4 Hochformat in pt (pdf-lib default unit).
@@ -29,7 +37,7 @@ async function blobToBytes(blob: Blob): Promise<Uint8Array> {
  * wird aspect-fit in seine Zelle eingepasst, dünne hellgraue
  * Trennlinien zwischen den Zellen.
  */
-export async function generateBelegePdf({ images, layout }: PdfOptions): Promise<Blob> {
+export async function generateBelegePdf({ images, layout, kennzeichen }: PdfOptions): Promise<Blob> {
   const { cols, rows } = LAYOUTS[layout];
   const perPage = cols * rows;
   const usableW = A4_W - 2 * MARGIN;
@@ -38,8 +46,11 @@ export async function generateBelegePdf({ images, layout }: PdfOptions): Promise
   const cellH = usableH / rows;
   const innerPad = 2; // pt — kleiner Abstand zwischen Bild und Zellenrand
   const grid = rgb(0.85, 0.85, 0.85);
+  const overlayText = (kennzeichen?.text ?? '').trim();
+  const overlayPos = kennzeichen?.position ?? { x: 4, y: 3 };
 
   const doc = await PDFDocument.create();
+  const helvetica = overlayText ? await doc.embedFont(StandardFonts.HelveticaBold) : null;
   const totalPages = Math.max(1, Math.ceil(images.length / perPage));
 
   for (let p = 0; p < totalPages; p++) {
@@ -96,6 +107,43 @@ export async function generateBelegePdf({ images, layout }: PdfOptions): Promise
       const y = cellBottom + (cellH - drawH) / 2;
 
       page.drawImage(embedded, { x, y, width: drawW, height: drawH });
+
+      // Kennzeichen-Overlay pro Bild — Position in Prozent relativ zum
+      // gezeichneten Bild (oben-links-Ursprung), Text in schwarz auf
+      // halbtransparentem weißem Kasten.
+      if (overlayText && helvetica) {
+        const fontSize = Math.max(7, Math.min(16, drawW * 0.07));
+        const padX = fontSize * 0.45;
+        const padY = fontSize * 0.25;
+        const textWidth = helvetica.widthOfTextAtSize(overlayText, fontSize);
+        const textHeight = helvetica.heightAtSize(fontSize);
+        const offsetX = (Math.max(0, Math.min(100, overlayPos.x)) / 100) * drawW;
+        const offsetY = (Math.max(0, Math.min(100, overlayPos.y)) / 100) * drawH;
+        // PDF-Koordinaten wachsen nach oben — Bild-Top entspricht y + drawH.
+        const imageTop = y + drawH;
+        const boxLeft = x + offsetX;
+        const boxTop = imageTop - offsetY;
+        const boxW = textWidth + 2 * padX;
+        const boxH = textHeight + 2 * padY;
+        // Halbtransparenter weißer Hintergrund (opacity 0.75) für
+        // Lesbarkeit auf dunklen Belegen.
+        page.drawRectangle({
+          x: boxLeft,
+          y: boxTop - boxH,
+          width: boxW,
+          height: boxH,
+          color: rgb(1, 1, 1),
+          opacity: 0.75,
+          borderWidth: 0,
+        });
+        page.drawText(overlayText, {
+          x: boxLeft + padX,
+          y: boxTop - boxH + padY,
+          size: fontSize,
+          font: helvetica,
+          color: rgb(0, 0, 0),
+        });
+      }
     }
   }
 

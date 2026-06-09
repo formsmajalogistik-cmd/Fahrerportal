@@ -18,9 +18,14 @@ import type {
 import type { Json } from '../../types/supabase';
 
 interface Props {
+  /** Tour-ID — wird beim Speichern auf die Zuweisung mit weitergegeben,
+   *  damit der aufrufende Code sie zur Cache-Invalidierung kennt. */
   tourId: string;
+  /** ID der konkreten tour_protokoll_zuweisungen-Zeile, in die die
+   *  Vorgaben geschrieben werden. */
+  assignmentId: string;
   template: Pick<FormularTemplate, 'id' | 'name' | 'schema'>;
-  /** Bisher gespeicherte Vorgaben (touren.vorgefuellte_daten). */
+  /** Bisher gespeicherte Vorgaben (tour_protokoll_zuweisungen.vorgefuellte_daten). */
   initial: Record<string, unknown>;
   onClose: () => void;
   onSaved: (next: Record<string, unknown>) => void;
@@ -37,7 +42,10 @@ export function collectPrefillableFields(schema: FormSchema | null | undefined):
   return out;
 }
 
-export function PrefillDialog({ tourId, template, initial, onClose, onSaved }: Props) {
+export function PrefillDialog({ tourId, assignmentId, template, initial, onClose, onSaved }: Props) {
+  // tourId wird hier nicht direkt verwendet — er steht aber in den Props,
+  // damit Aufrufer die Cache-Invalidierung damit verknüpfen können.
+  void tourId;
   const fields = useMemo(() => collectPrefillableFields(template.schema), [template.schema]);
   const [values, setValues] = useState<Record<string, unknown>>(() => ({ ...initial }));
   const [busy, setBusy] = useState(false);
@@ -57,9 +65,9 @@ export function PrefillDialog({ tourId, template, initial, onClose, onSaved }: P
     setError(null);
     const payload = nextDaten as unknown as Json | null;
     const { error: err } = await supabase
-      .from('touren')
+      .from('tour_protokoll_zuweisungen')
       .update({ vorgefuellte_daten: payload })
-      .eq('id', tourId);
+      .eq('id', assignmentId);
     setBusy(false);
     if (err) { setError(err.message); return; }
     onSaved(nextDaten ?? {});
