@@ -2,19 +2,19 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 export type Layout = 12 | 16;
 
-export interface KennzeichenOverlayOptions {
-  text: string;
-  /** Position in Prozent (0..100), relativ zum gezeichneten Bild — top/left. */
-  position: { x: number; y: number };
+/** Pro Beleg-Bild ein optionaler Kennzeichen-Overlay (Text + Position
+ *  in Prozent relativ zum gezeichneten Bild, Top-Left-Ursprung). */
+export interface BelegImage {
+  blob: Blob;
+  kennzeichen?: string | null;
+  kennzeichenPosition?: { x: number; y: number } | null;
 }
 
 interface PdfOptions {
-  /** Bilder als Blobs (JPEG/PNG). Reihenfolge = Reihenfolge im PDF. */
-  images: Blob[];
+  /** Beleg-Bilder in Reihenfolge der PDF-Slots. */
+  images: BelegImage[];
   /** 12 = 3×4-Raster, 16 = 4×4-Raster. */
   layout: Layout;
-  /** Optionaler Kennzeichen-Text-Overlay pro Beleg-Bild (Aufgabe 2). */
-  kennzeichen?: KennzeichenOverlayOptions | null;
 }
 
 // A4 Hochformat in pt (pdf-lib default unit).
@@ -37,7 +37,7 @@ async function blobToBytes(blob: Blob): Promise<Uint8Array> {
  * wird aspect-fit in seine Zelle eingepasst, dünne hellgraue
  * Trennlinien zwischen den Zellen.
  */
-export async function generateBelegePdf({ images, layout, kennzeichen }: PdfOptions): Promise<Blob> {
+export async function generateBelegePdf({ images, layout }: PdfOptions): Promise<Blob> {
   const { cols, rows } = LAYOUTS[layout];
   const perPage = cols * rows;
   const usableW = A4_W - 2 * MARGIN;
@@ -46,11 +46,12 @@ export async function generateBelegePdf({ images, layout, kennzeichen }: PdfOpti
   const cellH = usableH / rows;
   const innerPad = 2; // pt — kleiner Abstand zwischen Bild und Zellenrand
   const grid = rgb(0.85, 0.85, 0.85);
-  const overlayText = (kennzeichen?.text ?? '').trim();
-  const overlayPos = kennzeichen?.position ?? { x: 4, y: 3 };
 
   const doc = await PDFDocument.create();
-  const helvetica = overlayText ? await doc.embedFont(StandardFonts.HelveticaBold) : null;
+  // Helvetica-Bold nur bei Bedarf einbetten — wenn KEIN Beleg ein
+  // Kennzeichen trägt, sparen wir den Font im PDF.
+  const needsFont = images.some((it) => (it.kennzeichen ?? '').trim() !== '');
+  const helvetica = needsFont ? await doc.embedFont(StandardFonts.HelveticaBold) : null;
   const totalPages = Math.max(1, Math.ceil(images.length / perPage));
 
   for (let p = 0; p < totalPages; p++) {
@@ -79,8 +80,8 @@ export async function generateBelegePdf({ images, layout, kennzeichen }: PdfOpti
     // Bilder einbetten und zentriert in ihre Zelle einpassen.
     const slice = images.slice(p * perPage, (p + 1) * perPage);
     for (let i = 0; i < slice.length; i++) {
-      const blob = slice[i];
-      const bytes = await blobToBytes(blob);
+      const item = slice[i];
+      const bytes = await blobToBytes(item.blob);
       let embedded;
       // pdf-lib unterscheidet zwischen JPG und PNG — versuche JPG zuerst.
       try {
@@ -108,10 +109,13 @@ export async function generateBelegePdf({ images, layout, kennzeichen }: PdfOpti
 
       page.drawImage(embedded, { x, y, width: drawW, height: drawH });
 
-      // Kennzeichen-Overlay pro Bild — Position in Prozent relativ zum
+      // Kennzeichen-Overlay pro Beleg — Position in Prozent relativ zum
       // gezeichneten Bild (oben-links-Ursprung), Text in schwarz auf
-      // halbtransparentem weißem Kasten.
+      // halbtransparentem weißem Kasten. Belege ohne Kennzeichen
+      // bekommen schlicht kein Overlay auf ihrer Seite/in ihrer Zelle.
+      const overlayText = (item.kennzeichen ?? '').trim();
       if (overlayText && helvetica) {
+        const overlayPos = item.kennzeichenPosition ?? { x: 4, y: 3 };
         const fontSize = Math.max(7, Math.min(16, drawW * 0.07));
         const padX = fontSize * 0.45;
         const padY = fontSize * 0.25;
@@ -125,8 +129,6 @@ export async function generateBelegePdf({ images, layout, kennzeichen }: PdfOpti
         const boxTop = imageTop - offsetY;
         const boxW = textWidth + 2 * padX;
         const boxH = textHeight + 2 * padY;
-        // Halbtransparenter weißer Hintergrund (opacity 0.75) für
-        // Lesbarkeit auf dunklen Belegen.
         page.drawRectangle({
           x: boxLeft,
           y: boxTop - boxH,
