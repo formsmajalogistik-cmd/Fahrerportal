@@ -24,9 +24,27 @@ export function MeineUnterkontenPage() {
   const [nachname, setNachname] = useState('');
   const [editing, setEditing] = useState<Fahrer | null>(null);
   const [deleting, setDeleting] = useState<Fahrer | null>(null);
+  /** Anzahl Touren / Eingänge, die beim Löschen umgehängt werden — wird
+   *  beim Öffnen des Bestätigungsdialogs einmal nachgeladen. */
+  const [deleteRefs, setDeleteRefs] = useState<{ touren: number; eingaenge: number }>({ touren: 0, eingaenge: 0 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingTours, setLoadingTours] = useState(false);
+
+  async function openDeleteDialog(f: Fahrer) {
+    setError(null);
+    setDeleting(f);
+    setLoadingTours(true);
+    const [tourenRes, eingaengeRes] = await Promise.all([
+      supabase.from('touren').select('id', { count: 'exact', head: true }).eq('fahrer_id', f.id),
+      supabase.from('ausgefuellte_formulare').select('id', { count: 'exact', head: true }).eq('fahrer_id', f.id),
+    ]);
+    setLoadingTours(false);
+    setDeleteRefs({
+      touren: tourenRes.count ?? 0,
+      eingaenge: eingaengeRes.count ?? 0,
+    });
+  }
 
   const handleCreate = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -74,21 +92,41 @@ export function MeineUnterkontenPage() {
   }
 
   async function handleDelete(f: Fahrer) {
-    setLoadingTours(true);
-    const { count, error: cntErr } = await supabase
-      .from('touren')
-      .select('id', { count: 'exact', head: true })
-      .eq('fahrer_id', f.id);
-    setLoadingTours(false);
-    if (cntErr) { setError(cntErr.message); return; }
-    if ((count ?? 0) > 0) {
-      setError(`Diesem Unterkonto sind noch ${count} Touren zugeordnet. Bitte erst die Touren umweisen.`);
+    if (!hauptFahrer) {
+      setError('Hauptkonto nicht gefunden.');
       return;
     }
-    const { error: err } = await supabase.from('fahrer').delete().eq('id', f.id);
-    if (err) { setError(err.message); return; }
-    setDeleting(null);
-    await refresh();
+    setBusy(true);
+    setError(null);
+    try {
+      // 1) Touren des Unterkontos dem Hauptkonto zuweisen.
+      const { error: tErr } = await supabase
+        .from('touren')
+        .update({ fahrer_id: hauptFahrer.id })
+        .eq('fahrer_id', f.id);
+      if (tErr) throw new Error(`Touren konnten nicht übertragen werden: ${tErr.message}`);
+
+      // 2) Eingereichte Formulare / Entwürfe des Unterkontos dem
+      // Hauptkonto zuweisen — ausgefuellte_formulare.fahrer_id ist NOT
+      // NULL, FK auf fahrer.id würde das Delete sonst blockieren.
+      const { error: aErr } = await supabase
+        .from('ausgefuellte_formulare')
+        .update({ fahrer_id: hauptFahrer.id })
+        .eq('fahrer_id', f.id);
+      if (aErr) throw new Error(`Eingänge konnten nicht übertragen werden: ${aErr.message}`);
+
+      // 3) Jetzt darf das Unterkonto weg.
+      const { error: dErr } = await supabase.from('fahrer').delete().eq('id', f.id);
+      if (dErr) throw new Error(`Unterkonto konnte nicht gelöscht werden: ${dErr.message}`);
+
+      setDeleting(null);
+      setDeleteRefs({ touren: 0, eingaenge: 0 });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!profile || !hauptFahrer) {
@@ -179,7 +217,7 @@ export function MeineUnterkontenPage() {
                     className="text-sm font-medium text-maja-accent hover:underline"
                   >Umbenennen</button>
                   <button
-                    onClick={() => setDeleting(f)}
+                    onClick={() => void openDeleteDialog(f)}
                     className="ml-3 text-sm font-medium text-red-600 hover:underline"
                   >Löschen</button>
                 </td>
@@ -232,14 +270,41 @@ export function MeineUnterkontenPage() {
           message={
             <>
               Soll das Unterkonto „<strong>{fahrerName(deleting, profile)}</strong>" wirklich gelöscht werden?
-              Bestehende Touren bleiben erhalten, verlieren aber die Fahrer-Zuordnung.
-              {loadingTours && <div className="mt-2 text-xs text-maja-muted"><Spinner /></div>}
+              {loadingTours ? (
+                <div className="mt-2 text-xs text-maja-muted"><Spinner /></div>
+              ) : (deleteRefs.touren > 0 || deleteRefs.eingaenge > 0) ? (
+                <p className="mt-2 text-xs text-maja-muted">
+                  Alle verknüpften Daten wandern zum Hauptkonto{' '}
+                  <strong>{fahrerName(hauptFahrer, profile)}</strong>:
+                  {deleteRefs.touren > 0 && (
+                    <> {deleteRefs.touren} Tour{deleteRefs.touren === 1 ? '' : 'en'}</>
+                  )}
+                  {deleteRefs.touren > 0 && deleteRefs.eingaenge > 0 && ', '}
+                  {deleteRefs.eingaenge > 0 && (
+                    <> {deleteRefs.eingaenge} Eingang/Eingänge</>
+                  )}.
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-maja-muted">
+                  Dem Unterkonto sind keine Touren oder Eingänge zugeordnet.
+                </p>
+              )}
+              {error && (
+                <div role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {error}
+                </div>
+              )}
             </>
           }
-          confirmLabel="Löschen"
+          confirmLabel={busy ? 'Lösche …' : 'Löschen'}
           destructive
           onConfirm={() => handleDelete(deleting)}
-          onClose={() => setDeleting(null)}
+          onClose={() => {
+            if (busy) return;
+            setDeleting(null);
+            setError(null);
+            setDeleteRefs({ touren: 0, eingaenge: 0 });
+          }}
         />
       )}
     </div>

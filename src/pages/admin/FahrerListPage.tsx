@@ -48,6 +48,21 @@ export function FahrerListPage() {
   }, [rows]);
 
   async function handleDelete(f: Row) {
+    // Unterkonto-Spezialfall: vor dem Delete alle Referenzen auf das
+    // Haupt-Konto umhängen, sonst blocken FK-Constraints (touren.
+    // fahrer_id, ausgefuellte_formulare.fahrer_id NOT NULL).
+    if (f.ist_unterkonto && f.haupt_user_id) {
+      const { error: tErr } = await supabase
+        .from('touren')
+        .update({ fahrer_id: f.haupt_user_id })
+        .eq('fahrer_id', f.id);
+      if (tErr) throw new Error(`Touren übertragen: ${tErr.message}`);
+      const { error: aErr } = await supabase
+        .from('ausgefuellte_formulare')
+        .update({ fahrer_id: f.haupt_user_id })
+        .eq('fahrer_id', f.id);
+      if (aErr) throw new Error(`Eingänge übertragen: ${aErr.message}`);
+    }
     const { error: err } = await supabase.from('fahrer').delete().eq('id', f.id);
     if (err) throw err;
     setDeleting(null);
