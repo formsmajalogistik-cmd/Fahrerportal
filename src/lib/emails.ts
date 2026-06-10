@@ -17,6 +17,9 @@ export interface MailListItem {
   /** Focused Inbox: 'focused' | 'other' | null. Wird im Frontend für
    *  die Relevant/Sonstige-Tabs ausgewertet (clientseitiges Filtern). */
   inferenceClassification: 'focused' | 'other' | null;
+  /** Graph-Konversations-ID — gruppiert Antworten/Weiterleitungen zu
+   *  einem Thread. null bei Konten/Items ohne Konversations-Daten. */
+  conversationId: string | null;
 }
 
 export interface MailFolder {

@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useMemo, useState,
+  useCallback, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { Spinner } from '../../components/Spinner';
 import { MailIcon } from '../../components/icons';
@@ -26,6 +26,34 @@ type PendingTour =
   | { mode: 'edit'; tourId: string }
   | { mode: 'zusaetze'; tourId: string }
   | { mode: 'zusaetze-belege'; tourId: string };
+
+/**
+ * Gruppiert E-Mails nach Graph-conversationId zu Threads (Outlook-
+ * Konversationsansicht). Mails ohne conversationId bleiben Einzel-
+ * Threads. Innerhalb eines Threads: älteste zuerst. Threads selbst:
+ * nach der NEUESTEN Mail absteigend sortiert.
+ */
+function groupByConversation(emails: MailListItem[]): MailListItem[][] {
+  const threads = new Map<string, MailListItem[]>();
+  for (const m of emails) {
+    const key = m.conversationId ?? `single:${m.id}`;
+    const arr = threads.get(key);
+    if (arr) arr.push(m);
+    else threads.set(key, [m]);
+  }
+  const out = Array.from(threads.values());
+  for (const t of out) {
+    t.sort((a, b) => (a.receivedDateTime || '').localeCompare(b.receivedDateTime || ''));
+  }
+  out.sort((a, b) =>
+    (b[b.length - 1].receivedDateTime || '').localeCompare(a[a.length - 1].receivedDateTime || ''));
+  return out;
+}
+
+/** Stabiler Schlüssel eines Threads (conversationId oder Einzel-Mail-ID). */
+function threadKey(thread: MailListItem[]): string {
+  return thread[0].conversationId ?? `single:${thread[0].id}`;
+}
 
 /** Welcher Picker-Workflow wartet auf eine Tour-Auswahl? */
 type PickerPurpose = 'open' | 'zusaetze' | 'zusaetze-belege';
@@ -70,6 +98,9 @@ export function PosteingangPage() {
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [openMail, setOpenMail] = useState<MailDetail | null>(null);
+  /** Alle Nachrichten der geöffneten Konversation (chronologisch),
+   *  null wenn die Mail ein Einzel-Thread ist. */
+  const [openThread, setOpenThread] = useState<MailDetail[] | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -197,20 +228,22 @@ export function PosteingangPage() {
     if (!showClassificationTabs) return list;
     return list.filter((m) => m.inferenceClassification === classification);
   }, [list, showClassificationTabs, classification]);
-  // Anzeige-Seite aus der gefilterten Liste schneiden.
-  const visibleList = useMemo(() => {
+  // Threads gruppieren + Anzeige-Seite aus den Threads schneiden —
+  // paginiert wird in Konversationen, nicht in Einzel-Mails.
+  const threads = useMemo(() => groupByConversation(filteredList), [filteredList]);
+  const visibleThreads = useMemo(() => {
     const start = (page - 1) * DISPLAY_PAGE_SIZE;
-    return filteredList.slice(start, start + DISPLAY_PAGE_SIZE);
-  }, [filteredList, page]);
+    return threads.slice(start, start + DISPLAY_PAGE_SIZE);
+  }, [threads, page]);
   // Falls die aktuelle Seite kein „Sichtfeld voll" liefert UND die API
   // noch weitere Seiten hat: automatisch nachladen, bis genug
-  // gefilterte Einträge da sind oder die API erschöpft ist.
+  // gefilterte Threads da sind oder die API erschöpft ist.
   useEffect(() => {
     if (listLoading || !hasMoreFromApi) return;
     const needed = page * DISPLAY_PAGE_SIZE;
-    if (filteredList.length >= needed) return;
+    if (threads.length >= needed) return;
     void Promise.resolve().then(() => { void loadMoreFromApi(); });
-  }, [page, filteredList.length, hasMoreFromApi, listLoading, loadMoreFromApi]);
+  }, [page, threads.length, hasMoreFromApi, listLoading, loadMoreFromApi]);
   const focusedUnread = useMemo(
     () => (showClassificationTabs
       ? list.filter((m) => m.inferenceClassification === 'focused' && !m.isRead).length
@@ -223,21 +256,45 @@ export function PosteingangPage() {
       : 0),
     [list, showClassificationTabs],
   );
-  // „Weiter"-Button aktiv, wenn entweder gefilterte Einträge für die
+  // „Weiter"-Button aktiv, wenn entweder gefilterte Threads für die
   // nächste Seite vorliegen ODER die API noch nicht erschöpft ist.
-  const hasNextPage = filteredList.length > page * DISPLAY_PAGE_SIZE || hasMoreFromApi;
+  const hasNextPage = threads.length > page * DISPLAY_PAGE_SIZE || hasMoreFromApi;
+
+  // Eigene Absende-Adressen — für „Gesendet"-Badges in Thread-Liste
+  // und -Detail.
+  const ownAddresses = useMemo(
+    () => mailboxes.map((m) => m.address.trim().toLowerCase()).filter(Boolean),
+    [mailboxes],
+  );
 
   // --- Detail laden -----------------------------------------------
+  // Bei Threads (mehrere Mails mit derselben conversationId) werden
+  // ALLE Nachrichten der Konversation geladen und chronologisch im
+  // rechten Panel gerendert. listRef vermeidet, dass der Effekt bei
+  // jedem Listen-Reload neu feuert.
+  const listRef = useRef<MailListItem[]>([]);
+  useEffect(() => { listRef.current = list; }, [list]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       if (cancelled) return;
-      if (!openId || !activeMailbox) { setOpenMail(null); return; }
+      if (!openId || !activeMailbox) { setOpenMail(null); setOpenThread(null); return; }
       setOpenLoading(true);
       setOpenError(null);
       try {
-        const m = await getEmail(activeMailbox, openId);
-        if (!cancelled) setOpenMail(m);
+        const cur = listRef.current.find((m) => m.id === openId);
+        const convId = cur?.conversationId ?? null;
+        const threadItems = convId
+          ? listRef.current.filter((m) => m.conversationId === convId)
+          : [];
+        const ids = threadItems.length > 1 ? threadItems.map((m) => m.id) : [openId];
+        const details = await Promise.all(ids.map((id) => getEmail(activeMailbox, id)));
+        if (cancelled) return;
+        details.sort((a, b) =>
+          (a.receivedDateTime || '').localeCompare(b.receivedDateTime || ''));
+        setOpenThread(details.length > 1 ? details : null);
+        setOpenMail(details.find((d) => d.id === openId) ?? details[0] ?? null);
       } catch (err) {
         if (!cancelled) setOpenError(err instanceof Error ? err.message : 'Mail konnte nicht geladen werden.');
       } finally {
@@ -252,6 +309,7 @@ export function PosteingangPage() {
     setPage(1);
     setOpenId(null);
     setOpenMail(null);
+    setOpenThread(null);
     setPendingTour(null);
     setActiveFolderId('inbox');
     setClassification('focused');
@@ -262,6 +320,7 @@ export function PosteingangPage() {
     setPage(1);
     setOpenId(null);
     setOpenMail(null);
+    setOpenThread(null);
     setPendingTour(null);
     setClassification('focused');
   }
@@ -271,6 +330,7 @@ export function PosteingangPage() {
     setPage(1);
     setOpenId(null);
     setOpenMail(null);
+    setOpenThread(null);
   }
 
   function showToast(t: string) {
@@ -296,7 +356,7 @@ export function PosteingangPage() {
     try {
       await deleteEmail({ mailbox: activeMailbox, messageId: id });
       setList((prev) => prev.filter((x) => x.id !== id));
-      if (openId === id) { setOpenId(null); setOpenMail(null); }
+      if (openId === id) { setOpenId(null); setOpenMail(null); setOpenThread(null); }
       showToast('In den Papierkorb verschoben.');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
@@ -310,7 +370,7 @@ export function PosteingangPage() {
     try {
       await moveEmail({ mailbox: activeMailbox, messageId: id, destinationId });
       setList((prev) => prev.filter((x) => x.id !== id));
-      if (openId === id) { setOpenId(null); setOpenMail(null); }
+      if (openId === id) { setOpenId(null); setOpenMail(null); setOpenThread(null); }
       const targetName = folders.find((f) => f.id === destinationId)?.displayName ?? 'Ordner';
       showToast(`Verschoben nach „${targetName}".`);
     } catch (err) {
@@ -319,31 +379,34 @@ export function PosteingangPage() {
   }
 
   // ---- Tour-Hooks (nur primäres Postfach) ----
+  // Bei Threads beziehen sich Antworten/Weiterleiten auf die NEUESTE
+  // Nachricht der Konversation, nicht auf die gerade ausgewählte.
+  const replyTarget = openThread ? openThread[openThread.length - 1] : openMail;
   function openReply() {
-    if (!openMail) return;
+    if (!replyTarget) return;
     setComposer({
       mode: 'reply',
       initial: {
         from: activeMailbox,
-        to: openMail.from.address ? [openMail.from.address] : [],
+        to: replyTarget.from.address ? [replyTarget.from.address] : [],
         cc: [],
-        subject: openMail.subject.startsWith('Re:') ? openMail.subject : `Re: ${openMail.subject}`,
+        subject: replyTarget.subject.startsWith('Re:') ? replyTarget.subject : `Re: ${replyTarget.subject}`,
         bodyHtml: '',
-        messageId: openMail.id,
+        messageId: replyTarget.id,
       },
     });
   }
   function openForward() {
-    if (!openMail) return;
+    if (!replyTarget) return;
     setComposer({
       mode: 'forward',
       initial: {
         from: activeMailbox,
         to: [],
         cc: [],
-        subject: openMail.subject.startsWith('Fwd:') ? openMail.subject : `Fwd: ${openMail.subject}`,
+        subject: replyTarget.subject.startsWith('Fwd:') ? replyTarget.subject : `Fwd: ${replyTarget.subject}`,
         bodyHtml: '',
-        messageId: openMail.id,
+        messageId: replyTarget.id,
       },
     });
   }
@@ -445,7 +508,7 @@ export function PosteingangPage() {
             onChoose={chooseFolder}
           />
           <ListPane
-            list={visibleList}
+            threads={visibleThreads}
             loading={listLoading}
             error={listError}
             search={search}
@@ -463,12 +526,15 @@ export function PosteingangPage() {
             focusedUnread={focusedUnread}
             otherUnread={otherUnread}
             showClassificationTabs={showClassificationTabs}
+            ownAddresses={ownAddresses}
           />
           <DetailPane
             mailbox={activeMailbox}
             loading={openLoading}
             error={openError}
             mail={openMail}
+            thread={openThread}
+            ownAddresses={ownAddresses}
             isPrimary={isPrimaryMailbox}
             folders={folders}
             activeFolderId={activeFolderId}
@@ -603,7 +669,8 @@ function FolderRow({
 // ---- Liste ------------------------------------------------------------
 
 interface ListPaneProps {
-  list: MailListItem[];
+  /** Konversations-Threads (je innen chronologisch älteste→neueste). */
+  threads: MailListItem[][];
   loading: boolean;
   error: string | null;
   search: string;
@@ -627,13 +694,30 @@ interface ListPaneProps {
   focusedUnread: number;
   otherUnread: number;
   showClassificationTabs: boolean;
+  /** Eigene Postfach-Adressen (lowercase) — für „Gesendet"-Badges. */
+  ownAddresses: string[];
 }
 
 function ListPane({
-  list, loading, error, search, onSearch, openId, onOpen, onFlag, page, onPage, totalCount,
+  threads, loading, error, search, onSearch, openId, onOpen, onFlag, page, onPage, totalCount,
   filteredCount, hasNextPage,
   classification, onClassification, focusedUnread, otherUnread, showClassificationTabs,
+  ownAddresses,
 }: ListPaneProps) {
+  // Aufgeklappte Threads (per threadKey). Default: alle eingeklappt.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  function toggleExpand(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function isOwn(m: MailListItem): boolean {
+    const addr = m.from.address?.trim().toLowerCase();
+    return !!addr && ownAddresses.includes(addr);
+  }
   return (
     <div className="card flex min-h-0 flex-col overflow-hidden">
       <div className="border-b border-maja-navy/10 p-3">
@@ -668,46 +752,116 @@ function ListPane({
       )}
       {loading ? (
         <div className="p-4"><Spinner label="E-Mails werden geladen …" /></div>
-      ) : list.length === 0 ? (
+      ) : threads.length === 0 ? (
         <p className="p-6 text-center text-sm text-maja-muted">Keine E-Mails gefunden.</p>
       ) : (
         <ul className="flex-1 divide-y divide-maja-navy/5 overflow-y-auto overscroll-contain">
-          {list.map((m) => {
-            const active = m.id === openId;
+          {threads.map((thread) => {
+            const key = threadKey(thread);
+            const newest = thread[thread.length - 1];
+            const isThread = thread.length > 1;
+            const isExpanded = expanded.has(key);
+            const unreadCount = thread.filter((m) => !m.isRead).length;
+            const threadActive = thread.some((m) => m.id === openId);
             return (
-              <li key={m.id} className="relative">
+              <li key={key} className="relative">
+                {/* Hauptzeile: neueste Mail des Threads */}
                 <button
                   type="button"
-                  onClick={() => onOpen(m.id)}
+                  onClick={() => onOpen(newest.id)}
                   className={`block w-full px-4 py-3 pl-9 text-left transition ${
-                    active ? 'bg-maja-light' : 'hover:bg-maja-light/40'
-                  } ${!m.isRead ? 'bg-blue-50/30' : ''}`}
+                    threadActive && !isExpanded ? 'bg-maja-light' : 'hover:bg-maja-light/40'
+                  } ${unreadCount > 0 ? 'bg-blue-50/30' : ''}`}
                 >
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className={`min-w-0 truncate text-sm ${!m.isRead ? 'font-semibold text-maja-navy' : 'text-maja-ink'}`}>
-                      {m.from.name || m.from.address || '—'}
+                    <span className={`flex min-w-0 items-baseline gap-1.5 truncate text-sm ${unreadCount > 0 ? 'font-semibold text-maja-navy' : 'text-maja-ink'}`}>
+                      <span className="truncate">{newest.from.name || newest.from.address || '—'}</span>
+                      {isThread && (
+                        <span className="shrink-0 text-xs font-semibold text-maja-muted">({thread.length})</span>
+                      )}
+                      {isThread && unreadCount > 0 && (
+                        <span className="shrink-0 rounded-full bg-maja-accent/20 px-1.5 text-[10px] font-semibold text-maja-accent">
+                          {unreadCount} ungelesen
+                        </span>
+                      )}
+                      {isOwn(newest) && (
+                        <span className="shrink-0 rounded bg-maja-navy/10 px-1 text-[10px] font-semibold uppercase tracking-wide text-maja-navy">
+                          Gesendet
+                        </span>
+                      )}
                     </span>
                     <span className="shrink-0 text-xs text-maja-muted">
-                      {formatMailDate(m.receivedDateTime)}
+                      {formatMailDate(newest.receivedDateTime)}
                     </span>
                   </div>
-                  <div className={`mt-0.5 truncate text-sm ${!m.isRead ? 'font-semibold text-maja-ink' : 'text-maja-ink'}`}>
-                    {m.subject || '(kein Betreff)'}
-                    {m.hasAttachments && <PaperclipIcon className="ml-1 inline h-3 w-3 text-maja-muted" />}
+                  <div className={`mt-0.5 truncate text-sm ${unreadCount > 0 ? 'font-semibold text-maja-ink' : 'text-maja-ink'}`}>
+                    {newest.subject || '(kein Betreff)'}
+                    {newest.hasAttachments && <PaperclipIcon className="ml-1 inline h-3 w-3 text-maja-muted" />}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-maja-muted">
-                    {m.bodyPreview}
+                    {newest.bodyPreview}
                   </div>
                 </button>
+                {/* Flag-Toggle für die neueste Mail */}
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onFlag(m); }}
+                  onClick={(e) => { e.stopPropagation(); onFlag(newest); }}
                   className="absolute left-2 top-3 rounded p-0.5 text-maja-muted hover:bg-maja-light"
-                  aria-label={m.flagged ? 'Markierung entfernen' : 'Markieren'}
-                  title={m.flagged ? 'Markierung entfernen' : 'Markieren'}
+                  aria-label={newest.flagged ? 'Markierung entfernen' : 'Markieren'}
+                  title={newest.flagged ? 'Markierung entfernen' : 'Markieren'}
                 >
-                  <FlagIcon className="h-4 w-4" filled={m.flagged} />
+                  <FlagIcon className="h-4 w-4" filled={newest.flagged} />
                 </button>
+                {/* Chevron zum Auf-/Zuklappen */}
+                {isThread && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); toggleExpand(key); }}
+                    className="absolute right-2 bottom-2 rounded p-1 text-maja-muted hover:bg-maja-light hover:text-maja-navy"
+                    aria-label={isExpanded ? 'Konversation einklappen' : 'Konversation aufklappen'}
+                    aria-expanded={isExpanded}
+                  >
+                    <ChevronIcon className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                  </button>
+                )}
+                {/* Aufgeklappter Thread: alle Mails, älteste oben */}
+                {isThread && isExpanded && (
+                  <ul className="border-t border-maja-navy/5 bg-maja-light/20">
+                    {thread.map((m) => {
+                      const active = m.id === openId;
+                      return (
+                        <li key={m.id}>
+                          <button
+                            type="button"
+                            onClick={() => onOpen(m.id)}
+                            className={`block w-full border-l-2 py-2 pl-8 pr-4 text-left transition ${
+                              active
+                                ? 'border-maja-accent bg-maja-light'
+                                : 'border-transparent hover:bg-maja-light/40'
+                            }`}
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className={`flex min-w-0 items-baseline gap-1.5 truncate text-xs ${!m.isRead ? 'font-semibold text-maja-navy' : 'text-maja-ink'}`}>
+                                <span className="truncate">{m.from.name || m.from.address || '—'}</span>
+                                {isOwn(m) && (
+                                  <span className="shrink-0 rounded bg-maja-navy/10 px-1 text-[10px] font-semibold uppercase tracking-wide text-maja-navy">
+                                    Gesendet
+                                  </span>
+                                )}
+                              </span>
+                              <span className="shrink-0 text-[11px] text-maja-muted">
+                                {formatMailDate(m.receivedDateTime)}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 truncate text-xs text-maja-muted">
+                              {m.bodyPreview || m.subject}
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </li>
             );
           })}
@@ -751,6 +905,12 @@ interface DetailPaneProps {
   loading: boolean;
   error: string | null;
   mail: MailDetail | null;
+  /** Alle Nachrichten der Konversation (chronologisch, älteste zuerst).
+   *  null = Einzel-Mail ohne Thread. */
+  thread: MailDetail[] | null;
+  /** Eigene Postfach-Adressen (lowercase) — eigene Nachrichten werden
+   *  im Thread anders dargestellt. */
+  ownAddresses: string[];
   isPrimary: boolean;
   folders: MailFolder[];
   activeFolderId: string;
@@ -765,7 +925,7 @@ interface DetailPaneProps {
 }
 
 function DetailPane({
-  mailbox, loading, error, mail, isPrimary, folders, activeFolderId,
+  mailbox, loading, error, mail, thread, ownAddresses, isPrimary, folders, activeFolderId,
   onReply, onForward, onCreateTour, onOpenTour, onAddZusaetze, onAddZusaetzeBelege,
   onDelete, onMove,
 }: DetailPaneProps) {
@@ -780,10 +940,14 @@ function DetailPane({
       </div>
     );
   }
+  const isOwn = (m: MailDetail) => {
+    const addr = m.from.address?.trim().toLowerCase();
+    return !!addr && ownAddresses.includes(addr);
+  };
   return (
     <div className="card flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <EmailMessageHeader mail={mail} />
+        <EmailMessageHeader mail={thread ? thread[thread.length - 1] : mail} />
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={onReply}>Antworten</button>
           <button type="button" className="btn-secondary text-sm" onClick={onForward}>Weiterleiten</button>
@@ -818,7 +982,46 @@ function DetailPane({
           )}
         </div>
       </div>
-      <EmailMessageView mail={mail} mailbox={mailbox} />
+      {thread ? (
+        <div className="space-y-6">
+          {thread.map((m, idx) => {
+            const selected = m.id === mail.id;
+            const own = isOwn(m);
+            return (
+              <div
+                key={m.id}
+                className={`rounded-lg border p-4 ${
+                  selected
+                    ? 'border-maja-accent ring-1 ring-maja-accent/40'
+                    : 'border-maja-navy/10'
+                } ${own ? 'bg-maja-light/40' : ''}`}
+              >
+                <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-maja-navy/10 pb-2">
+                  <span className="flex min-w-0 items-baseline gap-2 text-sm font-medium text-maja-ink">
+                    <span className="truncate">
+                      {m.from.name || m.from.address || '—'}
+                    </span>
+                    {own && (
+                      <span className="shrink-0 rounded bg-maja-navy/10 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-maja-navy">
+                        Gesendet
+                      </span>
+                    )}
+                    <span className="shrink-0 text-xs font-normal text-maja-muted">
+                      Nachricht {idx + 1} von {thread.length}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-maja-muted">
+                    {formatMailDate(m.receivedDateTime)}
+                  </span>
+                </div>
+                <EmailMessageView mail={m} mailbox={mailbox} />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <EmailMessageView mail={mail} mailbox={mailbox} />
+      )}
     </div>
   );
 }
@@ -927,6 +1130,16 @@ function ClassificationTab({
         </span>
       )}
     </button>
+  );
+}
+
+function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+         className={className} aria-hidden="true">
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
   );
 }
 

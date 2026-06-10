@@ -423,6 +423,9 @@ export interface MailListItem {
    *  ausgewertet — clientseitiges Filtern statt $filter, weil
    *  inferenceClassification + $orderby = InefficientFilter. */
   inferenceClassification: 'focused' | 'other' | null;
+  /** Graph-Konversations-ID — gruppiert Antworten/Weiterleitungen zu
+   *  einem Thread (Outlook-Konversationsansicht). */
+  conversationId: string | null;
 }
 
 export interface MailDetail extends MailListItem {
@@ -459,6 +462,7 @@ interface RawMessage {
   body?: { contentType?: string; content?: string };
   flag?: { flagStatus?: string };
   inferenceClassification?: 'focused' | 'other' | string;
+  conversationId?: string;
 }
 
 function recipient(r: RawGraphRecipient | undefined): { name: string | null; address: string | null } {
@@ -493,7 +497,7 @@ export async function listMessages(args: {
   params.set('$top', String(pageSize));
   params.set('$skip', String(skip));
   params.set('$orderby', 'receivedDateTime desc');
-  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead,flag,inferenceClassification');
+  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead,flag,inferenceClassification,conversationId');
   params.set('$count', 'true');
 
   // Graph: $search + $filter / $orderby ist nicht kompatibel. Bei einer
@@ -521,6 +525,7 @@ export async function listMessages(args: {
     inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
       : m.inferenceClassification === 'other' ? 'other'
       : null,
+    conversationId: m.conversationId ?? null,
   }));
   // Bei aktiver Suche fällt Graph-$orderby weg → clientseitig
   // nach receivedDateTime DESC sortieren, damit die Liste konsistent
@@ -538,7 +543,7 @@ export async function getMessage(args: {
   mailbox: string;
   messageId: string;
 }): Promise<MailDetail> {
-  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body,flag,inferenceClassification';
+  const select = '$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,body,flag,inferenceClassification,conversationId';
   const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}?${select}`;
   const resp = await graphFetch('GET', url, undefined, { Prefer: 'outlook.body-content-type="html"' });
   if (!resp.ok) {
@@ -575,6 +580,7 @@ export async function getMessage(args: {
     inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
       : m.inferenceClassification === 'other' ? 'other'
       : null,
+    conversationId: m.conversationId ?? null,
     bodyHtml: m.body?.content ?? '',
     bodyContentType: contentType,
     attachments,
