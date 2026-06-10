@@ -170,8 +170,8 @@ export default async function handler(req: Req, res: Res) {
           throw new HttpError(400, 'mailbox, messageId und attachmentId sind Pflicht');
         }
         await assertMailboxAllowed(token, mailbox);
-        const { contentType, contentBytes } = await getAttachmentBase64({ mailbox, messageId, attachmentId });
-        res.status(200).json({ contentType, contentBytes });
+        const { contentType, contentBytes, contentId } = await getAttachmentBase64({ mailbox, messageId, attachmentId });
+        res.status(200).json({ contentType, contentBytes, contentId });
         return;
       }
       throw new HttpError(400, `Unbekannte GET-Action: ${action}`);

@@ -789,8 +789,10 @@ function ListPane({
                 <button
                   type="button"
                   onClick={() => onOpen(newest.id)}
-                  className={`block w-full px-4 py-3 pl-9 text-left transition ${
-                    threadActive && !isExpanded ? 'bg-maja-light' : 'hover:bg-maja-light/40'
+                  className={`block w-full border-l-4 px-4 py-3 pl-9 text-left transition ${
+                    threadActive && !isExpanded
+                      ? 'border-maja-accent bg-maja-light dark:bg-slate-700'
+                      : 'border-transparent hover:bg-maja-light/40 dark:hover:bg-slate-700/50'
                   } ${unreadCount > 0 ? 'bg-blue-50/30' : ''}`}
                 >
                   <div className="flex items-baseline justify-between gap-3">
@@ -856,8 +858,8 @@ function ListPane({
                             onClick={() => onOpen(m.id)}
                             className={`block w-full border-l-2 py-2 pl-8 pr-4 text-left transition ${
                               active
-                                ? 'border-maja-accent bg-maja-light'
-                                : 'border-transparent hover:bg-maja-light/40'
+                                ? 'border-maja-accent bg-maja-light dark:bg-slate-700'
+                                : 'border-transparent hover:bg-maja-light/40 dark:hover:bg-slate-700/50'
                             }`}
                           >
                             <div className="flex items-baseline justify-between gap-2">

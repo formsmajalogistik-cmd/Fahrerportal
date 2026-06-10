@@ -559,12 +559,13 @@ export async function getMessage(args: {
   const m = await resp.json() as RawMessage;
   let attachments: MailDetail['attachments'] = [];
   if (m.hasAttachments) {
-    // Additiv: isInline/contentId mitlesen — die Liste/Länge ändert sich
-    // dadurch NICHT (kein Filter), nur zwei neue optionale Felder kommen
-    // an. Reguläre Anhänge (auch wenn Outlook isInline=true setzt) bleiben
-    // in der Karten-Liste sichtbar; der Inline-Body-Fix unten liest die
-    // Felder nur, um cid-Referenzen aufzulösen.
-    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`;
+    // WICHTIG: $select darf hier NUR Basis-Properties von
+    // microsoft.graph.attachment enthalten (id,name,contentType,size,
+    // isInline). `contentId` gehört zum Subtyp fileAttachment und führt
+    // auf der polymorphen Collection zu HTTP 400 → leere Anhangs-Liste.
+    // contentId wird stattdessen pro Anhang über getAttachmentBase64
+    // geliefert (Inline-Bild-Auflösung).
+    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline`;
     const aResp = await graphFetch('GET', aUrl);
     if (aResp.ok) {
       const aJson = await aResp.json() as { value?: RawAttachment[] };
@@ -574,8 +575,12 @@ export async function getMessage(args: {
         contentType: a.contentType ?? 'application/octet-stream',
         size: a.size ?? 0,
         isInline: !!a.isInline,
-        contentId: a.contentId ?? null,
+        contentId: null,
       }));
+    } else {
+      // Nicht still schlucken — der leere-Anhänge-Bug war nur deshalb
+      // unsichtbar, weil dieser Fehlerpfad keinen Log hatte.
+      console.warn(`[graph.getMessage] attachments-Query HTTP ${aResp.status}: ${await aResp.text()}`);
     }
   }
   const contentType = (m.body?.contentType ?? 'html').toLowerCase() === 'text'
@@ -610,7 +615,7 @@ export async function getAttachmentBase64(args: {
   mailbox: string;
   messageId: string;
   attachmentId: string;
-}): Promise<{ name: string; contentType: string; contentBytes: string }> {
+}): Promise<{ name: string; contentType: string; contentBytes: string; contentId: string | null }> {
   const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(args.attachmentId)}`;
   const resp = await graphFetch('GET', url);
   if (!resp.ok) {
@@ -621,6 +626,7 @@ export async function getAttachmentBase64(args: {
     name: string;
     contentType?: string;
     contentBytes?: string;
+    contentId?: string | null;
   };
   if (a['@odata.type'] !== '#microsoft.graph.fileAttachment' || !a.contentBytes) {
     throw new Error('Anhang nicht unterstützt (kein FileAttachment).');
@@ -629,6 +635,7 @@ export async function getAttachmentBase64(args: {
     name: a.name,
     contentType: a.contentType ?? 'application/octet-stream',
     contentBytes: a.contentBytes,
+    contentId: a.contentId ?? null,
   };
 }
 

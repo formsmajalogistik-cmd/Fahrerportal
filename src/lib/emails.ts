@@ -157,7 +157,7 @@ export async function getEmail(mailbox: string, id: string): Promise<MailDetail>
  */
 export async function fetchAttachmentBase64(args: {
   mailbox: string; messageId: string; attachmentId: string;
-}): Promise<{ contentType: string; contentBytes: string }> {
+}): Promise<{ contentType: string; contentBytes: string; contentId?: string | null }> {
   const params = new URLSearchParams({
     action: 'inline-bytes',
     mailbox: args.mailbox,
@@ -171,7 +171,7 @@ export async function fetchAttachmentBase64(args: {
   if (!resp.ok) {
     throw new MailError(resp.status, `HTTP ${resp.status}`);
   }
-  return await resp.json() as { contentType: string; contentBytes: string };
+  return await resp.json() as { contentType: string; contentBytes: string; contentId?: string | null };
 }
 
 export async function fetchAttachmentBlob(args: {
