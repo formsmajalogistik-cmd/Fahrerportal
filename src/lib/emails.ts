@@ -36,6 +36,11 @@ export interface MailAttachmentMeta {
   name: string;
   contentType: string;
   size: number;
+  /** Aufgabe 2 (additiv): Outlook-Flag — kein UI-Filter darauf, nur
+   *  Hinweis für den Inline-Bild-Helper und den Belege-Import. */
+  isInline?: boolean;
+  /** Content-ID des Anhangs (für cid:-Referenzen im HTML-Body). */
+  contentId?: string | null;
 }
 
 export interface MailDetail extends MailListItem {
@@ -145,6 +150,30 @@ export async function getEmail(mailbox: string, id: string): Promise<MailDetail>
  * adressiert, sondern intern als blob-URL erzeugt; der Bearer-Token
  * bleibt im Authorization-Header (nicht in der URL).
  */
+/**
+ * Aufgabe 2 (additiv): liefert einen Anhang als base64-String + MIME-
+ * Type. Wird vom Inline-Bild-Helper und vom Belege-Import benutzt.
+ * Der reguläre `fetchAttachmentBlob` bleibt unangetastet.
+ */
+export async function fetchAttachmentBase64(args: {
+  mailbox: string; messageId: string; attachmentId: string;
+}): Promise<{ contentType: string; contentBytes: string }> {
+  const params = new URLSearchParams({
+    action: 'inline-bytes',
+    mailbox: args.mailbox,
+    messageId: args.messageId,
+    attachmentId: args.attachmentId,
+  });
+  const resp = await fetchWithRetry(`/api/emails?${params.toString()}`, {
+    headers: await authHeader(),
+    timeoutMs: 40_000,
+  });
+  if (!resp.ok) {
+    throw new MailError(resp.status, `HTTP ${resp.status}`);
+  }
+  return await resp.json() as { contentType: string; contentBytes: string };
+}
+
 export async function fetchAttachmentBlob(args: {
   mailbox: string; messageId: string; attachmentId: string;
   disposition?: 'inline' | 'attachment';

@@ -4,6 +4,7 @@ import { XIcon } from '../../components/icons';
 import {
   fetchAttachmentBlob, formatBytes, formatMailDate, type MailDetail,
 } from '../../lib/emails';
+import { enrichBodyWithInlineImages } from '../../lib/inlineImages';
 
 interface Props {
   mail: MailDetail;
@@ -48,16 +49,41 @@ export function EmailMessageHeader({ mail }: { mail: MailDetail }) {
  * öffnet ein Modal (keinen neuen Tab).
  */
 export function EmailMessageView({ mail, mailbox }: Props) {
+  // Body, der angezeigt wird. Default = Original; der Inline-Bild-
+  // Helper schreibt eine angereicherte Version DARÜBER. Bei Fehlern
+  // bleibt der Original-Body stehen.
+  const [displayBody, setDisplayBody] = useState<string>(mail.bodyHtml || '');
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setDisplayBody(mail.bodyHtml || '');
+    });
+    if (mail.bodyContentType !== 'html') return () => { cancelled = true; };
+    if (!mail.bodyHtml || !mail.bodyHtml.includes('cid:')) return () => { cancelled = true; };
+    void enrichBodyWithInlineImages(mail.bodyHtml, mail.attachments, mailbox, mail.id)
+      .then((next) => {
+        if (cancelled) return;
+        if (next && next !== mail.bodyHtml) setDisplayBody(next);
+      })
+      .catch(() => { /* Fallback bleibt der Original-Body. */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mail.id]);
+
   const safe = useMemo(() => {
     if (mail.bodyContentType === 'text') {
       return `<pre style="white-space:pre-wrap;font-family:inherit;margin:0;">${
-        DOMPurify.sanitize(mail.bodyHtml || mail.bodyPreview)
+        DOMPurify.sanitize(displayBody || mail.bodyPreview)
       }</pre>`;
     }
-    return DOMPurify.sanitize(mail.bodyHtml || '', {
+    return DOMPurify.sanitize(displayBody || '', {
       FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+      // data:image/...;base64 muss durch — Inline-Bilder werden lokal
+      // in den Body geschrieben (siehe inlineImages.ts).
+      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data:image\/[a-z0-9+.-]+;base64,):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
     });
-  }, [mail]);
+  }, [displayBody, mail.bodyContentType, mail.bodyPreview]);
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div

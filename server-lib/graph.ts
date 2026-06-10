@@ -438,6 +438,10 @@ export interface MailDetail extends MailListItem {
     name: string;
     contentType: string;
     size: number;
+    /** Additiv (kein UI-Filter darauf!): markiert von Outlook als inline. */
+    isInline?: boolean;
+    /** Content-ID für cid-Referenzen im HTML-Body. */
+    contentId?: string | null;
   }>;
 }
 
@@ -448,6 +452,9 @@ interface RawAttachment {
   name: string;
   contentType?: string;
   size?: number;
+  isInline?: boolean;
+  contentId?: string | null;
+  contentBytes?: string;
 }
 interface RawMessage {
   id: string;
@@ -552,7 +559,12 @@ export async function getMessage(args: {
   const m = await resp.json() as RawMessage;
   let attachments: MailDetail['attachments'] = [];
   if (m.hasAttachments) {
-    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size`;
+    // Additiv: isInline/contentId mitlesen — die Liste/Länge ändert sich
+    // dadurch NICHT (kein Filter), nur zwei neue optionale Felder kommen
+    // an. Reguläre Anhänge (auch wenn Outlook isInline=true setzt) bleiben
+    // in der Karten-Liste sichtbar; der Inline-Body-Fix unten liest die
+    // Felder nur, um cid-Referenzen aufzulösen.
+    const aUrl = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`;
     const aResp = await graphFetch('GET', aUrl);
     if (aResp.ok) {
       const aJson = await aResp.json() as { value?: RawAttachment[] };
@@ -561,6 +573,8 @@ export async function getMessage(args: {
         name: a.name,
         contentType: a.contentType ?? 'application/octet-stream',
         size: a.size ?? 0,
+        isInline: !!a.isInline,
+        contentId: a.contentId ?? null,
       }));
     }
   }
@@ -588,6 +602,36 @@ export async function getMessage(args: {
 }
 
 /** Lädt einen einzelnen Anhang als Binär (FileAttachment, decoded). */
+/** Additiv (Aufgabe 2: Inline-Bilder): liefert den Anhang als
+ *  base64-String wie Graph ihn liefert — kein Decode-Roundtrip. Wird
+ *  vom neuen `/api/emails?action=inline-bytes` benutzt. Schreibt KEINE
+ *  Daten und beeinflusst nicht den klassischen Attachment-Download. */
+export async function getAttachmentBase64(args: {
+  mailbox: string;
+  messageId: string;
+  attachmentId: string;
+}): Promise<{ name: string; contentType: string; contentBytes: string }> {
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(args.attachmentId)}`;
+  const resp = await graphFetch('GET', url);
+  if (!resp.ok) {
+    throw new Error(`getAttachmentBase64: ${resp.status} ${await resp.text()}`);
+  }
+  const a = await resp.json() as {
+    '@odata.type'?: string;
+    name: string;
+    contentType?: string;
+    contentBytes?: string;
+  };
+  if (a['@odata.type'] !== '#microsoft.graph.fileAttachment' || !a.contentBytes) {
+    throw new Error('Anhang nicht unterstützt (kein FileAttachment).');
+  }
+  return {
+    name: a.name,
+    contentType: a.contentType ?? 'application/octet-stream',
+    contentBytes: a.contentBytes,
+  };
+}
+
 export async function getAttachmentBytes(args: {
   mailbox: string;
   messageId: string;

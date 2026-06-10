@@ -130,6 +130,15 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
           const isImage = att.contentType.startsWith('image/');
           const isPdf = att.contentType === 'application/pdf';
           if (!isImage && !isPdf) continue;
+          // Signatur-Logos rausfiltern (Aufgabe 2): kleine
+          // inline-flagged Bilder (< 50 KB) sind in der Praxis
+          // Footer-Icons aus E-Mail-Signaturen und sollen nicht in
+          // den Belegen landen. Normale Anhänge (auch wenn Outlook
+          // sie als isInline=true markiert, sobald sie z.B. groß
+          // genug sind) bleiben weiterhin importiert.
+          if (isImage && att.isInline && att.size > 0 && att.size < 50 * 1024) {
+            continue;
+          }
           try {
             const blob = await fetchAttachmentBlob({
               mailbox, messageId: mail.id, attachmentId: att.id, disposition: 'attachment',

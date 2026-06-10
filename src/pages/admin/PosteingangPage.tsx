@@ -4,7 +4,8 @@ import {
 import { Spinner } from '../../components/Spinner';
 import { MailIcon } from '../../components/icons';
 import {
-  deleteEmail, flagEmail, formatMailDate, getEmail, listEmails, listFolders, moveEmail,
+  deleteEmail, flagEmail, formatMailDate, getEmail, listEmails, listFolders,
+  markEmailRead, moveEmail,
   type MailDetail, type MailFolder, type MailListItem,
 } from '../../lib/emails';
 import { loadMailboxes, type MailboxConfig } from '../../lib/mailboxSettings';
@@ -295,6 +296,25 @@ export function PosteingangPage() {
           (a.receivedDateTime || '').localeCompare(b.receivedDateTime || ''));
         setOpenThread(details.length > 1 ? details : null);
         setOpenMail(details.find((d) => d.id === openId) ?? details[0] ?? null);
+
+        // Aufgabe 1: ungelesene Nachrichten in dieser Konversation
+        // sofort im Hintergrund als gelesen markieren — kein await auf
+        // den Anzeige-Pfad, kein Loading-Indikator. Wird der Component
+        // entladen, schluckt der cancelled-Guard die UI-Updates.
+        const unreadIds = details.filter((d) => !d.isRead).map((d) => d.id);
+        if (unreadIds.length > 0) {
+          // optimistic: list-State sofort updaten, damit Fett/Counter
+          // verschwindet.
+          setList((prev) => prev.map((m) =>
+            unreadIds.includes(m.id) ? { ...m, isRead: true } : m,
+          ));
+          void Promise.all(unreadIds.map((id) =>
+            markEmailRead({ mailbox: activeMailbox, messageId: id, isRead: true })
+              .catch((err) => {
+                console.warn('[Posteingang] markRead fehlgeschlagen', id, err);
+              }),
+          ));
+        }
       } catch (err) {
         if (!cancelled) setOpenError(err instanceof Error ? err.message : 'Mail konnte nicht geladen werden.');
       } finally {

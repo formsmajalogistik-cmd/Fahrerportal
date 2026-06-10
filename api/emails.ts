@@ -23,7 +23,7 @@
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 import { assertMailboxAllowed } from '../server-lib/mailboxAuth.js';
 import {
-  downloadFile, forwardMail, getAttachmentBytes, getMessage,
+  downloadFile, forwardMail, getAttachmentBase64, getAttachmentBytes, getMessage,
   listFolders, listMessages, moveMessage, patchMessage,
   replyMail, sendMail, sendMailFrom,
 } from '../server-lib/graph.js';
@@ -155,6 +155,23 @@ export default async function handler(req: Req, res: Res) {
         );
         if (res.send) res.send(Buffer.from(bytes));
         else res.end(Buffer.from(bytes));
+        return;
+      }
+      // ---- inline-bytes (Aufgabe 2 — Inline-Bilder) -------------------
+      // Additive Action: liefert einen Anhang als { contentBytes (base64),
+      // contentType } statt binär. Wird vom Inline-Bild-Helper UND vom
+      // Belege-Import benutzt. Die klassische `attachment`-Action darüber
+      // ist UNVERÄNDERT.
+      if (action === 'inline-bytes') {
+        const mailbox = qString(req.query?.mailbox);
+        const messageId = qString(req.query?.messageId);
+        const attachmentId = qString(req.query?.attachmentId);
+        if (!mailbox || !messageId || !attachmentId) {
+          throw new HttpError(400, 'mailbox, messageId und attachmentId sind Pflicht');
+        }
+        await assertMailboxAllowed(token, mailbox);
+        const { contentType, contentBytes } = await getAttachmentBase64({ mailbox, messageId, attachmentId });
+        res.status(200).json({ contentType, contentBytes });
         return;
       }
       throw new HttpError(400, `Unbekannte GET-Action: ${action}`);
