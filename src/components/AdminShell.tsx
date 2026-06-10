@@ -8,18 +8,17 @@ import { useEingaengeNotifications } from '../sync/EingaengeContext';
 
 interface NavItem { to: string; label: string; end?: boolean }
 
+/** Schlichter Punkt statt Zahlen-Badge — zeigt nur AN/AUS:
+ *  „es gibt ungesehene Eingänge". */
 function NavBadge({ count, pulse }: { count: number; pulse: boolean }) {
   if (count <= 0) return null;
-  const label = count > 9 ? '9+' : String(count);
   return (
     <span
       aria-label={`${count} ungesehene Eingänge`}
-      className={`ml-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold leading-none text-white shadow-sm ${
-        pulse ? 'animate-bounce' : ''
+      className={`ml-1.5 inline-block h-2 w-2 rounded-full bg-red-500 ${
+        pulse ? 'animate-ping' : ''
       }`}
-    >
-      {label}
-    </span>
+    />
   );
 }
 

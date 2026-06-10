@@ -75,6 +75,8 @@ export function PosteingangPage() {
   const [folders, setFolders] = useState<MailFolder[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(false);
   const [activeFolderId, setActiveFolderId] = useState<string>('inbox');
+  /** Inkrement löst ein Neu-Laden der Ordner-Liste aus (Refresh-Button). */
+  const [folderReload, setFolderReload] = useState(0);
 
   const [search, setSearch] = useState('');
   // Anzeige-Pagination (clientseitig, in DISPLAY_PAGE_SIZE-Schritten).
@@ -151,7 +153,7 @@ export function PosteingangPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeMailbox]);
+  }, [activeMailbox, folderReload]);
 
   // --- Liste laden -------------------------------------------------
   // Erste API-Seite holen, akkumulierte Liste resetten. Wird ausgelöst,
@@ -353,6 +355,13 @@ export function PosteingangPage() {
     setOpenThread(null);
   }
 
+  /** Aufgabe 1: Liste + Ordner-Counts neu laden (Refresh-Button). */
+  function refreshAll() {
+    setPage(1);
+    setFolderReload((k) => k + 1);
+    void loadFirstPage();
+  }
+
   function showToast(t: string) {
     setToast(t);
     window.setTimeout(() => setToast(null), 4000);
@@ -418,6 +427,18 @@ export function PosteingangPage() {
   }
   function openForward() {
     if (!replyTarget) return;
+    // Original-Inhalt als Zitat-HTML — wird im Composer unter dem
+    // eigenen Text eingefügt (abwählbar).
+    const quoteHtml = `
+      <br/><div style="border-left:3px solid #94A3B8;margin-top:12px;padding:8px 12px;color:#334155;">
+        <p style="font-size:12px;color:#64748B;margin:0 0 8px 0;">
+          ---------- Weitergeleitete Nachricht ----------<br/>
+          Von: ${replyTarget.from.name ?? ''} &lt;${replyTarget.from.address ?? ''}&gt;<br/>
+          Datum: ${formatMailDate(replyTarget.receivedDateTime)}<br/>
+          Betreff: ${replyTarget.subject}
+        </p>
+        ${replyTarget.bodyContentType === 'html' ? replyTarget.bodyHtml : `<pre style="white-space:pre-wrap;font-family:inherit;">${replyTarget.bodyHtml}</pre>`}
+      </div>`;
     setComposer({
       mode: 'forward',
       initial: {
@@ -427,6 +448,9 @@ export function PosteingangPage() {
         subject: replyTarget.subject.startsWith('Fwd:') ? replyTarget.subject : `Fwd: ${replyTarget.subject}`,
         bodyHtml: '',
         messageId: replyTarget.id,
+        quoteHtml,
+        originalAttachments: replyTarget.attachments,
+        originalMailbox: activeMailbox,
       },
     });
   }
@@ -547,6 +571,7 @@ export function PosteingangPage() {
             otherUnread={otherUnread}
             showClassificationTabs={showClassificationTabs}
             ownAddresses={ownAddresses}
+            onRefresh={refreshAll}
           />
           <DetailPane
             mailbox={activeMailbox}
@@ -716,13 +741,15 @@ interface ListPaneProps {
   showClassificationTabs: boolean;
   /** Eigene Postfach-Adressen (lowercase) — für „Gesendet"-Badges. */
   ownAddresses: string[];
+  /** Aufgabe 1: lädt Liste + Ordner-Counts neu. */
+  onRefresh: () => void;
 }
 
 function ListPane({
   threads, loading, error, search, onSearch, openId, onOpen, onFlag, page, onPage, totalCount,
   filteredCount, hasNextPage,
   classification, onClassification, focusedUnread, otherUnread, showClassificationTabs,
-  ownAddresses,
+  ownAddresses, onRefresh,
 }: ListPaneProps) {
   // Aufgeklappte Threads (per threadKey). Default: alle eingeklappt.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -740,7 +767,7 @@ function ListPane({
   }
   return (
     <div className="card flex min-h-0 flex-col overflow-hidden">
-      <div className="border-b border-maja-navy/10 p-3">
+      <div className="flex items-center gap-2 border-b border-maja-navy/10 p-3">
         <input
           className="input"
           type="search"
@@ -748,6 +775,16 @@ function ListPane({
           value={search}
           onChange={(e) => onSearch(e.target.value)}
         />
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="shrink-0 rounded-lg border border-maja-navy/20 bg-white p-2.5 text-maja-navy transition hover:bg-maja-light disabled:opacity-50"
+          title="E-Mails neu laden"
+          aria-label="E-Mails neu laden"
+        >
+          <RefreshCwIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
       {showClassificationTabs && (
         <div className="flex border-b border-maja-navy/10 px-3">
@@ -1152,6 +1189,19 @@ function ClassificationTab({
         </span>
       )}
     </button>
+  );
+}
+
+function RefreshCwIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+         className={className} aria-hidden="true">
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
   );
 }
 

@@ -78,8 +78,21 @@ export function EingaengeProvider({ children }: { children: ReactNode }) {
       )
       .subscribe();
 
+    // Realtime ist nicht garantiert (Publication-Konfiguration,
+    // WebSocket-Drops in PWAs, RLS auf dem Realtime-Stream). Polling-
+    // Fallback alle 30 s + Refresh beim Tab-Fokus halten den Count auch
+    // dann aktuell, wenn keine Events ankommen. Der Count-Query selbst
+    // ist ein ungecachter head-COUNT — kein Stale-Cache möglich.
+    const pollHandle = window.setInterval(() => { void refresh(); }, 30_000);
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+
     return () => {
       void supabase.removeChannel(channel);
+      window.clearInterval(pollHandle);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
       if (pulseTimerRef.current) window.clearTimeout(pulseTimerRef.current);
     };
   }, [authStatus, isAdmin, refresh]);

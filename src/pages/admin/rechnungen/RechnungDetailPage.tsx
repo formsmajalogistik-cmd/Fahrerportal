@@ -4,7 +4,10 @@ import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate } from '../../../lib/touren';
-import { berechneSummenProUst } from '../../../lib/rechnungsformat';
+import {
+  berechneSummenProUst, generatePositionenFromTouren, parseRechnungsformat,
+  type TourForRechnung, type TourenartReal,
+} from '../../../lib/rechnungsformat';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
@@ -84,6 +87,10 @@ export function RechnungDetailPage() {
   const [posEditConfirmOpen, setPosEditConfirmOpen] = useState(false);
   const [savingPositions, setSavingPositions] = useState(false);
   const [tourPickerOpen, setTourPickerOpen] = useState(false);
+  /** "Touren erneut laden" (Aufgabe 5) — Bestätigungs-Dialog + Busy. */
+  const [reloadConfirm, setReloadConfirm] = useState(false);
+  const [keepManual, setKeepManual] = useState(true);
+  const [reloadingTouren, setReloadingTouren] = useState(false);
 
   // Notizen: Auto-Save bei Blur.
   const [notizen, setNotizen] = useState('');
@@ -325,6 +332,87 @@ export function RechnungDetailPage() {
       return;
     }
     setEditingPos(true);
+  }
+
+  /**
+   * "Touren erneut laden" (Aufgabe 5): generiert die Positionen aus dem
+   * aktuellen Touren-Stand des Auftraggebers im Leistungszeitraum neu —
+   * gleiche Logik wie der Erstellen-Wizard. Manuelle Positionen
+   * (ist_manuell=true) bleiben optional erhalten.
+   */
+  async function reloadTourenPositionen(keepManualRows: boolean) {
+    if (!rechnung?.auftraggeber_id) {
+      setError('Rechnung ohne Auftraggeber — Touren können nicht geladen werden.');
+      return;
+    }
+    setReloadingTouren(true);
+    setError(null);
+    try {
+      const { data: agData, error: agErr } = await supabase
+        .from('auftraggeber')
+        .select('rechnungsformat')
+        .eq('id', rechnung.auftraggeber_id)
+        .maybeSingle();
+      if (agErr) throw new Error(agErr.message);
+      const format = parseRechnungsformat(agData?.rechnungsformat ?? null);
+
+      const von = rechnung.leistungszeitraum_von ?? '2000-01-01';
+      const bis = rechnung.leistungszeitraum_bis ?? '2999-12-31';
+      const { data, error: tErr } = await supabase
+        .from('touren')
+        .select(`
+          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+          startdatum, enddatum, tourenart, kennzeichen,
+          kundenname, fin, sondervereinbarung, verguetung, info,
+          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
+        `)
+        .eq('auftraggeber_id', rechnung.auftraggeber_id)
+        .gte('enddatum', von)
+        .lte('enddatum', bis)
+        .order('enddatum', { ascending: true });
+      if (tErr) throw new Error(tErr.message);
+      type RawTour = {
+        id: string; tour_id: string | null;
+        start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
+        startdatum: string | null; enddatum: string | null;
+        tourenart: TourenartReal; kennzeichen: string[] | null;
+        kundenname: string | null; fin: string | null;
+        sondervereinbarung: string | null; verguetung: number | null;
+        info: string | null;
+        zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
+      };
+      const list: TourForRechnung[] = ((data as unknown as RawTour[]) ?? []).map((t) => ({
+        id: t.id, tour_id: t.tour_id,
+        start_stadt: t.start_stadt, ziel_stadt: t.ziel_stadt,
+        rueckfuehrung_stadt: t.rueckfuehrung_stadt,
+        startdatum: t.startdatum, enddatum: t.enddatum,
+        tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [],
+        kundenname: t.kundenname, fin: t.fin,
+        sondervereinbarung: t.sondervereinbarung,
+        verguetung: t.verguetung,
+        info: t.info,
+        zusaetze: t.zusaetze ?? [],
+      }));
+
+      const modus = rechnung.ist_auslagen_rechnung ? 'auslagen' : 'beides';
+      const generated = generatePositionenFromTouren(list, format, { modus });
+      const manualRows = keepManualRows ? positionen.filter((p) => p.ist_manuell) : [];
+      setPositionen([
+        ...generated.map((p) => ({ ...p, key: newKey('tour') })),
+        ...manualRows,
+      ]);
+
+      // Tour-Infos für die neue Positionsliste aktualisieren.
+      const m = new Map<string, string>();
+      for (const t of list) {
+        if (t.info && t.info.trim()) m.set(t.id, t.info.trim());
+      }
+      setTourInfoById(m);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Touren konnten nicht neu geladen werden.');
+    } finally {
+      setReloadingTouren(false);
+    }
   }
 
   /**
@@ -617,6 +705,12 @@ export function RechnungDetailPage() {
                     : 'Rechnung ohne Auftraggeber — Tour-Auswahl nicht verfügbar'}
                 >+ Tour hinzufügen</button>
                 <button
+                  type="button" className="btn-secondary text-sm"
+                  onClick={() => { setKeepManual(true); setReloadConfirm(true); }}
+                  disabled={!rechnung.auftraggeber_id || reloadingTouren}
+                  title="Positionen neu aus den aktuellen Touren-Daten generieren"
+                >{reloadingTouren ? 'Lade …' : 'Touren erneut laden'}</button>
+                <button
                   type="button" className="btn-primary text-sm"
                   onClick={() => void speicherePositionen()}
                   disabled={savingPositions}
@@ -729,6 +823,31 @@ export function RechnungDetailPage() {
       </section>
 
       {/* Confirm-Dialoge */}
+      {reloadConfirm && (
+        <ConfirmDialog
+          title="Touren erneut laden?"
+          message={
+            <>
+              Alle Positionen werden neu aus den Touren des
+              Leistungszeitraums generiert. Manuelle Änderungen an
+              generierten Positionen gehen verloren.
+              <label className="mt-3 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                  checked={keepManual}
+                  onChange={(e) => setKeepManual(e.target.checked)}
+                />
+                <span className="text-maja-ink">Manuelle Positionen behalten</span>
+              </label>
+            </>
+          }
+          confirmLabel="Neu laden"
+          destructive
+          onConfirm={() => { setReloadConfirm(false); void reloadTourenPositionen(keepManual); }}
+          onClose={() => setReloadConfirm(false)}
+        />
+      )}
       {posEditConfirmOpen && (
         <ConfirmDialog
           title="Rechnung ist bereits bezahlt"

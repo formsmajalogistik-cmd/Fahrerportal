@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
+import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate } from '../../../lib/touren';
 import {
   DEFAULT_RECHNUNGSFORMAT, auslagenRechnungsdatum, berechneSummenProUst,
@@ -132,6 +133,9 @@ export function RechnungNewPage() {
   const [loadingTouren, setLoadingTouren] = useState(false);
   /** Tour-Picker offen für "haupt" | "auslagen" — null = zu. */
   const [tourPicker, setTourPicker] = useState<null | 'haupt' | 'auslagen'>(null);
+  /** Bestätigungs-Dialog für "Touren erneut laden" (Aufgabe 5). */
+  const [reloadConfirm, setReloadConfirm] = useState(false);
+  const [keepManual, setKeepManual] = useState(true);
   /** Tour-Infos der via Dialog hinzugefügten Touren — landen on-the-fly
    *  in der Map, ohne den gesamten Touren-State zu mutieren. */
   const [addedTourInfos, setAddedTourInfos] = useState<Map<string, string>>(new Map());
@@ -421,6 +425,20 @@ export function RechnungNewPage() {
       setAuslagen([]);
     }
   }, [auftraggeber, rechnungsdatum, format, getrennt, rechnungsempfaengerId]);
+
+  /**
+   * "Touren erneut laden" (Aufgabe 5): überschreibt die generierten
+   * Positionen mit dem frischen Touren-Stand. Manuelle Positionen
+   * (ist_manuell=true) werden optional erhalten und nach dem Neuladen
+   * wieder angehängt.
+   */
+  const reloadTouren = useCallback(async (keepManualRows: boolean) => {
+    const manualHaupt = keepManualRows ? haupt.filter((p) => p.ist_manuell) : [];
+    const manualAuslagen = keepManualRows ? auslagen.filter((p) => p.ist_manuell) : [];
+    await loadTouren();
+    if (manualHaupt.length > 0) setHaupt((rows) => [...rows, ...manualHaupt]);
+    if (manualAuslagen.length > 0) setAuslagen((rows) => [...rows, ...manualAuslagen]);
+  }, [haupt, auslagen, loadTouren]);
 
   /**
    * Schnell-Erstellung der CC-Auslagenrechnung zum letzten Touren-
@@ -918,6 +936,17 @@ export function RechnungNewPage() {
           >
             {loadingTouren ? 'Lade Touren …' : 'Touren laden'}
           </button>
+          {(haupt.length > 0 || auslagen.length > 0) && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => { setKeepManual(true); setReloadConfirm(true); }}
+              disabled={!auftraggeber || loadingTouren || loadingSchnell}
+              title="Positionen neu aus den aktuellen Touren-Daten generieren"
+            >
+              Touren erneut laden
+            </button>
+          )}
           {getrennt && (
             <button
               type="button"
@@ -1047,6 +1076,32 @@ export function RechnungNewPage() {
           {saving === 'offen' ? 'Erstellt …' : 'Rechnung erstellen'}
         </button>
       </div>
+
+      {reloadConfirm && (
+        <ConfirmDialog
+          title="Touren erneut laden?"
+          message={
+            <>
+              Alle Positionen werden neu aus den aktuellen Touren-Daten
+              generiert. Manuelle Änderungen an generierten Positionen gehen
+              verloren.
+              <label className="mt-3 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                  checked={keepManual}
+                  onChange={(e) => setKeepManual(e.target.checked)}
+                />
+                <span className="text-maja-ink">Manuelle Positionen behalten</span>
+              </label>
+            </>
+          }
+          confirmLabel="Neu laden"
+          destructive
+          onConfirm={() => { setReloadConfirm(false); void reloadTouren(keepManual); }}
+          onClose={() => setReloadConfirm(false)}
+        />
+      )}
 
       {tourPicker && auftraggeber && (
         <AddTourPositionDialog

@@ -237,17 +237,29 @@ export function EingaengePage() {
               : 'Deine Protokolle. PDFs als Vorschau öffnen oder herunterladen.'}
           </p>
         </div>
-        {statusFilter === 'submitted' && linkedCount > 0 && (
-          <label className="flex items-center gap-2 text-sm text-maja-ink">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-              checked={hideLinked}
-              onChange={(e) => setHideLinked(e.target.checked)}
-            />
-            Verknüpfte ausblenden ({linkedCount})
-          </label>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {statusFilter === 'submitted' && linkedCount > 0 && (
+            <label className="flex items-center gap-2 text-sm text-maja-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+                checked={hideLinked}
+                onChange={(e) => setHideLinked(e.target.checked)}
+              />
+              Verknüpfte ausblenden ({linkedCount})
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="btn-secondary inline-flex items-center gap-1.5 text-sm"
+            title="Eingänge neu laden"
+          >
+            <RefreshIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Aktualisieren
+          </button>
+        </div>
       </div>
 
       {/* Status-Filter (Aufgabe 2B) */}
