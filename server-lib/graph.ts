@@ -558,7 +558,17 @@ export async function getMessage(args: {
   }
   const m = await resp.json() as RawMessage;
   let attachments: MailDetail['attachments'] = [];
-  if (m.hasAttachments) {
+  // Wann sollen wir die /attachments-Collection abfragen?
+  //   1) `hasAttachments=true` (klassischer Fall — sichtbare Anhänge).
+  //   2) Der HTML-Body enthält `cid:`-Referenzen. Microsoft Graph setzt
+  //      `hasAttachments=false`, wenn ALLE Anhänge inline sind — typisch
+  //      für Gmail-Mails mit `ii_...`-Cids. Ohne diesen zweiten Pfad
+  //      bliebe `attachments` leer und Inline-Bilder wären nicht
+  //      auflösbar. Die klassische Karten-Liste bleibt davon
+  //      unbeeinflusst (Mails ohne cid und ohne hasAttachments laden
+  //      weiterhin nichts nach).
+  const bodyHasCid = (m.body?.content ?? '').includes('cid:');
+  if (m.hasAttachments || bodyHasCid) {
     // WICHTIG: $select darf hier NUR Basis-Properties von
     // microsoft.graph.attachment enthalten (id,name,contentType,size,
     // isInline). `contentId` gehört zum Subtyp fileAttachment und führt
@@ -569,7 +579,19 @@ export async function getMessage(args: {
     const aResp = await graphFetch('GET', aUrl);
     if (aResp.ok) {
       const aJson = await aResp.json() as { value?: RawAttachment[] };
-      attachments = (aJson.value ?? []).map((a) => ({
+      const raw = aJson.value ?? [];
+      console.info('[graph.getMessage] attachments fetched', {
+        hasAttachmentsFlag: !!m.hasAttachments,
+        bodyHasCid,
+        count: raw.length,
+        items: raw.map((a) => ({
+          name: a.name,
+          contentType: a.contentType,
+          isInline: !!a.isInline,
+          size: a.size ?? 0,
+        })),
+      });
+      attachments = raw.map((a) => ({
         id: a.id,
         name: a.name,
         contentType: a.contentType ?? 'application/octet-stream',
