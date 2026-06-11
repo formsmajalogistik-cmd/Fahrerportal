@@ -14,7 +14,11 @@ type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nach
 
 interface Props {
   onClose: () => void;
-  onCreated: () => void;
+  /** Wird nach erfolgreicher Tour-Anlage aufgerufen. Optional bekommt
+   *  der Aufrufer Daten der angelegten Tour mit — heute reicht der
+   *  Posteingang-Workflow damit den gewählten Greimel-Zugang an die
+   *  Auto-Antwort weiter (siehe TourFromEmailPanel). */
+  onCreated: (info?: { greimelZugangId: string | null }) => void;
   /**
    * "modal" (Default): klassisches Overlay-Modal.
    * "embedded": Inhalt wird in den Eltern-Container gerendert — ohne
@@ -345,7 +349,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     }
 
     setSaving(false);
-    onCreated();
+    onCreated({ greimelZugangId: greimelEffective });
   }
 
   // Wrapper-Klassen je nach variant:
