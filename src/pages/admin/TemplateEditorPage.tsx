@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog';
 import { TemplateStructureEditor } from './TemplateStructureEditor';
 import { TemplateMappingEditor } from './TemplateMappingEditor';
 import { TemplateEmailEditor } from './TemplateEmailEditor';
@@ -58,6 +59,28 @@ export function TemplateEditorPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmDeletePdf, setConfirmDeletePdf] = useState<TemplatePdf | null>(null);
 
+  // Dirty-Tracking: Snapshot des zuletzt gespeicherten Stands wird
+  // beim Laden und nach jedem Save in `savedSnapshot` geschrieben. Wir
+  // verwenden ein State (statt Ref), damit der Vergleich während des
+  // Renders zulässig ist.
+  const [savedSnapshot, setSavedSnapshot] = useState<string>('');
+  const liveSnapshot = useMemo(
+    () => JSON.stringify({ name, schema, pdfs, emailConfig }),
+    [name, schema, pdfs, emailConfig],
+  );
+  const dirty = !loading && savedSnapshot !== '' && savedSnapshot !== liveSnapshot;
+  /** Pending-Navigation: ziel-URL oder Funktion, die nach Bestätigung läuft. */
+  const [pendingExit, setPendingExit] = useState<null | { kind: 'navigate'; to: string } | { kind: 'run'; run: () => void }>(null);
+
+  function safeNavigate(to: string) {
+    if (dirty) { setPendingExit({ kind: 'navigate', to }); return; }
+    navigate(to);
+  }
+  function guardedRun(run: () => void) {
+    if (dirty) { setPendingExit({ kind: 'run', run }); return; }
+    run();
+  }
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -80,11 +103,32 @@ export function TemplateEditorPage() {
     const loadedPdfs = Array.isArray(t.pdfs) ? (t.pdfs as TemplatePdf[]) : [];
     setPdfs(loadedPdfs);
     setActivePdfId((cur) => cur ?? loadedPdfs[0]?.id ?? null);
-    setEmailConfig((t.email_config as EmailConfig | null) ?? null);
+    const loadedEmailConfig = (t.email_config as EmailConfig | null) ?? null;
+    setEmailConfig(loadedEmailConfig);
+    // Snapshot des zuletzt-gespeicherten Stands für Dirty-Vergleich.
+    setSavedSnapshot(JSON.stringify({
+      name: t.name,
+      schema: t.schema && typeof t.schema === 'object' && 'sections' in t.schema
+        ? t.schema as FormSchema : { sections: [] },
+      pdfs: loadedPdfs,
+      emailConfig: loadedEmailConfig,
+    }));
     setLoading(false);
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Aufgabe 1: Browser-Warnung beim Tab-Schließen / Reload, solange
+  // ungespeicherte Änderungen vorliegen.
+  useEffect(() => {
+    if (!dirty) return undefined;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   const { fieldCount, sectionCount, mappingCount } = useMemo(() => {
     const sections = schema.sections ?? [];
@@ -105,17 +149,23 @@ export function TemplateEditorPage() {
     setSaving(true);
     setError(null);
     setStatusMsg(null);
+    const cleanName = name.trim() || 'Unbenanntes Template';
     const { error: err } = await supabase
       .from('formular_templates')
       .update({
-        name: name.trim() || 'Unbenanntes Template',
+        name: cleanName,
         schema: schema as unknown as Json,
         pdfs: pdfs as unknown as Json,
         email_config: (emailConfig ?? null) as unknown as Json,
       })
       .eq('id', template.id);
     setSaving(false);
-    if (err) { setError(err.message); return; }
+    if (err) { setError(err.message); throw new Error(err.message); }
+    // Snapshot nach erfolgreichem Save aktualisieren — Editor ist
+    // wieder „sauber".
+    setSavedSnapshot(JSON.stringify({
+      name: cleanName, schema, pdfs, emailConfig,
+    }));
     setStatusMsg('Template gespeichert.');
     // Auto-hide nach 3 s
     window.setTimeout(() => setStatusMsg((m) => m === 'Template gespeichert.' ? null : m), 3000);
@@ -268,7 +318,7 @@ export function TemplateEditorPage() {
     return (
       <div className="space-y-4">
         <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>
-        <button onClick={() => navigate('/templates')} className="btn-secondary">Zurück</button>
+        <button onClick={() => safeNavigate('/templates')} className="btn-secondary">Zurück</button>
       </div>
     );
   }
@@ -278,24 +328,29 @@ export function TemplateEditorPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <button onClick={() => navigate('/templates')}
+          <button onClick={() => safeNavigate('/templates')}
                   className="text-sm text-maja-accent hover:underline">
             ← Alle Templates
           </button>
-          <h1 className="mt-1 text-2xl font-semibold text-maja-navy">Template bearbeiten</h1>
+          <h1 className="mt-1 text-2xl font-semibold text-maja-navy">
+            Template bearbeiten
+            {dirty && (
+              <span className="ml-2 align-middle text-xs font-normal text-amber-700">• ungespeicherte Änderungen</span>
+            )}
+          </h1>
           <p className="text-sm text-maja-muted">
             {sectionCount} Sektionen · {fieldCount} Felder · {pdfs.length} PDF{pdfs.length === 1 ? '' : 's'} · {mappingCount} PDF-Mappings
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => setConfirmDelete(true)}
+          <button onClick={() => guardedRun(() => setConfirmDelete(true))}
                   className="text-sm font-medium text-red-600 hover:underline">
             Template löschen
           </button>
-          <button onClick={handleDuplicate} className="btn-secondary" disabled={duplicating}>
+          <button onClick={() => guardedRun(handleDuplicate)} className="btn-secondary" disabled={duplicating}>
             {duplicating ? 'Dupliziere …' : 'Duplizieren'}
           </button>
-          <button onClick={save} className="btn-primary" disabled={saving}>
+          <button onClick={() => void save().catch(() => {})} className="btn-primary" disabled={saving || !dirty}>
             {saving ? 'Speichern …' : 'Speichern'}
           </button>
         </div>
@@ -320,6 +375,18 @@ export function TemplateEditorPage() {
           Email
         </TabButton>
       </div>
+      {pendingExit && (
+        <UnsavedChangesDialog
+          onSave={async () => { await save(); }}
+          onLeave={() => {
+            const exit = pendingExit;
+            setPendingExit(null);
+            if (exit.kind === 'navigate') navigate(exit.to);
+            else exit.run();
+          }}
+          onCancel={() => setPendingExit(null)}
+        />
+      )}
 
       {tab === 'struktur' && (
         <TemplateStructureEditor

@@ -8,7 +8,7 @@ import { useFahrerContext } from '../../auth/FahrerContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
-import { DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
+import { CheckIcon, DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
 import { fahrerName } from '../../lib/names';
 
 function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user: { email: string; vorname: string | null; nachname: string | null } | null }): string {
@@ -329,6 +329,8 @@ export function TourDetailDialog({
    * Auto-Berechnung nach Eingang-Verknüpfung genutzt (Aufgabe 3).
    */
   const [routeDialog, setRouteDialog] = useState<null | 'hin' | 'rueck'>(null);
+  /** Erfolgs-Quittung pro Strecke nach „Entfernung berechnen". */
+  const [routeConfirm, setRouteConfirm] = useState<{ hin?: number; rueck?: number }>({});
   /** Welcher Abschnitt soll beim Verknüpfung-Lösen behandelt werden? null = Dialog zu. */
   const [unlinkOpen, setUnlinkOpen] = useState<null | 'ab' | 'bc'>(null);
   const [unlinkBusy, setUnlinkBusy] = useState(false);
@@ -966,6 +968,7 @@ export function TourDetailDialog({
           zugaenge={zugaenge}
           kontakte={editKontakte}
           onOpenRouteDialog={setRouteDialog}
+          routeConfirm={routeConfirm}
           tourId={tour.id}
         />
       )}
@@ -1205,6 +1208,8 @@ export function TourDetailDialog({
           <VehicleAndAddressEdit
             draft={draft}
             patchDraft={patchDraft}
+            onOpenRouteDialog={setRouteDialog}
+            routeConfirm={routeConfirm}
           />
         )}
       </div>
@@ -1312,8 +1317,10 @@ export function TourDetailDialog({
               if (isHin) {
                 if (draft.tourenart === 'ABA') patchDraft({ kmGesamtAba: String(km) });
                 else patchDraft({ kmHin: String(km) });
+                setRouteConfirm((c) => ({ ...c, hin: km }));
               } else {
                 patchDraft({ kmRueck: String(km) });
+                setRouteConfirm((c) => ({ ...c, rueck: km }));
               }
               closeAndAdvance();
             }}
@@ -1624,27 +1631,12 @@ interface EditModeProps {
   zugaenge: GreimelZugang[];
   kontakte: AuftraggeberKontakt[];
   onOpenRouteDialog: (which: 'hin' | 'rueck') => void;
+  /** km der jeweils zuletzt übernommenen Route — Bestätigung neben dem
+   *  Berechnen-Button (Aufgabe 2). */
+  routeConfirm: { hin?: number; rueck?: number };
   /** Aktuelle Tour-ID — Pflicht für die ProtokollSection (Protokoll-
    *  Zuweisungen werden direkt in tour_protokoll_zuweisungen persistiert). */
   tourId: string | null;
-}
-
-function KmBerechnenButton({
-  disabled, onClick, title,
-}: { disabled: boolean; onClick: () => void; title: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label="km berechnen"
-      className="inline-flex items-center gap-1 rounded-md border border-maja-navy/20 bg-white px-3 text-xs font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <RouteIcon className="h-4 w-4" />
-      Berechnen
-    </button>
-  );
 }
 
 function RouteIcon({ className }: { className?: string }) {
@@ -1660,7 +1652,7 @@ function RouteIcon({ className }: { className?: string }) {
 }
 
 function EditMode(p: EditModeProps) {
-  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, breakdown, pricing, templates, zugaenge, kontakte, onOpenRouteDialog } = p;
+  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, breakdown, pricing, templates, zugaenge, kontakte } = p;
   const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
   // Live-Status aus dem Datum (analog zur Anzeige in der Liste).
   const computedStatus = computeTourStatus(draft.startdatum || null, draft.enddatum || null);
@@ -1755,58 +1747,34 @@ function EditMode(p: EditModeProps) {
         // automatische Routenberechnung schon vorhanden sind. Wenn
         // beide Endpunkte ausgefüllt sind, wird der "Berechnen"-
         // Button aktiv — sonst disabled mit Hint im title-Attribut.
-        const startA = draft.adresseStart.trim();
-        const zielA  = draft.adresseZiel.trim();
-        const rueckA = draft.adresseRueckfuehrung.trim();
-        const canHin   = !!startA && !!zielA;
-        const canRueck = !!zielA  && !!rueckA;
+        // Berechnen-Buttons sitzen UNTER den Adressen (siehe weiter
+        // unten), damit der Workflow ohne Hochscrollen läuft (Aufgabe 2).
         return draft.tourenart === 'ABA' ? (
           <div>
             <label className="label">Kilometer gesamt</label>
-            <div className="flex items-stretch gap-2">
-              <input
-                className="input flex-1"
-                type="number"
-                min={0}
-                step={1}
-                value={draft.kmGesamtAba}
-                onChange={(e) => patchDraft({ kmGesamtAba: e.target.value })}
-              />
-              <KmBerechnenButton
-                disabled={!canHin}
-                title={canHin ? 'Route Start → Ziel berechnen' : 'Adresse Übernahme und Übergabe ausfüllen'}
-                onClick={() => onOpenRouteDialog('hin')}
-              />
-            </div>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step={1}
+              value={draft.kmGesamtAba}
+              onChange={(e) => patchDraft({ kmGesamtAba: e.target.value })}
+            />
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <label className="label">km Hin</label>
-              <div className="flex items-stretch gap-2">
-                <input className="input flex-1" type="number" min={0} step={1}
-                       value={draft.kmHin}
-                       onChange={(e) => patchDraft({ kmHin: e.target.value })} />
-                <KmBerechnenButton
-                  disabled={!canHin}
-                  title={canHin ? 'Route Start → Ziel berechnen' : 'Adresse Übernahme und Übergabe ausfüllen'}
-                  onClick={() => onOpenRouteDialog('hin')}
-                />
-              </div>
+              <input className="input" type="number" min={0} step={1}
+                     value={draft.kmHin}
+                     onChange={(e) => patchDraft({ kmHin: e.target.value })} />
             </div>
             {draft.hatRueckfuehrung && (
               <div>
                 <label className="label">km Rück</label>
-                <div className="flex items-stretch gap-2">
-                  <input className="input flex-1" type="number" min={0} step={1}
-                         value={draft.kmRueck}
-                         onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
-                  <KmBerechnenButton
-                    disabled={!canRueck}
-                    title={canRueck ? 'Route Ziel → Rückführung berechnen' : 'Adresse Übergabe und Rückführung ausfüllen'}
-                    onClick={() => onOpenRouteDialog('rueck')}
-                  />
-                </div>
+                <input className="input" type="number" min={0} step={1}
+                       value={draft.kmRueck}
+                       onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
               </div>
             )}
             <div>
@@ -2098,8 +2066,13 @@ function AddressBlockView({
 }
 
 function VehicleAndAddressEdit({
-  draft, patchDraft,
-}: { draft: EditDraft; patchDraft: (p: Partial<EditDraft>) => void }) {
+  draft, patchDraft, onOpenRouteDialog, routeConfirm,
+}: {
+  draft: EditDraft;
+  patchDraft: (p: Partial<EditDraft>) => void;
+  onOpenRouteDialog: (which: 'hin' | 'rueck') => void;
+  routeConfirm: { hin?: number; rueck?: number };
+}) {
   return (
     <>
       {/* Kennzeichen */}
@@ -2154,20 +2127,65 @@ function VehicleAndAddressEdit({
         email={draft.kontaktZielEmail}
         onEmail={(v) => patchDraft({ kontaktZielEmail: v })}
       />
+      {/* Aufgabe 2: Berechnen-Buttons sitzen direkt unter den
+          Adressen — kein Hochscrollen zur km-Sektion mehr nötig. */}
+      <RouteCalcRow
+        disabled={!draft.adresseStart.trim() || !draft.adresseZiel.trim()}
+        label="Entfernung berechnen"
+        confirmKm={routeConfirm.hin}
+        onClick={() => onOpenRouteDialog('hin')}
+      />
       {draft.hatRueckfuehrung && (
-        <AddressBlockEdit
-          stadt={draft.rueckfuehrungStadt}
-          adresseValue={draft.adresseRueckfuehrung}
-          onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
-          name={draft.kontaktRueckName}
-          onName={(v) => patchDraft({ kontaktRueckName: v })}
-          telefon={draft.kontaktRueckTelefon}
-          onTelefon={(v) => patchDraft({ kontaktRueckTelefon: v })}
-          email={draft.kontaktRueckEmail}
-          onEmail={(v) => patchDraft({ kontaktRueckEmail: v })}
-        />
+        <>
+          <AddressBlockEdit
+            stadt={draft.rueckfuehrungStadt}
+            adresseValue={draft.adresseRueckfuehrung}
+            onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
+            name={draft.kontaktRueckName}
+            onName={(v) => patchDraft({ kontaktRueckName: v })}
+            telefon={draft.kontaktRueckTelefon}
+            onTelefon={(v) => patchDraft({ kontaktRueckTelefon: v })}
+            email={draft.kontaktRueckEmail}
+            onEmail={(v) => patchDraft({ kontaktRueckEmail: v })}
+          />
+          <RouteCalcRow
+            disabled={!draft.adresseZiel.trim() || !draft.adresseRueckfuehrung.trim()}
+            label="Entfernung Rückweg berechnen"
+            confirmKm={routeConfirm.rueck}
+            onClick={() => onOpenRouteDialog('rueck')}
+          />
+        </>
       )}
     </>
+  );
+}
+
+function RouteCalcRow({
+  disabled, label, confirmKm, onClick,
+}: {
+  disabled: boolean;
+  label: string;
+  confirmKm?: number;
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        title={disabled ? 'Adressen ausfüllen, dann verfügbar' : label}
+        className="inline-flex items-center gap-1.5 rounded-md border border-maja-navy/20 bg-white px-3 py-1.5 text-xs font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <RouteIcon className="h-4 w-4" />
+        {label}
+      </button>
+      {confirmKm != null && confirmKm > 0 && (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+          <CheckIcon className="h-3.5 w-3.5" /> {confirmKm} km übernommen
+        </span>
+      )}
+    </div>
   );
 }
 

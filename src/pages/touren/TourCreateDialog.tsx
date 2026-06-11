@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
-import { XIcon } from '../../components/icons';
+import { CheckIcon, XIcon } from '../../components/icons';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro, formatKm, type TourPriceBreakdown } from '../../lib/touren';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
@@ -115,6 +115,8 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   // Routen-Dialog (km berechnen über Google Routes API). Identisches
   // Verhalten wie im Tour-Detail-Panel.
   const [routeDialog, setRouteDialog] = useState<null | 'hin' | 'rueck'>(null);
+  /** Erfolgs-Quittung pro Strecke nach „Entfernung berechnen". */
+  const [routeConfirm, setRouteConfirm] = useState<{ hin?: number; rueck?: number }>({});
 
   // Protokoll
   const [protokollArt, setProtokollArt] = useState<ProtokollArt | null>(null);
@@ -424,50 +426,27 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             </div>
           )}
 
-          {/* km Felder + "Berechnen"-Button für Google Routes */}
+          {/* km Felder — Berechnen-Buttons sitzen UNTER den Adressen
+              (Aufgabe 2), damit der Workflow von oben nach unten ohne
+              Hochscrollen funktioniert. */}
           {isAba ? (
             <div>
               <label htmlFor="t-km-aba" className="label">Kilometer gesamt</label>
-              <div className="flex items-stretch gap-2">
-                <input id="t-km-aba" className="input flex-1" type="number" min={0} step={1}
-                       value={kmGesamtAba} onChange={(e) => setKmGesamtAba(e.target.value)} />
-                <KmCalcButton
-                  disabled={!adresseStart.trim() || !adresseZiel.trim()}
-                  title="Adresse Start → Ziel berechnen"
-                  onClick={() => setRouteDialog('hin')}
-                />
-              </div>
+              <input id="t-km-aba" className="input" type="number" min={0} step={1}
+                     value={kmGesamtAba} onChange={(e) => setKmGesamtAba(e.target.value)} />
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="t-km-hin" className="label">km Hin (Start → Ziel)</label>
-                <div className="flex items-stretch gap-2">
-                  <input id="t-km-hin" className="input flex-1" type="number" min={0} step={1}
-                         value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
-                  <KmCalcButton
-                    disabled={!adresseStart.trim() || !adresseZiel.trim()}
-                    title={adresseStart.trim() && adresseZiel.trim()
-                      ? 'Route Start → Ziel berechnen'
-                      : 'Adressen unten ausfüllen, dann verfügbar'}
-                    onClick={() => setRouteDialog('hin')}
-                  />
-                </div>
+                <input id="t-km-hin" className="input" type="number" min={0} step={1}
+                       value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
               </div>
               {hatRueckfuehrung && (
                 <div>
                   <label htmlFor="t-km-rueck" className="label">km Rück (Ziel → Rückführung)</label>
-                  <div className="flex items-stretch gap-2">
-                    <input id="t-km-rueck" className="input flex-1" type="number" min={0} step={1}
-                           value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
-                    <KmCalcButton
-                      disabled={!adresseZiel.trim() || !adresseRueckfuehrung.trim()}
-                      title={adresseZiel.trim() && adresseRueckfuehrung.trim()
-                        ? 'Route Ziel → Rückführung berechnen'
-                        : 'Adressen unten ausfüllen, dann verfügbar'}
-                      onClick={() => setRouteDialog('rueck')}
-                    />
-                  </div>
+                  <input id="t-km-rueck" className="input" type="number" min={0} step={1}
+                         value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
                 </div>
               )}
             </div>
@@ -726,12 +705,24 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                          onChange={(e) => setAdresseZiel(e.target.value)} />
                 </div>
               </div>
+              <RouteCalcRow
+                disabled={!adresseStart.trim() || !adresseZiel.trim()}
+                label="Entfernung berechnen"
+                confirmKm={routeConfirm.hin}
+                onClick={() => setRouteDialog('hin')}
+              />
               {hatRueckfuehrung && (
                 <div>
                   <label htmlFor="t-adr-rueck" className="label">Adresse Rückführung</label>
                   <input id="t-adr-rueck" className="input"
                          value={adresseRueckfuehrung}
                          onChange={(e) => setAdresseRueckfuehrung(e.target.value)} />
+                  <RouteCalcRow
+                    disabled={!adresseZiel.trim() || !adresseRueckfuehrung.trim()}
+                    label="Entfernung Rückweg berechnen"
+                    confirmKm={routeConfirm.rueck}
+                    onClick={() => setRouteDialog('rueck')}
+                  />
                 </div>
               )}
               <KontaktVorOrtBlock
@@ -812,8 +803,10 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               if (isHin) {
                 if (isAba) setKmGesamtAba(String(km));
                 else setKmHin(String(km));
+                setRouteConfirm((c) => ({ ...c, hin: km }));
               } else {
                 setKmRueck(String(km));
+                setRouteConfirm((c) => ({ ...c, rueck: km }));
               }
               setRouteDialog(null);
             }}
@@ -824,21 +817,34 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   );
 }
 
-function KmCalcButton({
-  disabled, onClick, title,
-}: { disabled: boolean; onClick: () => void; title: string }) {
+function RouteCalcRow({
+  disabled, label, confirmKm, onClick,
+}: {
+  disabled: boolean;
+  label: string;
+  /** km der zuletzt übernommenen Berechnung — wenn gesetzt, erscheint
+   *  rechts eine kleine grüne Bestätigung. */
+  confirmKm?: number;
+  onClick: () => void;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label="km berechnen"
-      className="inline-flex items-center gap-1 rounded-md border border-maja-navy/20 bg-white px-3 text-xs font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <RouteSmallIcon className="h-4 w-4" />
-      Berechnen
-    </button>
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        title={disabled ? 'Adressen ausfüllen, dann verfügbar' : label}
+        className="inline-flex items-center gap-1.5 rounded-md border border-maja-navy/20 bg-white px-3 py-1.5 text-xs font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <RouteSmallIcon className="h-4 w-4" />
+        {label}
+      </button>
+      {confirmKm != null && confirmKm > 0 && (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+          <CheckIcon className="h-3.5 w-3.5" /> {confirmKm} km übernommen
+        </span>
+      )}
+    </div>
   );
 }
 
