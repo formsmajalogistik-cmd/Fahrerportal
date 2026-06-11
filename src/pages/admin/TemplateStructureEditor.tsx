@@ -20,6 +20,7 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'dynamic_photos', label: 'Foto-Sammlung (dynamisch)' },
   { value: 'checkboxes_with_text', label: 'Mehrfachauswahl mit Textfeld' },
   { value: 'address',        label: 'Adresse (Straße / PLZ / Stadt)' },
+  { value: 'stamp',          label: 'Stempel (mit Auto-Freistellung)' },
 ];
 
 interface Props {

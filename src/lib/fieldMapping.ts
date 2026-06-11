@@ -24,6 +24,7 @@ export function modeFor(type: FieldType): MappingMode {
     case 'photo':
     case 'signature':
     case 'damage_diagram':
+    case 'stamp':
       return 'box';
     case 'checkboxes':
     case 'select':
@@ -43,7 +44,7 @@ export function isTextEntry(e: FieldMappingEntry | undefined): e is TextEntry {
   return !!e && (e.type === 'text' || e.type === 'number' || e.type === 'date' || e.type === 'textarea');
 }
 export function isBoxEntry(e: FieldMappingEntry | undefined): e is BoxEntry {
-  return !!e && (e.type === 'photo' || e.type === 'signature' || e.type === 'damage_diagram');
+  return !!e && (e.type === 'photo' || e.type === 'signature' || e.type === 'damage_diagram' || e.type === 'stamp');
 }
 export function isOptionsEntry(e: FieldMappingEntry | undefined): e is OptionsEntry {
   return !!e && (e.type === 'checkboxes' || e.type === 'select');

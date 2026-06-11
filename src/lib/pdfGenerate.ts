@@ -627,6 +627,35 @@ export async function fillPdf(
         }
         continue;
       }
+      // stamp — wie photo, aber IMMER als PNG einbetten, damit die
+      // Transparenz (Auto-Freistellung in stampProcessing.ts) erhalten
+      // bleibt. compressForPdfEmbed würde nach JPEG re-encoden und damit
+      // den Alpha-Kanal vernichten.
+      if (entry.type === 'stamp') {
+        const photo = asPhoto(value);
+        if (!photo || !photo.storage_path) {
+          console.info(`[fillPdf] stamp ${fieldId}: SKIP (kein storage_path — value=`, value, ')');
+          continue;
+        }
+        const bytes = await fetchSubmittedPhotoBytes(photo.storage_path, formularId);
+        if (!bytes) {
+          console.warn(`[fillPdf] stamp ${fieldId}: SKIP (Bytes nicht ladbar, path=${photo.storage_path})`);
+          continue;
+        }
+        try {
+          const img = await embedImage(pdf, new Uint8Array(bytes), photo.storage_path);
+          const fit = aspectFit(img.width, img.height,
+            entry.x, entry.y, entry.width, entry.height);
+          page(entry.page).drawImage(img, fit);
+          console.info(
+            `[fillPdf] stamp ${fieldId}: OK (page ${entry.page}, `
+            + `${img.width}x${img.height}, embed=${bytes.byteLength} bytes)`,
+          );
+        } catch (err) {
+          console.warn(`[fillPdf] stamp ${fieldId} embed failed`, err);
+        }
+        continue;
+      }
       // signature
       if (entry.type === 'signature') {
         const dataUrl = typeof value === 'string' ? value : '';
@@ -778,7 +807,7 @@ function isImageOnlyAndEmpty(
       imageEntries += 1;
       const list = asPhotos(readDataValue(data, fieldId));
       if (list.some((p) => p.storage_path || p.pending_id)) hasContent = true;
-    } else if (isBoxEntry(entry) && entry.type === 'photo') {
+    } else if (isBoxEntry(entry) && (entry.type === 'photo' || entry.type === 'stamp')) {
       imageEntries += 1;
       const photo = asPhoto(readDataValue(data, fieldId));
       if (photo && (photo.storage_path || photo.pending_id)) hasContent = true;

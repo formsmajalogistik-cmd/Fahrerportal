@@ -13,6 +13,7 @@ import { SignatureField } from './fields/SignatureField';
 import { DamageDiagramField } from './fields/DamageDiagramField';
 import { DynamicPhotosField } from './fields/DynamicPhotosField';
 import { AddressField } from './fields/AddressField';
+import { StampField } from './fields/StampField';
 
 interface Props {
   schema: FormSchema;
@@ -115,6 +116,7 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
                       onChange={(v) => onChange(field.id, v)}
                       disabled={disabled}
                       oneDriveFolder={oneDriveFolder}
+                      formularId={formularId}
                     />
                   </FieldErrorWrapper>
                 ))
@@ -243,6 +245,15 @@ function FieldSwitch({ field, value, onChange, disabled, oneDriveFolder, formula
       );
     case 'address':
       return <AddressField field={field} value={value} onChange={onChange} disabled={effDisabled} />;
+    case 'stamp':
+      return (
+        <StampField
+          field={field} value={value}
+          oneDriveFolder={oneDriveFolder}
+          formularId={formularId}
+          onChange={onChange} disabled={effDisabled}
+        />
+      );
     default:
       return (
         <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">

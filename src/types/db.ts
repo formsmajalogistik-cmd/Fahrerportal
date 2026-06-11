@@ -41,7 +41,7 @@ export type FieldType =
   | 'text' | 'number' | 'date' | 'select' | 'checkboxes'
   | 'textarea' | 'photo' | 'signature' | 'damage_diagram'
   | 'dynamic_photos' | 'checkboxes_with_text'
-  | 'address';
+  | 'address' | 'stamp';
 
 /** Sub-Felder eines `address`-Feldes — werden im PDF-Mapping einzeln
  *  positioniert (Schlüssel `<fieldId>.strasse` / `.plz` / `.stadt`). */
@@ -134,7 +134,7 @@ export type TextEntry = {
 };
 
 export type BoxEntry = {
-  type: 'photo' | 'signature' | 'damage_diagram';
+  type: 'photo' | 'signature' | 'damage_diagram' | 'stamp';
   page: number;
   x: number;
   y: number;
