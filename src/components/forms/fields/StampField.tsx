@@ -7,6 +7,7 @@ import {
   type UploadQueueItem,
 } from '../../../lib/offlineDb';
 import { useSync } from '../../../sync/SyncContext';
+import { ConfirmDialog } from '../../ConfirmDialog';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
@@ -33,14 +34,17 @@ function makeUploadId(formularId: string, fieldId: string): string {
 }
 
 /**
- * Stempel-Feld (Fahrer-Ansicht): Foto vom Stempel aufnehmen, Hintergrund
- * lokal per Canvas freistellen (siehe lib/stampProcessing), Vorschau auf
- * Karoboden zeigen (damit der transparente Bereich sichtbar ist),
- * Ergebnis durch die normale Upload-Queue in OneDrive ablegen.
+ * Stempel-Feld (Fahrer-Ansicht). Eingeklappt: nur ein Toggle „Stempel
+ * <Label> erfassen". Aufgeklappt: Aufnahme-Buttons + Vorschau auf
+ * Karoboden. Beim Deaktivieren mit aufgenommenem Stempel wird der
+ * Verwerfen vor Rückfrage abgesichert.
  */
 export function StampField({ field, value, oneDriveFolder, formularId, onChange, disabled }: Props) {
   const { triggerSync } = useSync();
   const current = asPhoto(value);
+  const hasValue = !!current;
+  const [expanded, setExpanded] = useState<boolean>(hasValue);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
@@ -48,6 +52,13 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+
+  // Sobald ein Wert nachträglich (Restore aus Draft etc.) auftaucht,
+  // Toggle automatisch aufklappen.
+  useEffect(() => {
+    if (!hasValue) return;
+    queueMicrotask(() => setExpanded(true));
+  }, [hasValue]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +164,7 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
     }
   }
 
-  async function handleDelete() {
+  async function discardStamp() {
     if (localPreviewUrl) { URL.revokeObjectURL(localPreviewUrl); setLocalPreviewUrl(null); }
     if (current?.pending_id) {
       try { await removeFromUploadQueue(current.pending_id); } catch { /* ignore */ }
@@ -162,68 +173,103 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
     onChange(null);
   }
 
+  function handleToggle(next: boolean) {
+    if (disabled || busy) return;
+    if (next) {
+      setExpanded(true);
+      return;
+    }
+    // Toggle aus → wenn ein Stempel da ist, vorher Rückfrage.
+    if (hasValue) {
+      setConfirmDiscard(true);
+      return;
+    }
+    setExpanded(false);
+  }
+
   const previewUrl = localPreviewUrl ?? signedUrl;
   const hasStamp = !!previewUrl;
+  const toggleLabel = `Stempel ${field.label} erfassen`;
 
   return (
-    <div>
-      <label className="label">
-        {field.label}{field.required && <span className="text-red-600"> *</span>}
+    <div className="space-y-2 rounded-lg border border-maja-navy/10 p-3">
+      <label className="flex items-center gap-3 text-sm">
+        <span
+          role="switch"
+          aria-checked={expanded}
+          tabIndex={disabled ? -1 : 0}
+          onClick={() => handleToggle(!expanded)}
+          onKeyDown={(e) => {
+            if (disabled) return;
+            if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault();
+              handleToggle(!expanded);
+            }
+          }}
+          className={
+            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border transition '
+            + (expanded
+              ? 'bg-maja-accent border-maja-accent dark:bg-blue-500 dark:border-blue-400'
+              : 'bg-maja-navy/20 border-maja-navy/30 dark:bg-slate-600 dark:border-slate-500')
+            + (disabled ? ' opacity-50 cursor-not-allowed' : '')
+          }
+        >
+          <span
+            className={
+              'inline-block h-5 w-5 transform rounded-full bg-white shadow transition '
+              + (expanded ? 'translate-x-5' : 'translate-x-0.5')
+            }
+          />
+        </span>
+        <span className="font-medium text-maja-ink">
+          {toggleLabel}
+          {field.required && <span className="text-red-600"> *</span>}
+        </span>
       </label>
 
-      <div
-        className={`relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-lg border bg-white ${
-          hasStamp ? 'border-maja-navy/20' : 'border-2 border-dashed border-maja-navy/30'
-        }`}
-        style={hasStamp ? checkerboardStyle : undefined}
-      >
-        {hasStamp ? (
-          <img
-            src={previewUrl!}
-            alt={field.label}
-            className="h-full w-full object-contain"
-            draggable={false}
-          />
-        ) : (
-          <div className="flex flex-col items-center gap-1 text-maja-muted">
-            <IconStamp />
-            <span className="text-xs font-medium">Noch kein Stempel</span>
+      {expanded && (
+        <div className="space-y-2 pt-1">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={disabled || busy}
+              onClick={() => cameraRef.current?.click()}
+              className="btn-secondary text-sm"
+            >
+              {hasStamp ? 'Neu aufnehmen' : 'Stempel fotografieren'}
+            </button>
+            <button
+              type="button"
+              disabled={disabled || busy}
+              onClick={() => galleryRef.current?.click()}
+              className="btn-secondary text-sm"
+            >
+              Aus Galerie
+            </button>
           </div>
-        )}
-        {busy && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs font-medium text-maja-navy">
-            Stempel wird verarbeitet …
-          </div>
-        )}
-      </div>
 
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => cameraRef.current?.click()}
-          className="btn-secondary text-sm"
-        >
-          {hasStamp ? 'Neu aufnehmen' : 'Stempel fotografieren'}
-        </button>
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => galleryRef.current?.click()}
-          className="btn-secondary text-sm"
-        >
-          Aus Galerie
-        </button>
-        {hasStamp && !disabled && !busy && (
-          <button
-            type="button"
-            onClick={() => void handleDelete()}
-            className="text-sm font-medium text-red-600 hover:underline"
-          >
-            Entfernen
-          </button>
-        )}
-      </div>
+          {(hasStamp || busy) && (
+            <div
+              className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-lg border border-maja-navy/20 bg-white"
+              style={hasStamp ? checkerboardStyle : undefined}
+            >
+              {hasStamp && (
+                <img
+                  src={previewUrl!}
+                  alt={field.label}
+                  className="h-full w-full object-contain"
+                  draggable={false}
+                />
+              )}
+              {busy && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs font-medium text-maja-navy">
+                  Stempel wird verarbeitet …
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <input
         ref={cameraRef}
@@ -250,10 +296,26 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
       />
 
       {hint && (
-        <p className="mt-2 text-xs text-maja-muted">{hint}</p>
+        <p className="text-xs text-maja-muted">{hint}</p>
       )}
       {error && (
-        <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>
+        <p role="alert" className="text-sm text-red-700">{error}</p>
+      )}
+
+      {confirmDiscard && (
+        <ConfirmDialog
+          title="Aufgenommenen Stempel verwerfen?"
+          message="Der aktuell erfasste Stempel wird entfernt. Diese Aktion kann nicht rückgängig gemacht werden."
+          confirmLabel="Ja, verwerfen"
+          cancelLabel="Nein, behalten"
+          destructive
+          onConfirm={async () => {
+            await discardStamp();
+            setConfirmDiscard(false);
+            setExpanded(false);
+          }}
+          onClose={() => setConfirmDiscard(false)}
+        />
       )}
     </div>
   );
@@ -269,14 +331,3 @@ const checkerboardStyle: React.CSSProperties = {
   backgroundSize: '16px 16px',
   backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
 };
-
-function IconStamp() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
-      <path d="M5 21h14" />
-      <path d="M6 17h12v2H6z" />
-      <path d="M9 11V8a3 3 0 0 1 6 0v3" />
-      <path d="M7 11h10l-1 6H8z" />
-    </svg>
-  );
-}

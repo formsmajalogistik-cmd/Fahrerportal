@@ -4,54 +4,99 @@ import { displayName, fahrerName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { FahrerEditDialog } from './FahrerEditDialog';
-import type { AppUser, Fahrer } from '../../types/db';
+import { useAuth } from '../../auth/AuthContext';
+import { deleteAccount } from '../../lib/accountApi';
+import type { AppUser, Fahrer, UserRole } from '../../types/db';
 
-interface Row extends Fahrer {
+interface FahrerRow extends Fahrer {
   user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
 }
 
+/**
+ * Eine Zeile der Konten-Verwaltung. Bündelt den app_users-Eintrag mit
+ * optionalem Haupt-Fahrer-Eintrag und (falls vorhanden) Unterkonten.
+ */
+interface AccountRow {
+  user: AppUser;
+  fahrer: FahrerRow | null;
+  subs: FahrerRow[];
+}
+
 export function FahrerListPage() {
-  const [rows, setRows] = useState<Row[]>([]);
+  const { profile: me, refreshProfile } = useAuth();
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [fahrerRows, setFahrerRows] = useState<FahrerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Row | 'new' | null>(null);
-  const [deleting, setDeleting] = useState<Row | null>(null);
+  const [editing, setEditing] = useState<FahrerRow | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<AccountRow | null>(null);
+  const [deletingSub, setDeletingSub] = useState<FahrerRow | null>(null);
+  const [roleChange, setRoleChange] = useState<{ user: AppUser; next: UserRole } | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [newSubName, setNewSubName] = useState<Record<string, { vorname: string; nachname: string }>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [transferTarget, setTransferTarget] = useState<string>('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase
-      .from('fahrer')
-      .select('*, user:user_id (email, vorname, nachname)')
-      .order('ist_unterkonto', { ascending: true })
-      .order('aktiv', { ascending: false });
-    if (err) setError(err.message);
-    else setRows((data as unknown as Row[]) ?? []);
+    const [u, f] = await Promise.all([
+      supabase.from('app_users').select('*').order('email'),
+      supabase.from('fahrer')
+        .select('*, user:user_id (email, vorname, nachname)')
+        .order('ist_unterkonto', { ascending: true })
+        .order('aktiv', { ascending: false }),
+    ]);
+    if (u.error) setError(u.error.message);
+    else setUsers((u.data as AppUser[]) ?? []);
+    if (f.error) setError(f.error.message);
+    else setFahrerRows((f.data as unknown as FahrerRow[]) ?? []);
     setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  const haupt = useMemo(() => rows.filter((r) => !r.ist_unterkonto), [rows]);
-  const subsByHaupt = useMemo(() => {
-    const m = new Map<string, Row[]>();
-    for (const r of rows) {
-      if (!r.ist_unterkonto || !r.haupt_user_id) continue;
-      const arr = m.get(r.haupt_user_id) ?? [];
-      arr.push(r);
-      m.set(r.haupt_user_id, arr);
+  const accounts: AccountRow[] = useMemo(() => {
+    const hauptByUser = new Map<string, FahrerRow>();
+    const subsByHaupt = new Map<string, FahrerRow[]>();
+    for (const f of fahrerRows) {
+      if (f.ist_unterkonto && f.haupt_user_id) {
+        const arr = subsByHaupt.get(f.haupt_user_id) ?? [];
+        arr.push(f);
+        subsByHaupt.set(f.haupt_user_id, arr);
+      } else if (!f.ist_unterkonto) {
+        hauptByUser.set(f.user_id, f);
+      }
     }
-    return m;
-  }, [rows]);
+    return users.map((u) => {
+      const haupt = hauptByUser.get(u.id) ?? null;
+      const subs = haupt ? (subsByHaupt.get(haupt.id) ?? []) : [];
+      return { user: u, fahrer: haupt, subs };
+    });
+  }, [users, fahrerRows]);
 
-  async function handleDelete(f: Row) {
-    // Unterkonto-Spezialfall: vor dem Delete alle Referenzen auf das
-    // Haupt-Konto umhängen, sonst blocken FK-Constraints (touren.
-    // fahrer_id, ausgefuellte_formulare.fahrer_id NOT NULL).
-    if (f.ist_unterkonto && f.haupt_user_id) {
+  const adminCount = useMemo(
+    () => users.filter((u) => u.role === 'admin').length,
+    [users],
+  );
+
+  // Mögliche Übertragungs-Ziele beim Löschen: alle HAUPT-Fahrer ANDERER
+  // Konten. Unterkonten kommen nicht in Frage, weil sie technisch ein
+  // anderes Konto als Eigentümer haben.
+  const transferOptions = useMemo(() => {
+    if (!deleting) return [];
+    const excludeUserId = deleting.user.id;
+    return fahrerRows
+      .filter((f) => !f.ist_unterkonto && f.user_id !== excludeUserId)
+      .map((f) => ({
+        id: f.id,
+        label: `${fahrerName(f, f.user ?? null)} (${f.user?.email ?? '—'})`,
+      }));
+  }, [deleting, fahrerRows]);
+
+  async function handleDeleteSub(f: FahrerRow) {
+    // Unterkonten: Referenzen aufs Haupt-Konto umhängen (FK-NOT-NULL).
+    if (f.haupt_user_id) {
       const { error: tErr } = await supabase
         .from('touren')
         .update({ fahrer_id: f.haupt_user_id })
@@ -65,11 +110,29 @@ export function FahrerListPage() {
     }
     const { error: err } = await supabase.from('fahrer').delete().eq('id', f.id);
     if (err) throw err;
-    setDeleting(null);
+    setDeletingSub(null);
     void load();
   }
 
-  async function handleAddUnterkonto(h: Row) {
+  async function handleDeleteAccount(acc: AccountRow) {
+    await deleteAccount(acc.user.id, transferTarget || null);
+    setDeleting(null);
+    setTransferTarget('');
+    void load();
+  }
+
+  async function handleRoleChange(user: AppUser, next: UserRole) {
+    const { error: err } = await supabase
+      .from('app_users')
+      .update({ role: next })
+      .eq('id', user.id);
+    if (err) throw err;
+    setRoleChange(null);
+    if (me?.id === user.id) await refreshProfile();
+    void load();
+  }
+
+  async function handleAddUnterkonto(h: FahrerRow) {
     const v = newSubName[h.id] ?? { vorname: '', nachname: '' };
     const vn = v.vorname.trim();
     const nn = v.nachname.trim();
@@ -98,8 +161,8 @@ export function FahrerListPage() {
     });
   }
 
-  if (loading) return <Spinner label="Fahrer werden geladen …" />;
-  if (error && rows.length === 0) {
+  if (loading) return <Spinner label="Konten werden geladen …" />;
+  if (error && users.length === 0) {
     return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   }
 
@@ -107,13 +170,14 @@ export function FahrerListPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-maja-navy">Fahrer</h1>
+          <h1 className="text-2xl font-semibold text-maja-navy">Konten</h1>
           <p className="text-sm text-maja-muted">
-            Fahrer-Stammdaten verwalten. Pro Fahrer können beliebige Unterkonten angelegt werden.
+            Admins und Fahrer verwalten. Rollen wechseln, Unterkonten anlegen,
+            Konten löschen.
           </p>
         </div>
         <button className="btn-primary" onClick={() => setEditing('new')}>
-          Neuen Fahrer anlegen
+          Fahrer-Profil anlegen
         </button>
       </div>
 
@@ -129,68 +193,123 @@ export function FahrerListPage() {
             <tr>
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="px-4 py-3 font-semibold">E-Mail</th>
+              <th className="px-4 py-3 font-semibold">Rolle</th>
               <th className="px-4 py-3 font-semibold">Status</th>
               <th className="px-4 py-3 font-semibold">Unterkonten</th>
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-maja-navy/10">
-            {haupt.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-maja-muted">
-                Noch keine Fahrer angelegt.
+            {accounts.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-maja-muted">
+                Noch keine Konten angelegt.
               </td></tr>
-            ) : haupt.map((f) => {
-              const subs = subsByHaupt.get(f.id) ?? [];
-              const isOpen = expanded.has(f.id);
-              const subInput = newSubName[f.id] ?? { vorname: '', nachname: '' };
+            ) : accounts.map((acc) => {
+              const u = acc.user;
+              const f = acc.fahrer;
+              const subs = acc.subs;
+              const isOpen = expanded.has(u.id);
+              const subInput = (f && newSubName[f.id]) ?? { vorname: '', nachname: '' };
+              const isSelf = me?.id === u.id;
+              const isLastAdmin = u.role === 'admin' && adminCount <= 1;
+              const targetRole: UserRole = u.role === 'admin' ? 'fahrer' : 'admin';
+              const roleLockReason = isSelf
+                ? 'Du kannst deine eigene Rolle nicht ändern.'
+                : (u.role === 'admin' && isLastAdmin
+                    ? 'Mindestens ein Admin muss existieren.'
+                    : null);
+              const deleteLockReason = isSelf
+                ? 'Du kannst dein eigenes Konto nicht löschen.'
+                : (u.role === 'admin' && isLastAdmin
+                    ? 'Mindestens ein Admin muss existieren.'
+                    : null);
+
               return (
-                <Row key={f.id}>
+                <RowFragment key={u.id}>
                   <tr className="hover:bg-maja-light/50">
                     <td className="px-4 py-3 font-medium text-maja-ink">
-                      {displayName(f.user ?? null)}
+                      {displayName(u)}
                     </td>
-                    <td className="px-4 py-3 text-maja-muted">{f.user?.email ?? '—'}</td>
+                    <td className="px-4 py-3 text-maja-muted">{u.email}</td>
                     <td className="px-4 py-3">
-                      <span className={
-                        'inline-flex rounded-full px-2 py-0.5 text-xs font-medium ' +
-                        (f.aktiv
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-gray-200 text-gray-600')
-                      }>
-                        {f.aktiv ? 'aktiv' : 'inaktiv'}
-                      </span>
+                      <button
+                        type="button"
+                        disabled={!!roleLockReason}
+                        title={roleLockReason ?? `Zu „${targetRole}" wechseln`}
+                        onClick={() => setRoleChange({ user: u, next: targetRole })}
+                        className={
+                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium '
+                          + (u.role === 'admin'
+                            ? 'bg-maja-navy/10 text-maja-navy hover:bg-maja-navy/15'
+                            : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200')
+                          + (roleLockReason ? ' cursor-not-allowed opacity-60' : '')
+                        }
+                      >
+                        {u.role === 'admin' ? 'Admin' : 'Fahrer'}
+                      </button>
                     </td>
                     <td className="px-4 py-3">
-                      {subs.length > 0 ? (
-                        <button
-                          onClick={() => toggleExpanded(f.id)}
-                          className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy hover:bg-maja-navy/10"
-                        >
-                          {subs.length} Unterkonten {isOpen ? '▲' : '▼'}
-                        </button>
+                      {f ? (
+                        <span className={
+                          'inline-flex rounded-full px-2 py-0.5 text-xs font-medium ' +
+                          (f.aktiv
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-gray-200 text-gray-600')
+                        }>
+                          {f.aktiv ? 'aktiv' : 'inaktiv'}
+                        </span>
                       ) : (
-                        <button
-                          onClick={() => toggleExpanded(f.id)}
-                          className="text-xs font-medium text-maja-accent hover:underline"
-                        >
-                          + hinzufügen
-                        </button>
+                        <span className="text-xs text-maja-muted">kein Fahrer-Profil</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {f ? (
+                        subs.length > 0 ? (
+                          <button
+                            onClick={() => toggleExpanded(u.id)}
+                            className="inline-flex items-center gap-1 rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy hover:bg-maja-navy/10"
+                          >
+                            {subs.length} Unterkonten {isOpen ? '▲' : '▼'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => toggleExpanded(u.id)}
+                            className="text-xs font-medium text-maja-accent hover:underline"
+                          >
+                            + hinzufügen
+                          </button>
+                        )
+                      ) : (
+                        <span className="text-xs text-maja-muted">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {f && (
+                        <button
+                          className="text-sm font-medium text-maja-accent hover:underline"
+                          onClick={() => setEditing(f)}
+                        >Bearbeiten</button>
+                      )}
                       <button
-                        className="text-sm font-medium text-maja-accent hover:underline"
-                        onClick={() => setEditing(f)}
-                      >Bearbeiten</button>
-                      <button
-                        className="ml-3 text-sm font-medium text-red-600 hover:underline"
-                        onClick={() => setDeleting(f)}
+                        disabled={!!deleteLockReason}
+                        title={deleteLockReason ?? 'Konto löschen'}
+                        className={
+                          'ml-3 text-sm font-medium '
+                          + (deleteLockReason
+                            ? 'text-maja-muted cursor-not-allowed'
+                            : 'text-red-600 hover:underline')
+                        }
+                        onClick={() => {
+                          if (deleteLockReason) return;
+                          setTransferTarget('');
+                          setDeleting(acc);
+                        }}
                       >Löschen</button>
                     </td>
                   </tr>
-                  {isOpen && (
+                  {isOpen && f && (
                     <tr className="bg-maja-light/40">
-                      <td colSpan={5} className="px-4 py-3">
+                      <td colSpan={6} className="px-4 py-3">
                         <div className="space-y-2">
                           {subs.map((s) => (
                             <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2">
@@ -199,7 +318,7 @@ export function FahrerListPage() {
                                 {!s.aktiv && <span className="ml-2 text-xs text-maja-muted">(inaktiv)</span>}
                               </div>
                               <button
-                                onClick={() => setDeleting(s)}
+                                onClick={() => setDeletingSub(s)}
                                 className="text-xs font-medium text-red-600 hover:underline"
                               >Löschen</button>
                             </div>
@@ -238,7 +357,7 @@ export function FahrerListPage() {
                       </td>
                     </tr>
                   )}
-                </Row>
+                </RowFragment>
               );
             })}
           </tbody>
@@ -253,29 +372,84 @@ export function FahrerListPage() {
         />
       )}
 
-      {deleting && (
+      {deletingSub && (
         <ConfirmDialog
-          title={deleting.ist_unterkonto ? 'Unterkonto löschen?' : 'Fahrer löschen?'}
+          title="Unterkonto löschen?"
           message={
             <>
-              Soll das {deleting.ist_unterkonto ? 'Unterkonto' : 'Fahrer-Profil'} von
-              „<strong>{fahrerName(deleting, deleting.user ?? null)}</strong>" gelöscht werden?
-              {!deleting.ist_unterkonto && (
-                <> Damit werden auch alle Unterkonten dieses Fahrers entfernt.</>
-              )}
-              {' '}Das zugehörige Benutzerkonto in Supabase Auth bleibt bestehen.
+              Soll das Unterkonto „<strong>{fahrerName(deletingSub, deletingSub.user ?? null)}</strong>"
+              gelöscht werden? Verknüpfte Touren und Formulare werden dem
+              zugehörigen Hauptkonto zugeordnet.
             </>
           }
           confirmLabel="Löschen"
           destructive
-          onConfirm={() => handleDelete(deleting)}
-          onClose={() => setDeleting(null)}
+          onConfirm={() => handleDeleteSub(deletingSub)}
+          onClose={() => setDeletingSub(null)}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmDialog
+          title={`Konto „${displayName(deleting.user)}" löschen?`}
+          message={
+            <>
+              Das Konto (E-Mail <strong>{deleting.user.email}</strong>,
+              Rolle <strong>{deleting.user.role === 'admin' ? 'Admin' : 'Fahrer'}</strong>)
+              wird unwiderruflich gelöscht — inklusive aller Unterkonten und
+              dem Supabase-Auth-Zugang.
+              <div className="mt-3">
+                <label htmlFor="transfer-target" className="label">
+                  Touren und Formulare übertragen an:
+                </label>
+                <select
+                  id="transfer-target"
+                  className="input"
+                  value={transferTarget}
+                  onChange={(e) => setTransferTarget(e.target.value)}
+                >
+                  <option value="">— Niemanden (Touren auf NULL setzen) —</option>
+                  {transferOptions.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-maja-muted">
+                  Hinweis: Bereits eingereichte Formulare brauchen ein
+                  Übertragungs-Konto — sie können nicht auf „Niemanden"
+                  gesetzt werden.
+                </p>
+              </div>
+            </>
+          }
+          confirmLabel="Konto löschen"
+          destructive
+          onConfirm={() => handleDeleteAccount(deleting)}
+          onClose={() => { setDeleting(null); setTransferTarget(''); }}
+        />
+      )}
+
+      {roleChange && (
+        <ConfirmDialog
+          title={
+            roleChange.next === 'admin'
+              ? `${displayName(roleChange.user)} zum Admin machen?`
+              : `${displayName(roleChange.user)} zum Fahrer herabstufen?`
+          }
+          message={
+            roleChange.next === 'admin'
+              ? 'Die Person erhält Zugriff auf alle Verwaltungsfunktionen (Touren, Rechnungen, E-Mails, Einstellungen).'
+              : 'Die Person verliert den Zugriff auf alle Admin-Bereiche.'
+          }
+          confirmLabel="Rolle ändern"
+          destructive={roleChange.next === 'fahrer'}
+          onConfirm={() => handleRoleChange(roleChange.user, roleChange.next)}
+          onClose={() => setRoleChange(null)}
         />
       )}
     </div>
   );
 }
 
-function Row({ children }: { children: React.ReactNode }) {
+function RowFragment({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
