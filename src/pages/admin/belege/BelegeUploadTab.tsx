@@ -78,6 +78,9 @@ export function BelegeUploadTab() {
   const [layout, setLayout] = useState<Layout>(12);
   const [filename, setFilename] = useState<string>(`Auslagen_${todayIso()}.pdf`);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Unterscheidet, welche Aktion gerade läuft — sonst zeigt der
+   *  Download-Button den Assign-Hinweis und umgekehrt. */
+  const [busyAction, setBusyAction] = useState<'download' | 'assign' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -252,10 +255,20 @@ export function BelegeUploadTab() {
     }));
     setEditingId(null);
     void updateBelegBlob(id, blob);
+    // Bildausschnitt hat sich geändert — Kennzeichen-Overlay-Position
+    // zurück auf den Default (oben links). Der Text bleibt erhalten.
+    setItems((prev) => {
+      const cur = prev.find((i) => i.id === id);
+      if (cur && cur.kennzeichen.trim()) {
+        void updateBelegKennzeichen(id, cur.kennzeichen.trim(), DEFAULT_KENNZEICHEN_POSITION);
+      }
+      return prev;
+    });
   }
 
   async function handleGenerate() {
     if (items.length === 0) return;
+    setBusyAction('download');
     setBusy('PDF wird erstellt …');
     setError(null);
     try {
@@ -272,11 +285,12 @@ export function BelegeUploadTab() {
       setError(e instanceof Error ? e.message : 'PDF-Erstellung fehlgeschlagen');
     } finally {
       setBusy(null);
+      setBusyAction(null);
     }
   }
 
   /**
-   * "Rechnung zuordnen" (Aufgabe 2): generiert die Beleg-PDF, lädt
+   * "PDF erstellen & Rechnung zuordnen": generiert die Beleg-PDF, lädt
    * sie nach OneDrive und schreibt den Pfad als belege_pdf_url auf
    * die gewählte Rechnung. Belege bleiben im Zwischenspeicher
    * stehen, damit der Admin sie weiter bearbeiten kann.
@@ -284,7 +298,8 @@ export function BelegeUploadTab() {
   async function handleAssignToRechnung(rechnung: { id: string; rechnungsnummer: string }) {
     if (items.length === 0) return;
     setAssignOpen(false);
-    setBusy(`Belege werden hochgeladen … (Rechnung ${rechnung.rechnungsnummer})`);
+    setBusyAction('assign');
+    setBusy(`PDF wird erstellt … (Rechnung ${rechnung.rechnungsnummer})`);
     setError(null);
     try {
       const pdf = await generateBelegePdf({
@@ -301,12 +316,13 @@ export function BelegeUploadTab() {
         .update({ belege_pdf_url: onedrivePath })
         .eq('id', rechnung.id);
       if (err) throw new Error(err.message);
-      setAssignToast(`Belege der Rechnung ${rechnung.rechnungsnummer} zugeordnet.`);
+      setAssignToast(`Belege-PDF erstellt und Rechnung ${rechnung.rechnungsnummer} zugeordnet.`);
       window.setTimeout(() => setAssignToast(null), 4500);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Zuordnung fehlgeschlagen');
     } finally {
       setBusy(null);
+      setBusyAction(null);
     }
   }
 
@@ -433,7 +449,7 @@ export function BelegeUploadTab() {
                     className="aspect-[3/4] w-full rounded-md object-cover"
                     draggable={false}
                   />
-                  {item.kennzeichen.trim() && (
+                  {item.kennzeichen.trim() && editingId !== item.id && (
                     <KennzeichenOverlayLabel text={item.kennzeichen} />
                   )}
                 </div>
@@ -563,20 +579,20 @@ export function BelegeUploadTab() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              className="btn-primary"
+              className="btn-secondary"
               disabled={items.length === 0 || busy !== null}
               onClick={() => void handleGenerate()}
             >
-              {busy ?? 'PDF erstellen'}
+              {busyAction === 'download' ? (busy ?? 'PDF wird erstellt …') : 'PDF herunterladen'}
             </button>
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-primary"
               disabled={items.length === 0 || busy !== null}
               onClick={() => setAssignOpen(true)}
-              title="Generiert die PDF, lädt sie hoch und ordnet sie der gewählten Rechnung zu."
+              title="Erstellt die PDF, lädt sie in OneDrive hoch und verknüpft sie mit der gewählten Rechnung."
             >
-              Rechnung zuordnen
+              {busyAction === 'assign' ? (busy ?? 'PDF wird erstellt …') : 'PDF erstellen & Rechnung zuordnen'}
             </button>
           </div>
         </div>
