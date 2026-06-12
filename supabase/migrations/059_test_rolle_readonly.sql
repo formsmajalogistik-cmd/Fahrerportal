@@ -13,8 +13,19 @@
 --     Das Frontend fängt zusätzlich mit einem Guard ab, aber die
 --     DB ist die harte Garantie.
 --
+-- Abgedeckte Tabellen = alle aktuell existierenden Tabellen laut
+-- Migrations-Historie (001–056). NICHT enthalten:
+--   * formular_zuweisungen — wurde in Migration 023 gedroppt
+--     (Template-Sichtbarkeit läuft seitdem über das sichtbar-Flag
+--     bzw. tour_protokoll_zuweisungen aus 054).
+--   * auftraggeber, auftraggeber_kontakte, preisstufen,
+--     sonderverguetungen — deren Read-Policies erlauben
+--     "authenticated AND not is_auftraggeber()" und decken die
+--     Test-Rolle damit bereits ab.
+--
 -- Idempotent (drop policy if exists / create or replace function).
--- Voraussetzung: Migration 058 (Enum-Wert 'test') ist gelaufen.
+-- Voraussetzungen: Migration 058 (Enum-Wert 'test') und 056
+-- (template_auftraggeber_freigaben, formular_wuensche) sind gelaufen.
 -- ============================================================
 
 -- ------------------------------------------------------------
@@ -38,10 +49,6 @@ grant execute on function public.is_test() to authenticated;
 
 -- ------------------------------------------------------------
 -- 2. SELECT-Policies pro Tabelle.
---    Stammdaten-Tabellen, die für alle Authenticated lesbar sind
---    (auftraggeber, auftraggeber_kontakte, preisstufen, sonder-
---    verguetungen) brauchen NICHTS — sie haben den Test-Pfad
---    bereits über "authenticated AND not is_auftraggeber()".
 -- ------------------------------------------------------------
 
 drop policy if exists touren_test_read on public.touren;
@@ -62,10 +69,6 @@ create policy af_test_read on public.ausgefuellte_formulare
 
 drop policy if exists templates_test_read on public.formular_templates;
 create policy templates_test_read on public.formular_templates
-  for select using (public.is_test());
-
-drop policy if exists zuweisungen_test_read on public.formular_zuweisungen;
-create policy zuweisungen_test_read on public.formular_zuweisungen
   for select using (public.is_test());
 
 drop policy if exists tpz_test_read on public.tour_protokoll_zuweisungen;
