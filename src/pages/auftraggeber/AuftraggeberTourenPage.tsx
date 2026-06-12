@@ -11,11 +11,13 @@ import type { KontaktVorOrt, TourKundensicht, TourStatus } from '../../types/db'
  * Tourenliste für Auftraggeber-Profile.
  *
  * SICHERHEIT: Die Daten kommen ausschließlich aus der View
- * `touren_kundensicht` (Migration 056) — sie enthält auf DB-Ebene
- * keine Preis-/Vergütungs- und keine Fahrer-Spalten und liefert nur
- * Touren des eigenen Auftraggebers (bestätigte plus selbst erstellte
- * unbestätigte). Es gibt hier bewusst keine KPI-Summen, keinen
- * Fahrer-Filter und keinen Zugriff auf das Admin-Tour-Detail.
+ * `touren_kundensicht` (security_invoker, Migration 056/057) — sie
+ * enthält keine Preis-/Vergütungs- und keine Fahrer-Spalten. Die
+ * Zeilen-Einschränkung (nur eigener Auftraggeber; bestätigte plus
+ * selbst erstellte unbestätigte Touren) erzwingt die RLS-Policy
+ * `touren_auftraggeber_read` auf der touren-Tabelle. Es gibt hier
+ * bewusst keine KPI-Summen, keinen Fahrer-Filter und keinen Zugriff
+ * auf das Admin-Tour-Detail.
  */
 
 interface EingangLite {

@@ -10,14 +10,15 @@
 --   * sehen nur explizit freigegebene Templates
 --   * können Formular-Wünsche (PDF + Notiz) einreichen
 --
--- Sicherheits-Architektur:
---   1. KEINE SELECT-Policy auf public.touren für Auftraggeber —
---      direkte Tabellen-Queries liefern für diese Rolle IMMER 0 Zeilen.
---   2. Lesezugriff ausschließlich über die View touren_kundensicht,
---      die nur unkritische Spalten enthält (keine verguetung, kein
---      fahrer_id/fahrer_honorar/barauslagen) und in ihrem WHERE den
---      Auftraggeber-Scope erzwingt. Preis-Spalten sind damit auf
---      DB-Ebene unerreichbar — nicht nur im Frontend ausgeblendet.
+-- Sicherheits-Architektur (Stand 057 — security_invoker):
+--   1. ZEILEN-Einschränkung über RLS auf public.touren
+--      (touren_auftraggeber_read): nur Touren des eigenen
+--      Auftraggebers, davon nur bestätigte plus selbst erstellte.
+--   2. SPALTEN-Einschränkung über die View touren_kundensicht
+--      (security_invoker = true): enthält keine verguetung-/
+--      fahrer-Spalten und ist die einzige Quelle, die das Frontend
+--      für diese Rolle abfragt. Das WHERE der View ist redundant zur
+--      RLS-Policy und bleibt als zweite Verteidigungslinie bestehen.
 --   3. Preis-/Stammdaten-Tabellen, die bisher für alle Authenticated
 --      lesbar waren (preisstufen, sonderverguetungen, auftraggeber,
 --      auftraggeber_kontakte, greimel sichtbar_fuer_alle), werden für
@@ -118,15 +119,18 @@ grant execute on function public.current_auftraggeber_id() to authenticated;
 
 -- ------------------------------------------------------------
 -- 4. Kunden-View: einzige Lesequelle für Auftraggeber-Profile.
---    Security-Definer-Semantik (View-Owner umgeht RLS auf touren),
---    deshalb MUSS das WHERE den Scope vollständig erzwingen:
---      * nur Touren des eigenen Auftraggebers
---      * nur bestätigte ODER selbst erstellte
+--    security_invoker = true: Abfragen laufen mit den RLS-Policies
+--    des eingeloggten Nutzers (Zeilen-Schutz liegt auf der Tabelle,
+--    siehe touren_auftraggeber_read unten). Die View liefert nur die
+--    unkritischen Spalten; ihr WHERE ist redundant zur Policy und
+--    bleibt als zweite Verteidigungslinie.
 --    Für Admin/Fahrer liefert current_auftraggeber_id() NULL → View leer.
 -- ------------------------------------------------------------
 
 drop view if exists public.touren_kundensicht;
-create view public.touren_kundensicht as
+create view public.touren_kundensicht
+  with (security_invoker = true)
+as
   select
     t.id, t.tour_id,
     t.start_stadt, t.ziel_stadt, t.rueckfuehrung_stadt,
@@ -146,10 +150,21 @@ create view public.touren_kundensicht as
 grant select on public.touren_kundensicht to authenticated;
 
 -- ------------------------------------------------------------
--- 5. RLS touren: INSERT/DELETE für Auftraggeber.
---    Bewusst KEINE SELECT- und KEINE UPDATE-Policy: Lesen läuft über
---    die View; bestätigte Touren sind für die Rolle unveränderlich.
+-- 5. RLS touren: SELECT/INSERT/DELETE für Auftraggeber.
+--    Bewusst KEINE UPDATE-Policy: bestätigte Touren sind für die
+--    Rolle unveränderlich; Formular-Zuweisung läuft über die RPC.
 -- ------------------------------------------------------------
+
+-- SELECT: nötig für die security_invoker-View (siehe Block 4) —
+-- gleicher Scope wie das View-WHERE.
+drop policy if exists touren_auftraggeber_read on public.touren;
+create policy touren_auftraggeber_read on public.touren
+  for select using (
+    public.is_auftraggeber()
+    and auftraggeber_id is not null
+    and auftraggeber_id = public.current_auftraggeber_id()
+    and (bestaetigt = true or erstellt_von = auth.uid())
+  );
 
 drop policy if exists touren_auftraggeber_insert on public.touren;
 create policy touren_auftraggeber_insert on public.touren
