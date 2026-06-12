@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 interface AuthedUser {
   id: string;
   email: string;
-  role: 'admin' | 'fahrer' | null;
+  role: 'admin' | 'fahrer' | 'auftraggeber' | null;
 }
 
 /**

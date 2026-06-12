@@ -10,7 +10,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
-export type UserRole = 'admin' | 'fahrer';
+export type UserRole = 'admin' | 'fahrer' | 'auftraggeber';
 export type FormularStatus = 'draft' | 'submitted';
 export type TourStatus = 'geplant' | 'aktiv' | 'abgeschlossen';
 export type TourenArt = 'AB' | 'ABC' | 'ABA';
@@ -29,6 +29,7 @@ export type Database = {
           save_to_gallery: boolean;
           telefon: string | null;
           position: string | null;
+          auftraggeber_id: string | null;
         };
         Insert: {
           id: string;
@@ -39,6 +40,7 @@ export type Database = {
           save_to_gallery?: boolean;
           telefon?: string | null;
           position?: string | null;
+          auftraggeber_id?: string | null;
         };
         Update: {
           id?: string;
@@ -49,6 +51,7 @@ export type Database = {
           save_to_gallery?: boolean;
           telefon?: string | null;
           position?: string | null;
+          auftraggeber_id?: string | null;
         };
         Relationships: [
           {
@@ -277,6 +280,9 @@ export type Database = {
           rechnungsdatum_abweichend: boolean;
           rechnungsdatum: string | null;
           bearbeitet_markiert_am: string | null;
+          bestaetigt: boolean;
+          erstellt_von: string | null;
+          erstellt_von_rolle: string | null;
           created_at: string;
           updated_at: string;
           vorgefuellte_daten: Json | null;
@@ -324,6 +330,9 @@ export type Database = {
           rechnungsdatum_abweichend?: boolean;
           rechnungsdatum?: string | null;
           bearbeitet_markiert_am?: string | null;
+          bestaetigt?: boolean;
+          erstellt_von?: string | null;
+          erstellt_von_rolle?: string | null;
           created_at?: string;
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
@@ -371,6 +380,9 @@ export type Database = {
           rechnungsdatum_abweichend?: boolean;
           rechnungsdatum?: string | null;
           bearbeitet_markiert_am?: string | null;
+          bestaetigt?: boolean;
+          erstellt_von?: string | null;
+          erstellt_von_rolle?: string | null;
           created_at?: string;
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
@@ -468,6 +480,74 @@ export type Database = {
           created_at?: string;
         };
         Relationships: [];
+      };
+      template_auftraggeber_freigaben: {
+        Row: {
+          template_id: string;
+          auftraggeber_id: string;
+          created_at: string;
+        };
+        Insert: {
+          template_id: string;
+          auftraggeber_id: string;
+          created_at?: string;
+        };
+        Update: {
+          template_id?: string;
+          auftraggeber_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'template_auftraggeber_freigaben_template_id_fkey';
+            columns: ['template_id'];
+            referencedRelation: 'formular_templates';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'template_auftraggeber_freigaben_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      formular_wuensche: {
+        Row: {
+          id: string;
+          auftraggeber_id: string;
+          eingereicht_von: string | null;
+          pdf_url: string;
+          notiz: string | null;
+          status: 'offen' | 'erledigt';
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          auftraggeber_id: string;
+          eingereicht_von?: string | null;
+          pdf_url: string;
+          notiz?: string | null;
+          status?: 'offen' | 'erledigt';
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          auftraggeber_id?: string;
+          eingereicht_von?: string | null;
+          pdf_url?: string;
+          notiz?: string | null;
+          status?: 'offen' | 'erledigt';
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'formular_wuensche_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       routen_cache: {
         Row: {
@@ -942,12 +1022,54 @@ export type Database = {
       };
     };
     Views: {
-      [_ in never]: never;
+      touren_kundensicht: {
+        Row: {
+          id: string;
+          tour_id: string | null;
+          start_stadt: string;
+          ziel_stadt: string;
+          rueckfuehrung_stadt: string | null;
+          kundenname: string | null;
+          auftraggeber_id: string | null;
+          startdatum: string;
+          enddatum: string;
+          tourenart: TourenArt | null;
+          kennzeichen: string[];
+          ist_e_fahrzeug: boolean;
+          fin: string | null;
+          adresse_start: string | null;
+          adresse_ziel: string | null;
+          adresse_rueckfuehrung: string | null;
+          kontakt_start: Json | null;
+          kontakt_ziel: Json | null;
+          kontakt_rueckfuehrung: Json | null;
+          protokoll_art: ProtokollArt | null;
+          info: string | null;
+          bestaetigt: boolean;
+          erstellt_von: string | null;
+          created_at: string;
+          eingang_id: string | null;
+          eingang_id_bc: string | null;
+        };
+        Relationships: [];
+      };
     };
     Functions: {
       is_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      is_auftraggeber: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      current_auftraggeber_id: {
+        Args: Record<PropertyKey, never>;
+        Returns: string | null;
+      };
+      auftraggeber_formular_zuweisen: {
+        Args: { p_tour_id: string; p_template_id: string };
+        Returns: void;
       };
       next_rechnungsnummer: {
         Args: { p_year?: number };

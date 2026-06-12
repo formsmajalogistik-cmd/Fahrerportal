@@ -4,9 +4,16 @@ import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { TemplateNewDialog } from './TemplateNewDialog';
-import type { FormularTemplate } from '../../types/db';
+import { previewOneDrivePdf, triggerOneDriveDownload } from '../../lib/onedrive';
+import { formatDateTime } from '../../lib/touren';
+import { DownloadIcon, EyeIcon } from '../../components/icons';
+import type { FormularTemplate, FormularWunsch } from '../../types/db';
 
 type Row = FormularTemplate;
+
+type WunschRow = FormularWunsch & {
+  auftraggeber: { name: string } | null;
+};
 
 export function TemplatesListPage() {
   const navigate = useNavigate();
@@ -16,17 +23,33 @@ export function TemplatesListPage() {
   const [showFahrzeugDialog, setShowFahrzeugDialog] = useState(false);
   const [deleting, setDeleting] = useState<Row | null>(null);
 
+  const [wuensche, setWuensche] = useState<WunschRow[]>([]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase
-      .from('formular_templates')
-      .select('*')
-      .order('name');
-    if (err) setError(err.message);
-    else setRows((data as unknown as Row[]) ?? []);
+    const [tplRes, wRes] = await Promise.all([
+      supabase.from('formular_templates').select('*').order('name'),
+      supabase.from('formular_wuensche')
+        .select('*, auftraggeber:auftraggeber_id (name)')
+        .order('created_at', { ascending: false }),
+    ]);
+    if (tplRes.error) setError(tplRes.error.message);
+    else setRows((tplRes.data as unknown as Row[]) ?? []);
+    // Wünsche-Tabelle existiert erst ab Migration 056 — Fehler hier
+    // blockt die Templates-Liste nicht.
+    setWuensche(wRes.error ? [] : ((wRes.data as unknown as WunschRow[]) ?? []));
     setLoading(false);
   }, []);
+
+  async function markWunschErledigt(w: WunschRow) {
+    const { error: err } = await supabase
+      .from('formular_wuensche')
+      .update({ status: 'erledigt' })
+      .eq('id', w.id);
+    if (err) { setError(err.message); return; }
+    setWuensche((prev) => prev.map((x) => (x.id === w.id ? { ...x, status: 'erledigt' } : x)));
+  }
 
   useEffect(() => { void load(); }, [load]);
 
@@ -89,6 +112,59 @@ export function TemplatesListPage() {
           </button>
         </div>
       </div>
+
+      {wuensche.length > 0 && (() => {
+        const offen = wuensche.filter((w) => w.status === 'offen');
+        return (
+          <section className={`space-y-2 rounded-xl border p-4 ${
+            offen.length > 0 ? 'border-amber-300 bg-amber-50' : 'border-maja-navy/10 bg-white'
+          }`}>
+            <h2 className="text-sm font-semibold text-maja-navy">
+              Formular-Wünsche ({offen.length} offen)
+            </h2>
+            <p className="text-xs text-maja-muted">
+              Von Auftraggebern eingereichte PDF-Vorlagen — daraus Templates
+              bauen und als erledigt markieren.
+            </p>
+            <ul className="space-y-2">
+              {wuensche.map((w) => (
+                <li key={w.id} className="card flex flex-wrap items-center justify-between gap-3 p-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-medium text-maja-navy">
+                        {w.auftraggeber?.name ?? 'Auftraggeber'}
+                      </span>
+                      <span className="text-xs text-maja-muted">{formatDateTime(w.created_at)}</span>
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        w.status === 'offen'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {w.status === 'offen' ? 'Offen' : 'Erledigt'}
+                      </span>
+                    </div>
+                    {w.notiz && (
+                      <p className="mt-1 text-xs text-maja-ink">{w.notiz}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <WunschPdfButtons wunsch={w} />
+                    {w.status === 'offen' && (
+                      <button
+                        type="button"
+                        className="btn-secondary px-3 py-1.5 text-xs"
+                        onClick={() => void markWunschErledigt(w)}
+                      >
+                        Als erledigt markieren
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })()}
 
       {rows.length === 0 ? (
         <div className="card p-6 text-sm text-maja-muted">
@@ -179,5 +255,40 @@ export function TemplatesListPage() {
         />
       )}
     </div>
+  );
+}
+
+function WunschPdfButtons({ wunsch }: { wunsch: FormularWunsch }) {
+  const [busy, setBusy] = useState<'preview' | 'download' | null>(null);
+  const filename = wunsch.pdf_url.split('/').pop() ?? 'vorlage.pdf';
+  return (
+    <span className="inline-flex items-stretch overflow-hidden rounded-full border border-slate-300 bg-maja-light text-xs text-maja-navy">
+      <button
+        type="button"
+        disabled={busy !== null}
+        onClick={async () => {
+          setBusy('preview');
+          const ok = await previewOneDrivePdf(wunsch.pdf_url, { filename });
+          setBusy(null);
+          if (!ok) alert('Vorschau fehlgeschlagen.');
+        }}
+        className="flex items-center px-2 py-1 hover:bg-maja-accent/20"
+        aria-label="PDF ansehen"
+      >{busy === 'preview' ? <span>…</span> : <EyeIcon className="h-4 w-4" />}</button>
+      <button
+        type="button"
+        disabled={busy !== null}
+        onClick={async () => {
+          setBusy('download');
+          const ok = await triggerOneDriveDownload(wunsch.pdf_url, filename);
+          setBusy(null);
+          if (!ok) alert('PDF nicht erreichbar.');
+        }}
+        className="flex items-center gap-1 border-l border-slate-300 px-2 py-1 hover:bg-maja-accent/20"
+      >
+        {busy === 'download' ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
+        {filename}
+      </button>
+    </span>
   );
 }

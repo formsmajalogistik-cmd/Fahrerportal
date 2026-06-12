@@ -7,6 +7,7 @@ import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog';
 import { TemplateStructureEditor } from './TemplateStructureEditor';
 import { TemplateMappingEditor } from './TemplateMappingEditor';
 import { TemplateEmailEditor } from './TemplateEmailEditor';
+import { TemplateFreigabeEditor } from './TemplateFreigabeEditor';
 import { copyPdfInStorage, deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
   EmailConfig, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
@@ -21,7 +22,7 @@ export interface PlaceholderToken {
   label?: string;
 }
 
-type Tab = 'struktur' | 'mapping' | 'email';
+type Tab = 'struktur' | 'mapping' | 'email' | 'freigabe';
 
 function slugify(s: string): string {
   return s.toLowerCase()
@@ -374,6 +375,9 @@ export function TemplateEditorPage() {
         <TabButton active={tab === 'email'} onClick={() => setTab('email')}>
           Email
         </TabButton>
+        <TabButton active={tab === 'freigabe'} onClick={() => setTab('freigabe')}>
+          Auftraggeber-Freigabe
+        </TabButton>
       </div>
       {pendingExit && (
         <UnsavedChangesDialog
@@ -455,6 +459,10 @@ export function TemplateEditorPage() {
           pdfs={pdfs}
           placeholders={placeholderTokens}
         />
+      )}
+
+      {tab === 'freigabe' && template && (
+        <TemplateFreigabeEditor templateId={template.id} />
       )}
 
       {(error || statusMsg) && (

@@ -44,6 +44,18 @@ function asString(v: unknown): string | null {
   if (Array.isArray(v) && typeof v[0] === 'string') return v[0];
   return null;
 }
+/**
+ * Upload-Pfad-Whitelist pro Rolle. Auftraggeber-Profile (externe Kunden)
+ * dürfen ausschließlich Formular-Wünsche ablegen — alle anderen
+ * OneDrive-Bereiche (Formulare, Belege, Rechnungen, …) sind tabu.
+ * Admin/Fahrer behalten das bisherige Verhalten.
+ */
+function assertUploadPathAllowed(role: string | null, path: string): void {
+  if (role === 'auftraggeber' && !path.startsWith('Maja-Logistik/Formular-Wuensche/')) {
+    throw new HttpError(403, 'Upload-Pfad für Auftraggeber-Profile nicht erlaubt');
+  }
+}
+
 function base64ToBytes(b64: string): Uint8Array {
   const clean = b64.includes(',') ? b64.split(',').pop()! : b64;
   if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(clean, 'base64'));
@@ -114,6 +126,11 @@ export default async function handler(req: Req, res: Res) {
 
     // ---- FILES (List) ----------------------------------------------
     if (method === 'GET' && action === 'files') {
+      // Auftraggeber-Profile (externe Kunden) dürfen keine OneDrive-
+      // Ordner durchsuchen.
+      if (user.role === 'auftraggeber') {
+        throw new HttpError(403, 'Kein Zugriff für Auftraggeber-Profile');
+      }
       const folder = qString(req.query?.folder) ?? '';
       if (folder.includes('..')) throw new HttpError(400, 'Ungültiger Pfad');
       const items = await listChildren(folder);
@@ -150,6 +167,7 @@ export default async function handler(req: Req, res: Res) {
       if (path.includes('..') || path.startsWith('/')) {
         throw new HttpError(400, 'Ungültiger Pfad');
       }
+      assertUploadPathAllowed(user.role, path);
       const bytes = base64ToBytes(contentB64);
       const item = await uploadFile(path, bytes, contentType);
       res.status(200).json({
@@ -166,6 +184,7 @@ export default async function handler(req: Req, res: Res) {
       if (!path || path.includes('..')) {
         throw new HttpError(400, 'Pfad ungültig');
       }
+      assertUploadPathAllowed(user.role, path);
       const { uploadUrl } = await createUploadSession(path);
       res.status(200).json({ ok: true, uploadUrl });
       return;
@@ -173,6 +192,10 @@ export default async function handler(req: Req, res: Res) {
 
     // ---- DELETE-PDF -------------------------------------------------
     if (action === 'delete-pdf') {
+      // Auftraggeber-Profile haben Read-Only-Zugriff auf Protokolle.
+      if (user.role === 'auftraggeber') {
+        throw new HttpError(403, 'Kein Lösch-Zugriff für Auftraggeber-Profile');
+      }
       const path = asString(body.path);
       const formularId = asString(body.formular_id);
       if (!path || path.includes('..') || !formularId) {

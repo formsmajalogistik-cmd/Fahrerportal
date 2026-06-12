@@ -1,25 +1,66 @@
-import { type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
 import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { useEingaengeNotifications } from '../sync/EingaengeContext';
+import { supabase } from '../lib/supabase';
 
 interface NavItem { to: string; label: string; end?: boolean }
 
-/** Schlichter Punkt statt Zahlen-Badge — zeigt nur AN/AUS:
- *  „es gibt ungesehene Eingänge". */
-function NavBadge({ count, pulse }: { count: number; pulse: boolean }) {
+/** Schlichter Punkt statt Zahlen-Badge — zeigt nur AN/AUS. */
+function NavBadge({ count, pulse, label }: { count: number; pulse?: boolean; label: string }) {
   if (count <= 0) return null;
   return (
     <span
-      aria-label={`${count} ungesehene Eingänge`}
+      aria-label={`${count} ${label}`}
       className={`ml-1.5 inline-block h-2 w-2 rounded-full bg-red-500 ${
         pulse ? 'animate-ping' : ''
       }`}
     />
   );
+}
+
+/**
+ * Leichtgewichtige Zähler für die Nav-Punkte: unbestätigte Touren
+ * (Auftraggeber-Einreichungen → Tourenliste) und offene Formular-
+ * Wünsche (→ Templates). 60s-Polling + Refresh bei Fokus; Fehler
+ * (z.B. Migration noch nicht eingespielt) werden still geschluckt.
+ */
+function useAdminPendingCounts(): { unbestaetigt: number; wuensche: number } {
+  const [counts, setCounts] = useState({ unbestaetigt: 0, wuensche: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      try {
+        const [t, w] = await Promise.all([
+          supabase.from('touren')
+            .select('id', { count: 'exact', head: true })
+            .eq('bestaetigt', false),
+          supabase.from('formular_wuensche')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'offen'),
+        ]);
+        if (cancelled) return;
+        setCounts({
+          unbestaetigt: t.error ? 0 : (t.count ?? 0),
+          wuensche: w.error ? 0 : (w.count ?? 0),
+        });
+      } catch { /* still — Badge bleibt einfach aus */ }
+    }
+    const t = window.setTimeout(() => { void refresh(); }, 0);
+    const interval = window.setInterval(() => { void refresh(); }, 60_000);
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
+  return counts;
 }
 
 const adminNav: NavItem[] = [
@@ -37,6 +78,15 @@ const adminNav: NavItem[] = [
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const { unseen, pulse } = useEingaengeNotifications();
+  const { unbestaetigt, wuensche } = useAdminPendingCounts();
+
+  function badgeFor(to: string) {
+    if (to === '/eingaenge') return <NavBadge count={unseen} pulse={pulse} label="ungesehene Eingänge" />;
+    if (to === '/touren') return <NavBadge count={unbestaetigt} label="unbestätigte Touren" />;
+    if (to === '/templates') return <NavBadge count={wuensche} label="offene Formular-Wünsche" />;
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-maja-light">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-maja-navy/10 bg-white lg:block">
@@ -59,7 +109,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   }
                 >
                   <span>{item.label}</span>
-                  {item.to === '/eingaenge' && <NavBadge count={unseen} pulse={pulse} />}
+                  {badgeFor(item.to)}
                 </NavLink>
               </li>
             ))}
@@ -92,7 +142,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     }
                   >
                     <span>{item.label}</span>
-                    {item.to === '/eingaenge' && <NavBadge count={unseen} pulse={pulse} />}
+                    {badgeFor(item.to)}
                   </NavLink>
                 </li>
               ))}

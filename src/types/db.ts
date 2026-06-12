@@ -29,6 +29,10 @@ export interface KontaktVorOrt {
 }
 
 export type Tour = Database['public']['Tables']['touren']['Row'];
+/** Eingeschränkte Tour-Sicht für Auftraggeber-Profile — enthält
+ *  bewusst KEINE Preis- oder Fahrer-Spalten (siehe Migration 056). */
+export type TourKundensicht = Database['public']['Views']['touren_kundensicht']['Row'];
+export type FormularWunsch = Database['public']['Tables']['formular_wuensche']['Row'];
 export type TourZusatz = Database['public']['Tables']['tour_zusaetze']['Row'];
 export type GreimelZugang = Database['public']['Tables']['greimel_zugaenge']['Row'];
 export type EmailFavorit = Database['public']['Tables']['email_favoriten']['Row'];

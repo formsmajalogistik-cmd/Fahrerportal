@@ -45,7 +45,9 @@ export function ProfilMenu() {
         <span className="hidden text-right text-xs sm:block">
           <span className="block font-medium text-maja-ink">{aktivLabel}</span>
           <span className="block text-maja-muted">
-            {profile.role === 'admin' ? 'Admin' : 'Fahrer'}
+            {profile.role === 'admin' ? 'Admin'
+              : profile.role === 'auftraggeber' ? 'Auftraggeber'
+              : 'Fahrer'}
             {activeFahrer?.ist_unterkonto ? ' · Unterkonto' : ''}
           </span>
         </span>
@@ -102,13 +104,15 @@ export function ProfilMenu() {
           >
             Profil
           </Link>
-          <Link
-            to="/meine-unterkonten"
-            onClick={() => setOpen(false)}
-            className="block rounded-md px-3 py-2 text-sm text-maja-ink hover:bg-maja-light"
-          >
-            Meine Unterkonten
-          </Link>
+          {profile.role !== 'auftraggeber' && (
+            <Link
+              to="/meine-unterkonten"
+              onClick={() => setOpen(false)}
+              className="block rounded-md px-3 py-2 text-sm text-maja-ink hover:bg-maja-light"
+            >
+              Meine Unterkonten
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => { setOpen(false); void signOut(); }}

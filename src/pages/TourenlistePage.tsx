@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
@@ -166,6 +167,8 @@ export function TourenlistePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [openTourId, setOpenTourId] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState<TourRow | null>(null);
+  const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -191,7 +194,7 @@ export function TourenlistePage() {
       tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
       greimel_zugang_id, ist_e_fahrzeug, fin,
       eingang_id, eingang_id_bc, km_gesamt,
-      bearbeitet_markiert_am, created_at
+      bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at
     `;
     const adminCols = `${baseCols},
       verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung`;
@@ -347,6 +350,15 @@ export function TourenlistePage() {
     return () => { cancelled = true; };
   }, [isAdmin, scopedFahrerIds, availableFahrer, profile]);
 
+  // ---- Unbestätigte Touren (von Auftraggebern eingereicht) ----
+  // Erscheinen für Admins in einem eigenen Bereich GANZ OBEN — ohne
+  // Datums-/Status-Filter, damit nichts untergeht. Fahrer sehen
+  // unbestätigte Touren per RLS ohnehin nie (fahrer_id ist null).
+  const unbestaetigteRows = useMemo(
+    () => (isAdmin ? (rows ?? []).filter((t) => t.bestaetigt === false) : []),
+    [rows, isAdmin],
+  );
+
   // ---- Touren im gewählten Datums-Bereich ----
   // Maßgeblich ist das ENDDATUM (Fallback auf startdatum, falls noch
   // kein Enddatum gesetzt ist) — eine Tour mit enddatum im Januar 2026
@@ -355,6 +367,8 @@ export function TourenlistePage() {
     const fromKey = dateFrom.replace(/-/g, '');
     const toKey   = dateTo.replace(/-/g, '');
     return (rows ?? []).filter((t) => {
+      // Unbestätigte Touren laufen über den eigenen Bereich oben.
+      if (t.bestaetigt === false) return false;
       const ref = t?.enddatum ?? t?.startdatum;
       if (!ref) return false;
       const d = new Date(ref);
@@ -419,6 +433,26 @@ export function TourenlistePage() {
     };
   }, [kpiRangeRows, filteredRows]);
 
+  /** Unbestätigte Tour freigeben — wandert danach in die normale Liste. */
+  async function handleBestaetigen(t: TourRow) {
+    setConfirmBusyId(t.id);
+    const { error: err } = await supabase
+      .from('touren')
+      .update({ bestaetigt: true })
+      .eq('id', t.id);
+    setConfirmBusyId(null);
+    if (err) { setError(err.message); return; }
+    void load(true);
+  }
+
+  /** Unbestätigte Tour ablehnen = löschen (mit Bestätigungsdialog). */
+  async function handleAblehnen(t: TourRow) {
+    const { error: err } = await supabase.from('touren').delete().eq('id', t.id);
+    if (err) throw err;
+    setRejecting(null);
+    void load(true);
+  }
+
   // ---- Pagination ----
   const totalPages = Math.max(1, Math.ceil((filteredRows ?? []).length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -458,6 +492,65 @@ export function TourenlistePage() {
           )}
         </div>
       </div>
+
+      {/* Zur Bestätigung: von Auftraggebern eingereichte Touren */}
+      {isAdmin && unbestaetigteRows.length > 0 && (
+        <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-amber-900">
+            Zur Bestätigung ({unbestaetigteRows.length})
+          </h2>
+          <p className="text-xs text-amber-800">
+            Von Auftraggebern eingereichte Touren. Öffnen, fehlende Daten
+            (Fahrer, km, Preis) ergänzen und bestätigen — oder ablehnen.
+          </p>
+          <ul className="space-y-2">
+            {unbestaetigteRows.map((t) => (
+              <li key={t.id} className="card flex flex-wrap items-center justify-between gap-3 p-4 ring-1 ring-amber-300">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => setOpenTourId(t.id)}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    {t.tour_id && (
+                      <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                        {t.tour_id}
+                      </span>
+                    )}
+                    <span className="text-sm font-semibold text-maja-navy">{tourTitel(t)}</span>
+                    <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+                      Unbestätigt
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-maja-muted">
+                    {formatDate(t.startdatum)} – {formatDate(t.enddatum)}
+                    {t.auftraggeber?.name && <> · {t.auftraggeber.name}</>}
+                    {(t.kennzeichen ?? []).length > 0 && <> · {(t.kennzeichen ?? []).join(', ')}</>}
+                    {t.kundenname && <> · {t.kundenname}</>}
+                  </div>
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary px-3 py-1.5 text-sm"
+                    disabled={confirmBusyId === t.id}
+                    onClick={() => void handleBestaetigen(t)}
+                  >
+                    {confirmBusyId === t.id ? 'Bestätigt …' : 'Tour bestätigen'}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                    onClick={() => setRejecting(t)}
+                  >
+                    Ablehnen
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Datums-Filter */}
       <div className="card p-4">
@@ -699,6 +792,22 @@ export function TourenlistePage() {
           onClose={() => setOpenTourId(null)}
           onChanged={() => void load(true)}
           onDeleted={() => { setOpenTourId(null); void load(); }}
+        />
+      )}
+
+      {rejecting && (
+        <ConfirmDialog
+          title="Tour ablehnen?"
+          message={
+            <>
+              Die eingereichte Tour <strong>{rejecting.tour_id ?? tourTitel(rejecting)}</strong> wird
+              gelöscht. Der Auftraggeber sieht sie danach nicht mehr.
+            </>
+          }
+          confirmLabel="Ablehnen und löschen"
+          destructive
+          onConfirm={() => handleAblehnen(rejecting)}
+          onClose={() => setRejecting(null)}
         />
       )}
     </div>

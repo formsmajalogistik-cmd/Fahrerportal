@@ -829,6 +829,20 @@ export function TourDetailDialog({
     onDeleted();
   }
 
+  // ----- Tour bestätigen (Auftraggeber-Einreichungen) -----
+
+  async function handleBestaetigen() {
+    if (!tour || !isAdmin) return;
+    const { error: err } = await supabase
+      .from('touren')
+      .update({ bestaetigt: true })
+      .eq('id', tour.id);
+    if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
+    setTour({ ...tour, bestaetigt: true });
+    setStatusMsg({ kind: 'ok', text: 'Tour bestätigt.' });
+    onChanged();
+  }
+
   // ----- Protokoll-Verknüpfung lösen -----
 
   /**
@@ -1245,6 +1259,15 @@ export function TourDetailDialog({
               <button type="button" onClick={onClose} className="btn-secondary">
                 Schließen
               </button>
+              {isAdmin && tour.bestaetigt === false && (
+                <button
+                  type="button"
+                  onClick={() => void handleBestaetigen()}
+                  className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+                >
+                  Tour bestätigen
+                </button>
+              )}
               {isAdmin && (
                 <button type="button" onClick={startEdit} className="btn-primary">
                   Bearbeiten

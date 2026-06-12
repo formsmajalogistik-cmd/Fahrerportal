@@ -22,16 +22,25 @@ interface AccountRow {
   subs: FahrerRow[];
 }
 
+const ROLE_LABEL: Record<UserRole, string> = {
+  admin: 'Admin',
+  fahrer: 'Fahrer',
+  auftraggeber: 'Auftraggeber',
+};
+
 export function FahrerListPage() {
   const { profile: me, refreshProfile } = useAuth();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [fahrerRows, setFahrerRows] = useState<FahrerRow[]>([]);
+  const [auftraggeberList, setAuftraggeberList] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<FahrerRow | 'new' | null>(null);
   const [deleting, setDeleting] = useState<AccountRow | null>(null);
   const [deletingSub, setDeletingSub] = useState<FahrerRow | null>(null);
   const [roleChange, setRoleChange] = useState<{ user: AppUser; next: UserRole } | null>(null);
+  /** Bei Wechsel zur Rolle Auftraggeber: gewählter Auftraggeber (Pflicht). */
+  const [roleChangeAgId, setRoleChangeAgId] = useState<string>('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [newSubName, setNewSubName] = useState<Record<string, { vorname: string; nachname: string }>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -40,17 +49,19 @@ export function FahrerListPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [u, f] = await Promise.all([
+    const [u, f, ag] = await Promise.all([
       supabase.from('app_users').select('*').order('email'),
       supabase.from('fahrer')
         .select('*, user:user_id (email, vorname, nachname)')
         .order('ist_unterkonto', { ascending: true })
         .order('aktiv', { ascending: false }),
+      supabase.from('auftraggeber').select('id, name').order('name'),
     ]);
     if (u.error) setError(u.error.message);
     else setUsers((u.data as AppUser[]) ?? []);
     if (f.error) setError(f.error.message);
     else setFahrerRows((f.data as unknown as FahrerRow[]) ?? []);
+    setAuftraggeberList((ag.data as Array<{ id: string; name: string }>) ?? []);
     setLoading(false);
   }, []);
 
@@ -121,13 +132,22 @@ export function FahrerListPage() {
     void load();
   }
 
-  async function handleRoleChange(user: AppUser, next: UserRole) {
+  async function handleRoleChange(user: AppUser, next: UserRole, agId: string | null) {
+    if (next === 'auftraggeber' && !agId) {
+      throw new Error('Bitte einen zugehörigen Auftraggeber auswählen.');
+    }
     const { error: err } = await supabase
       .from('app_users')
-      .update({ role: next })
+      .update({
+        role: next,
+        // Verknüpfung nur für die Rolle Auftraggeber — beim Wechsel weg
+        // davon wird sie aufgeräumt.
+        auftraggeber_id: next === 'auftraggeber' ? agId : null,
+      })
       .eq('id', user.id);
     if (err) throw err;
     setRoleChange(null);
+    setRoleChangeAgId('');
     if (me?.id === user.id) await refreshProfile();
     void load();
   }
@@ -212,12 +232,14 @@ export function FahrerListPage() {
               const subInput = (f && newSubName[f.id]) ?? { vorname: '', nachname: '' };
               const isSelf = me?.id === u.id;
               const isLastAdmin = u.role === 'admin' && adminCount <= 1;
-              const targetRole: UserRole = u.role === 'admin' ? 'fahrer' : 'admin';
               const roleLockReason = isSelf
                 ? 'Du kannst deine eigene Rolle nicht ändern.'
                 : (u.role === 'admin' && isLastAdmin
                     ? 'Mindestens ein Admin muss existieren.'
                     : null);
+              const agName = u.role === 'auftraggeber'
+                ? (auftraggeberList.find((a) => a.id === u.auftraggeber_id)?.name ?? 'kein Auftraggeber')
+                : null;
               const deleteLockReason = isSelf
                 ? 'Du kannst dein eigenes Konto nicht löschen.'
                 : (u.role === 'admin' && isLastAdmin
@@ -232,21 +254,34 @@ export function FahrerListPage() {
                     </td>
                     <td className="px-4 py-3 text-maja-muted">{u.email}</td>
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
+                      <select
+                        aria-label={`Rolle von ${displayName(u)}`}
                         disabled={!!roleLockReason}
-                        title={roleLockReason ?? `Zu „${targetRole}" wechseln`}
-                        onClick={() => setRoleChange({ user: u, next: targetRole })}
+                        title={roleLockReason ?? 'Rolle ändern'}
+                        value={u.role}
+                        onChange={(e) => {
+                          const next = e.target.value as UserRole;
+                          if (next === u.role) return;
+                          setRoleChangeAgId(u.auftraggeber_id ?? '');
+                          setRoleChange({ user: u, next });
+                        }}
                         className={
-                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium '
+                          'rounded-full border-0 py-0.5 pl-2 pr-7 text-xs font-medium focus:ring-2 focus:ring-maja-navy '
                           + (u.role === 'admin'
-                            ? 'bg-maja-navy/10 text-maja-navy hover:bg-maja-navy/15'
-                            : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200')
+                            ? 'bg-maja-navy/10 text-maja-navy'
+                            : u.role === 'auftraggeber'
+                              ? 'bg-purple-100 text-purple-800'
+                              : 'bg-emerald-100 text-emerald-800')
                           + (roleLockReason ? ' cursor-not-allowed opacity-60' : '')
                         }
                       >
-                        {u.role === 'admin' ? 'Admin' : 'Fahrer'}
-                      </button>
+                        {(['admin', 'fahrer', 'auftraggeber'] as UserRole[]).map((r) => (
+                          <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+                        ))}
+                      </select>
+                      {agName && (
+                        <div className="mt-1 text-xs text-maja-muted">{agName}</div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {f ? (
@@ -433,17 +468,48 @@ export function FahrerListPage() {
           title={
             roleChange.next === 'admin'
               ? `${displayName(roleChange.user)} zum Admin machen?`
-              : `${displayName(roleChange.user)} zum Fahrer herabstufen?`
+              : roleChange.next === 'fahrer'
+                ? (roleChange.user.role === 'admin'
+                    ? `${displayName(roleChange.user)} zum Fahrer herabstufen?`
+                    : `${displayName(roleChange.user)} zum Fahrer machen?`)
+                : `${displayName(roleChange.user)} zum Auftraggeber-Profil machen?`
           }
           message={
-            roleChange.next === 'admin'
-              ? 'Die Person erhält Zugriff auf alle Verwaltungsfunktionen (Touren, Rechnungen, E-Mails, Einstellungen).'
-              : 'Die Person verliert den Zugriff auf alle Admin-Bereiche.'
+            roleChange.next === 'admin' ? (
+              'Die Person erhält Zugriff auf alle Verwaltungsfunktionen (Touren, Rechnungen, E-Mails, Einstellungen).'
+            ) : roleChange.next === 'fahrer' ? (
+              roleChange.user.role === 'admin'
+                ? 'Die Person verliert den Zugriff auf alle Admin-Bereiche.'
+                : 'Die Person erhält die normale Fahrer-Sicht (eigene Touren und Formulare).'
+            ) : (
+              <>
+                Auftraggeber-Profile sehen ausschließlich die Touren und
+                Formulare des zugeordneten Auftraggebers — ohne Preise,
+                Vergütungen oder Fahrer-Daten.
+                <div className="mt-3">
+                  <label htmlFor="role-ag" className="label">Zugehöriger Auftraggeber *</label>
+                  <select
+                    id="role-ag"
+                    className="input"
+                    value={roleChangeAgId}
+                    onChange={(e) => setRoleChangeAgId(e.target.value)}
+                  >
+                    <option value="">— Auftraggeber wählen —</option>
+                    {auftraggeberList.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )
           }
           confirmLabel="Rolle ändern"
-          destructive={roleChange.next === 'fahrer'}
-          onConfirm={() => handleRoleChange(roleChange.user, roleChange.next)}
-          onClose={() => setRoleChange(null)}
+          destructive={roleChange.user.role === 'admin'}
+          onConfirm={() => handleRoleChange(
+            roleChange.user, roleChange.next,
+            roleChange.next === 'auftraggeber' ? (roleChangeAgId || null) : null,
+          )}
+          onClose={() => { setRoleChange(null); setRoleChangeAgId(''); }}
         />
       )}
     </div>

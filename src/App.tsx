@@ -28,6 +28,9 @@ import { RechnungNewPage } from './pages/admin/rechnungen/RechnungNewPage';
 import { RechnungDetailPage } from './pages/admin/rechnungen/RechnungDetailPage';
 import { TourenlistePage } from './pages/TourenlistePage';
 import { GreimelZugaengePage } from './pages/GreimelZugaengePage';
+import { AuftraggeberShell } from './components/AuftraggeberShell';
+import { AuftraggeberTourenPage } from './pages/auftraggeber/AuftraggeberTourenPage';
+import { AuftraggeberFormularePage } from './pages/auftraggeber/AuftraggeberFormularePage';
 
 export default function App() {
   const { status, profile } = useAuth();
@@ -62,6 +65,26 @@ export default function App() {
   }
   if (fahrerCtx.needsPicker) {
     return <KontoAuswahlPage />;
+  }
+
+  // Auftraggeber-Profile: nur Tourenliste + Formulare. Alle anderen
+  // Routen (Eingänge, Belege, Rechnungen, Einstellungen, …) sind nicht
+  // registriert und landen im Redirect auf /touren. Die eigentliche
+  // Datensicherheit liegt in den RLS-Policies (Migration 056) — das
+  // Routing ist nur die UI-Schicht.
+  if (profile?.role === 'auftraggeber') {
+    return (
+      <AuftraggeberShell>
+        <Routes>
+          <Route path="/" element={<Navigate to="/touren" replace />} />
+          <Route path="/touren" element={<AuftraggeberTourenPage />} />
+          <Route path="/formulare" element={<AuftraggeberFormularePage />} />
+          <Route path="/profil" element={<ProfilPage />} />
+          <Route path="/passwort-neu" element={<PasswordNewPage />} />
+          <Route path="*" element={<Navigate to="/touren" replace />} />
+        </Routes>
+      </AuftraggeberShell>
+    );
   }
 
   if (profile?.role === 'admin') {

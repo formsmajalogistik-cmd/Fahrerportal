@@ -13,7 +13,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { HttpError } from './auth.js';
 
-interface AuthedUser { id: string; role: 'admin' | 'fahrer' | null }
+interface AuthedUser { id: string; role: 'admin' | 'fahrer' | 'auftraggeber' | null }
 
 interface FormularRow {
   id: string;
