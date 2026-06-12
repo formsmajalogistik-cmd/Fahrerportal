@@ -22,10 +22,68 @@
 --      lesbar waren (preisstufen, sonderverguetungen, auftraggeber,
 --      auftraggeber_kontakte, greimel sichtbar_fuer_alle), werden für
 --      die Rolle auftraggeber dichtgemacht.
+--
+-- Reihenfolge dieser Datei (wichtig — Postgres validiert SQL-Funktions-
+-- Bodies beim Anlegen):
+--   1. Alle ALTER TABLE ... ADD COLUMN (idempotent via IF NOT EXISTS)
+--   2. Neue Tabellen
+--   3. Helper-Funktionen (referenzieren die neuen Spalten)
+--   4. View
+--   5. Policies + RPC
+--
+-- Voraussetzung: Migration 055 (Enum-Wert 'auftraggeber') ist gelaufen.
 -- ============================================================
 
 -- ------------------------------------------------------------
--- 1. Helper-Funktionen
+-- 1. Spalten anlegen — MUSS vor den Funktionen passieren.
+-- ------------------------------------------------------------
+
+-- Verknüpfung Profil → GENAU EIN Auftraggeber.
+alter table public.app_users
+  add column if not exists auftraggeber_id uuid references public.auftraggeber(id) on delete set null;
+
+-- Bestätigungs-Workflow: von Auftraggebern erstellte Touren starten
+-- unbestätigt; bestehende und Admin-Touren sind automatisch bestätigt.
+alter table public.touren
+  add column if not exists bestaetigt boolean not null default true,
+  add column if not exists erstellt_von uuid references public.app_users(id) on delete set null,
+  add column if not exists erstellt_von_rolle text;
+
+create index if not exists idx_touren_bestaetigt on public.touren(bestaetigt) where bestaetigt = false;
+
+-- ------------------------------------------------------------
+-- 2. Neue Tabellen
+-- ------------------------------------------------------------
+
+-- Multi-Select-Freigabe: welche Auftraggeber dürfen ein Template sehen
+-- und ihren Touren zuweisen?
+create table if not exists public.template_auftraggeber_freigaben (
+  template_id     uuid not null references public.formular_templates(id) on delete cascade,
+  auftraggeber_id uuid not null references public.auftraggeber(id) on delete cascade,
+  created_at      timestamptz not null default now(),
+  primary key (template_id, auftraggeber_id)
+);
+
+alter table public.template_auftraggeber_freigaben enable row level security;
+
+-- Formular-Wünsche: PDF-Vorlagen, die Auftraggeber einreichen können.
+create table if not exists public.formular_wuensche (
+  id               uuid primary key default gen_random_uuid(),
+  auftraggeber_id  uuid not null references public.auftraggeber(id) on delete cascade,
+  eingereicht_von  uuid references public.app_users(id) on delete set null,
+  pdf_url          text not null,
+  notiz            text,
+  status           text not null default 'offen' check (status in ('offen', 'erledigt')),
+  created_at       timestamptz not null default now()
+);
+
+create index if not exists idx_formular_wuensche_status on public.formular_wuensche(status);
+
+alter table public.formular_wuensche enable row level security;
+
+-- ------------------------------------------------------------
+-- 3. Helper-Funktionen — referenzieren die in Schritt 1 angelegten
+--    Spalten (`role` aus 001, `auftraggeber_id` aus diesem Schritt).
 -- ------------------------------------------------------------
 
 create or replace function public.is_auftraggeber()
@@ -59,24 +117,7 @@ $$;
 grant execute on function public.current_auftraggeber_id() to authenticated;
 
 -- ------------------------------------------------------------
--- 2. Spalten
--- ------------------------------------------------------------
-
--- Verknüpfung Profil → GENAU EIN Auftraggeber.
-alter table public.app_users
-  add column if not exists auftraggeber_id uuid references public.auftraggeber(id) on delete set null;
-
--- Bestätigungs-Workflow: von Auftraggebern erstellte Touren starten
--- unbestätigt; bestehende und Admin-Touren sind automatisch bestätigt.
-alter table public.touren
-  add column if not exists bestaetigt boolean not null default true,
-  add column if not exists erstellt_von uuid references public.app_users(id) on delete set null,
-  add column if not exists erstellt_von_rolle text;
-
-create index if not exists idx_touren_bestaetigt on public.touren(bestaetigt) where bestaetigt = false;
-
--- ------------------------------------------------------------
--- 3. Kunden-View: einzige Lesequelle für Auftraggeber-Profile.
+-- 4. Kunden-View: einzige Lesequelle für Auftraggeber-Profile.
 --    Security-Definer-Semantik (View-Owner umgeht RLS auf touren),
 --    deshalb MUSS das WHERE den Scope vollständig erzwingen:
 --      * nur Touren des eigenen Auftraggebers
@@ -105,7 +146,7 @@ create view public.touren_kundensicht as
 grant select on public.touren_kundensicht to authenticated;
 
 -- ------------------------------------------------------------
--- 4. RLS touren: INSERT/DELETE für Auftraggeber.
+-- 5. RLS touren: INSERT/DELETE für Auftraggeber.
 --    Bewusst KEINE SELECT- und KEINE UPDATE-Policy: Lesen läuft über
 --    die View; bestätigte Touren sind für die Rolle unveränderlich.
 -- ------------------------------------------------------------
@@ -135,7 +176,7 @@ create policy touren_auftraggeber_delete on public.touren
   );
 
 -- ------------------------------------------------------------
--- 5. RLS ausgefuellte_formulare: Auftraggeber liest Formulare,
+-- 6. RLS ausgefuellte_formulare: Auftraggeber liest Formulare,
 --    die mit Touren des EIGENEN Auftraggebers verknüpft sind
 --    (über eingang_id / eingang_id_bc oder daten->>'_tour_id').
 -- ------------------------------------------------------------
@@ -156,17 +197,8 @@ create policy af_auftraggeber_read on public.ausgefuellte_formulare
   );
 
 -- ------------------------------------------------------------
--- 6. Template-Freigaben pro Auftraggeber
+-- 7. Template-Freigaben Policies
 -- ------------------------------------------------------------
-
-create table if not exists public.template_auftraggeber_freigaben (
-  template_id     uuid not null references public.formular_templates(id) on delete cascade,
-  auftraggeber_id uuid not null references public.auftraggeber(id) on delete cascade,
-  created_at      timestamptz not null default now(),
-  primary key (template_id, auftraggeber_id)
-);
-
-alter table public.template_auftraggeber_freigaben enable row level security;
 
 drop policy if exists taf_admin_all on public.template_auftraggeber_freigaben;
 create policy taf_admin_all on public.template_auftraggeber_freigaben
@@ -206,7 +238,7 @@ create policy templates_visible_read on public.formular_templates
   );
 
 -- ------------------------------------------------------------
--- 7. tour_protokoll_zuweisungen: Auftraggeber liest Zuweisungen
+-- 8. tour_protokoll_zuweisungen: Auftraggeber liest Zuweisungen
 --    der eigenen Touren (für die Formular-Übersicht).
 -- ------------------------------------------------------------
 
@@ -221,7 +253,7 @@ create policy tpz_auftraggeber_read on public.tour_protokoll_zuweisungen
   );
 
 -- ------------------------------------------------------------
--- 8. RPC: Formular einer Tour zuweisen (Auftraggeber).
+-- 9. RPC: Formular einer Tour zuweisen (Auftraggeber).
 --    SECURITY DEFINER, weil zusätzlich touren.protokoll_art gesetzt
 --    werden muss — Auftraggeber haben bewusst keine UPDATE-Policy
 --    auf touren. Alle Checks laufen hier serverseitig.
@@ -274,22 +306,8 @@ $$;
 grant execute on function public.auftraggeber_formular_zuweisen(uuid, uuid) to authenticated;
 
 -- ------------------------------------------------------------
--- 9. Formular-Wünsche (PDF-Vorlagen-Einreichung)
+-- 10. Formular-Wünsche: Policies
 -- ------------------------------------------------------------
-
-create table if not exists public.formular_wuensche (
-  id               uuid primary key default gen_random_uuid(),
-  auftraggeber_id  uuid not null references public.auftraggeber(id) on delete cascade,
-  eingereicht_von  uuid references public.app_users(id) on delete set null,
-  pdf_url          text not null,
-  notiz            text,
-  status           text not null default 'offen' check (status in ('offen', 'erledigt')),
-  created_at       timestamptz not null default now()
-);
-
-create index if not exists idx_formular_wuensche_status on public.formular_wuensche(status);
-
-alter table public.formular_wuensche enable row level security;
 
 drop policy if exists fw_admin_all on public.formular_wuensche;
 create policy fw_admin_all on public.formular_wuensche
@@ -311,7 +329,7 @@ create policy fw_auftraggeber_read on public.formular_wuensche
   );
 
 -- ------------------------------------------------------------
--- 10. Bestehende "alle Authenticated dürfen lesen"-Policies für die
+-- 11. Bestehende "alle Authenticated dürfen lesen"-Policies für die
 --     Rolle auftraggeber dichtmachen — Preise, fremde Stammdaten und
 --     Greimel-Zugänge gehen externe Kunden nichts an.
 -- ------------------------------------------------------------
