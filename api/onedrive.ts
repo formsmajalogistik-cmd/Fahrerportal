@@ -48,9 +48,13 @@ function asString(v: unknown): string | null {
  * Upload-Pfad-Whitelist pro Rolle. Auftraggeber-Profile (externe Kunden)
  * dürfen ausschließlich Formular-Wünsche ablegen — alle anderen
  * OneDrive-Bereiche (Formulare, Belege, Rechnungen, …) sind tabu.
+ * Test-Profile haben Read-Only-Zugriff und dürfen gar nichts hochladen.
  * Admin/Fahrer behalten das bisherige Verhalten.
  */
 function assertUploadPathAllowed(role: string | null, path: string): void {
+  if (role === 'test') {
+    throw new HttpError(403, 'Testmodus — Uploads werden nicht ausgeführt.');
+  }
   if (role === 'auftraggeber' && !path.startsWith('Maja-Logistik/Formular-Wuensche/')) {
     throw new HttpError(403, 'Upload-Pfad für Auftraggeber-Profile nicht erlaubt');
   }
@@ -195,6 +199,9 @@ export default async function handler(req: Req, res: Res) {
       // Auftraggeber-Profile haben Read-Only-Zugriff auf Protokolle.
       if (user.role === 'auftraggeber') {
         throw new HttpError(403, 'Kein Lösch-Zugriff für Auftraggeber-Profile');
+      }
+      if (user.role === 'test') {
+        throw new HttpError(403, 'Testmodus — Löschen wird nicht ausgeführt.');
       }
       const path = asString(body.path);
       const formularId = asString(body.formular_id);

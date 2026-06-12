@@ -4,6 +4,7 @@ import {
 import { sendEmail } from '../../lib/onedrive';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
+import { useTestGuard } from '../../auth/TestModeContext';
 import { bodyWithSignatureHtml, signatureFromProfile } from '../../lib/emailSignature';
 import { XIcon } from '../../components/icons';
 import {
@@ -62,6 +63,7 @@ function splitList(s: string): string[] {
  *   Checkboxen.
  */
 export function EingangSendEmailDialog({ formular, template, onClose, onSent }: Props) {
+  const guard = useTestGuard();
   const { profile } = useAuth();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
   // --- Adress-Quellen für die Dropdowns ------------------------------
@@ -234,6 +236,7 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
     setError(null);
     if (to.length === 0) { setError('Mindestens einen Empfänger angeben.'); return; }
     if (!subject.trim()) { setError('Betreff darf nicht leer sein.'); return; }
+    if (guard()) { onClose(); return; }
     const selected = attachments.filter((a) => a.selected);
     setBusy(true);
     try {

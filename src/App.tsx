@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import { useFahrerContext } from './auth/FahrerContext';
+import { useTestMode } from './auth/TestModeContext';
 import { Spinner } from './components/Spinner';
 import { AppShell } from './components/AppShell';
 import { AdminShell } from './components/AdminShell';
@@ -35,6 +36,7 @@ import { AuftraggeberFormularePage } from './pages/auftraggeber/AuftraggeberForm
 export default function App() {
   const { status, profile } = useAuth();
   const fahrerCtx = useFahrerContext();
+  const { effectiveRole } = useTestMode();
 
   if (status === 'loading') {
     return (
@@ -65,6 +67,24 @@ export default function App() {
   }
   if (fahrerCtx.needsPicker) {
     return <KontoAuswahlPage />;
+  }
+
+  // Test-Profile: rendern wie die simulierte Rolle (Fahrer oder
+  // Auftraggeber). Banner + Switcher sitzen in der jeweiligen Shell.
+  // RLS lässt Test-User alles lesen; Writes werden auf DB-Ebene
+  // blockiert (Migration 059) und vom guard zusätzlich abgefangen.
+  if (profile?.role === 'test' && effectiveRole === 'auftraggeber') {
+    return (
+      <AuftraggeberShell>
+        <Routes>
+          <Route path="/" element={<Navigate to="/touren" replace />} />
+          <Route path="/touren" element={<AuftraggeberTourenPage />} />
+          <Route path="/formulare" element={<AuftraggeberFormularePage />} />
+          <Route path="/profil" element={<ProfilPage />} />
+          <Route path="*" element={<Navigate to="/touren" replace />} />
+        </Routes>
+      </AuftraggeberShell>
+    );
   }
 
   // Auftraggeber-Profile: nur Tourenliste + Formulare. Alle anderen

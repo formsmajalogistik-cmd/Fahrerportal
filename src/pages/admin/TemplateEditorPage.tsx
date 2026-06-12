@@ -8,6 +8,7 @@ import { TemplateStructureEditor } from './TemplateStructureEditor';
 import { TemplateMappingEditor } from './TemplateMappingEditor';
 import { TemplateEmailEditor } from './TemplateEmailEditor';
 import { TemplateFreigabeEditor } from './TemplateFreigabeEditor';
+import { useTestGuard } from '../../auth/TestModeContext';
 import { copyPdfInStorage, deletePdfFromStorage } from '../../lib/pdfStorage';
 import type {
   EmailConfig, FieldMapping, FormSchema, FormularTemplate, TemplatePdf,
@@ -42,6 +43,7 @@ function uniquePdfId(base: string, existing: TemplatePdf[]): string {
 }
 
 export function TemplateEditorPage() {
+  const guard = useTestGuard();
   const { id } = useParams();
   const navigate = useNavigate();
 
@@ -147,6 +149,7 @@ export function TemplateEditorPage() {
 
   async function save() {
     if (!template) return;
+    if (guard()) return;
     setSaving(true);
     setError(null);
     setStatusMsg(null);

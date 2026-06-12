@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useTestGuard } from '../auth/TestModeContext';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
@@ -433,8 +434,11 @@ export function TourenlistePage() {
     };
   }, [kpiRangeRows, filteredRows]);
 
+  const guard = useTestGuard();
+
   /** Unbestätigte Tour freigeben — wandert danach in die normale Liste. */
   async function handleBestaetigen(t: TourRow) {
+    if (guard()) return;
     setConfirmBusyId(t.id);
     const { error: err } = await supabase
       .from('touren')
@@ -447,6 +451,7 @@ export function TourenlistePage() {
 
   /** Unbestätigte Tour ablehnen = löschen (mit Bestätigungsdialog). */
   async function handleAblehnen(t: TourRow) {
+    if (guard()) { setRejecting(null); return; }
     const { error: err } = await supabase.from('touren').delete().eq('id', t.id);
     if (err) throw err;
     setRejecting(null);

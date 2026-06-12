@@ -69,6 +69,9 @@ export default async function handler(req: Req, res: Res) {
     }
 
     const caller = await getAuthedUser(authHeader(req));
+    if (caller.role === 'test') {
+      throw new HttpError(403, 'Testmodus — Konten werden nicht gelöscht.');
+    }
     if (caller.role !== 'admin') {
       throw new HttpError(403, 'Nur Admins dürfen Konten löschen.');
     }

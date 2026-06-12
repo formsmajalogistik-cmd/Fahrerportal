@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { cachedQuery } from '../../lib/queryCache';
 import { useAuth } from '../../auth/AuthContext';
 import { useFahrerContext } from '../../auth/FahrerContext';
+import { useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
@@ -295,6 +296,7 @@ export function TourDetailDialog({
   const { profile } = useAuth();
   const fahrerCtx = useFahrerContext();
   const isAdmin = profile?.role === 'admin';
+  const guard = useTestGuard();
 
   const [tour, setTour] = useState<FullTour | null>(null);
   const [zusaetze, setZusaetze] = useState<TourZusatz[]>([]);
@@ -564,6 +566,7 @@ export function TourDetailDialog({
 
   async function handleSave() {
     if (!draft || !tour) return;
+    if (guard()) return;
 
     const start = draft.startStadt.trim();
     const ziel  = draft.zielStadt.trim();
@@ -787,6 +790,7 @@ export function TourDetailDialog({
     } else {
       kennzeichen = (tour.kennzeichen?.[0]?.trim() || null);
     }
+    if (guard()) return;
     setAddingZusatz(true);
     const { data, error: err } = await supabase
       .from('tour_zusaetze')
@@ -814,6 +818,7 @@ export function TourDetailDialog({
 
   async function handleDeleteZusatz(id: string) {
     if (!isAdmin) return;
+    if (guard()) return;
     const { error: err } = await supabase.from('tour_zusaetze').delete().eq('id', id);
     if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setZusaetze((z) => z.filter((x) => x.id !== id));
@@ -824,6 +829,7 @@ export function TourDetailDialog({
 
   async function handleDeleteTour() {
     if (!tour) return;
+    if (guard()) return;
     const { error: err } = await supabase.from('touren').delete().eq('id', tour.id);
     if (err) throw err;
     onDeleted();
@@ -833,6 +839,7 @@ export function TourDetailDialog({
 
   async function handleBestaetigen() {
     if (!tour || !isAdmin) return;
+    if (guard()) return;
     const { error: err } = await supabase
       .from('touren')
       .update({ bestaetigt: true })

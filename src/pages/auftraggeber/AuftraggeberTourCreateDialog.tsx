@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
+import { useTestGuard } from '../../auth/TestModeContext';
 import type { TourenArt } from '../../types/db';
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
  */
 export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const { profile, session } = useAuth();
+  const guard = useTestGuard();
 
   const [tourenart, setTourenart] = useState<TourenArt | ''>('');
   const [startStadt, setStartStadt] = useState('');
@@ -85,6 +87,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       setError('Ihrem Konto ist kein Auftraggeber zugeordnet — bitte wenden Sie sich an Maja-Logistik.');
       return;
     }
+    if (guard()) { onClose(); return; }
 
     const kennzeichen = [kennzeichenHin.trim().toUpperCase()];
     if (hatRueckfuehrung && kennzeichenRueck.trim()) {

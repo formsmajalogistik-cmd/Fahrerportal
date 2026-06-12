@@ -4,6 +4,7 @@ import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
 import { PdfPreviewProvider } from './PdfPreviewProvider';
+import { TestModeBanner } from './TestModeBanner';
 
 interface NavItem { to: string; label: string }
 
@@ -18,6 +19,7 @@ const auftraggeberNav: NavItem[] = [
 export function AuftraggeberShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-maja-light">
+      <TestModeBanner />
       <OfflineBanner />
       <header className="sticky top-0 z-10 border-b border-maja-navy/10 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">

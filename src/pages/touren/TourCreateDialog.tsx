@@ -6,6 +6,7 @@ import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
+import { useTestGuard } from '../../auth/TestModeContext';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
 } from '../../types/db';
@@ -53,6 +54,7 @@ function parseDecimal(input: string): number | null {
 
 
 export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initial }: Props) {
+  const guard = useTestGuard();
   // Pflichtfelder
   const [startStadt, setStartStadt] = useState(initial?.startStadt ?? '');
   const [zielStadt, setZielStadt]   = useState(initial?.zielStadt ?? '');
@@ -279,6 +281,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       verguetung = breakdown?.total ?? null;
     }
 
+    if (guard()) { onClose(); return; }
     setSaving(true);
     const ag = (auftraggeber ?? []).find((a) => a.id === auftraggeberId) ?? null;
     // Bei einer rückwirkend angelegten Tour (Datum bereits in der Vergangenheit)

@@ -2,6 +2,7 @@ import {
   useMemo, useState, type FormEvent,
 } from 'react';
 import { useAuth } from '../../auth/AuthContext';
+import { useTestGuard } from '../../auth/TestModeContext';
 import {
   bodyWithSignatureHtml, signatureFromProfile,
 } from '../../lib/emailSignature';
@@ -49,6 +50,7 @@ interface Props {
  */
 export function EmailComposeDialog({ mode, mailboxes, initial, onClose, onSent }: Props) {
   const { profile } = useAuth();
+  const guard = useTestGuard();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
   const [from, setFrom] = useState(initial.from || mailboxes[0]?.address || '');
   const [to, setTo] = useState<string[]>(initial.to ?? []);
@@ -106,6 +108,7 @@ export function EmailComposeDialog({ mode, mailboxes, initial, onClose, onSent }
       return;
     }
     if (!from.trim()) { setError('Postfach (Von) ist erforderlich.'); return; }
+    if (guard()) { onClose(); return; }
     setBusy(true);
     try {
       // Signatur an alle ausgehenden Mails anhängen (Aufgabe 1).

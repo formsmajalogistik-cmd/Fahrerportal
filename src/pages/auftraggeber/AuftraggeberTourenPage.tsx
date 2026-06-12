@@ -5,6 +5,7 @@ import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
 import { asPdfPathList, downloadFormPdf, previewFormPdf } from '../../lib/pdfGenerate';
 import { DownloadIcon, EyeIcon } from '../../components/icons';
 import { AuftraggeberTourCreateDialog } from './AuftraggeberTourCreateDialog';
+import { useTestMode } from '../../auth/TestModeContext';
 import type { KontaktVorOrt, TourKundensicht, TourStatus } from '../../types/db';
 
 /**
@@ -42,6 +43,10 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 type StatusFilter = 'alle' | TourStatus | 'pruefung';
 
 export function AuftraggeberTourenPage() {
+  // Test-User wählen den simulierten Auftraggeber im Banner. Für echte
+  // Auftraggeber-Profile bleibt die View die einzige Datenquelle
+  // (RLS liefert NUR den eigenen AG).
+  const { isTestUser, effectiveAuftraggeberId } = useTestMode();
   const [rows, setRows] = useState<TourKundensicht[]>([]);
   const [eingaenge, setEingaenge] = useState<Map<string, EingangLite>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -54,18 +59,52 @@ export function AuftraggeberTourenPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase
-      .from('touren_kundensicht')
-      .select('*')
-      .order('startdatum', { ascending: false })
-      .order('created_at', { ascending: false });
+    // Test-User: direkt die touren-Tabelle abfragen, gefiltert auf den
+    // im Banner gewählten Auftraggeber — die Auftraggeber-View liefert
+    // ihnen sonst keine Zeilen (current_auftraggeber_id() ist NULL).
+    // Wir holen exakt die Spalten, die die View auch hätte, damit die
+    // UI-Komponenten unverändert weiterarbeiten.
+    let data: TourKundensicht[] | null = null;
+    let err: { message: string } | null = null;
+    if (isTestUser) {
+      if (!effectiveAuftraggeberId) {
+        setRows([]);
+        setEingaenge(new Map());
+        setLoading(false);
+        return;
+      }
+      const res = await supabase
+        .from('touren')
+        .select(`
+          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+          kundenname, auftraggeber_id, startdatum, enddatum, tourenart,
+          kennzeichen, ist_e_fahrzeug, fin,
+          adresse_start, adresse_ziel, adresse_rueckfuehrung,
+          kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
+          protokoll_art, info, bestaetigt, erstellt_von, created_at,
+          eingang_id, eingang_id_bc
+        `)
+        .eq('auftraggeber_id', effectiveAuftraggeberId)
+        .order('startdatum', { ascending: false })
+        .order('created_at', { ascending: false });
+      data = (res.data as unknown as TourKundensicht[]) ?? null;
+      err = res.error;
+    } else {
+      const res = await supabase
+        .from('touren_kundensicht')
+        .select('*')
+        .order('startdatum', { ascending: false })
+        .order('created_at', { ascending: false });
+      data = (res.data as unknown as TourKundensicht[]) ?? null;
+      err = res.error;
+    }
     if (err) {
       setError(err.message);
       setRows([]);
       setLoading(false);
       return;
     }
-    const list = (data as unknown as TourKundensicht[]) ?? [];
+    const list = data ?? [];
     setRows(list);
 
     // Verknüpfte eingereichte Protokolle nachladen (PDF-Downloads).
@@ -87,7 +126,7 @@ export function AuftraggeberTourenPage() {
       setEingaenge(new Map());
     }
     setLoading(false);
-  }, []);
+  }, [isTestUser, effectiveAuftraggeberId]);
 
   useEffect(() => {
     // Deferred, damit setLoading nicht synchron im Effect läuft

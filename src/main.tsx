@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import { AuthProvider } from './auth/AuthContext';
 import { FahrerProvider } from './auth/FahrerContext';
+import { TestModeProvider } from './auth/TestModeContext';
 import { SyncProvider } from './sync/SyncContext';
 import { EingaengeProvider } from './sync/EingaengeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -63,13 +64,15 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary fallback={AppErrorFallback}>
       <BrowserRouter>
         <AuthProvider>
-          <FahrerProvider>
-            <SyncProvider>
-              <EingaengeProvider>
-                <App />
-              </EingaengeProvider>
-            </SyncProvider>
-          </FahrerProvider>
+          <TestModeProvider>
+            <FahrerProvider>
+              <SyncProvider>
+                <EingaengeProvider>
+                  <App />
+                </EingaengeProvider>
+              </SyncProvider>
+            </FahrerProvider>
+          </TestModeProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

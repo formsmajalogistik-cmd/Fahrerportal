@@ -17,6 +17,7 @@ import {
   saveFormDraft,
 } from '../lib/offlineDb';
 import { useAuth } from '../auth/AuthContext';
+import { useTestGuard } from '../auth/TestModeContext';
 import { useSync } from '../sync/SyncContext';
 import { displayName } from '../lib/names';
 import type {
@@ -58,6 +59,7 @@ export function FormularPage() {
   const [autoSaveHint, setAutoSaveHint] = useState<string | null>(null);
   const { triggerSync } = useSync();
   const { session, profile } = useAuth();
+  const guard = useTestGuard();
   // E-Mail des aktuell eingeloggten Nutzers — bekommt automatisch eine
   // Kopie jeder Submission als CC.
   const submitterEmail = session?.user?.email ?? null;
@@ -255,6 +257,7 @@ export function FormularPage() {
 
   async function saveDraft(): Promise<void> {
     if (!formular) return;
+    if (guard()) return;
     setSaving('draft');
     setStatusMsg(null);
     const { error: err } = await supabase
@@ -270,6 +273,7 @@ export function FormularPage() {
 
   async function submit() {
     if (!formular || !template) return;
+    if (guard()) return;
     const { valid, missing } = validateForm(template.schema, data);
     if (!valid) {
       setError(`Bitte fülle die Pflichtfelder aus: ${missing.join(', ')}`);

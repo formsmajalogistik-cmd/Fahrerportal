@@ -5,6 +5,7 @@ import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { FahrerEditDialog } from './FahrerEditDialog';
 import { useAuth } from '../../auth/AuthContext';
+import { useTestGuard } from '../../auth/TestModeContext';
 import { deleteAccount } from '../../lib/accountApi';
 import type { AppUser, Fahrer, UserRole } from '../../types/db';
 
@@ -26,10 +27,12 @@ const ROLE_LABEL: Record<UserRole, string> = {
   admin: 'Admin',
   fahrer: 'Fahrer',
   auftraggeber: 'Auftraggeber',
+  test: 'Test',
 };
 
 export function FahrerListPage() {
   const { profile: me, refreshProfile } = useAuth();
+  const guard = useTestGuard();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [fahrerRows, setFahrerRows] = useState<FahrerRow[]>([]);
   const [auftraggeberList, setAuftraggeberList] = useState<Array<{ id: string; name: string }>>([]);
@@ -106,6 +109,7 @@ export function FahrerListPage() {
   }, [deleting, fahrerRows]);
 
   async function handleDeleteSub(f: FahrerRow) {
+    if (guard()) { setDeletingSub(null); return; }
     // Unterkonten: Referenzen aufs Haupt-Konto umhängen (FK-NOT-NULL).
     if (f.haupt_user_id) {
       const { error: tErr } = await supabase
@@ -126,6 +130,7 @@ export function FahrerListPage() {
   }
 
   async function handleDeleteAccount(acc: AccountRow) {
+    if (guard()) { setDeleting(null); setTransferTarget(''); return; }
     await deleteAccount(acc.user.id, transferTarget || null);
     setDeleting(null);
     setTransferTarget('');
@@ -136,6 +141,7 @@ export function FahrerListPage() {
     if (next === 'auftraggeber' && !agId) {
       throw new Error('Bitte einen zugehörigen Auftraggeber auswählen.');
     }
+    if (guard()) { setRoleChange(null); setRoleChangeAgId(''); return; }
     const { error: err } = await supabase
       .from('app_users')
       .update({
@@ -157,6 +163,7 @@ export function FahrerListPage() {
     const vn = v.vorname.trim();
     const nn = v.nachname.trim();
     if (!vn && !nn) { setError('Bitte einen Namen für das Unterkonto angeben.'); return; }
+    if (guard()) return;
     setBusyId(h.id);
     setError(null);
     const { error: err } = await supabase.from('fahrer').insert({
@@ -271,11 +278,13 @@ export function FahrerListPage() {
                             ? 'bg-maja-navy/10 text-maja-navy'
                             : u.role === 'auftraggeber'
                               ? 'bg-purple-100 text-purple-800'
-                              : 'bg-emerald-100 text-emerald-800')
+                              : u.role === 'test'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100 text-emerald-800')
                           + (roleLockReason ? ' cursor-not-allowed opacity-60' : '')
                         }
                       >
-                        {(['admin', 'fahrer', 'auftraggeber'] as UserRole[]).map((r) => (
+                        {(['admin', 'fahrer', 'auftraggeber', 'test'] as UserRole[]).map((r) => (
                           <option key={r} value={r}>{ROLE_LABEL[r]}</option>
                         ))}
                       </select>
@@ -472,7 +481,9 @@ export function FahrerListPage() {
                 ? (roleChange.user.role === 'admin'
                     ? `${displayName(roleChange.user)} zum Fahrer herabstufen?`
                     : `${displayName(roleChange.user)} zum Fahrer machen?`)
-                : `${displayName(roleChange.user)} zum Auftraggeber-Profil machen?`
+                : roleChange.next === 'test'
+                  ? `${displayName(roleChange.user)} zum Test-Profil machen?`
+                  : `${displayName(roleChange.user)} zum Auftraggeber-Profil machen?`
           }
           message={
             roleChange.next === 'admin' ? (
@@ -481,6 +492,8 @@ export function FahrerListPage() {
               roleChange.user.role === 'admin'
                 ? 'Die Person verliert den Zugriff auf alle Admin-Bereiche.'
                 : 'Die Person erhält die normale Fahrer-Sicht (eigene Touren und Formulare).'
+            ) : roleChange.next === 'test' ? (
+              'Test-Profile sehen alle Daten read-only und können zwischen Fahrer- und Auftraggeber-Ansicht umschalten. Schreibaktionen sind komplett gesperrt (DB-RLS + Frontend-Guard). Gedacht für interne Demos.'
             ) : (
               <>
                 Auftraggeber-Profile sehen ausschließlich die Touren und

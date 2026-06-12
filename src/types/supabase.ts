@@ -10,7 +10,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
-export type UserRole = 'admin' | 'fahrer' | 'auftraggeber';
+export type UserRole = 'admin' | 'fahrer' | 'auftraggeber' | 'test';
 export type FormularStatus = 'draft' | 'submitted';
 export type TourStatus = 'geplant' | 'aktiv' | 'abgeschlossen';
 export type TourenArt = 'AB' | 'ABC' | 'ABA';
@@ -1060,6 +1060,10 @@ export type Database = {
         Returns: boolean;
       };
       is_auftraggeber: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      is_test: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
       };

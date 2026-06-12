@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
+import { useTestMode, useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { uploadToOneDrive } from '../../lib/onedrive';
 import { asPdfPathList, downloadFormPdf, sanitizeFilename } from '../../lib/pdfGenerate';
@@ -30,6 +31,12 @@ interface SubmittedRow {
 
 export function AuftraggeberFormularePage() {
   const { profile, session } = useAuth();
+  const { isTestUser, effectiveAuftraggeberId } = useTestMode();
+  // Effektive Auftraggeber-ID: bei Test-Usern aus dem Banner, sonst
+  // aus dem eigenen Profil.
+  const scopeAuftraggeberId = isTestUser
+    ? effectiveAuftraggeberId
+    : (profile?.auftraggeber_id ?? null);
   const [templates, setTemplates] = useState<TemplateLite[]>([]);
   const [submitted, setSubmitted] = useState<SubmittedRow[]>([]);
   const [wuensche, setWuensche] = useState<FormularWunsch[]>([]);
@@ -41,23 +48,65 @@ export function AuftraggeberFormularePage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [tplRes, subRes, wRes] = await Promise.all([
-      supabase.from('formular_templates').select('id, name').order('name'),
-      supabase.from('ausgefuellte_formulare')
-        .select('id, status, created_at, pdf_paths, template:template_id (name)')
-        .eq('status', 'submitted')
-        .order('created_at', { ascending: false })
-        .limit(100),
-      supabase.from('formular_wuensche')
-        .select('*')
-        .order('created_at', { ascending: false }),
-    ]);
+
+    // Templates: für echte Auftraggeber filtert RLS auf Freigaben; im
+    // Test-Modus wird zusätzlich nach dem gewählten Auftraggeber
+    // gefiltert (sonst sähe der Test-User alle Templates).
+    let tplQuery = supabase.from('formular_templates').select('id, name').order('name');
+    if (isTestUser && scopeAuftraggeberId) {
+      const { data: freigaben } = await supabase
+        .from('template_auftraggeber_freigaben')
+        .select('template_id')
+        .eq('auftraggeber_id', scopeAuftraggeberId);
+      const ids = (freigaben ?? []).map((r) => r.template_id);
+      tplQuery = supabase.from('formular_templates')
+        .select('id, name')
+        .in('id', ids.length > 0 ? ids : ['00000000-0000-0000-0000-000000000000'])
+        .order('name');
+    }
+
+    // Eingereichte Formulare: für echte Auftraggeber filtert RLS;
+    // Test-User bekommen den Filter über die Touren des gewählten AG.
+    let submittedIds: string[] | null = null;
+    if (isTestUser && scopeAuftraggeberId) {
+      const { data: agTouren } = await supabase
+        .from('touren').select('eingang_id, eingang_id_bc')
+        .eq('auftraggeber_id', scopeAuftraggeberId);
+      const set = new Set<string>();
+      for (const t of (agTouren ?? []) as Array<{ eingang_id: string | null; eingang_id_bc: string | null }>) {
+        if (t.eingang_id) set.add(t.eingang_id);
+        if (t.eingang_id_bc) set.add(t.eingang_id_bc);
+      }
+      submittedIds = Array.from(set);
+    }
+    let subQuery = supabase.from('ausgefuellte_formulare')
+      .select('id, status, created_at, pdf_paths, template:template_id (name)')
+      .eq('status', 'submitted')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (submittedIds !== null) {
+      if (submittedIds.length === 0) {
+        subQuery = subQuery.in('id', ['00000000-0000-0000-0000-000000000000']);
+      } else {
+        subQuery = subQuery.in('id', submittedIds);
+      }
+    }
+
+    // Formular-Wünsche: RLS filtert für echte AG; Test-User explizit.
+    let wQuery = supabase.from('formular_wuensche').select('*').order('created_at', { ascending: false });
+    if (isTestUser && scopeAuftraggeberId) {
+      wQuery = supabase.from('formular_wuensche').select('*')
+        .eq('auftraggeber_id', scopeAuftraggeberId)
+        .order('created_at', { ascending: false });
+    }
+
+    const [tplRes, subRes, wRes] = await Promise.all([tplQuery, subQuery, wQuery]);
     if (tplRes.error) setError(tplRes.error.message);
     setTemplates((tplRes.data as TemplateLite[]) ?? []);
     setSubmitted((subRes.data as unknown as SubmittedRow[]) ?? []);
     setWuensche((wRes.data as FormularWunsch[]) ?? []);
     setLoading(false);
-  }, []);
+  }, [isTestUser, scopeAuftraggeberId]);
 
   useEffect(() => {
     // Deferred, damit setLoading nicht synchron im Effect läuft
@@ -161,7 +210,7 @@ export function AuftraggeberFormularePage() {
       {/* 3. Formular-Wunsch einreichen */}
       <WunschSection
         wuensche={wuensche}
-        auftraggeberId={profile?.auftraggeber_id ?? null}
+        auftraggeberId={scopeAuftraggeberId}
         userId={session?.user.id ?? null}
         onSubmitted={() => { showToast('Formular-Vorlage eingereicht.'); void load(); }}
       />
@@ -217,6 +266,7 @@ function AssignToTourDialog({
   onClose: () => void;
   onAssigned: (tourLabel: string) => void;
 }) {
+  const { isTestUser, effectiveAuftraggeberId } = useTestMode();
   const [touren, setTouren] = useState<TourKundensicht[]>([]);
   const [loading, setLoading] = useState(true);
   const [tourId, setTourId] = useState('');
@@ -226,20 +276,30 @@ function AssignToTourDialog({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { data } = await supabase
-        .from('touren_kundensicht')
-        .select('*')
-        .order('startdatum', { ascending: false })
-        .limit(200);
-      if (cancelled) return;
-      setTouren((data as unknown as TourKundensicht[]) ?? []);
+      if (isTestUser && effectiveAuftraggeberId) {
+        const { data } = await supabase.from('touren')
+          .select('id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt, startdatum, bestaetigt')
+          .eq('auftraggeber_id', effectiveAuftraggeberId)
+          .order('startdatum', { ascending: false })
+          .limit(200);
+        if (cancelled) return;
+        setTouren((data as unknown as TourKundensicht[]) ?? []);
+      } else {
+        const { data } = await supabase
+          .from('touren_kundensicht').select('*')
+          .order('startdatum', { ascending: false }).limit(200);
+        if (cancelled) return;
+        setTouren((data as unknown as TourKundensicht[]) ?? []);
+      }
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [isTestUser, effectiveAuftraggeberId]);
 
+  const guard = useTestGuard();
   async function handleAssign() {
     if (!tourId) { setError('Bitte eine Tour auswählen.'); return; }
+    if (guard()) return;
     setBusy(true);
     setError(null);
     const { error: err } = await supabase.rpc('auftraggeber_formular_zuweisen', {
@@ -319,6 +379,7 @@ function WunschSection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const guard = useTestGuard();
   async function handleSubmit() {
     setError(null);
     if (!file) { setError('Bitte eine PDF-Datei auswählen.'); return; }
@@ -326,6 +387,7 @@ function WunschSection({
       setError('Ihrem Konto ist kein Auftraggeber zugeordnet.');
       return;
     }
+    if (guard()) return;
     setBusy(true);
     try {
       const cleanName = sanitizeFilename(file.name.replace(/\.pdf$/i, '')) || 'vorlage';

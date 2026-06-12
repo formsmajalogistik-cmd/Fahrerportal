@@ -10,6 +10,7 @@ import { heicToJpeg } from './heic';
 import { ImageCropDialog } from './ImageCropDialog';
 import { RechnungAssignDialog } from './RechnungAssignDialog';
 import { downloadBlob, generateBelegePdf, type Layout } from './belegPdf';
+import { useTestGuard } from '../../../auth/TestModeContext';
 
 interface BelegItem {
   id: string;
@@ -74,6 +75,7 @@ function todayIso() {
 }
 
 export function BelegeUploadTab() {
+  const guard = useTestGuard();
   const [items, setItems] = useState<BelegItem[]>([]);
   const [layout, setLayout] = useState<Layout>(12);
   const [filename, setFilename] = useState<string>(`Auslagen_${todayIso()}.pdf`);
@@ -297,6 +299,7 @@ export function BelegeUploadTab() {
    */
   async function handleAssignToRechnung(rechnung: { id: string; rechnungsnummer: string }) {
     if (items.length === 0) return;
+    if (guard()) { setAssignOpen(false); return; }
     setAssignOpen(false);
     setBusyAction('assign');
     setBusy(`PDF wird erstellt … (Rechnung ${rechnung.rechnungsnummer})`);
