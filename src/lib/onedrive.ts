@@ -147,14 +147,19 @@ async function uploadViaSession(
     const end = Math.min(offset + CHUNK, total);
     const slice = file.slice(offset, end);
     // Wichtig: KEIN auth-Header bei diesem PUT — uploadUrl ist signiert.
-    const r = await fetch(uploadUrl, {
+    // Hartes Timeout pro Chunk (60 s): ohne dieses kann ein stehender
+    // PUT (iOS-Background, Netzabbruch) den Promise NIE auflösen — dann
+    // bleibt der Upload-Status im UI ewig auf „Upload läuft". Bei Timeout
+    // wirft der AbortController, der Aufrufer routet das Bild in die
+    // Retry-Queue.
+    const r = await fetchWithTimeout(uploadUrl, {
       method: 'PUT',
       headers: {
         'Content-Length': String(end - offset),
         'Content-Range': `bytes ${offset}-${end - 1}/${total}`,
       },
       body: slice,
-    });
+    }, 60_000);
     if (!r.ok && r.status !== 202) {
       throw new Error(`Chunk-Upload (${r.status}): ${(await r.text()).slice(0, 200)}`);
     }
@@ -164,6 +169,23 @@ async function uploadViaSession(
     offset = end;
   }
   return { ok: true, path, webUrl: last?.webUrl };
+}
+
+/**
+ * fetch mit hartem Timeout via AbortController. Garantiert, dass der
+ * zurückgegebene Promise innerhalb von `timeoutMs` settled (auflöst oder
+ * mit AbortError verwirft) — verhindert ewig hängende Uploads.
+ */
+async function fetchWithTimeout(
+  url: string, init: RequestInit, timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function downloadFromOneDrive(

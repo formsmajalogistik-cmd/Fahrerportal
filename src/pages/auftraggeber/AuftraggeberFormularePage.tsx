@@ -4,9 +4,8 @@ import { useAuth } from '../../auth/AuthContext';
 import { useTestMode, useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { uploadToOneDrive } from '../../lib/onedrive';
-import { asPdfPathList, downloadFormPdf, sanitizeFilename } from '../../lib/pdfGenerate';
-import { formatDate, formatDateTime, tourTitel } from '../../lib/touren';
-import { DownloadIcon } from '../../components/icons';
+import { sanitizeFilename } from '../../lib/pdfGenerate';
+import { formatDate, tourTitel } from '../../lib/touren';
 import type { FormularWunsch, TourKundensicht } from '../../types/db';
 
 /**
@@ -15,19 +14,14 @@ import type { FormularWunsch, TourKundensicht } from '../../types/db';
  *     für den eigenen Auftraggeber) — können eigenen Touren zugewiesen
  *     werden. Keine App/Schriftlich-Auswahl: die Zuweisung läuft immer
  *     über die SECURITY-DEFINER-RPC `auftraggeber_formular_zuweisen`.
- *  2. Eingereichte Protokolle eigener Touren (Read-Only + PDF-Download).
- *  3. Formular-Wunsch: PDF-Vorlage + Notiz einreichen.
+ *  2. Formular-Wunsch: PDF-Vorlage + Notiz einreichen.
+ *
+ * Eingereichte Protokolle werden hier bewusst NICHT gelistet — sie
+ * sind direkt an der jeweiligen Tour in der Tourenliste einsehbar und
+ * herunterladbar.
  */
 
 interface TemplateLite { id: string; name: string }
-
-interface SubmittedRow {
-  id: string;
-  status: 'draft' | 'submitted';
-  created_at: string;
-  pdf_paths: unknown;
-  template: { name: string } | null;
-}
 
 export function AuftraggeberFormularePage() {
   const { profile, session } = useAuth();
@@ -38,7 +32,6 @@ export function AuftraggeberFormularePage() {
     ? effectiveAuftraggeberId
     : (profile?.auftraggeber_id ?? null);
   const [templates, setTemplates] = useState<TemplateLite[]>([]);
-  const [submitted, setSubmitted] = useState<SubmittedRow[]>([]);
   const [wuensche, setWuensche] = useState<FormularWunsch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,33 +58,6 @@ export function AuftraggeberFormularePage() {
         .order('name');
     }
 
-    // Eingereichte Formulare: für echte Auftraggeber filtert RLS;
-    // Test-User bekommen den Filter über die Touren des gewählten AG.
-    let submittedIds: string[] | null = null;
-    if (isTestUser && scopeAuftraggeberId) {
-      const { data: agTouren } = await supabase
-        .from('touren').select('eingang_id, eingang_id_bc')
-        .eq('auftraggeber_id', scopeAuftraggeberId);
-      const set = new Set<string>();
-      for (const t of (agTouren ?? []) as Array<{ eingang_id: string | null; eingang_id_bc: string | null }>) {
-        if (t.eingang_id) set.add(t.eingang_id);
-        if (t.eingang_id_bc) set.add(t.eingang_id_bc);
-      }
-      submittedIds = Array.from(set);
-    }
-    let subQuery = supabase.from('ausgefuellte_formulare')
-      .select('id, status, created_at, pdf_paths, template:template_id (name)')
-      .eq('status', 'submitted')
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (submittedIds !== null) {
-      if (submittedIds.length === 0) {
-        subQuery = subQuery.in('id', ['00000000-0000-0000-0000-000000000000']);
-      } else {
-        subQuery = subQuery.in('id', submittedIds);
-      }
-    }
-
     // Formular-Wünsche: RLS filtert für echte AG; Test-User explizit.
     let wQuery = supabase.from('formular_wuensche').select('*').order('created_at', { ascending: false });
     if (isTestUser && scopeAuftraggeberId) {
@@ -100,10 +66,9 @@ export function AuftraggeberFormularePage() {
         .order('created_at', { ascending: false });
     }
 
-    const [tplRes, subRes, wRes] = await Promise.all([tplQuery, subQuery, wQuery]);
+    const [tplRes, wRes] = await Promise.all([tplQuery, wQuery]);
     if (tplRes.error) setError(tplRes.error.message);
     setTemplates((tplRes.data as TemplateLite[]) ?? []);
-    setSubmitted((subRes.data as unknown as SubmittedRow[]) ?? []);
     setWuensche((wRes.data as FormularWunsch[]) ?? []);
     setLoading(false);
   }, [isTestUser, scopeAuftraggeberId]);
@@ -127,8 +92,8 @@ export function AuftraggeberFormularePage() {
       <div>
         <h1 className="text-2xl font-semibold text-maja-navy">Formulare</h1>
         <p className="text-sm text-maja-muted">
-          Freigegebene Formulare Ihren Touren zuweisen und eingereichte
-          Protokolle einsehen.
+          Freigegebene Formulare Ihren Touren zuweisen. Eingereichte
+          Protokolle finden Sie direkt bei der jeweiligen Tour.
         </p>
       </div>
 
@@ -165,49 +130,7 @@ export function AuftraggeberFormularePage() {
         )}
       </section>
 
-      {/* 2. Eingereichte Protokolle */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
-          Eingereichte Protokolle
-        </h2>
-        {submitted.length === 0 ? (
-          <div className="card p-5 text-sm text-maja-muted">
-            Noch keine eingereichten Protokolle zu Ihren Touren.
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {submitted.map((s) => {
-              const pdfs = asPdfPathList(s.pdf_paths);
-              return (
-                <li key={s.id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
-                  <div>
-                    <div className="text-sm font-medium text-maja-navy">
-                      {s.template?.name ?? 'Protokoll'}
-                    </div>
-                    <div className="text-xs text-maja-muted">{formatDateTime(s.created_at)}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {pdfs.map((p) => (
-                      <SubmittedPdfButton
-                        key={p.pdf_id}
-                        label={p.pdf_name}
-                        filename={p.filename}
-                        path={p.onedrive_path}
-                        formularId={s.id}
-                      />
-                    ))}
-                    {pdfs.length === 0 && (
-                      <span className="text-xs text-maja-muted">keine PDFs</span>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      {/* 3. Formular-Wunsch einreichen */}
+      {/* 2. Formular-Wunsch einreichen */}
       <WunschSection
         wuensche={wuensche}
         auftraggeberId={scopeAuftraggeberId}
@@ -232,28 +155,6 @@ export function AuftraggeberFormularePage() {
         </div>
       )}
     </div>
-  );
-}
-
-function SubmittedPdfButton({
-  label, filename, path, formularId,
-}: { label: string; filename: string; path: string; formularId: string }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      type="button"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        const ok = await downloadFormPdf(path, filename, formularId);
-        setBusy(false);
-        if (!ok) alert('PDF nicht erreichbar.');
-      }}
-      className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-maja-light px-2 py-1 text-xs text-maja-navy hover:bg-maja-accent/20"
-    >
-      {busy ? <span>…</span> : <DownloadIcon className="h-4 w-4" />}
-      {label}
-    </button>
   );
 }
 

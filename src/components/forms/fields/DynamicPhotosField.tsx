@@ -27,6 +27,17 @@ function asArray(v: unknown): PhotoValue[] {
 // trotzdem vor versehentlichen Massen-Uploads.
 const MAX_DYNAMIC_PHOTOS = 100;
 
+/** Kurzer Zufalls-Suffix gegen Dateinamen-Kollisionen bei schnellen
+ *  Aufnahmen (gleicher Millisekunden-Timestamp). */
+function randomSuffix(): string {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID().slice(0, 8);
+    }
+  } catch { /* ignore */ }
+  return Math.random().toString(36).slice(2, 10);
+}
+
 export function DynamicPhotosField({
   field, value, oneDriveFolder, formularId, onChange, disabled,
 }: Props) {
@@ -45,6 +56,10 @@ export function DynamicPhotosField({
       return;
     }
     setUploading(true);
+    console.info('[Upload] Start:', {
+      feldName: field.id, slotIndex: items.length, dateiGroesse: file.size,
+      typ: file.type, name: file.name,
+    });
     try {
       const compressed = await compressImage(file);
       if (fromCamera && profile?.save_to_gallery) {
@@ -52,7 +67,11 @@ export function DynamicPhotosField({
         downloadFile(compressed, `${field.id}_${items.length + 1}_${ts}.jpg`);
       }
       const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
-      const filename = `${field.id}_${String(items.length + 1).padStart(3, '0')}_${Date.now()}.${ext}`;
+      // GARANTIERT eindeutiger Dateiname: Index + Timestamp + Zufalls-
+      // Suffix. Bei schnellen Aufnahmen kann der Timestamp allein
+      // kollidieren (gleiche Millisekunde) und ein Upload den anderen
+      // überschreiben.
+      const filename = `${field.id}_${String(items.length + 1).padStart(3, '0')}_${Date.now()}_${randomSuffix()}.${ext}`;
       const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
       const next: PhotoValue = {
         storage_path: path,
@@ -60,7 +79,9 @@ export function DynamicPhotosField({
         size_bytes: compressed.size,
       };
       onChange([...items, next]);
+      console.info('[Upload] Ende:', { feldName: field.id, slotIndex: items.length, status: 'ok' });
     } catch (err) {
+      console.error('[Upload] Ende:', { feldName: field.id, slotIndex: items.length, status: 'fehler', fehler: err });
       setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');
     } finally {
       setUploading(false);

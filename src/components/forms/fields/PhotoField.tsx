@@ -4,7 +4,7 @@ import { useAuth } from '../../../auth/AuthContext';
 import { ActionSheet } from '../../ActionSheet';
 import { useLongPress } from '../../../lib/useLongPress';
 import {
-  enqueueUpload, getUploadQueue, removeFromUploadQueue,
+  enqueueUpload, getUploadQueue, removeFromUploadQueue, updateUploadQueueItem,
   type UploadQueueItem,
 } from '../../../lib/offlineDb';
 import { useSync } from '../../../sync/SyncContext';
@@ -35,11 +35,14 @@ function makeUploadId(formularId: string, fieldId: string): string {
 
 export function PhotoField({ field, value, oneDriveFolder, formularId, onChange, disabled }: Props) {
   const { profile } = useAuth();
-  const { triggerSync, online } = useSync();
+  const { triggerSync, online, syncing } = useSync();
   const current = asPhoto(value);
   const isPending = !!current?.pending_id;
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Status des zugehörigen Queue-Eintrags (nur relevant, solange das Feld
+  // pending ist): 'failed' = Queue hat aufgegeben oder mehrfach gescheitert.
+  const [queueFailed, setQueueFailed] = useState(false);
   // Local-Preview (objectURL) — sofortige Vorschau aus dem aufgenommenen
   // bzw. aus IDB nachgeladenen Blob.
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
@@ -102,61 +105,126 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
     };
   }, [localPreviewUrl]);
 
+  // Failed-State des Queue-Eintrags nach jedem Sync-Tick neu bestimmen.
+  // `syncing` flippt bei jedem Drainer-Lauf — danach lohnt sich ein
+  // erneuter Blick in die Queue. Ein Eintrag gilt als „fehlgeschlagen",
+  // wenn die Queue ihn endgültig aufgegeben hat (nextRetryAt = MAX) oder
+  // er nach mehreren Versuchen weiter einen Fehler trägt.
+  useEffect(() => {
+    let cancelled = false;
+    const pendingId = current?.pending_id;
+    if (!pendingId) {
+      queueMicrotask(() => { if (!cancelled) setQueueFailed(false); });
+      return () => { cancelled = true; };
+    }
+    void getUploadQueue().then((items) => {
+      if (cancelled) return;
+      const item = items.find((i) => i.id === pendingId);
+      const failed = !!item && (
+        item.nextRetryAt === Number.MAX_SAFE_INTEGER
+        || (item.attempts >= 3 && !!item.lastError)
+      );
+      setQueueFailed(failed);
+    });
+    return () => { cancelled = true; };
+  }, [current?.pending_id, syncing]);
+
+  /** Legt das (komprimierte) Bild in die IDB-Upload-Queue. Der Sync-
+   *  Drainer lädt es danach mit Backoff hoch — der Status wird über das
+   *  pending_id-Feld verfolgt, nie über einen offenen Promise. */
+  async function enqueueForUpload(compressed: File, filename: string) {
+    if (!formularId) {
+      setError('Upload nicht möglich (keine Formular-ID).');
+      return;
+    }
+    const id = makeUploadId(formularId, field.id);
+    const item: UploadQueueItem = {
+      id, formularId, fieldId: field.id,
+      folder: oneDriveFolder, filename, blob: compressed,
+      attempts: 0, nextRetryAt: 0, lastError: null,
+    };
+    await enqueueUpload(item);
+    onChange({
+      pending_id: id,
+      mime_type: compressed.type,
+      size_bytes: compressed.size,
+    });
+    setQueueFailed(false);
+    triggerSync();
+  }
+
   async function handleFile(file: File, fromCamera: boolean) {
     setError(null);
+    setQueueFailed(false);
     // Sofortige lokale Vorschau aus dem Original.
     const localUrl = URL.createObjectURL(file);
     setLocalPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return localUrl; });
 
     setUploading(true);
-    let compressed: File;
+    console.info('[Upload] Start:', {
+      feldName: field.id, dateiGroesse: file.size, typ: file.type, name: file.name,
+    });
     try {
-      compressed = await compressImage(file);
-    } catch {
-      compressed = file;
-    }
-    if (fromCamera && profile?.save_to_gallery) {
-      const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-      try { await downloadFile(compressed, `${field.id}_${ts}.jpg`); } catch { /* ignore */ }
-    }
-    const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
-    const filename = `${field.id}.${ext}`;
-
-    // Online + Verbindung intakt → direkter Upload.
-    if (navigator.onLine) {
+      let compressed: File;
       try {
-        const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
-        onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
-        setUploading(false);
-        return;
-      } catch (err) {
-        console.warn('[PhotoField] Direkter Upload fehlgeschlagen — gehe in Queue', err);
+        compressed = await compressImage(file);
+      } catch {
+        compressed = file;
       }
-    }
+      if (fromCamera && profile?.save_to_gallery) {
+        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+        try { await downloadFile(compressed, `${field.id}_${ts}.jpg`); } catch { /* ignore */ }
+      }
+      const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
+      const filename = `${field.id}.${ext}`;
 
-    // Offline oder Upload fehlgeschlagen → in IDB-Queue legen.
-    if (formularId) {
-      const id = makeUploadId(formularId, field.id);
-      const item: UploadQueueItem = {
-        id, formularId, fieldId: field.id,
-        folder: oneDriveFolder, filename, blob: compressed,
-        attempts: 0, nextRetryAt: 0, lastError: null,
-      };
+      // Online → direkter Upload versuchen. uploadPhotoToOneDrive hat
+      // intern harte Timeouts (API + signierter PUT), kann also nicht
+      // mehr ewig hängen; bei Fehler/Timeout landet das Bild in der Queue.
+      if (navigator.onLine) {
+        try {
+          const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
+          onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
+          console.info('[Upload] Ende:', { feldName: field.id, status: 'ok-direkt' });
+          return;
+        } catch (err) {
+          console.warn('[PhotoField] Direkter Upload fehlgeschlagen — gehe in Queue', err);
+        }
+      }
+
+      // Offline oder Direkt-Upload fehlgeschlagen → in IDB-Queue legen.
       try {
-        await enqueueUpload(item);
-        onChange({
-          pending_id: id,
-          mime_type: compressed.type,
-          size_bytes: compressed.size,
-        });
-        triggerSync();
+        await enqueueForUpload(compressed, filename);
+        console.info('[Upload] Ende:', { feldName: field.id, status: 'queued' });
       } catch (err) {
+        console.error('[Upload] Ende:', { feldName: field.id, status: 'fehler', fehler: err });
         setError(err instanceof Error ? err.message : 'Konnte Bild lokal nicht speichern');
       }
-    } else {
-      setError('Upload nicht möglich (keine Formular-ID).');
+    } finally {
+      // GARANTIERT: egal welcher Pfad — der „Upload läuft"-Status wird
+      // immer zurückgesetzt. Genau das fehlte vorher, wenn der Upload-
+      // Promise nie settled.
+      setUploading(false);
     }
-    setUploading(false);
+  }
+
+  /** Manuelles erneutes Hochladen des bereits lokal vorhandenen Bildes —
+   *  setzt den Queue-Eintrag zurück (attempts/Backoff) und stößt den Sync
+   *  an. Kein Neu-Fotografieren nötig. */
+  async function handleRetry() {
+    const pendingId = current?.pending_id;
+    if (!pendingId) return;
+    try {
+      const items = await getUploadQueue();
+      const item = items.find((i) => i.id === pendingId);
+      if (!item) { setQueueFailed(false); return; }
+      await updateUploadQueueItem({ ...item, attempts: 0, nextRetryAt: 0, lastError: null });
+      setQueueFailed(false);
+      console.info('[Upload] Retry:', { feldName: field.id, id: pendingId });
+      triggerSync();
+    } catch (err) {
+      console.warn('[PhotoField] Retry fehlgeschlagen', err);
+    }
   }
 
   async function handleDelete() {
@@ -217,11 +285,31 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
           <UploadBadge
             uploading={uploading}
             pending={isPending}
+            failed={isPending && queueFailed}
             online={online}
             uploaded={!!current?.storage_path && !isPending}
           />
         )}
       </div>
+
+      {/* Manueller Retry bei hängendem / fehlgeschlagenem Upload — nutzt
+          das bereits lokal gespeicherte Bild, kein Neu-Fotografieren. */}
+      {isPending && !disabled && (
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <span className={`text-xs ${queueFailed ? 'text-red-700' : 'text-maja-muted'}`}>
+            {queueFailed
+              ? 'Upload fehlgeschlagen — Bild ist gespeichert.'
+              : (online ? 'Bild wird hochgeladen …' : 'Offline — Upload folgt automatisch.')}
+          </span>
+          <button
+            type="button"
+            onClick={() => void handleRetry()}
+            className="shrink-0 text-xs font-medium text-maja-accent hover:underline"
+          >
+            Erneut versuchen
+          </button>
+        </div>
+      )}
 
       <input
         ref={cameraRef}
@@ -274,14 +362,22 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
   );
 }
 
-function UploadBadge({ uploading, pending, uploaded, online }: {
-  uploading: boolean; pending: boolean; uploaded: boolean; online: boolean;
+function UploadBadge({ uploading, pending, failed, uploaded, online }: {
+  uploading: boolean; pending: boolean; failed: boolean; uploaded: boolean; online: boolean;
 }) {
   if (uploading) {
     return (
       <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-maja-navy shadow">
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
         Upload läuft
+      </span>
+    );
+  }
+  if (failed) {
+    return (
+      <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-red-700 shadow">
+        <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+        Fehlgeschlagen
       </span>
     );
   }

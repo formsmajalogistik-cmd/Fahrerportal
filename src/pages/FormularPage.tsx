@@ -304,9 +304,12 @@ export function FormularPage() {
       });
       setSaving('idle');
       triggerSync();
+      const n = pendingUploads.length;
       setSubmittedSummary(
         navigator.onLine
-          ? 'Formular gespeichert — wird automatisch eingereicht, sobald alle Bilder hochgeladen sind.'
+          ? (n > 0
+              ? `Formular gespeichert — ${n} ${n === 1 ? 'Bild ist' : 'Bilder sind'} noch nicht hochgeladen. Es wird automatisch eingereicht, sobald alle Bilder hochgeladen sind.`
+              : 'Formular gespeichert — wird automatisch eingereicht.')
           : 'Formular gespeichert — wird automatisch eingereicht, sobald du wieder online bist.',
       );
       setRedirectIn(REDIRECT_AFTER_SUBMIT_MS);

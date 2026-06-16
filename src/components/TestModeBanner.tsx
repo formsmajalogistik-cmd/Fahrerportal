@@ -1,5 +1,14 @@
 import { useTestMode } from '../auth/TestModeContext';
 
+// Eigenständig gestylte Dropdowns: weißer Hintergrund + dunkler Text,
+// klare Border — unabhängig vom gelben Banner und in beiden Themes
+// lesbar. `[color-scheme:light]` zwingt das native Control (inkl. der
+// aufklappenden Optionsliste) in die helle Darstellung, sonst rendert
+// der Browser im Dark Mode dunkle Optionen mit kaum lesbarem Text.
+const BANNER_SELECT_CLS =
+  '[color-scheme:light] rounded-md border border-amber-700/50 bg-white px-2 py-1 '
+  + 'text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-800';
+
 /**
  * Banner für Test-Profile: oben fixiert, gelb, mit Ansicht-Umschalter.
  * Für Nicht-Test-User rendert die Komponente nichts.
@@ -26,7 +35,7 @@ export function TestModeBanner() {
           <label className="inline-flex items-center gap-1.5 text-xs font-medium">
             Ansicht
             <select
-              className="rounded-md border-0 bg-white px-2 py-1 text-sm text-amber-950 focus:ring-2 focus:ring-amber-800"
+              className={BANNER_SELECT_CLS}
               value={effectiveRole}
               onChange={(e) => setEffectiveRole(e.target.value as 'fahrer' | 'auftraggeber')}
             >
@@ -38,7 +47,7 @@ export function TestModeBanner() {
             <label className="inline-flex items-center gap-1.5 text-xs font-medium">
               Als Auftraggeber
               <select
-                className="rounded-md border-0 bg-white px-2 py-1 text-sm text-amber-950 focus:ring-2 focus:ring-amber-800"
+                className={BANNER_SELECT_CLS}
                 value={effectiveAuftraggeberId ?? ''}
                 onChange={(e) => setEffectiveAuftraggeberId(e.target.value || null)}
               >
