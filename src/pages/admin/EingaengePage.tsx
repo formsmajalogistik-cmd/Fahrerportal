@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
@@ -37,12 +37,24 @@ interface Row extends AusgefuelltesFormular {
   zwischenprotokoll_erstellt_am: string | null;
 }
 
+// Performance: nicht alle Eingänge auf einmal laden. Initial nur eine
+// Seite, ältere via "Mehr laden". Default-Zeitfenster begrenzt zusätzlich
+// die Datenmenge. Filter (Status, Zeitraum) laufen server-seitig im Query.
+const PAGE_SIZE = 25;
+const DATE_WINDOW_DAYS = 90;
+
+interface EingangCounts { alle: number; submitted: number; draft: number }
+
 export function EingaengePage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const { markEingangSeen } = useEingaengeNotifications();
   const [rows, setRows] = useState<Row[]>([]);
+  const rowsRef = useRef<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [counts, setCounts] = useState<EingangCounts | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [regen, setRegen] = useState<string | null>(null);
   const [linking, setLinking] = useState<Row | null>(null);
@@ -51,6 +63,8 @@ export function EingaengePage() {
   const [linkToast, setLinkToast] = useState<string | null>(null);
   /** Status-Filter (Aufgabe 2B). Default "submitted" = wie bisher. */
   const [statusFilter, setStatusFilter] = useState<'submitted' | 'draft' | 'alle'>('submitted');
+  /** Zeitfenster: standardmäßig die letzten 90 Tage; "all" = ohne Limit. */
+  const [dateRange, setDateRange] = useState<'recent' | 'all'>('recent');
   /** Welcher Eingang/Entwurf ist im Read-Only-Viewer offen (Aufgabe 2A)? */
   const [viewing, setViewing] = useState<string | null>(null);
   /** Auswahl für Bulk-Löschen bei Entwürfen. */
@@ -58,27 +72,52 @@ export function EingaengePage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState<null | { ids: string[]; mode: 'selected' | 'empty' }>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+
+  // Zeitfenster-Grenze als ISO (oder null für "alle"). Wird in Query +
+  // Count-Query genutzt.
+  const cutoffIso = useMemo(() => {
+    if (dateRange === 'all') return null;
+    const d = new Date();
+    d.setDate(d.getDate() - DATE_WINDOW_DAYS);
+    return d.toISOString();
+  }, [dateRange]);
+
+  /**
+   * Lädt eine Seite Eingänge. `reset=true` ersetzt die Liste (erste Seite
+   * / Filter-Wechsel), sonst werden ältere angehängt ("Mehr laden").
+   * NUR die in der Übersicht benötigten Spalten werden selektiert; die
+   * großen Bild-/Signatur-Inhalte in `daten` werden nur für die jeweils
+   * sichtbare Seite (PAGE_SIZE) geladen, nicht für alle Eingänge.
+   * Status + Zeitfenster filtern server-seitig.
+   */
+  const load = useCallback(async (reset: boolean) => {
+    const offset = reset ? 0 : rowsRef.current.length;
+    if (reset) setLoading(true); else setLoadingMore(true);
     setError(null);
-    // 1. Eingänge laden inkl. Template-Stammdaten
-    const { data, error: err } = await supabase
+    let q = supabase
       .from('ausgefuellte_formulare')
       .select(`
-        *,
+        id, fahrer_id, template_id, daten, status, created_at, gesehen_am,
+        zwischenprotokoll_url, zwischenprotokoll_erstellt_am,
+        pdf_paths, pdf_status, pdf_fehler, email_send_log,
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
         template:template_id (id, name, pdfs, schema, email_config)
       `)
       .order('created_at', { ascending: false })
-      .limit(200);
-    if (err) { setError(err.message); setLoading(false); return; }
-    const list = (data as unknown as Row[]) ?? [];
-    // 2. Verknüpfte Touren je Eingang nachladen. Bei ABA/ABC kann eine
-    // Tour bis zu ZWEI Eingänge referenzieren (eingang_id = AB,
-    // eingang_id_bc = BC). Wir suchen Touren, bei denen einer der beiden
-    // Slots auf einen der geladenen Eingänge zeigt.
-    const ids = list.map((r) => r.id);
-    let tourMap = new Map<string, { id: string; tour_id: string | null }>();
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (statusFilter !== 'alle') q = q.eq('status', statusFilter);
+    if (cutoffIso) q = q.gte('created_at', cutoffIso);
+    const { data, error: err } = await q;
+    if (err) {
+      setError(err.message);
+      if (reset) setLoading(false); else setLoadingMore(false);
+      return;
+    }
+    const pageRows = (data as unknown as Row[]) ?? [];
+    // Verknüpfte Touren je Eingang nachladen (nur für die geladene Seite).
+    const ids = pageRows.map((r) => r.id);
+    const tourMap = new Map<string, { id: string; tour_id: string | null }>();
     if (ids.length > 0) {
       const idList = ids.map((id) => `"${id}"`).join(',');
       const { data: tdata } = await supabase
@@ -94,11 +133,43 @@ export function EingaengePage() {
         }
       }
     }
-    setRows(list.map((r) => ({ ...r, tour: tourMap.get(r.id) ?? null })));
-    setLoading(false);
-  }, []);
+    const withTours = pageRows.map((r) => ({ ...r, tour: tourMap.get(r.id) ?? null }));
+    setRows((prev) => (reset ? withTours : [...prev, ...withTours]));
+    setHasMore(pageRows.length === PAGE_SIZE);
+    if (reset) setLoading(false); else setLoadingMore(false);
+  }, [statusFilter, cutoffIso]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Gesamtzahlen für die Tab-Badges — via COUNT (head), nicht durch
+  // Laden aller Zeilen. Respektiert das Zeitfenster.
+  const refreshCounts = useCallback(async () => {
+    const mk = () => {
+      let q = supabase
+        .from('ausgefuellte_formulare')
+        .select('id', { count: 'exact', head: true });
+      if (cutoffIso) q = q.gte('created_at', cutoffIso);
+      return q;
+    };
+    try {
+      const [a, s, d] = await Promise.all([
+        mk(), mk().eq('status', 'submitted'), mk().eq('status', 'draft'),
+      ]);
+      setCounts({ alle: a.count ?? 0, submitted: s.count ?? 0, draft: d.count ?? 0 });
+    } catch { /* Count nicht kritisch */ }
+  }, [cutoffIso]);
+
+  /** Liste + Zähler frisch laden (nach Mutationen / Filter-Wechsel). */
+  const reload = useCallback(() => {
+    void load(true);
+    void refreshCounts();
+  }, [load, refreshCounts]);
+
+  // Bei Filter-/Zeitraum-Wechsel neu von vorn laden.
+  useEffect(() => { void load(true); }, [load]);
+  // Counts deferred, damit setState nicht synchron im Effect läuft.
+  useEffect(() => {
+    const t = window.setTimeout(() => { void refreshCounts(); }, 0);
+    return () => window.clearTimeout(t);
+  }, [refreshCounts]);
 
   // Markiert den Eingang als gesehen (für Badge-Update) und patcht den
   // lokalen State, damit die Hervorhebung sofort verschwindet. Wird bei
@@ -122,7 +193,6 @@ export function EingaengePage() {
   }, [rows, hideLinked, statusFilter]);
 
   const draftRows = useMemo(() => rows.filter((r) => r.status === 'draft'), [rows]);
-  const submittedRows = useMemo(() => rows.filter((r) => r.status === 'submitted'), [rows]);
 
   /**
    * "Leerer Entwurf": daten ist leer oder enthält nur leere/false-y
@@ -170,6 +240,7 @@ export function EingaengePage() {
       });
       setLinkToast(`${ids.length} ${ids.length === 1 ? 'Entwurf' : 'Entwürfe'} gelöscht.`);
       window.setTimeout(() => setLinkToast(null), 4000);
+      void refreshCounts();
     } finally {
       setBulkBusy(false);
       setBulkConfirm(null);
@@ -251,7 +322,7 @@ export function EingaengePage() {
           )}
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={reload}
             disabled={loading}
             className="btn-secondary inline-flex items-center gap-1.5 text-sm"
             title="Eingänge neu laden"
@@ -262,13 +333,39 @@ export function EingaengePage() {
         </div>
       </div>
 
+      {/* Zeitraum-Filter (server-seitig). Default: letzte 90 Tage. */}
+      {isAdmin && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+            Zeitraum
+          </span>
+          {([
+            { id: 'recent' as const, label: `Letzte ${DATE_WINDOW_DAYS} Tage` },
+            { id: 'all' as const, label: 'Alle' },
+          ]).map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setDateRange(opt.id)}
+              className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                dateRange === opt.id
+                  ? 'bg-maja-navy text-white'
+                  : 'bg-white text-maja-navy border border-maja-navy/15 hover:bg-maja-light'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Status-Filter (Aufgabe 2B) */}
       {isAdmin && (
         <div className="flex flex-wrap items-center gap-1">
           {([
-            { id: 'submitted' as const, label: 'Eingereicht', cnt: submittedRows.length },
-            { id: 'draft' as const,     label: 'Entwürfe',    cnt: draftRows.length },
-            { id: 'alle' as const,      label: 'Alle',        cnt: rows.length },
+            { id: 'submitted' as const, label: 'Eingereicht', cnt: counts?.submitted },
+            { id: 'draft' as const,     label: 'Entwürfe',    cnt: counts?.draft },
+            { id: 'alle' as const,      label: 'Alle',        cnt: counts?.alle },
           ]).map((opt) => {
             const active = statusFilter === opt.id;
             return (
@@ -285,7 +382,7 @@ export function EingaengePage() {
                     : 'bg-white text-maja-navy border border-maja-navy/15 hover:bg-maja-light'
                 }`}
               >
-                {opt.label} ({opt.cnt})
+                {opt.label}{opt.cnt != null ? ` (${opt.cnt})` : ''}
               </button>
             );
           })}
@@ -353,6 +450,19 @@ export function EingaengePage() {
         </ul>
       )}
 
+      {hasMore && (
+        <div className="flex justify-center pt-1">
+          <button
+            type="button"
+            onClick={() => void load(false)}
+            disabled={loadingMore}
+            className="btn-secondary text-sm"
+          >
+            {loadingMore ? 'Lädt …' : 'Mehr laden'}
+          </button>
+        </div>
+      )}
+
       {linking && isAdmin && (
         <EingangLinkDialog
           formular={linking}
@@ -363,7 +473,7 @@ export function EingaengePage() {
           onClose={() => setLinking(null)}
           onLinked={(filled) => {
             setLinking(null);
-            void load();
+            reload();
             if (filled.length > 0) {
               setLinkToast(`${filled.join(' & ')} aus Protokoll übernommen.`);
             } else {

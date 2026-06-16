@@ -268,16 +268,22 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
         }}
         {...longPress.bind}
         style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
-        className={`relative flex aspect-[4/3] w-full select-none items-center justify-center overflow-hidden rounded-lg border bg-maja-light transition ${
-          hasPhoto ? 'border-maja-navy/20' : 'border-2 border-dashed border-maja-navy/30'
+        className={`relative flex aspect-[4/3] w-full select-none items-center justify-center overflow-hidden rounded-lg bg-maja-light transition dark:bg-surface-700 ${
+          hasPhoto
+            ? 'border border-slate-300 dark:border-slate-600'
+            : 'border-2 border-dashed border-slate-300 dark:border-slate-600'
         } ${disabled ? 'opacity-60' : 'cursor-pointer'} ${longPress.pressing ? 'scale-[0.97] opacity-80' : ''}`}
       >
         {hasPhoto ? (
           <img src={previewUrl!} alt={field.label} className="h-full w-full object-cover" draggable={false} />
         ) : (
-          <div className="flex flex-col items-center gap-1 text-maja-muted">
+          // Leerer Zustand: Feld-Name zentriert im Platzhalter, damit der
+          // Fahrer sofort sieht, welches Foto hierher gehört.
+          <div className="flex flex-col items-center gap-1.5 px-3 text-center text-maja-muted">
             <IconCamera />
-            <span className="text-xs font-medium">Foto hinzufügen</span>
+            <span className="text-xs font-semibold leading-tight text-maja-ink/70 dark:text-slate-300">
+              {field.label}
+            </span>
           </div>
         )}
         {/* Upload-Status-Indikator unten rechts */}
