@@ -113,6 +113,15 @@ export function ProfilMenu() {
               Meine Unterkonten
             </Link>
           )}
+          {profile.role === 'admin' && (
+            <Link
+              to="/recovery"
+              onClick={() => setOpen(false)}
+              className="block rounded-md px-3 py-2 text-sm text-maja-ink hover:bg-maja-light"
+            >
+              Daten-Recovery
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => { setOpen(false); void signOut(); }}

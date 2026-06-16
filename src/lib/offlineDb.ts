@@ -102,6 +102,12 @@ export async function getFormDraft(id: string): Promise<FormDraftRecord | null> 
   return (await db.get('form-drafts', id)) ?? null;
 }
 
+/** Alle lokal gespeicherten Entwürfe — für die Recovery-Seite. */
+export async function getAllFormDrafts(): Promise<FormDraftRecord[]> {
+  const db = await getDb();
+  return await db.getAll('form-drafts');
+}
+
 export async function saveFormDraft(record: FormDraftRecord): Promise<void> {
   const db = await getDb();
   await db.put('form-drafts', record);
