@@ -17,6 +17,14 @@ interface AuthContextValue {
   status: Status;
   session: Session | null;
   profile: AppUser | null;
+  /** True, solange für eine bestehende Session das Profil (mit Rolle)
+   *  erstmalig geladen wird. UI muss dann einen Ladebildschirm zeigen,
+   *  NICHT voreilig eine Default-Ansicht. */
+  profileLoading: boolean;
+  /** True, wenn eine Session existiert, das Profil aber (nach Retries)
+   *  nicht geladen werden konnte oder gar nicht existiert. UI zeigt dann
+   *  eine Fehlerseite mit Logout — niemals die Fahrer-Default-Ansicht. */
+  profileError: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
@@ -30,9 +38,10 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 // nicht antwortet (schlechtes Netz, kaputter Local-Storage), schalten wir auf
 // unauthenticated — sonst hängt die App für immer auf „Sitzung wird geprüft …".
 const SESSION_TIMEOUT_MS = 5000;
-// Kürzeres Timeout für den Profil-Load: das Profil darf fehlen, ohne dass der
-// Login-Flow blockiert.
+// Timeout pro Profil-Load-Versuch. Bei Fehlschlag wird mit Backoff erneut
+// versucht (siehe loadProfileWithRetry).
 const PROFILE_TIMEOUT_MS = 4000;
+const PROFILE_RETRIES = 3;
 
 function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -47,29 +56,54 @@ function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T
   });
 }
 
-async function loadProfile(userId: string): Promise<AppUser | null> {
-  try {
-    const { data, error } = await withTimeout(
-      supabase.from('app_users').select('*').eq('id', userId).maybeSingle(),
-      PROFILE_TIMEOUT_MS,
-      'loadProfile',
-    );
-    if (error) {
-      console.warn('Profil konnte nicht geladen werden', error);
-      return null;
+/**
+ * Lädt das app_users-Profil robust: bis zu PROFILE_RETRIES Versuche mit
+ * Backoff bei Netzwerk-/Timeout-Fehlern.
+ *
+ * Rückgabe:
+ *   - { profile, ok: true }      → erfolgreich geladen (profile kann null
+ *                                  sein, wenn kein app_users-Datensatz
+ *                                  existiert — echtes Konto-Problem).
+ *   - { profile: null, ok: false } → DB nach allen Versuchen nicht
+ *                                  erreichbar (Netzwerk/Timing).
+ */
+async function loadProfileWithRetry(
+  userId: string,
+): Promise<{ profile: AppUser | null; ok: boolean }> {
+  for (let attempt = 0; attempt < PROFILE_RETRIES; attempt += 1) {
+    try {
+      const { data, error } = await withTimeout(
+        supabase.from('app_users').select('*').eq('id', userId).maybeSingle(),
+        PROFILE_TIMEOUT_MS,
+        'loadProfile',
+      );
+      if (!error) {
+        // DB erreichbar — data kann null sein (kein Datensatz).
+        return { profile: (data as AppUser | null) ?? null, ok: true };
+      }
+      console.warn(`[Auth] Profil-Load Fehler (Versuch ${attempt + 1}/${PROFILE_RETRIES})`, error.message);
+    } catch (err) {
+      console.warn(`[Auth] Profil-Load Timeout (Versuch ${attempt + 1}/${PROFILE_RETRIES})`, err);
     }
-    return (data as AppUser | null) ?? null;
-  } catch (err) {
-    console.warn('loadProfile fehlgeschlagen', err);
-    return null;
+    if (attempt < PROFILE_RETRIES - 1) {
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
   }
+  return { profile: null, ok: false };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>('loading');
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<AppUser | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState(false);
   const initializedRef = useRef(false);
+  // Spiegelt das aktuelle Profil — damit apply() bei Hintergrund-Reloads
+  // (TOKEN_REFRESHED) erkennt, ob bereits ein Profil für diesen User da
+  // ist (dann KEIN Ladebildschirm) und einen kurzzeitigen Netz-Blip nicht
+  // in eine Fehlerseite umschlagen lässt.
+  const profileRef = useRef<AppUser | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +118,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       initializedRef.current = true;
       setSession(null);
       setProfile(null);
+      setProfileError(false);
+      setProfileLoading(false);
       setStatus('unauthenticated');
     }, SESSION_TIMEOUT_MS);
 
@@ -93,14 +129,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(timeoutId);
       setSession(s);
       if (!s) {
+        profileRef.current = null;
         setProfile(null);
+        setProfileError(false);
+        setProfileLoading(false);
         setStatus('unauthenticated');
         return;
       }
-      const p = await loadProfile(s.user.id);
-      if (cancelled) return;
-      setProfile(p);
+      // Session steht fest. Rolle MUSS geladen sein, bevor die App eine
+      // rollenabhängige Ansicht zeigt — daher profileLoading, solange wir
+      // noch kein Profil für genau diesen User haben.
       setStatus('authenticated');
+      const sameUser = profileRef.current?.id === s.user.id;
+      if (!sameUser) {
+        setProfileLoading(true);
+        setProfileError(false);
+      }
+      const { profile: p, ok } = await loadProfileWithRetry(s.user.id);
+      if (cancelled) return;
+      if (p) {
+        profileRef.current = p;
+        setProfile(p);
+        setProfileError(false);
+      } else if (!profileRef.current) {
+        // Erst-Load fehlgeschlagen / kein Datensatz → Fehlerzustand
+        // (NICHT auf Fahrer defaulten). ok=false = Netzproblem,
+        // ok=true+null = kein app_users-Eintrag.
+        setProfile(null);
+        setProfileError(true);
+        console.warn('[Auth] Kein Profil ladbar', { ok });
+      }
+      // else: Hintergrund-Reload-Blip bei vorhandenem Profil → altes
+      // Profil behalten, kein Fehler.
+      setProfileLoading(false);
     }
 
     // Initialer Session-Check, mit hartem Timeout.
@@ -189,6 +250,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       session,
       profile,
+      profileLoading,
+      profileError,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -200,6 +263,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const uid = session?.user.id;
           if (uid) localStorage.removeItem(`maja:active-fahrer:${uid}`);
         } catch { /* noop */ }
+        profileRef.current = null;
         await supabase.auth.signOut();
       },
       requestPasswordReset: async (email) => {
@@ -211,11 +275,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.auth.updateUser({ password: newPassword });
         if (error) throw error;
       },
+      // Erneuter Profil-Load — genutzt nach Rollen-Änderung und vom
+      // Fehlerschirm-„Erneut versuchen". Setzt profileLoading nur, wenn
+      // noch kein Profil vorhanden ist (sonst Hintergrund-Refresh).
       refreshProfile: async () => {
-        if (session) setProfile(await loadProfile(session.user.id));
+        if (!session) return;
+        if (!profileRef.current) { setProfileLoading(true); setProfileError(false); }
+        const { profile: p } = await loadProfileWithRetry(session.user.id);
+        if (p) {
+          profileRef.current = p;
+          setProfile(p);
+          setProfileError(false);
+        } else if (!profileRef.current) {
+          setProfile(null);
+          setProfileError(true);
+        }
+        setProfileLoading(false);
       },
     }),
-    [status, session, profile],
+    [status, session, profile, profileLoading, profileError],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

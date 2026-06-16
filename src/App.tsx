@@ -3,6 +3,7 @@ import { useAuth } from './auth/AuthContext';
 import { useFahrerContext } from './auth/FahrerContext';
 import { useTestMode } from './auth/TestModeContext';
 import { Spinner } from './components/Spinner';
+import { ProfileErrorScreen } from './components/ProfileErrorScreen';
 import { AppShell } from './components/AppShell';
 import { AdminShell } from './components/AdminShell';
 import { LoginPage } from './pages/LoginPage';
@@ -35,7 +36,7 @@ import { AuftraggeberTourenPage } from './pages/auftraggeber/AuftraggeberTourenP
 import { AuftraggeberFormularePage } from './pages/auftraggeber/AuftraggeberFormularePage';
 
 export default function App() {
-  const { status, profile } = useAuth();
+  const { status, profile, profileLoading, profileError, refreshProfile, signOut } = useAuth();
   const fahrerCtx = useFahrerContext();
   const { effectiveRole } = useTestMode();
 
@@ -55,6 +56,28 @@ export default function App() {
         <Route path="/passwort-neu" element={<PasswordNewPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
+    );
+  }
+
+  // Angemeldet, aber Profil (inkl. Rolle) noch nicht final geladen →
+  // Ladebildschirm. NIEMALS hier schon eine (Default-)Ansicht rendern,
+  // sonst erscheint die „leere Fahrer-Ansicht" ohne Profil-Menü.
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-maja-light">
+        <Spinner label="Profil wird geladen …" />
+      </div>
+    );
+  }
+
+  // Angemeldet, aber Profil konnte nicht geladen werden / existiert nicht
+  // → Fehlerseite mit Logout. KEIN Fallback auf die Fahrer-Ansicht.
+  if (profileError || !profile) {
+    return (
+      <ProfileErrorScreen
+        onRetry={() => void refreshProfile()}
+        onLogout={() => void signOut()}
+      />
     );
   }
 
@@ -151,22 +174,34 @@ export default function App() {
     );
   }
 
+  if (profile.role === 'fahrer') {
+    return (
+      <AppShell>
+        <Routes>
+          {/* Default-Reiter nach Login = Tourenliste */}
+          <Route path="/" element={<Navigate to="/touren" replace />} />
+          <Route path="/touren" element={<TourenlistePage />} />
+          <Route path="/meine-formulare" element={<FahrerDashboard />} />
+          <Route path="/offen" element={<Navigate to="/meine-formulare" replace />} />
+          <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
+          <Route path="/eingaenge" element={<EingaengePage />} />
+          <Route path="/formular/:id" element={<FormularPage />} />
+          <Route path="/profil" element={<ProfilPage />} />
+          <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
+          <Route path="/passwort-neu" element={<PasswordNewPage />} />
+          <Route path="*" element={<Navigate to="/touren" replace />} />
+        </Routes>
+      </AppShell>
+    );
+  }
+
+  // Unbekannte/leere Rolle → niemals stillschweigend die Fahrer-Ansicht
+  // zeigen. Fehlerseite mit Logout (deckt z.B. einen kaputten Rollenwert
+  // ab).
   return (
-    <AppShell>
-      <Routes>
-        {/* Default-Reiter nach Login = Tourenliste */}
-        <Route path="/" element={<Navigate to="/touren" replace />} />
-        <Route path="/touren" element={<TourenlistePage />} />
-        <Route path="/meine-formulare" element={<FahrerDashboard />} />
-        <Route path="/offen" element={<Navigate to="/meine-formulare" replace />} />
-        <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
-        <Route path="/eingaenge" element={<EingaengePage />} />
-        <Route path="/formular/:id" element={<FormularPage />} />
-        <Route path="/profil" element={<ProfilPage />} />
-        <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
-        <Route path="/passwort-neu" element={<PasswordNewPage />} />
-        <Route path="*" element={<Navigate to="/touren" replace />} />
-      </Routes>
-    </AppShell>
+    <ProfileErrorScreen
+      onRetry={() => void refreshProfile()}
+      onLogout={() => void signOut()}
+    />
   );
 }
