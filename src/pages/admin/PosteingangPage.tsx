@@ -4,9 +4,9 @@ import {
 import { Spinner } from '../../components/Spinner';
 import { MailIcon } from '../../components/icons';
 import {
-  deleteEmail, flagEmail, formatMailDate, getEmail, listEmails, listFolders,
-  markEmailRead, moveEmail,
-  type MailDetail, type MailFolder, type MailListItem,
+  deleteEmail, formatMailDate, getEmail, listEmails, listFolders,
+  markEmailRead, moveEmail, setFlagStatus, NEXT_FLAG_STATUS,
+  type FlagStatus, type MailDetail, type MailFolder, type MailListItem,
 } from '../../lib/emails';
 import { loadMailboxes, type MailboxConfig } from '../../lib/mailboxSettings';
 import { EmailComposeDialog, type ComposeMode } from './EmailComposeDialog';
@@ -113,7 +113,9 @@ export function PosteingangPage() {
   }>(null);
   const [pendingTour, setPendingTour] = useState<PendingTour | null>(null);
   const [tourPicker, setTourPicker] = useState<PickerPurpose | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  /** Lösch-Bestätigung für eine ganze Konversation (alle IDs im aktuellen
+   *  Ordner). null = kein Dialog offen. */
+  const [confirmDelete, setConfirmDelete] = useState<{ ids: string[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   // Primäres Postfach = mailboxes[0] (Default / "info@"). Tour-Buttons
@@ -367,26 +369,58 @@ export function PosteingangPage() {
     window.setTimeout(() => setToast(null), 4000);
   }
 
+  // Drei-Status-Markierung (Outlook): notFlagged → flagged → complete → …
   async function handleToggleFlag(m: MailListItem) {
     if (!activeMailbox) return;
-    const next = !m.flagged;
+    const prevStatus = m.flagStatus ?? (m.flagged ? 'flagged' : 'notFlagged');
+    const next = NEXT_FLAG_STATUS[prevStatus];
     // optimistic
-    setList((prev) => prev.map((x) => (x.id === m.id ? { ...x, flagged: next } : x)));
+    setList((prev) => prev.map((x) => (
+      x.id === m.id ? { ...x, flagStatus: next, flagged: next === 'flagged' } : x
+    )));
     try {
-      await flagEmail({ mailbox: activeMailbox, messageId: m.id, flagged: next });
+      await setFlagStatus({ mailbox: activeMailbox, messageId: m.id, flagStatus: next });
     } catch (err) {
-      setList((prev) => prev.map((x) => (x.id === m.id ? { ...x, flagged: !next } : x)));
-      showToast(err instanceof Error ? err.message : 'Flag konnte nicht gesetzt werden.');
+      setList((prev) => prev.map((x) => (
+        x.id === m.id ? { ...x, flagStatus: prevStatus, flagged: prevStatus === 'flagged' } : x
+      )));
+      showToast(err instanceof Error ? err.message : 'Markierung konnte nicht gesetzt werden.');
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!activeMailbox) return;
+  /** Lösch-Anforderung: ermittelt ALLE Nachrichten der Konversation im
+   *  aktuell geladenen Ordner und öffnet den Bestätigungsdialog. */
+  function requestDelete(id: string) {
+    const clicked = list.find((m) => m.id === id);
+    const convId = clicked?.conversationId ?? null;
+    const ids = convId
+      ? list.filter((m) => m.conversationId === convId).map((m) => m.id)
+      : [id];
+    // Sicherstellen, dass die geklickte ID enthalten ist (falls nicht in
+    // der Liste — z.B. Detail aus Thread-Nachladung).
+    setConfirmDelete({ ids: ids.includes(id) ? ids : [id] });
+  }
+
+  async function handleDelete(ids: string[]) {
+    if (!activeMailbox || ids.length === 0) return;
     try {
-      await deleteEmail({ mailbox: activeMailbox, messageId: id });
-      setList((prev) => prev.filter((x) => x.id !== id));
-      if (openId === id) { setOpenId(null); setOpenMail(null); setOpenThread(null); }
-      showToast('In den Papierkorb verschoben.');
+      // Ganze Konversation parallel in den Papierkorb.
+      const results = await Promise.allSettled(
+        ids.map((id) => deleteEmail({ mailbox: activeMailbox, messageId: id })),
+      );
+      const okIds = ids.filter((_, i) => results[i].status === 'fulfilled');
+      const failed = results.length - okIds.length;
+      setList((prev) => prev.filter((x) => !okIds.includes(x.id)));
+      if (openId && okIds.includes(openId)) {
+        setOpenId(null); setOpenMail(null); setOpenThread(null);
+      }
+      if (failed > 0) {
+        showToast(`${okIds.length} verschoben, ${failed} fehlgeschlagen.`);
+      } else {
+        showToast(ids.length > 1
+          ? `Konversation (${ids.length} Nachrichten) in den Papierkorb verschoben.`
+          : 'In den Papierkorb verschoben.');
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
     } finally {
@@ -589,7 +623,7 @@ export function PosteingangPage() {
             onOpenTour={() => setTourPicker('open')}
             onAddZusaetze={() => setTourPicker('zusaetze')}
             onAddZusaetzeBelege={() => setTourPicker('zusaetze-belege')}
-            onDelete={(id) => setConfirmDelete(id)}
+            onDelete={(id) => requestDelete(id)}
             onMove={handleMove}
           />
         </div>
@@ -625,8 +659,9 @@ export function PosteingangPage() {
       )}
       {confirmDelete && (
         <DeleteConfirmDialog
+          count={confirmDelete.ids.length}
           onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => void handleDelete(confirmDelete)}
+          onConfirm={() => void handleDelete(confirmDelete.ids)}
         />
       )}
       {toast && (
@@ -861,15 +896,16 @@ function ListPane({
                     {newest.bodyPreview}
                   </div>
                 </button>
-                {/* Flag-Toggle für die neueste Mail */}
+                {/* Drei-Status-Markierung: Klick schaltet weiter
+                    (offen → erledigt → keine). */}
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onFlag(newest); }}
                   className="absolute left-2 top-3 rounded p-0.5 text-maja-muted hover:bg-maja-light"
-                  aria-label={newest.flagged ? 'Markierung entfernen' : 'Markieren'}
-                  title={newest.flagged ? 'Markierung entfernen' : 'Markieren'}
+                  aria-label={flagActionLabel(newest.flagStatus)}
+                  title={flagActionLabel(newest.flagStatus)}
                 >
-                  <FlagIcon className="h-4 w-4" filled={newest.flagged} />
+                  <FlagStatusIcon className="h-4 w-4" status={newest.flagStatus} />
                 </button>
                 {/* Chevron zum Auf-/Zuklappen */}
                 {isThread && (
@@ -1136,15 +1172,21 @@ function MoveMenu({
 // ---- Delete-Confirm --------------------------------------------------
 
 function DeleteConfirmDialog({
-  onConfirm, onCancel,
-}: { onConfirm: () => void; onCancel: () => void }) {
+  count, onConfirm, onCancel,
+}: { count: number; onConfirm: () => void; onCancel: () => void }) {
+  const isThread = count > 1;
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
       <div className="card w-full max-w-md p-5">
-        <h3 className="text-base font-semibold text-maja-navy">E-Mail in den Papierkorb verschieben?</h3>
+        <h3 className="text-base font-semibold text-maja-navy">
+          {isThread
+            ? `Gesamte Konversation (${count} Nachrichten) in den Papierkorb verschieben?`
+            : 'E-Mail in den Papierkorb verschieben?'}
+        </h3>
         <p className="mt-2 text-sm text-maja-muted">
-          Die Nachricht wird in den Ordner „Papierkorb" verschoben und kann von
-          dort wiederhergestellt werden.
+          {isThread
+            ? `Alle ${count} Nachrichten dieser Konversation im aktuellen Ordner werden in den „Papierkorb" verschoben und können von dort wiederhergestellt werden.`
+            : 'Die Nachricht wird in den Ordner „Papierkorb" verschoben und kann von dort wiederhergestellt werden.'}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="btn-secondary" onClick={onCancel}>Abbrechen</button>
@@ -1225,7 +1267,30 @@ function PaperclipIcon({ className }: { className?: string }) {
   );
 }
 
-function FlagIcon({ className, filled }: { className?: string; filled?: boolean }) {
+/** Tooltip/aria-Text: was passiert beim NÄCHSTEN Klick. */
+function flagActionLabel(status: FlagStatus): string {
+  if (status === 'notFlagged') return 'Markieren (zur Nachverfolgung)';
+  if (status === 'flagged') return 'Als erledigt markieren';
+  return 'Markierung entfernen';
+}
+
+/**
+ * Drei-Status-Markierung wie in Outlook:
+ *   notFlagged → graues Outline-Fähnchen
+ *   flagged    → gefülltes oranges Fähnchen
+ *   complete   → grünes Häkchen
+ */
+function FlagStatusIcon({ className, status }: { className?: string; status: FlagStatus }) {
+  if (status === 'complete') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#16a34a"
+           strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"
+           className={className} aria-hidden="true">
+        <path d="M4 10.5l4 4 8-9" />
+      </svg>
+    );
+  }
+  const filled = status === 'flagged';
   return (
     <svg viewBox="0 0 20 20"
          fill={filled ? '#f59e0b' : 'none'}

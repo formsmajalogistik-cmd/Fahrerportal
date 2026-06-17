@@ -706,9 +706,6 @@ function EingangCard({
               Mit Tour verknüpfen
             </button>
           )}
-          {row.status === 'submitted' && tpl && (
-            <PdfDownloads template={tpl} formular={row} />
-          )}
           {isAdmin && row.status === 'draft' && tpl && (
             <ZwischenprotokollSection
               template={tpl}
@@ -739,6 +736,16 @@ function EingangCard({
           )}
         </div>
       </div>
+
+      {/* Protokoll-PDFs in eigenem, voll-breitem Block UNTER den
+          Fahrzeugdaten — sonst überlappen sie bei mehreren PDFs mit der
+          FIN-Zeile der linken Spalte. Der Container wächst frei mit
+          (umbrechende Buttons, keine feste Höhe). */}
+      {row.status === 'submitted' && tpl && (
+        <div className="mt-3 border-t border-maja-navy/10 pt-3">
+          <PdfDownloads template={tpl} formular={row} />
+        </div>
+      )}
     </li>
   );
 }
@@ -785,7 +792,10 @@ function PdfDownloads({
     return <span className="text-xs text-maja-muted">keine PDFs erzeugt</span>;
   }
   return (
-    <div className="flex flex-wrap justify-end gap-2">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">
+        Protokoll-PDFs
+      </span>
       {list.map((p) => (
         <PdfDownloadButton
           key={p.id}

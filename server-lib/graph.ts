@@ -392,15 +392,27 @@ export async function moveMessage(args: {
 }
 
 /** Setzt Flag/Read-Status auf einer Nachricht. */
+export type FlagStatus = 'notFlagged' | 'flagged' | 'complete';
+
+/** Normalisiert den Graph-Flag-Status auf die drei bekannten Werte. */
+export function normFlagStatus(s: string | null | undefined): FlagStatus {
+  return s === 'flagged' ? 'flagged' : s === 'complete' ? 'complete' : 'notFlagged';
+}
+
 export async function patchMessage(args: {
   mailbox: string;
   messageId: string;
+  /** Drei-Status-Markierung (Outlook): notFlagged / flagged / complete. */
+  flagStatus?: FlagStatus;
+  /** Legacy-Boolean — wird auf flagged/notFlagged abgebildet. */
   flagged?: boolean;
   isRead?: boolean;
 }): Promise<void> {
   const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages/${encodeURIComponent(args.messageId)}`;
   const body: Record<string, unknown> = {};
-  if (typeof args.flagged === 'boolean') {
+  if (args.flagStatus) {
+    body.flag = { flagStatus: args.flagStatus };
+  } else if (typeof args.flagged === 'boolean') {
     body.flag = { flagStatus: args.flagged ? 'flagged' : 'notFlagged' };
   }
   if (typeof args.isRead === 'boolean') body.isRead = args.isRead;
@@ -416,8 +428,10 @@ export interface MailListItem {
   bodyPreview: string;
   hasAttachments: boolean;
   isRead: boolean;
-  /** Graph-Flag-Status: "flagged" | "notFlagged" | "complete". */
+  /** Legacy-Boolean (= flagStatus==='flagged'). Für bestehende UI-Pfade. */
   flagged: boolean;
+  /** Drei-Status-Markierung: 'notFlagged' | 'flagged' | 'complete'. */
+  flagStatus: FlagStatus;
   /** Focused Inbox: 'focused' | 'other' | null (unbekannt / nicht
    *  unterstützt). Wird im Frontend für die Relevant/Sonstige-Tabs
    *  ausgewertet — clientseitiges Filtern statt $filter, weil
@@ -529,6 +543,7 @@ export async function listMessages(args: {
     hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
+    flagStatus: normFlagStatus(m.flag?.flagStatus),
     inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
       : m.inferenceClassification === 'other' ? 'other'
       : null,
@@ -618,6 +633,7 @@ export async function getMessage(args: {
     hasAttachments: !!m.hasAttachments,
     isRead: !!m.isRead,
     flagged: m.flag?.flagStatus === 'flagged',
+    flagStatus: normFlagStatus(m.flag?.flagStatus),
     inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
       : m.inferenceClassification === 'other' ? 'other'
       : null,

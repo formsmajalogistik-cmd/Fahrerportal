@@ -5,6 +5,15 @@
 import { getValidToken } from './supabase';
 import { fetchWithRetry } from './fetchRetry';
 
+export type FlagStatus = 'notFlagged' | 'flagged' | 'complete';
+
+/** Zyklus für den Drei-Status-Klick: notFlagged → flagged → complete → … */
+export const NEXT_FLAG_STATUS: Record<FlagStatus, FlagStatus> = {
+  notFlagged: 'flagged',
+  flagged: 'complete',
+  complete: 'notFlagged',
+};
+
 export interface MailListItem {
   id: string;
   subject: string;
@@ -13,7 +22,10 @@ export interface MailListItem {
   bodyPreview: string;
   hasAttachments: boolean;
   isRead: boolean;
+  /** Legacy-Boolean (= flagStatus==='flagged'). */
   flagged: boolean;
+  /** Drei-Status-Markierung (Outlook): 'notFlagged' | 'flagged' | 'complete'. */
+  flagStatus: FlagStatus;
   /** Focused Inbox: 'focused' | 'other' | null. Wird im Frontend für
    *  die Relevant/Sonstige-Tabs ausgewertet (clientseitiges Filtern). */
   inferenceClassification: 'focused' | 'other' | null;
@@ -131,6 +143,13 @@ export async function deleteEmail(args: {
 
 export async function flagEmail(args: {
   mailbox: string; messageId: string; flagged: boolean;
+}): Promise<void> {
+  await postAction('flag', args, 25_000);
+}
+
+/** Drei-Status-Markierung setzen (notFlagged / flagged / complete). */
+export async function setFlagStatus(args: {
+  mailbox: string; messageId: string; flagStatus: FlagStatus;
 }): Promise<void> {
   await postAction('flag', args, 25_000);
 }

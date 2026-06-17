@@ -255,7 +255,14 @@ export default async function handler(req: Req, res: Res) {
       const messageId = asString(body.messageId);
       if (!mailbox || !messageId) throw new HttpError(400, 'mailbox und messageId sind Pflicht');
       await assertMailboxAllowed(token, mailbox);
-      await patchMessage({ mailbox, messageId, flagged: body.flagged === true });
+      // Drei-Status-Markierung: bevorzugt flagStatus; Legacy-Fallback auf
+      // den flagged-Boolean.
+      const fs = asString(body.flagStatus);
+      if (fs === 'notFlagged' || fs === 'flagged' || fs === 'complete') {
+        await patchMessage({ mailbox, messageId, flagStatus: fs });
+      } else {
+        await patchMessage({ mailbox, messageId, flagged: body.flagged === true });
+      }
       res.status(200).json({ ok: true });
       return;
     }
