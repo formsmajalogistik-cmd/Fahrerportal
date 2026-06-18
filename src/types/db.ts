@@ -37,6 +37,8 @@ export type TourZusatz = Database['public']['Tables']['tour_zusaetze']['Row'];
 export type GreimelZugang = Database['public']['Tables']['greimel_zugaenge']['Row'];
 export type EmailFavorit = Database['public']['Tables']['email_favoriten']['Row'];
 export type Fahrer = Database['public']['Tables']['fahrer']['Row'];
+export type FuehrerscheinAbfrage = Database['public']['Tables']['fuehrerschein_abfragen']['Row'];
+export type FuehrerscheinEinreichung = Database['public']['Tables']['fuehrerschein_einreichungen']['Row'];
 
 // ---- Templates: schema und pdfs sind in der DB jsonb.
 // Wir casten im Frontend auf spezifische Strukturen.

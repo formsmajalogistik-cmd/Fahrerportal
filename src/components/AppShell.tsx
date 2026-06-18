@@ -5,6 +5,7 @@ import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
 import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { TestModeBanner } from './TestModeBanner';
+import { FuehrerscheinPopupGate } from './FuehrerscheinPopupGate';
 
 interface NavItem { to: string; label: string }
 
@@ -51,6 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
       <PdfPreviewProvider />
+      <FuehrerscheinPopupGate />
     </div>
   );
 }

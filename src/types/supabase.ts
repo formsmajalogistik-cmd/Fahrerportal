@@ -481,6 +481,82 @@ export type Database = {
         };
         Relationships: [];
       };
+      fuehrerschein_abfragen: {
+        Row: {
+          id: string;
+          gestartet_von: string | null;
+          gestartet_am: string;
+          status: 'offen' | 'abgeschlossen';
+          notiz: string | null;
+        };
+        Insert: {
+          id?: string;
+          gestartet_von?: string | null;
+          gestartet_am?: string;
+          status?: 'offen' | 'abgeschlossen';
+          notiz?: string | null;
+        };
+        Update: {
+          id?: string;
+          gestartet_von?: string | null;
+          gestartet_am?: string;
+          status?: 'offen' | 'abgeschlossen';
+          notiz?: string | null;
+        };
+        Relationships: [];
+      };
+      fuehrerschein_einreichungen: {
+        Row: {
+          id: string;
+          abfrage_id: string;
+          fahrer_id: string;
+          name_eingetragen: string | null;
+          bild_vorderseite_pfad: string | null;
+          bild_rueckseite_pfad: string | null;
+          eingereicht_am: string;
+          geprueft: boolean;
+          geprueft_am: string | null;
+          geprueft_von: string | null;
+        };
+        Insert: {
+          id?: string;
+          abfrage_id: string;
+          fahrer_id: string;
+          name_eingetragen?: string | null;
+          bild_vorderseite_pfad?: string | null;
+          bild_rueckseite_pfad?: string | null;
+          eingereicht_am?: string;
+          geprueft?: boolean;
+          geprueft_am?: string | null;
+          geprueft_von?: string | null;
+        };
+        Update: {
+          id?: string;
+          abfrage_id?: string;
+          fahrer_id?: string;
+          name_eingetragen?: string | null;
+          bild_vorderseite_pfad?: string | null;
+          bild_rueckseite_pfad?: string | null;
+          eingereicht_am?: string;
+          geprueft?: boolean;
+          geprueft_am?: string | null;
+          geprueft_von?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'fuehrerschein_einreichungen_abfrage_id_fkey';
+            columns: ['abfrage_id'];
+            referencedRelation: 'fuehrerschein_abfragen';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'fuehrerschein_einreichungen_fahrer_id_fkey';
+            columns: ['fahrer_id'];
+            referencedRelation: 'fahrer';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       template_auftraggeber_freigaben: {
         Row: {
           template_id: string;

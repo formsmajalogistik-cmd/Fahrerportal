@@ -5,6 +5,7 @@ import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
 import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { useEingaengeNotifications } from '../sync/EingaengeContext';
+import { FuehrerscheinNavWidget } from './FuehrerscheinNavWidget';
 import { supabase } from '../lib/supabase';
 
 interface NavItem { to: string; label: string; end?: boolean }
@@ -89,11 +90,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-maja-light">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-maja-navy/10 bg-white lg:block">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-maja-navy/10 bg-white lg:flex">
         <div className="px-5 py-5 border-b border-maja-navy/10">
           <MajaLogo className="h-9" />
         </div>
-        <nav className="px-3 py-4">
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-1">
             {adminNav.map((item) => (
               <li key={item.to}>
@@ -115,6 +116,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
             ))}
           </ul>
         </nav>
+        {/* Führerscheinabfrage unten links, mit Datum + Fällig-Indikator. */}
+        <div className="border-t border-maja-navy/10 px-3 py-3">
+          <FuehrerscheinNavWidget />
+        </div>
       </aside>
 
       <div className="lg:pl-64">
@@ -146,6 +151,20 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   </NavLink>
                 </li>
               ))}
+              <li>
+                <NavLink
+                  to="/fuehrerschein"
+                  className={({ isActive }) =>
+                    `inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                      isActive
+                        ? 'bg-maja-navy text-white'
+                        : 'text-maja-navy hover:bg-maja-light'
+                    }`
+                  }
+                >
+                  Führerschein
+                </NavLink>
+              </li>
             </ul>
           </nav>
         </header>

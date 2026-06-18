@@ -31,6 +31,7 @@ import { RechnungDetailPage } from './pages/admin/rechnungen/RechnungDetailPage'
 import { TourenlistePage } from './pages/TourenlistePage';
 import { GreimelZugaengePage } from './pages/GreimelZugaengePage';
 import { RecoveryPage } from './pages/admin/RecoveryPage';
+import { FuehrerscheinPage } from './pages/admin/FuehrerscheinPage';
 import { AuftraggeberShell } from './components/AuftraggeberShell';
 import { AuftraggeberTourenPage } from './pages/auftraggeber/AuftraggeberTourenPage';
 import { AuftraggeberFormularePage } from './pages/auftraggeber/AuftraggeberFormularePage';
@@ -166,6 +167,7 @@ export default function App() {
           <Route path="/formular/:id" element={<FormularPage />} />
           <Route path="/profil" element={<ProfilPage />} />
           <Route path="/recovery" element={<RecoveryPage />} />
+          <Route path="/fuehrerschein" element={<FuehrerscheinPage />} />
           <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
           <Route path="/passwort-neu" element={<PasswordNewPage />} />
           <Route path="*" element={<Navigate to="/touren" replace />} />
