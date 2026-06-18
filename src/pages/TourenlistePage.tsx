@@ -9,6 +9,7 @@ import { useTestGuard } from '../auth/TestModeContext';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
+import { exportTourenExcel } from '../lib/tourenExport';
 import { flattenedFahrerOptions, type FahrerOptionRaw } from './touren/FahrerSelect';
 import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
@@ -148,6 +149,7 @@ export function TourenlistePage() {
   const [rows, setRows] = useState<TourRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Default-Filter: aktueller Monat (1. → letzter Tag).
@@ -458,6 +460,24 @@ export function TourenlistePage() {
     void load(true);
   }
 
+  /** Excel-Export des aktuell gewählten Zeitraums (+ Auftraggeber-Filter,
+   *  falls gesetzt). Roundtrip-kompatibel mit dem Touren-Import. */
+  async function handleExport() {
+    setExporting(true);
+    setError(null);
+    try {
+      const n = await exportTourenExcel({
+        dateFrom, dateTo,
+        auftraggeberId: auftraggeberFilter || null,
+      });
+      if (n === 0) setError('Keine Touren im gewählten Zeitraum — nichts zu exportieren.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export fehlgeschlagen.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // ---- Pagination ----
   const totalPages = Math.max(1, Math.ceil((filteredRows ?? []).length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -487,6 +507,15 @@ export function TourenlistePage() {
           </button>
           {isAdmin && (
             <>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void handleExport()}
+                disabled={exporting}
+                title="Touren des gewählten Zeitraums als Excel-Backup exportieren"
+              >
+                {exporting ? 'Exportiert …' : 'Export (Excel)'}
+              </button>
               <button type="button" className="btn-secondary" onClick={() => setShowImport(true)}>
                 Touren importieren
               </button>

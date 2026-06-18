@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
+import { useTestMode, useTestGuard } from '../auth/TestModeContext';
 import { fahrerName } from '../lib/names';
 import { uploadFuehrerscheinBild } from '../lib/fuehrerscheinStorage';
 import type { FuehrerscheinAbfrage } from '../types/db';
@@ -14,35 +15,55 @@ const DATENSCHUTZ_HINWEIS =
   + 'nicht statt.';
 
 /**
- * Zeigt für eingeloggte Fahrer ein Popup, wenn eine offene Führerschein-
- * Abfrage existiert, zu der das aktive Konto noch NICHT eingereicht hat.
- * Mount-Ort: AppShell — damit erscheint das Popup erst NACH der Konto-
- * Auswahl (App.tsx rendert die Shell erst, wenn kein Picker mehr offen
- * ist). „Später" schließt es nur für die aktuelle Sitzung; beim nächsten
- * Laden erscheint es erneut, bis eingereicht wurde.
+ * Zeigt das Führerschein-Popup. Rollen-Eingrenzung (Aufgabe 1):
+ *
+ *  - Fahrer (inkl. Unterkonten): echtes Popup, wenn eine offene Abfrage
+ *    existiert, zu der das aktive Konto noch NICHT eingereicht hat.
+ *  - Auftraggeber: NIEMALS (Komponente ist ohnehin nur in der AppShell
+ *    montiert, die Auftraggeber nicht nutzen — hier zusätzlich hart
+ *    ausgeschlossen).
+ *  - Admin: kein Fahrer-Popup (AdminShell montiert die Komponente nicht).
+ *  - Test-Account in Fahrer-Ansicht (effectiveRole='fahrer'): Demo-Popup
+ *    IMMER — unabhängig von einer echten Abfrage. Die Einreichung wird
+ *    durch den Test-Guard abgefangen (kein Upload, kein DB-Eintrag,
+ *    keine echten Bilder im Bucket).
+ *
+ * Mount-Ort: AppShell → erscheint erst NACH der Konto-Auswahl.
  */
 export function FuehrerscheinPopupGate() {
   const { profile } = useAuth();
   const { activeFahrer } = useFahrerContext();
+  const { isTestUser, effectiveRole } = useTestMode();
+
+  const role = profile?.role;
+  // Test-Account, der gerade die Fahrer-Ansicht simuliert.
+  const isTestFahrer = isTestUser && effectiveRole === 'fahrer';
+  // Auftraggeber sind hart ausgeschlossen; nur echter Fahrer oder Test-Fahrer.
+  const eligible = role === 'fahrer' || isTestFahrer;
+
+  const fahrerId = activeFahrer?.id ?? null;
   const [abfrage, setAbfrage] = useState<FuehrerscheinAbfrage | null>(null);
   const [needsSubmit, setNeedsSubmit] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [done, setDone] = useState(false);
 
-  const fahrerId = activeFahrer?.id ?? null;
-
   useEffect(() => {
     let cancelled = false;
-    // Deferred (kein synchroner setState im Effect-Body) + bei
-    // Konto-Wechsel State zurücksetzen.
-    const t = window.setTimeout(() => { void check(); }, 0);
-    async function check() {
+    const t = window.setTimeout(() => { void run(); }, 0);
+    async function run() {
       if (cancelled) return;
       setDismissed(false);
       setDone(false);
+      // Test-Fahrer: Demo immer zeigen, KEINE DB-Abfrage.
+      if (isTestFahrer) {
+        setAbfrage(null);
+        setNeedsSubmit(true);
+        return;
+      }
       setNeedsSubmit(false);
       setAbfrage(null);
-      if (!fahrerId) return;
+      // Echte Logik nur für die Rolle 'fahrer' mit aktivem Konto.
+      if (role !== 'fahrer' || !fahrerId) return;
       try {
         const { data: open } = await supabase
           .from('fuehrerschein_abfragen')
@@ -56,7 +77,7 @@ export function FuehrerscheinPopupGate() {
           .from('fuehrerschein_einreichungen')
           .select('id')
           .eq('abfrage_id', open.id)
-          .eq('fahrer_id', fahrerId!)
+          .eq('fahrer_id', fahrerId)
           .maybeSingle();
         if (cancelled) return;
         setAbfrage(open as FuehrerscheinAbfrage);
@@ -66,9 +87,9 @@ export function FuehrerscheinPopupGate() {
       }
     }
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [fahrerId]);
+  }, [fahrerId, isTestFahrer, role]);
 
-  if (!fahrerId || !abfrage || !needsSubmit || dismissed) return null;
+  if (!eligible || !needsSubmit || dismissed) return null;
 
   if (done) {
     return (
@@ -90,8 +111,9 @@ export function FuehrerscheinPopupGate() {
   return (
     <Overlay>
       <FuehrerscheinForm
-        abfrageId={abfrage.id}
-        fahrerId={fahrerId}
+        abfrageId={abfrage?.id ?? 'test-demo'}
+        fahrerId={fahrerId ?? 'test-demo'}
+        testMode={isTestFahrer}
         defaultName={fahrerName(activeFahrer, profile) || ''}
         onDone={() => { setDone(true); setNeedsSubmit(false); }}
         onLater={() => setDismissed(true)}
@@ -109,14 +131,16 @@ function Overlay({ children }: { children: React.ReactNode }) {
 }
 
 function FuehrerscheinForm({
-  abfrageId, fahrerId, defaultName, onDone, onLater,
+  abfrageId, fahrerId, testMode, defaultName, onDone, onLater,
 }: {
   abfrageId: string;
   fahrerId: string;
+  testMode: boolean;
   defaultName: string;
   onDone: () => void;
   onLater: () => void;
 }) {
+  const guard = useTestGuard();
   const [name, setName] = useState(defaultName);
   const [vorderseite, setVorderseite] = useState<File | null>(null);
   const [rueckseite, setRueckseite] = useState<File | null>(null);
@@ -125,6 +149,9 @@ function FuehrerscheinForm({
 
   async function handleSubmit() {
     setError(null);
+    // Testmodus: Einreichung wird abgefangen — kein Upload, kein DB-
+    // Eintrag, keine echten Bilder im Bucket. Nur der Hinweis-Toast.
+    if (testMode) { guard(); return; }
     if (!vorderseite) { setError('Bitte die Vorderseite hochladen.'); return; }
     if (!rueckseite) { setError('Bitte die Rückseite hochladen.'); return; }
     if (!name.trim()) { setError('Bitte deinen Namen eintragen.'); return; }
@@ -150,7 +177,9 @@ function FuehrerscheinForm({
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-maja-navy">Führerscheinkontrolle</h2>
+      <h2 className="text-lg font-semibold text-maja-navy">
+        Führerscheinkontrolle{testMode ? ' (Testmodus)' : ''}
+      </h2>
       <p className="mt-1 text-sm text-maja-ink">
         Bitte lade Vorder- und Rückseite deines Führerscheins hoch.
       </p>
@@ -158,6 +187,13 @@ function FuehrerscheinForm({
       <div className="mt-3 rounded-lg border border-maja-navy/15 bg-maja-light/60 px-3 py-2 text-xs text-maja-ink dark:bg-surface-700">
         {DATENSCHUTZ_HINWEIS}
       </div>
+
+      {testMode && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Testmodus — diese Einreichung wird nicht gespeichert und es werden
+          keine Bilder hochgeladen.
+        </div>
+      )}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <SeiteUpload label="Vorderseite *" file={vorderseite} onPick={setVorderseite} disabled={busy} />

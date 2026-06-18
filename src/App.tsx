@@ -176,7 +176,7 @@ export default function App() {
     );
   }
 
-  if (profile.role === 'fahrer') {
+  if (profile.role === 'fahrer' || (profile.role === 'test' && effectiveRole === 'fahrer')) {
     return (
       <AppShell>
         <Routes>
