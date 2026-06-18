@@ -6,6 +6,9 @@ import { displayName } from '../../lib/names';
 import type {
   AppUser, Auftraggeber, Fahrer, TourenArt,
 } from '../../types/db';
+import type { Database } from '../../types/supabase';
+
+type TourInsert = Database['public']['Tables']['touren']['Insert'];
 
 type FahrerWithUser = Fahrer & { user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null };
 
@@ -15,6 +18,8 @@ interface Props {
 }
 
 type Step = 'upload' | 'mapping' | 'matching' | 'preview' | 'running' | 'done';
+
+interface KontaktJson { name: string; telefon: string; email: string }
 
 interface ParsedRow {
   rowIndex: number; // ursprüngliche Excel-Zeilennummer (1-basiert nach Header)
@@ -34,6 +39,23 @@ interface ParsedRow {
   kennzeichen: string[];
   errors: string[];
   is_duplicate: boolean;
+  // ---- Optionale Felder (nur gesetzt, wenn die jeweilige Spalte in der
+  // importierten Datei vorhanden ist — für den vollständigen Roundtrip
+  // mit dem Excel-Export). Fehlen sie, bleibt das Verhalten wie bisher.
+  enddatum?: string | null;
+  adresse_start?: string | null;
+  adresse_ziel?: string | null;
+  adresse_rueckfuehrung?: string | null;
+  kontakt_start?: KontaktJson | null;
+  kontakt_ziel?: KontaktJson | null;
+  kontakt_rueckfuehrung?: KontaktJson | null;
+  fin?: string | null;
+  kundenname?: string | null;
+  km_hin?: number | null;
+  km_rueck?: number | null;
+  status?: string | null;
+  bestaetigt?: boolean | null;
+  created_at?: string | null;
 }
 
 const HEADER_KEYS = {
@@ -46,6 +68,28 @@ const HEADER_KEYS = {
   km:              ['km zahl', 'km', 'km gesamt', 'km zahl:'],
   verguetung:      ['vergütung (netto)', 'verguetung (netto)', 'vergütung netto', 'vergütung', 'verguetung', 'vergütung netto:'],
   kennzeichen:     ['kennzeichen', 'kennzeichen:'],
+  // ---- Optionale Roundtrip-Spalten (exakt die Export-Header). ----
+  enddatum:        ['enddatum'],
+  km_hin:          ['km hin'],
+  km_rueck:        ['km rück', 'km rueck'],
+  kennzeichen_rueck: ['kennzeichen rück', 'kennzeichen rueck'],
+  adresse_start:   ['adresse start'],
+  adresse_ziel:    ['adresse ziel'],
+  adresse_rueck:   ['adresse rückführung', 'adresse rueckfuehrung'],
+  kontakt_start_name: ['kontakt start name'],
+  kontakt_start_tel:  ['kontakt start tel'],
+  kontakt_start_mail: ['kontakt start e-mail', 'kontakt start email'],
+  kontakt_ziel_name:  ['kontakt ziel name'],
+  kontakt_ziel_tel:   ['kontakt ziel tel'],
+  kontakt_ziel_mail:  ['kontakt ziel e-mail', 'kontakt ziel email'],
+  kontakt_rueck_name: ['kontakt rück name', 'kontakt rueck name'],
+  kontakt_rueck_tel:  ['kontakt rück tel', 'kontakt rueck tel'],
+  kontakt_rueck_mail: ['kontakt rück e-mail', 'kontakt rück email', 'kontakt rueck e-mail'],
+  fin:             ['fin'],
+  kundenname:      ['kundenname', 'kunde'],
+  status:          ['status'],
+  bestaetigt:      ['bestätigt', 'bestaetigt'],
+  created_at:      ['created_at', 'erstellt am'],
 };
 
 function normalizeHeader(s: string): string {
@@ -65,6 +109,47 @@ function findColumn(headers: string[], candidates: string[]): number {
     if (idx >= 0) return idx;
   }
   return -1;
+}
+
+/** Wie findColumn, aber NUR exakter Header-Match (kein Contains-Fallback)
+ *  — für die optionalen Roundtrip-Spalten, damit kurze Namen wie "fin"
+ *  nicht versehentlich eine fremde Spalte treffen. -1 = nicht vorhanden. */
+function findColumnExact(headers: string[], candidates: string[]): number {
+  const norm = headers.map(normalizeHeader);
+  for (const c of candidates) {
+    const idx = norm.indexOf(normalizeHeader(c));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function cellStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+
+function buildKontakt(name: unknown, tel: unknown, mail: unknown): KontaktJson | null {
+  const n = cellStr(name) ?? '';
+  const t = cellStr(tel) ?? '';
+  const m = cellStr(mail) ?? '';
+  if (!n && !t && !m) return null;
+  return { name: n, telefon: t, email: m };
+}
+
+function parseBoolCell(v: unknown): boolean | null {
+  if (v == null || v === '') return null;
+  if (typeof v === 'boolean') return v;
+  const s = String(v).trim().toLowerCase();
+  if (['ja', 'true', 'wahr', 'x', '1'].includes(s)) return true;
+  if (['nein', 'false', 'falsch', '0'].includes(s)) return false;
+  return null;
+}
+
+function parseStatusCell(v: unknown): 'geplant' | 'aktiv' | 'abgeschlossen' | null {
+  const s = cellStr(v)?.toLowerCase();
+  if (s === 'geplant' || s === 'aktiv' || s === 'abgeschlossen') return s;
+  return null;
 }
 
 function excelDateToISO(value: unknown): string | null {
@@ -256,6 +341,31 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       verguetung:   findColumn(cols, HEADER_KEYS.verguetung),
       kennzeichen:  findColumn(cols, HEADER_KEYS.kennzeichen),
     };
+    // Optionale Roundtrip-Spalten (exakt, -1 wenn nicht vorhanden).
+    const oIdx = {
+      enddatum:        findColumnExact(cols, HEADER_KEYS.enddatum),
+      km_hin:          findColumnExact(cols, HEADER_KEYS.km_hin),
+      km_rueck:        findColumnExact(cols, HEADER_KEYS.km_rueck),
+      kennzeichen_rueck: findColumnExact(cols, HEADER_KEYS.kennzeichen_rueck),
+      adresse_start:   findColumnExact(cols, HEADER_KEYS.adresse_start),
+      adresse_ziel:    findColumnExact(cols, HEADER_KEYS.adresse_ziel),
+      adresse_rueck:   findColumnExact(cols, HEADER_KEYS.adresse_rueck),
+      kontakt_start_name: findColumnExact(cols, HEADER_KEYS.kontakt_start_name),
+      kontakt_start_tel:  findColumnExact(cols, HEADER_KEYS.kontakt_start_tel),
+      kontakt_start_mail: findColumnExact(cols, HEADER_KEYS.kontakt_start_mail),
+      kontakt_ziel_name:  findColumnExact(cols, HEADER_KEYS.kontakt_ziel_name),
+      kontakt_ziel_tel:   findColumnExact(cols, HEADER_KEYS.kontakt_ziel_tel),
+      kontakt_ziel_mail:  findColumnExact(cols, HEADER_KEYS.kontakt_ziel_mail),
+      kontakt_rueck_name: findColumnExact(cols, HEADER_KEYS.kontakt_rueck_name),
+      kontakt_rueck_tel:  findColumnExact(cols, HEADER_KEYS.kontakt_rueck_tel),
+      kontakt_rueck_mail: findColumnExact(cols, HEADER_KEYS.kontakt_rueck_mail),
+      fin:             findColumnExact(cols, HEADER_KEYS.fin),
+      kundenname:      findColumnExact(cols, HEADER_KEYS.kundenname),
+      status:          findColumnExact(cols, HEADER_KEYS.status),
+      bestaetigt:      findColumnExact(cols, HEADER_KEYS.bestaetigt),
+      created_at:      findColumnExact(cols, HEADER_KEYS.created_at),
+    };
+    const at = (r: unknown[], idx: number): unknown => (idx >= 0 ? r[idx] : null);
 
     const parsed: ParsedRow[] = [];
     const fNames = new Set<string>();
@@ -284,8 +394,37 @@ export function TourImportDialog({ onClose, onImported }: Props) {
 
       const km_gesamt = cIdx.km >= 0 ? parseInteger(r[cIdx.km]) : null;
       const verguetung = cIdx.verguetung >= 0 ? parseDecimalNumber(r[cIdx.verguetung]) : null;
-      const kz_raw = cIdx.kennzeichen >= 0 ? r[cIdx.kennzeichen] : null;
-      const kz = kz_raw == null ? [] : [String(kz_raw).trim().toUpperCase()].filter(Boolean);
+      // Kennzeichen: "Kennzeichen" (Hin) + optional "Kennzeichen Rück".
+      const kz: string[] = [];
+      const kzHin = cellStr(at(r, cIdx.kennzeichen));
+      if (kzHin) kz.push(kzHin.toUpperCase());
+      const kzRueck = cellStr(at(r, oIdx.kennzeichen_rueck));
+      if (kzRueck) kz.push(kzRueck.toUpperCase());
+
+      // Optionale Roundtrip-Felder — nur setzen, wenn Spalte vorhanden.
+      const enddatum = oIdx.enddatum >= 0 ? excelDateToISO(at(r, oIdx.enddatum)) : undefined;
+      const km_hin = oIdx.km_hin >= 0 ? parseInteger(at(r, oIdx.km_hin)) : undefined;
+      const km_rueck = oIdx.km_rueck >= 0 ? parseInteger(at(r, oIdx.km_rueck)) : undefined;
+      const adresse_start = oIdx.adresse_start >= 0 ? cellStr(at(r, oIdx.adresse_start)) : undefined;
+      const adresse_ziel = oIdx.adresse_ziel >= 0 ? cellStr(at(r, oIdx.adresse_ziel)) : undefined;
+      const adresse_rueckfuehrung = oIdx.adresse_rueck >= 0 ? cellStr(at(r, oIdx.adresse_rueck)) : undefined;
+      const hasKontaktStart = oIdx.kontakt_start_name >= 0 || oIdx.kontakt_start_tel >= 0 || oIdx.kontakt_start_mail >= 0;
+      const kontakt_start = hasKontaktStart
+        ? buildKontakt(at(r, oIdx.kontakt_start_name), at(r, oIdx.kontakt_start_tel), at(r, oIdx.kontakt_start_mail))
+        : undefined;
+      const hasKontaktZiel = oIdx.kontakt_ziel_name >= 0 || oIdx.kontakt_ziel_tel >= 0 || oIdx.kontakt_ziel_mail >= 0;
+      const kontakt_ziel = hasKontaktZiel
+        ? buildKontakt(at(r, oIdx.kontakt_ziel_name), at(r, oIdx.kontakt_ziel_tel), at(r, oIdx.kontakt_ziel_mail))
+        : undefined;
+      const hasKontaktRueck = oIdx.kontakt_rueck_name >= 0 || oIdx.kontakt_rueck_tel >= 0 || oIdx.kontakt_rueck_mail >= 0;
+      const kontakt_rueckfuehrung = hasKontaktRueck
+        ? buildKontakt(at(r, oIdx.kontakt_rueck_name), at(r, oIdx.kontakt_rueck_tel), at(r, oIdx.kontakt_rueck_mail))
+        : undefined;
+      const fin = oIdx.fin >= 0 ? cellStr(at(r, oIdx.fin)) : undefined;
+      const kundenname = oIdx.kundenname >= 0 ? cellStr(at(r, oIdx.kundenname)) : undefined;
+      const status = oIdx.status >= 0 ? parseStatusCell(at(r, oIdx.status)) : undefined;
+      const bestaetigt = oIdx.bestaetigt >= 0 ? parseBoolCell(at(r, oIdx.bestaetigt)) : undefined;
+      const created_at = oIdx.created_at >= 0 ? excelDateToISO(at(r, oIdx.created_at)) : undefined;
 
       const errors: string[] = [];
       if (!start_stadt || !ziel_stadt) errors.push('Route konnte nicht geparst werden.');
@@ -310,6 +449,22 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         kennzeichen: kz,
         errors,
         is_duplicate: false,
+        // Optionale Roundtrip-Felder (undefined = Spalte fehlte → bleibt
+        // beim Insert unberücksichtigt, Verhalten wie bisher).
+        enddatum,
+        km_hin,
+        km_rueck,
+        adresse_start,
+        adresse_ziel,
+        adresse_rueckfuehrung,
+        kontakt_start,
+        kontakt_ziel,
+        kontakt_rueckfuehrung,
+        fin,
+        kundenname,
+        status,
+        bestaetigt,
+        created_at,
         // dupKey ist nur intern; wir berechnen ihn erst im Preview neu.
         ...{ _dup_partial: dupKey } as Partial<ParsedRow>,
       });
@@ -366,14 +521,16 @@ export function TourImportDialog({ onClose, onImported }: Props) {
     for (let i = 0; i < toImport.length; i += CHUNK) {
       const slice = toImport.slice(i, i + CHUNK);
       const payload = slice.map((r) => {
-        // Tourenart 'ABA' speichert km nur als km_hin.
-        const isAba = r.tourenart === 'ABA';
         // startdatum + enddatum sind NOT NULL — fehlt das Datum (sollte
         // durch die Filter vorher abgefangen sein), füllen wir das aktuelle.
         const sd = r.startdatum ?? new Date().toISOString().slice(0, 10);
-        return {
+        // Basis-Payload (wie bisher; gilt auch für Supplier-Importe ohne
+        // optionale Spalten).
+        const base: TourInsert = {
           startdatum: sd,
-          enddatum: sd,
+          // Enddatum aus optionaler Spalte, sonst = Startdatum (bisheriges
+          // Verhalten).
+          enddatum: r.enddatum ?? sd,
           start_stadt: r.start_stadt,
           ziel_stadt: r.ziel_stadt,
           rueckfuehrung_stadt: r.rueckfuehrung_stadt,
@@ -382,12 +539,30 @@ export function TourImportDialog({ onClose, onImported }: Props) {
           tourenart: r.tourenart,
           ist_sondervereinbarung: r.ist_sondervereinbarung,
           sondervereinbarung: r.sondervereinbarung,
-          km_hin: isAba ? r.km_gesamt : r.km_gesamt,
-          km_rueck: null,
+          // km Hin/Rück: wenn die Spalten vorhanden sind (auch leer),
+          // exakt übernehmen; sonst bisheriges Verhalten (km_hin =
+          // km_gesamt, km_rueck = null).
+          km_hin: r.km_hin !== undefined ? r.km_hin : r.km_gesamt,
+          km_rueck: r.km_rueck !== undefined ? r.km_rueck : null,
           km_gesamt: r.km_gesamt,
           verguetung: r.verguetung,
           kennzeichen: r.kennzeichen,
         };
+        // Optionale Roundtrip-Felder NUR setzen, wenn vorhanden — damit
+        // NOT-NULL-Defaults (status, bestaetigt) bei Supplier-Importen
+        // greifen.
+        if (r.adresse_start !== undefined) base.adresse_start = r.adresse_start;
+        if (r.adresse_ziel !== undefined) base.adresse_ziel = r.adresse_ziel;
+        if (r.adresse_rueckfuehrung !== undefined) base.adresse_rueckfuehrung = r.adresse_rueckfuehrung;
+        if (r.kontakt_start !== undefined) base.kontakt_start = r.kontakt_start as TourInsert['kontakt_start'];
+        if (r.kontakt_ziel !== undefined) base.kontakt_ziel = r.kontakt_ziel as TourInsert['kontakt_ziel'];
+        if (r.kontakt_rueckfuehrung !== undefined) base.kontakt_rueckfuehrung = r.kontakt_rueckfuehrung as TourInsert['kontakt_rueckfuehrung'];
+        if (r.fin !== undefined) base.fin = r.fin;
+        if (r.kundenname !== undefined) base.kundenname = r.kundenname;
+        if (r.status != null) base.status = r.status as TourInsert['status'];
+        if (r.bestaetigt != null) base.bestaetigt = r.bestaetigt;
+        if (r.created_at != null) base.created_at = r.created_at;
+        return base;
       });
       const { error: err } = await supabase.from('touren').insert(payload);
       if (err) {
