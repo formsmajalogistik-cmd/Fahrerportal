@@ -113,7 +113,7 @@ export function AuftraggeberFormularePage() {
             Für Ihr Konto sind noch keine Formulare freigegeben.
           </div>
         ) : (
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {templates.map((t) => (
               <li key={t.id} className="card flex flex-col p-4">
                 <h3 className="text-sm font-semibold text-maja-navy">{t.name}</h3>

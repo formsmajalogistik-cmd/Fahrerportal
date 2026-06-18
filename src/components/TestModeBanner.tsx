@@ -25,7 +25,7 @@ export function TestModeBanner() {
       role="status"
       className="sticky top-0 z-30 border-b border-amber-700/40 bg-amber-400 text-amber-950 shadow-sm"
     >
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-2 text-sm">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-2 text-sm lg:px-8 xl:max-w-7xl">
         <div className="flex items-center gap-2">
           <span aria-hidden="true" className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-900" />
           <strong>Testmodus</strong>

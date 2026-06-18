@@ -93,7 +93,9 @@ export function FormRenderer({ schema, data, onChange, disabled, oneDriveFolder,
             <h2 className="mb-4 text-lg font-semibold text-maja-navy">{section.title}</h2>
             <div className="space-y-5">
               {groups.map((g, gi) => g.kind === 'photos' ? (
-                <div key={gi} className="grid grid-cols-2 items-start gap-3">
+                // Mobile 2, Tablet 3, Desktop 4 Bilder pro Reihe — Cards
+                // bleiben quadratisch-knapp und füllen die Breite besser.
+                <div key={gi} className="grid grid-cols-2 items-start gap-3 sm:grid-cols-3 lg:grid-cols-4">
                   {g.fields.map((field) => (
                     <FieldErrorWrapper key={field.id} field={field}>
                       <FieldSwitch

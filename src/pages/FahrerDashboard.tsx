@@ -248,7 +248,7 @@ export function FahrerDashboard() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
             In Bearbeitung
           </h2>
-          <ul className="grid gap-3 sm:grid-cols-2">
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {drafts.map((d) => (
               <DraftCard
                 key={d.id}
@@ -268,7 +268,7 @@ export function FahrerDashboard() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
             Tour-Protokolle
           </h2>
-          <ul className="grid gap-3 sm:grid-cols-2">
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {tourProtokolle.map((tp) => {
               const assignmentId = (tp.tour as unknown as { assignment_id?: string }).assignment_id
                 ?? `${tp.tour.id}-${tp.template.id}`;
@@ -305,7 +305,7 @@ export function FahrerDashboard() {
             Es sind aktuell keine Formular-Vorlagen verfügbar.
           </div>
         ) : (
-          <ul className="grid gap-3 sm:grid-cols-2">
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {templates.map((t) => (
               <AssignedCard
                 key={t.id}

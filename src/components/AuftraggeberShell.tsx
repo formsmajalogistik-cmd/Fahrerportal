@@ -22,11 +22,11 @@ export function AuftraggeberShell({ children }: { children: ReactNode }) {
       <TestModeBanner />
       <OfflineBanner />
       <header className="sticky top-0 z-10 border-b border-maja-navy/10 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 lg:px-8 xl:max-w-7xl">
           <MajaLogo className="h-9" />
           <ProfilMenu />
         </div>
-        <nav className="mx-auto max-w-5xl overflow-x-auto px-2">
+        <nav className="mx-auto max-w-6xl overflow-x-auto px-2 lg:px-6 xl:max-w-7xl">
           <ul className="flex gap-1 py-1">
             {auftraggeberNav.map((item) => (
               <li key={item.to}>
@@ -48,7 +48,7 @@ export function AuftraggeberShell({ children }: { children: ReactNode }) {
           </ul>
         </nav>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-6xl px-4 py-6 lg:px-8 xl:max-w-7xl">{children}</main>
       <PdfPreviewProvider />
     </div>
   );
