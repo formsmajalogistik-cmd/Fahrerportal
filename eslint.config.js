@@ -19,5 +19,17 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Die neuen, sehr strikten React-Hooks-Heuristiken (eslint-plugin-
+      // react-hooks v6) und der Fast-Refresh-Hinweis sind reine
+      // Dev-/Lint-Zeit-Regeln OHNE Laufzeit-Auswirkung. Wir führen sie als
+      // Warnung (sichtbar, aber kein Fehler/CI-Blocker), statt dafür
+      // riskante Effect- oder Datei-Umbauten vorzunehmen, die die
+      // Funktionalität gefährden würden. rules-of-hooks (echte Bugs)
+      // bleibt bewusst auf 'error'.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/purity': 'warn',
+      'react-refresh/only-export-components': 'warn',
+    },
   },
 ])

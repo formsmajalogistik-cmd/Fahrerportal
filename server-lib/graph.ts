@@ -794,6 +794,5 @@ function bytesToBase64(bytes: Uint8Array): string {
   // Browser-Fallback (eigentlich nur server, aber sicher ist sicher)
   let bin = '';
   for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
-  // eslint-disable-next-line no-undef
   return btoa(bin);
 }

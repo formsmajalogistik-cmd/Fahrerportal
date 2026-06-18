@@ -46,7 +46,7 @@ interface Props {
 
 type Tab = 'existing' | 'new';
 
-export function EingangLinkDialog({ formular, template: _template, onClose, onLinked }: Props) {
+export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
   const [tab, setTab] = useState<Tab>('existing');
   const [touren, setTouren] = useState<TourRow[]>([]);
   const [loading, setLoading] = useState(true);
