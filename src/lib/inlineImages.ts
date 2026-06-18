@@ -46,12 +46,6 @@ export async function enrichBodyWithInlineImages(
       .filter((a) => a.contentType.startsWith('image/'))
       .slice(0, MAX_INLINE_FETCHES);
 
-    console.info('[inlineImages] Diagnose:', {
-      cidsImBody: cidsInBody,
-      bildAnhaenge: imageAtts.map((a) => ({
-        name: a.name, isInline: a.isInline ?? null, size: a.size,
-      })),
-    });
     if (imageAtts.length === 0) return htmlBody;
 
     // Pro Bild-Anhang: Bytes + contentId holen, dann gegen die

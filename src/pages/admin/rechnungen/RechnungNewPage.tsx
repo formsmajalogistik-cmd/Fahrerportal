@@ -348,11 +348,6 @@ export function RechnungNewPage() {
       `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${rechnungsdatum}),`
       + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${rechnungsdatum}),`
       + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${rechnungsdatum})`;
-    console.info('[Rechnungen] Touren laden:', {
-      auftraggeber_id: auftraggeber.id,
-      rechnungsdatum,
-      filter: orFilter,
-    });
     let query = supabase
       .from('touren')
       .select(`
@@ -406,10 +401,6 @@ export function RechnungNewPage() {
       info: t.info,
       zusaetze: t.zusaetze ?? [],
     }));
-    console.info('[Rechnungen] Ergebnis:', {
-      anzahl: list.length,
-      tour_ids: list.map((t) => t.tour_id),
-    });
     setTouren(list);
 
     // Positionen rendern: bei getrennten Auslagen-Rechnungen in zwei Töpfe,
@@ -492,11 +483,6 @@ export function RechnungNewPage() {
         `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${referenzDatum}),`
         + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${referenzDatum}),`
         + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${referenzDatum})`;
-      console.info('[Rechnungen] Auslagen-Schnellmodus laden:', {
-        auftraggeber_id: auftraggeber.id,
-        referenzDatum,
-        letzteRechnung: lastRow?.id ?? null,
-      });
       const { data, error: err } = await supabase
         .from('touren')
         .select(`

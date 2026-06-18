@@ -959,11 +959,9 @@ function RechnungPdfButtons({
   const [busy, setBusy] = useState<null | 'preview' | 'download'>(null);
 
   async function preview() {
-    console.info('[Rechnung PDF] Vorschau geklickt:', { pdfUrl });
     setBusy('preview');
     try {
       const ok = await previewOneDrivePdf(pdfUrl, { filename });
-      console.info('[Rechnung PDF] Vorschau-Result:', { ok });
       if (!ok) alert('PDF konnte nicht geöffnet werden. Prüfe Popup-Blocker oder lade die Datei stattdessen herunter.');
     } catch (err) {
       console.error('[Rechnung PDF] Vorschau-Error:', err);
@@ -974,11 +972,9 @@ function RechnungPdfButtons({
   }
 
   async function download() {
-    console.info('[Rechnung PDF] Download geklickt:', { pdfUrl, filename });
     setBusy('download');
     try {
       const ok = await triggerOneDriveDownload(pdfUrl, filename);
-      console.info('[Rechnung PDF] Download-Result:', { ok });
       if (!ok) alert('Download fehlgeschlagen. Sieh in die Browser-Konsole für Details (Network-Tab).');
     } catch (err) {
       console.error('[Rechnung PDF] Download-Error:', err);

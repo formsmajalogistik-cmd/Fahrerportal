@@ -141,12 +141,6 @@ export async function deleteEmail(args: {
   await postAction('delete', args, 25_000);
 }
 
-export async function flagEmail(args: {
-  mailbox: string; messageId: string; flagged: boolean;
-}): Promise<void> {
-  await postAction('flag', args, 25_000);
-}
-
 /** Drei-Status-Markierung setzen (notFlagged / flagged / complete). */
 export async function setFlagStatus(args: {
   mailbox: string; messageId: string; flagStatus: FlagStatus;
@@ -240,16 +234,6 @@ export async function replyToEmail(args: {
   attachments?: OutboundAttachment[];
 }): Promise<void> {
   await postAction('reply', args, 60_000);
-}
-
-export async function forwardEmail(args: {
-  mailbox: string;
-  messageId: string;
-  to: string[];
-  cc?: string[];
-  comment: string;
-}): Promise<void> {
-  await postAction('forward', args, 60_000);
 }
 
 /** Liest einen File-Blob in OutboundAttachment um. */
