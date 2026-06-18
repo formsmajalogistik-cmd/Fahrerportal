@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { useTestMode, useTestGuard } from '../auth/TestModeContext';
 import { fahrerName } from '../lib/names';
 import { uploadFuehrerscheinBild } from '../lib/fuehrerscheinStorage';
+import { LiveCameraField, type CapturedImage } from './LiveCameraField';
 import type { FuehrerscheinAbfrage } from '../types/db';
 
 const DATENSCHUTZ_HINWEIS =
@@ -142,8 +143,8 @@ function FuehrerscheinForm({
 }) {
   const guard = useTestGuard();
   const [name, setName] = useState(defaultName);
-  const [vorderseite, setVorderseite] = useState<File | null>(null);
-  const [rueckseite, setRueckseite] = useState<File | null>(null);
+  const [vorderseite, setVorderseite] = useState<CapturedImage | null>(null);
+  const [rueckseite, setRueckseite] = useState<CapturedImage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -152,19 +153,21 @@ function FuehrerscheinForm({
     // Testmodus: Einreichung wird abgefangen — kein Upload, kein DB-
     // Eintrag, keine echten Bilder im Bucket. Nur der Hinweis-Toast.
     if (testMode) { guard(); return; }
-    if (!vorderseite) { setError('Bitte die Vorderseite hochladen.'); return; }
-    if (!rueckseite) { setError('Bitte die Rückseite hochladen.'); return; }
+    if (!vorderseite) { setError('Bitte die Vorderseite live aufnehmen.'); return; }
+    if (!rueckseite) { setError('Bitte die Rückseite live aufnehmen.'); return; }
     if (!name.trim()) { setError('Bitte deinen Namen eintragen.'); return; }
     setBusy(true);
     try {
-      const vPath = await uploadFuehrerscheinBild(vorderseite, abfrageId, fahrerId, 'vorderseite');
-      const rPath = await uploadFuehrerscheinBild(rueckseite, abfrageId, fahrerId, 'rueckseite');
+      const vPath = await uploadFuehrerscheinBild(vorderseite.file, abfrageId, fahrerId, 'vorderseite');
+      const rPath = await uploadFuehrerscheinBild(rueckseite.file, abfrageId, fahrerId, 'rueckseite');
       const { error: err } = await supabase.from('fuehrerschein_einreichungen').insert({
         abfrage_id: abfrageId,
         fahrer_id: fahrerId,
         name_eingetragen: name.trim(),
         bild_vorderseite_pfad: vPath,
         bild_rueckseite_pfad: rPath,
+        vorderseite_aufgenommen_am: vorderseite.takenAt,
+        rueckseite_aufgenommen_am: rueckseite.takenAt,
       });
       if (err) throw new Error(err.message);
       onDone();
@@ -181,7 +184,8 @@ function FuehrerscheinForm({
         Führerscheinkontrolle{testMode ? ' (Testmodus)' : ''}
       </h2>
       <p className="mt-1 text-sm text-maja-ink">
-        Bitte lade Vorder- und Rückseite deines Führerscheins hoch.
+        Bitte nimm Vorder- und Rückseite deines Führerscheins live mit der
+        Kamera auf (keine Galerie-Auswahl möglich).
       </p>
 
       <div className="mt-3 rounded-lg border border-maja-navy/15 bg-maja-light/60 px-3 py-2 text-xs text-maja-ink dark:bg-surface-700">
@@ -196,8 +200,8 @@ function FuehrerscheinForm({
       )}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <SeiteUpload label="Vorderseite *" file={vorderseite} onPick={setVorderseite} disabled={busy} />
-        <SeiteUpload label="Rückseite *" file={rueckseite} onPick={setRueckseite} disabled={busy} />
+        <LiveCameraField label="Vorderseite *" value={vorderseite} onChange={setVorderseite} disabled={busy} />
+        <LiveCameraField label="Rückseite *" value={rueckseite} onChange={setRueckseite} disabled={busy} />
       </div>
 
       <div className="mt-4">
@@ -226,63 +230,6 @@ function FuehrerscheinForm({
           {busy ? 'Wird übermittelt …' : 'Absenden'}
         </button>
       </div>
-    </div>
-  );
-}
-
-function SeiteUpload({
-  label, file, onPick, disabled,
-}: {
-  label: string;
-  file: File | null;
-  onPick: (f: File | null) => void;
-  disabled?: boolean;
-}) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const galleryRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!file) {
-      queueMicrotask(() => { if (!cancelled) setPreviewUrl(null); });
-      return () => { cancelled = true; };
-    }
-    const url = URL.createObjectURL(file);
-    queueMicrotask(() => { if (!cancelled) setPreviewUrl(url); });
-    return () => { cancelled = true; URL.revokeObjectURL(url); };
-  }, [file]);
-
-  return (
-    <div className="rounded-lg border border-slate-300 p-2 dark:border-slate-600">
-      <div className="mb-1 text-xs font-medium text-maja-ink">{label}</div>
-      <div className="flex aspect-[3/2] items-center justify-center overflow-hidden rounded-md bg-maja-light dark:bg-surface-700">
-        {previewUrl ? (
-          <img src={previewUrl} alt={label} className="h-full w-full object-contain" />
-        ) : (
-          <span className="text-xs text-maja-muted">kein Bild</span>
-        )}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        <button type="button" className="btn-secondary px-2 py-1 text-xs"
-                disabled={disabled} onClick={() => cameraRef.current?.click()}>
-          {file ? 'Neu' : 'Foto'}
-        </button>
-        <button type="button" className="btn-secondary px-2 py-1 text-xs"
-                disabled={disabled} onClick={() => galleryRef.current?.click()}>
-          Galerie
-        </button>
-        {file && (
-          <button type="button" className="px-1 text-xs font-medium text-red-600 hover:underline"
-                  disabled={disabled} onClick={() => onPick(null)}>
-            Entfernen
-          </button>
-        )}
-      </div>
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-             onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = ''; }} />
-      <input ref={galleryRef} type="file" accept="image/*" className="hidden"
-             onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = ''; }} />
     </div>
   );
 }

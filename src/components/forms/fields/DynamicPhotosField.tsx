@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { compressImage, downloadFile, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
-import { useAuth } from '../../../auth/AuthContext';
+import { compressImage, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
 import type { FormField, PhotoValue } from '../../../types/db';
 
 interface Props {
@@ -41,7 +40,6 @@ function randomSuffix(): string {
 export function DynamicPhotosField({
   field, value, oneDriveFolder, formularId, onChange, disabled,
 }: Props) {
-  const { profile } = useAuth();
   const items = asArray(value);
   const limitReached = items.length >= MAX_DYNAMIC_PHOTOS;
   const [uploading, setUploading] = useState(false);
@@ -49,7 +47,7 @@ export function DynamicPhotosField({
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
-  async function addPhoto(file: File, fromCamera: boolean) {
+  async function addPhoto(file: File) {
     setError(null);
     if (items.length >= MAX_DYNAMIC_PHOTOS) {
       setError(`Maximum von ${MAX_DYNAMIC_PHOTOS} Fotos bereits erreicht.`);
@@ -62,10 +60,6 @@ export function DynamicPhotosField({
     });
     try {
       const compressed = await compressImage(file);
-      if (fromCamera && profile?.save_to_gallery) {
-        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-        downloadFile(compressed, `${field.id}_${items.length + 1}_${ts}.jpg`);
-      }
       const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
       // GARANTIERT eindeutiger Dateiname: Index + Timestamp + Zufalls-
       // Suffix. Bei schnellen Aufnahmen kann der Timestamp allein
@@ -133,7 +127,7 @@ export function DynamicPhotosField({
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) void addPhoto(f, true);
+          if (f) void addPhoto(f);
           e.target.value = '';
         }}
       />
@@ -145,7 +139,7 @@ export function DynamicPhotosField({
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) void addPhoto(f, false);
+          if (f) void addPhoto(f);
           e.target.value = '';
         }}
       />

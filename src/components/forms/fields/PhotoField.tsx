@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { compressImage, downloadFile, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
-import { useAuth } from '../../../auth/AuthContext';
+import { compressImage, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
 import { ActionSheet } from '../../ActionSheet';
 import { useLongPress } from '../../../lib/useLongPress';
 import {
@@ -34,7 +33,6 @@ function makeUploadId(formularId: string, fieldId: string): string {
 }
 
 export function PhotoField({ field, value, oneDriveFolder, formularId, onChange, disabled }: Props) {
-  const { profile } = useAuth();
   const { triggerSync, online, syncing } = useSync();
   const current = asPhoto(value);
   const isPending = !!current?.pending_id;
@@ -153,7 +151,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
     triggerSync();
   }
 
-  async function handleFile(file: File, fromCamera: boolean) {
+  async function handleFile(file: File) {
     setError(null);
     setQueueFailed(false);
     // Sofortige lokale Vorschau aus dem Original.
@@ -170,10 +168,6 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
         compressed = await compressImage(file);
       } catch {
         compressed = file;
-      }
-      if (fromCamera && profile?.save_to_gallery) {
-        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-        try { await downloadFile(compressed, `${field.id}_${ts}.jpg`); } catch { /* ignore */ }
       }
       const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
       const filename = `${field.id}.${ext}`;
@@ -325,7 +319,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) void handleFile(f, true);
+          if (f) void handleFile(f);
           e.target.value = '';
         }}
       />
@@ -336,7 +330,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) void handleFile(f, false);
+          if (f) void handleFile(f);
           e.target.value = '';
         }}
       />

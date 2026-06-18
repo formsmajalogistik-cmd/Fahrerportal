@@ -26,7 +26,6 @@ export type Database = {
           role: UserRole;
           vorname: string | null;
           nachname: string | null;
-          save_to_gallery: boolean;
           telefon: string | null;
           position: string | null;
           auftraggeber_id: string | null;
@@ -37,7 +36,6 @@ export type Database = {
           role?: UserRole;
           vorname?: string | null;
           nachname?: string | null;
-          save_to_gallery?: boolean;
           telefon?: string | null;
           position?: string | null;
           auftraggeber_id?: string | null;
@@ -48,7 +46,6 @@ export type Database = {
           role?: UserRole;
           vorname?: string | null;
           nachname?: string | null;
-          save_to_gallery?: boolean;
           telefon?: string | null;
           position?: string | null;
           auftraggeber_id?: string | null;
@@ -517,6 +514,8 @@ export type Database = {
           geprueft: boolean;
           geprueft_am: string | null;
           geprueft_von: string | null;
+          vorderseite_aufgenommen_am: string | null;
+          rueckseite_aufgenommen_am: string | null;
         };
         Insert: {
           id?: string;
@@ -529,6 +528,8 @@ export type Database = {
           geprueft?: boolean;
           geprueft_am?: string | null;
           geprueft_von?: string | null;
+          vorderseite_aufgenommen_am?: string | null;
+          rueckseite_aufgenommen_am?: string | null;
         };
         Update: {
           id?: string;
@@ -541,6 +542,8 @@ export type Database = {
           geprueft?: boolean;
           geprueft_am?: string | null;
           geprueft_von?: string | null;
+          vorderseite_aufgenommen_am?: string | null;
+          rueckseite_aufgenommen_am?: string | null;
         };
         Relationships: [
           {
@@ -1168,7 +1171,8 @@ export type Database = {
         Args: {
           p_vorname: string | null;
           p_nachname: string | null;
-          p_save_to_gallery: boolean;
+          p_telefon?: string | null;
+          p_position?: string | null;
         };
         Returns: void;
       };

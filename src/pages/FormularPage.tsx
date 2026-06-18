@@ -9,6 +9,7 @@ import { PdfPreviewModal } from '../components/forms/PdfPreviewModal';
 import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
+import { collectPageImageBlobs, countPageImages, sharePhotos } from '../lib/sharePagePhotos';
 import { deleteFormPdf } from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
 import { runSubmissionEmails, readSliderState, sliderKey } from '../lib/submissionEmails';
@@ -443,6 +444,27 @@ export function FormularPage() {
   );
   const currentPageIdx = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : 0;
   const hasMultiplePages = pages.length > 1;
+  // „Fotos dieser Seite sichern" (Web Share API) — Anzahl erfasster
+  // Bilder auf der aktuellen Seite (leere Felder zählen nicht).
+  const pageImageCount = useMemo(
+    () => countPageImages(visibleSections, data),
+    [visibleSections, data],
+  );
+  const [sharingPhotos, setSharingPhotos] = useState(false);
+  async function handleSharePagePhotos() {
+    if (!formular) return;
+    setSharingPhotos(true);
+    try {
+      const blobs = await collectPageImageBlobs(visibleSections, data, formular.id);
+      const res = await sharePhotos(blobs);
+      if (res === 'none') setAutoSaveHint('Keine Fotos auf dieser Seite.');
+      else if (res === 'downloaded') setAutoSaveHint('Fotos heruntergeladen.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Fotos konnten nicht gesichert werden.');
+    } finally {
+      setSharingPhotos(false);
+    }
+  }
   // Auf dem letzten (Abschluss-)Tab wird "Endgültig abschließen" primär
   // hervorgehoben, sonst "Speichern und später fortfahren". Greift
   // automatisch für jedes Template — der letzte Tab ist immer der Abschluss.
@@ -568,6 +590,24 @@ export function FormularPage() {
               );
             })}
           </nav>
+        </div>
+      )}
+
+      {pageImageCount > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-maja-muted">
+            Öffnet das Teilen-Menü — wähle „In Fotos sichern", um die Bilder
+            im Album zu speichern.
+          </span>
+          <button
+            type="button"
+            className="btn-secondary text-sm"
+            onClick={() => void handleSharePagePhotos()}
+            disabled={sharingPhotos}
+            title="Alle Fotos dieser Seite über das native Teilen-Menü sichern"
+          >
+            {sharingPhotos ? 'Wird vorbereitet …' : `Fotos dieser Seite sichern (${pageImageCount})`}
+          </button>
         </div>
       )}
 

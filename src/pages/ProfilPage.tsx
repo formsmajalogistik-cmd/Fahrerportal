@@ -24,7 +24,6 @@ export function ProfilPage() {
   const [nachname, setNachname] = useState(profile?.nachname ?? '');
   const [telefon, setTelefon]   = useState(profile?.telefon ?? '');
   const [position, setPosition] = useState(profile?.position ?? '');
-  const [saveGallery, setSaveGallery] = useState<boolean>(!!profile?.save_to_gallery);
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg]       = useState<string | null>(null);
@@ -49,7 +48,6 @@ export function ProfilPage() {
     const { error } = await supabase.rpc('update_my_profile', {
       p_vorname: vorname.trim() || null,
       p_nachname: nachname.trim() || null,
-      p_save_to_gallery: saveGallery,
       p_telefon: telefon.trim() || null,
       p_position: position.trim() || null,
     });
@@ -133,24 +131,6 @@ export function ProfilPage() {
             </p>
           </div>
         </div>
-
-        <label className="flex items-start gap-3 rounded-lg border border-maja-navy/15 bg-maja-light/50 p-3">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-            checked={saveGallery}
-            onChange={(e) => setSaveGallery(e.target.checked)}
-          />
-          <span className="text-sm">
-            <span className="font-medium text-maja-ink">
-              Aufgenommene Fotos auch in der Geräte-Galerie speichern
-            </span>
-            <span className="block text-xs text-maja-muted">
-              Wenn aktiviert, wird beim Aufnehmen eines Fotos ein Download
-              ausgelöst, sodass das Bild in der Galerie deines Geräts landet.
-            </span>
-          </span>
-        </label>
 
         {profileErr && (
           <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
