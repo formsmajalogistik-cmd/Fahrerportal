@@ -12,6 +12,7 @@ import { createClient } from '@supabase/supabase-js';
 interface Req {
   method?: string;
   headers?: Record<string, string | string[] | undefined>;
+  query?: Record<string, string | string[] | undefined>;
 }
 interface Res {
   status: (n: number) => Res;
@@ -29,15 +30,23 @@ export default async function handler(req: Req, res: Res) {
     res.status(405).json({ error: 'Method Not Allowed' }); return;
   }
 
-  // Optionaler Schutz: wenn CRON_SECRET gesetzt ist, muss der Aufruf
-  // Authorization: Bearer <CRON_SECRET> mitschicken (Vercel-Crons setzen
-  // automatisch diesen Header, wenn man ihn dort konfiguriert).
+  // Pflicht-Schutz (Sicherheits-Audit M-3): Der Endpoint löst eine
+  // SECURITY-DEFINER-RPC aus und darf NICHT unauthentifiziert aufrufbar
+  // sein. CRON_SECRET MUSS gesetzt sein; fehlt es, brechen wir mit 500
+  // ab statt offen durchzulassen. Der Aufruf muss das Secret per
+  // Authorization: Bearer <CRON_SECRET> (Vercel-Crons setzen diesen
+  // Header automatisch, wenn konfiguriert) ODER ?secret=<CRON_SECRET>
+  // mitschicken.
   const expected = process.env.CRON_SECRET;
-  if (expected) {
-    const auth = asString(req.headers?.authorization);
-    if (auth !== `Bearer ${expected}`) {
-      res.status(401).json({ error: 'Unauthorized' }); return;
-    }
+  if (!expected) {
+    console.error('[cron-release-greimel] CRON_SECRET ist nicht konfiguriert');
+    res.status(500).json({ error: 'CRON_SECRET nicht konfiguriert' });
+    return;
+  }
+  const auth = asString(req.headers?.authorization);
+  const querySecret = asString(req.query?.secret);
+  if (auth !== `Bearer ${expected}` && querySecret !== expected) {
+    res.status(401).json({ error: 'Unauthorized' }); return;
   }
 
   const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
