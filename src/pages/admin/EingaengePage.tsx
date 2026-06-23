@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { Spinner } from '../../components/Spinner';
 import { useAuth } from '../../auth/AuthContext';
+import { useTestMode } from '../../auth/TestModeContext';
 import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
   asPdfPathList, deleteFormPdf, downloadFormPdf, expectedOneDrivePath,
@@ -47,7 +48,13 @@ interface EingangCounts { alle: number; submitted: number; draft: number }
 
 export function EingaengePage() {
   const { profile } = useAuth();
+  const { isTestUser, effectiveRole, scopedFahrerIds: testScopedFahrerIds } = useTestMode();
   const isAdmin = profile?.role === 'admin';
+  // Test+Fahrer-Sicht: zeigt nur Eingänge des im Banner gewählten Fahrers
+  // (+ Unterkonten). RLS erlaubt Test alle Eingänge zu lesen; der
+  // Filter macht die Sicht realistisch wie bei einem echten Fahrer.
+  const testFahrerScope = isTestUser && effectiveRole === 'fahrer'
+    ? testScopedFahrerIds : null;
   const { markEingangSeen } = useEingaengeNotifications();
   const [rows, setRows] = useState<Row[]>([]);
   const rowsRef = useRef<Row[]>([]);
@@ -108,6 +115,15 @@ export function EingaengePage() {
       .range(offset, offset + PAGE_SIZE - 1);
     if (statusFilter !== 'alle') q = q.eq('status', statusFilter);
     if (cutoffIso) q = q.gte('created_at', cutoffIso);
+    if (testFahrerScope) {
+      if (testFahrerScope.length === 0) {
+        // Kein Fahrer gewählt → leere Liste statt aller Eingänge.
+        setRows([]); setHasMore(false);
+        if (reset) setLoading(false); else setLoadingMore(false);
+        return;
+      }
+      q = q.in('fahrer_id', testFahrerScope);
+    }
     const { data, error: err } = await q;
     if (err) {
       setError(err.message);
@@ -137,7 +153,7 @@ export function EingaengePage() {
     setRows((prev) => (reset ? withTours : [...prev, ...withTours]));
     setHasMore(pageRows.length === PAGE_SIZE);
     if (reset) setLoading(false); else setLoadingMore(false);
-  }, [statusFilter, cutoffIso]);
+  }, [statusFilter, cutoffIso, testFahrerScope]);
 
   // Gesamtzahlen für die Tab-Badges — via COUNT (head), nicht durch
   // Laden aller Zeilen. Respektiert das Zeitfenster.
@@ -147,15 +163,23 @@ export function EingaengePage() {
         .from('ausgefuellte_formulare')
         .select('id', { count: 'exact', head: true });
       if (cutoffIso) q = q.gte('created_at', cutoffIso);
+      if (testFahrerScope) {
+        if (testFahrerScope.length === 0) return null;
+        q = q.in('fahrer_id', testFahrerScope);
+      }
       return q;
     };
     try {
-      const [a, s, d] = await Promise.all([
-        mk(), mk().eq('status', 'submitted'), mk().eq('status', 'draft'),
-      ]);
+      const qa = mk(); const qs = mk()?.eq('status', 'submitted');
+      const qd = mk()?.eq('status', 'draft');
+      if (!qa || !qs || !qd) {
+        setCounts({ alle: 0, submitted: 0, draft: 0 });
+        return;
+      }
+      const [a, s, d] = await Promise.all([qa, qs, qd]);
       setCounts({ alle: a.count ?? 0, submitted: s.count ?? 0, draft: d.count ?? 0 });
     } catch { /* Count nicht kritisch */ }
-  }, [cutoffIso]);
+  }, [cutoffIso, testFahrerScope]);
 
   /** Liste + Zähler frisch laden (nach Mutationen / Filter-Wechsel). */
   const reload = useCallback(() => {

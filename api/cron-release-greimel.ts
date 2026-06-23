@@ -4,8 +4,11 @@
 // abgeschlossenen Touren von ihrem Greimel-Zugang entkoppelt.
 //
 // Aufruf:
-//   Vercel-Cron (siehe vercel.json) sendet den Request einmal pro Nacht.
-//   Optional kann ein Token-Schutz über CRON_SECRET-Env eingerichtet werden.
+//   Vercel-Cron (siehe vercel.json) sendet den Request einmal pro Nacht
+//   und schickt automatisch den Header Authorization: Bearer <CRON_SECRET>,
+//   sofern die Env-Variable CRON_SECRET gesetzt ist. CRON_SECRET ist
+//   PFLICHT (Sicherheits-Audit M-3) — ohne gesetztes Secret antwortet der
+//   Endpoint mit 500, statt offen aufrufbar zu sein.
 
 import { createClient } from '@supabase/supabase-js';
 

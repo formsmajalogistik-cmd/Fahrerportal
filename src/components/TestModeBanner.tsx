@@ -17,6 +17,7 @@ export function TestModeBanner() {
   const {
     isTestUser, effectiveRole, effectiveAuftraggeberId,
     auftraggeberOptions, setEffectiveRole, setEffectiveAuftraggeberId,
+    effectiveFahrerId, fahrerOptions, setEffectiveFahrerId,
   } = useTestMode();
   if (!isTestUser) return null;
 
@@ -54,6 +55,21 @@ export function TestModeBanner() {
                 {auftraggeberOptions.length === 0 && <option value="">— keine vorhanden —</option>}
                 {auftraggeberOptions.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {effectiveRole === 'fahrer' && (
+            <label className="inline-flex items-center gap-1.5 text-xs font-medium">
+              Als Fahrer
+              <select
+                className={BANNER_SELECT_CLS}
+                value={effectiveFahrerId ?? ''}
+                onChange={(e) => setEffectiveFahrerId(e.target.value || null)}
+              >
+                {fahrerOptions.length === 0 && <option value="">— keine vorhanden —</option>}
+                {fahrerOptions.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
                 ))}
               </select>
             </label>

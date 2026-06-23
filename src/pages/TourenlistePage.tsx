@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { useTestGuard } from '../auth/TestModeContext';
+import { useTestGuard, useTestMode } from '../auth/TestModeContext';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
@@ -79,17 +79,24 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 export function TourenlistePage() {
   const { profile, session } = useAuth();
   const { activeFahrer, availableFahrer } = useFahrerContext();
+  const { isTestUser, effectiveRole, scopedFahrerIds: testScopedFahrerIds } = useTestMode();
   const isAdmin = profile?.role === 'admin';
+  // Test+Fahrer-Sicht simuliert einen echten Fahrer (Auswahl im Banner):
+  // gleiche Tour-Sicht wie ein echter Fahrer — nur Touren des gewählten
+  // Fahrers + Unterkonten. RLS lässt Test alles lesen; der Filter
+  // erzwingt die realistische Sicht clientseitig.
+  const isTestFahrerSim = isTestUser && effectiveRole === 'fahrer';
   // Konten, deren Touren mein aktives Konto sieht: das aktive Konto selbst,
   // und — falls es das Haupt-Konto ist — alle eigenen Unterkonten.
   const scopedFahrerIds = useMemo(() => {
+    if (isTestFahrerSim) return testScopedFahrerIds;
     if (!activeFahrer) return [] as string[];
     if (activeFahrer.ist_unterkonto) return [activeFahrer.id];
     const subs = availableFahrer
       .filter((f) => f.ist_unterkonto && f.haupt_user_id === activeFahrer.id)
       .map((f) => f.id);
     return [activeFahrer.id, ...subs];
-  }, [activeFahrer, availableFahrer]);
+  }, [isTestFahrerSim, testScopedFahrerIds, activeFahrer, availableFahrer]);
   const navigate = useNavigate();
   const [openingProtokoll, setOpeningProtokoll] = useState<string | null>(null);
 

@@ -19,6 +19,19 @@ type EffectiveRole = 'fahrer' | 'auftraggeber';
 
 const STORAGE_ROLE = 'maja:test-mode:effective-role';
 const STORAGE_AG   = 'maja:test-mode:auftraggeber-id';
+const STORAGE_FA   = 'maja:test-mode:fahrer-id';
+
+interface FahrerOption {
+  id: string;
+  /** Anzeige-Name fürs Dropdown (vorname + nachname / Mail-Fallback). */
+  label: string;
+  /** Haupt-Konto-User-Id, falls Unterkonto — wird genutzt, um beim
+   *  Filtern Touren/Eingänge des Haupt-Kontos UND aller Unterkonten
+   *  desselben Haupt-Users zu zeigen. */
+  user_id: string;
+  ist_unterkonto: boolean;
+  haupt_user_id: string | null;
+}
 
 interface TestModeValue {
   /** True, wenn der eingeloggte User die Rolle 'test' hat. */
@@ -29,8 +42,17 @@ interface TestModeValue {
   effectiveAuftraggeberId: string | null;
   /** Liste aller Auftraggeber für das Dropdown im Banner. */
   auftraggeberOptions: Array<{ id: string; name: string }>;
+  /** Simulierte Fahrer-Identität für die Fahrer-Sicht im Testmodus. */
+  effectiveFahrerId: string | null;
+  /** Liste aller aktiven Fahrer (für das Banner-Dropdown). */
+  fahrerOptions: FahrerOption[];
+  /** Welche fahrer.id-Werte gelten als „gehört zum simulierten Fahrer"
+   *  (= der gewählte Fahrer selbst + alle Unterkonten desselben Haupt-
+   *  Kontos). Im Nicht-Test-Modus oder ohne Auswahl leeres Array. */
+  scopedFahrerIds: string[];
   setEffectiveRole: (r: EffectiveRole) => void;
   setEffectiveAuftraggeberId: (id: string | null) => void;
+  setEffectiveFahrerId: (id: string | null) => void;
   /** Kurzes Test-Mode-Toast einblenden (zentriert unten). */
   showTestToast: (text?: string) => void;
   /** Read der aktuellen Toast-Message (für Provider-internes Rendern). */
@@ -55,27 +77,71 @@ export function TestModeProvider({ children }: { children: ReactNode }) {
     try { return localStorage.getItem(STORAGE_AG); } catch { return null; }
   });
 
+  const [effectiveFahrerId, setEffectiveFahrerIdState] = useState<string | null>(() => {
+    try { return localStorage.getItem(STORAGE_FA); } catch { return null; }
+  });
+
   const [auftraggeberOptions, setAuftraggeberOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [fahrerOptions, setFahrerOptions] = useState<FahrerOption[]>([]);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Auftraggeber-Liste nur für Test-User laden. RLS lässt Test-User
-  // alle Auftraggeber lesen (siehe Migration 059).
+  // Auftraggeber- + Fahrer-Liste nur für Test-User laden. RLS lässt
+  // Test-User alle Stammdaten lesen (siehe Migration 059).
   useEffect(() => {
     if (!isTestUser) {
       // Asynchron, damit der Reset nicht synchron im Effect läuft
       // (react-hooks/set-state-in-effect).
-      queueMicrotask(() => setAuftraggeberOptions([]));
+      queueMicrotask(() => {
+        setAuftraggeberOptions([]);
+        setFahrerOptions([]);
+      });
       return;
     }
     let cancelled = false;
     void (async () => {
-      const { data } = await supabase.from('auftraggeber').select('id, name').order('name');
+      const [agRes, faRes] = await Promise.all([
+        supabase.from('auftraggeber').select('id, name').order('name'),
+        supabase
+          .from('fahrer')
+          .select('id, user_id, ist_unterkonto, haupt_user_id, vorname, nachname, user:user_id (email, vorname, nachname)')
+          .eq('aktiv', true),
+      ]);
       if (cancelled) return;
-      const list = (data as Array<{ id: string; name: string }>) ?? [];
-      setAuftraggeberOptions(list);
+      const agList = (agRes.data as Array<{ id: string; name: string }>) ?? [];
+      setAuftraggeberOptions(agList);
       // Wenn noch keiner gewählt ist und die Liste nicht leer, ersten
       // setzen — sonst zeigt die Auftraggeber-Sicht keine Touren.
-      setEffectiveAuftraggeberIdState((cur) => cur ?? list[0]?.id ?? null);
+      setEffectiveAuftraggeberIdState((cur) => cur ?? agList[0]?.id ?? null);
+
+      type RawFahrer = {
+        id: string; user_id: string;
+        ist_unterkonto: boolean | null; haupt_user_id: string | null;
+        vorname: string | null; nachname: string | null;
+        user: { email: string | null; vorname: string | null; nachname: string | null } | null;
+      };
+      const raw = (faRes.data as unknown as RawFahrer[]) ?? [];
+      const faList: FahrerOption[] = raw.map((f) => {
+        const vor = (f.vorname ?? f.user?.vorname ?? '').trim();
+        const nach = (f.nachname ?? f.user?.nachname ?? '').trim();
+        const name = `${vor} ${nach}`.trim();
+        const label = name !== ''
+          ? `${name}${f.ist_unterkonto ? ' (Unterkonto)' : ''}`
+          : (f.user?.email ?? f.id.slice(0, 8));
+        return {
+          id: f.id, user_id: f.user_id,
+          ist_unterkonto: !!f.ist_unterkonto,
+          haupt_user_id: f.haupt_user_id,
+          label,
+        };
+      }).sort((a, b) => a.label.localeCompare(b.label, 'de'));
+      setFahrerOptions(faList);
+      // Default: ersten Fahrer (bevorzugt Haupt-Konto) wählen, damit
+      // die Tourenliste im Testmodus nicht leer bleibt.
+      setEffectiveFahrerIdState((cur) => {
+        if (cur && faList.some((f) => f.id === cur)) return cur;
+        const firstHaupt = faList.find((f) => !f.ist_unterkonto);
+        return cur ?? firstHaupt?.id ?? faList[0]?.id ?? null;
+      });
     })();
     return () => { cancelled = true; };
   }, [isTestUser]);
@@ -93,6 +159,29 @@ export function TestModeProvider({ children }: { children: ReactNode }) {
     } catch { /* noop */ }
   }, []);
 
+  const setEffectiveFahrerId = useCallback((id: string | null) => {
+    setEffectiveFahrerIdState(id);
+    try {
+      if (id) localStorage.setItem(STORAGE_FA, id);
+      else localStorage.removeItem(STORAGE_FA);
+    } catch { /* noop */ }
+  }, []);
+
+  // Scope-Auflösung: der simulierte Fahrer SIEHT die eigenen Touren
+  // plus die seiner Unterkonten (wenn er Haupt-Konto ist). Bei Auswahl
+  // eines Unterkontos nur dessen Daten — analog zur echten Logik in
+  // TourenlistePage.scopedFahrerIds.
+  const scopedFahrerIds = useMemo<string[]>(() => {
+    if (!isTestUser || !effectiveFahrerId) return [];
+    const me = fahrerOptions.find((f) => f.id === effectiveFahrerId);
+    if (!me) return [effectiveFahrerId];
+    if (me.ist_unterkonto) return [me.id];
+    const subs = fahrerOptions
+      .filter((f) => f.ist_unterkonto && f.haupt_user_id === me.user_id)
+      .map((f) => f.id);
+    return [me.id, ...subs];
+  }, [isTestUser, effectiveFahrerId, fahrerOptions]);
+
   const showTestToast = useCallback((text?: string) => {
     setToast(text ?? 'Testmodus — Änderungen werden nicht gespeichert.');
     window.setTimeout(() => setToast(null), 3500);
@@ -103,13 +192,19 @@ export function TestModeProvider({ children }: { children: ReactNode }) {
     effectiveRole,
     effectiveAuftraggeberId,
     auftraggeberOptions,
+    effectiveFahrerId,
+    fahrerOptions,
+    scopedFahrerIds,
     setEffectiveRole,
     setEffectiveAuftraggeberId,
+    setEffectiveFahrerId,
     showTestToast,
     toast,
   }), [
     isTestUser, effectiveRole, effectiveAuftraggeberId, auftraggeberOptions,
-    setEffectiveRole, setEffectiveAuftraggeberId, showTestToast, toast,
+    effectiveFahrerId, fahrerOptions, scopedFahrerIds,
+    setEffectiveRole, setEffectiveAuftraggeberId, setEffectiveFahrerId,
+    showTestToast, toast,
   ]);
 
   return (
@@ -138,8 +233,12 @@ export function useTestMode(): TestModeValue {
       effectiveRole: 'fahrer',
       effectiveAuftraggeberId: null,
       auftraggeberOptions: [],
+      effectiveFahrerId: null,
+      fahrerOptions: [],
+      scopedFahrerIds: [],
       setEffectiveRole: () => { /* noop */ },
       setEffectiveAuftraggeberId: () => { /* noop */ },
+      setEffectiveFahrerId: () => { /* noop */ },
       showTestToast: () => { /* noop */ },
       toast: null,
     };
