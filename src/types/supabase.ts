@@ -516,6 +516,8 @@ export type Database = {
           geprueft_von: string | null;
           vorderseite_aufgenommen_am: string | null;
           rueckseite_aufgenommen_am: string | null;
+          manuell_erledigt: boolean;
+          manuell_grund: string | null;
         };
         Insert: {
           id?: string;
@@ -530,6 +532,8 @@ export type Database = {
           geprueft_von?: string | null;
           vorderseite_aufgenommen_am?: string | null;
           rueckseite_aufgenommen_am?: string | null;
+          manuell_erledigt?: boolean;
+          manuell_grund?: string | null;
         };
         Update: {
           id?: string;
@@ -544,6 +548,8 @@ export type Database = {
           geprueft_von?: string | null;
           vorderseite_aufgenommen_am?: string | null;
           rueckseite_aufgenommen_am?: string | null;
+          manuell_erledigt?: boolean;
+          manuell_grund?: string | null;
         };
         Relationships: [
           {
@@ -795,6 +801,7 @@ export type Database = {
           nachname: string | null;
           haupt_user_id: string | null;
           ist_unterkonto: boolean;
+          fs_ausgenommen: boolean;
         };
         Insert: {
           id?: string;
@@ -804,6 +811,7 @@ export type Database = {
           nachname?: string | null;
           haupt_user_id?: string | null;
           ist_unterkonto?: boolean;
+          fs_ausgenommen?: boolean;
         };
         Update: {
           id?: string;
@@ -813,6 +821,7 @@ export type Database = {
           nachname?: string | null;
           haupt_user_id?: string | null;
           ist_unterkonto?: boolean;
+          fs_ausgenommen?: boolean;
         };
         Relationships: [
           {

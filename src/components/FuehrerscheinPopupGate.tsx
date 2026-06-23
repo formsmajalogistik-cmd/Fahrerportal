@@ -43,6 +43,9 @@ export function FuehrerscheinPopupGate() {
   const eligible = role === 'fahrer' || isTestFahrer;
 
   const fahrerId = activeFahrer?.id ?? null;
+  // Dauerhaft von Führerscheinabfragen ausgenommene Konten erhalten kein
+  // Popup (z.B. Disponent ohne Fahrtätigkeit). Test-Demo bleibt unberührt.
+  const ausgenommen = activeFahrer?.fs_ausgenommen ?? false;
   const [abfrage, setAbfrage] = useState<FuehrerscheinAbfrage | null>(null);
   const [needsSubmit, setNeedsSubmit] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -65,6 +68,8 @@ export function FuehrerscheinPopupGate() {
       setAbfrage(null);
       // Echte Logik nur für die Rolle 'fahrer' mit aktivem Konto.
       if (role !== 'fahrer' || !fahrerId) return;
+      // Ausgenommene Konten nie zur Einreichung auffordern.
+      if (ausgenommen) return;
       try {
         const { data: open } = await supabase
           .from('fuehrerschein_abfragen')
@@ -88,7 +93,7 @@ export function FuehrerscheinPopupGate() {
       }
     }
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [fahrerId, isTestFahrer, role]);
+  }, [fahrerId, isTestFahrer, role, ausgenommen]);
 
   if (!eligible || !needsSubmit || dismissed) return null;
 

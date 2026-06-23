@@ -13,6 +13,7 @@ interface FahrerRow {
   id: string;
   vorname: string | null;
   nachname: string | null;
+  fs_ausgenommen: boolean;
   user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
 }
 
@@ -36,6 +37,11 @@ export function FuehrerscheinPage() {
   const [pruefBusy, setPruefBusy] = useState<string | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Fahrer, der gerade manuell als erledigt markiert wird (Grund-Dialog).
+  const [manuellFor, setManuellFor] = useState<FahrerRow | null>(null);
+  const [manuellBusy, setManuellBusy] = useState(false);
+  // Pro Fahrer-Id laufende Aktion (manuell rückgängig / ausnehmen).
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
 
   const openAbfrage = useMemo(() => abfragen.find((a) => a.status === 'offen') ?? null, [abfragen]);
   const selected = useMemo(
@@ -49,7 +55,7 @@ export function FuehrerscheinPage() {
     const [aRes, fRes] = await Promise.all([
       supabase.from('fuehrerschein_abfragen').select('*').order('gestartet_am', { ascending: false }),
       supabase.from('fahrer')
-        .select('id, vorname, nachname, user:user_id (email, vorname, nachname)')
+        .select('id, vorname, nachname, fs_ausgenommen, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true),
     ]);
     if (aRes.error) setError(aRes.error.message);
@@ -130,6 +136,76 @@ export function FuehrerscheinPage() {
     }
   }
 
+  /** Einen Account ohne Einreichung manuell als erledigt verbuchen.
+   *  Legt einen Einreichungs-Datensatz mit manuell_erledigt=true an —
+   *  KEINE Bilder. `grund` optional. */
+  async function markManuellErledigt(fahrerRow: FahrerRow, grund: string) {
+    if (!selected) return;
+    setManuellBusy(true);
+    setError(null);
+    try {
+      const { error: err } = await supabase
+        .from('fuehrerschein_einreichungen')
+        .insert({
+          abfrage_id: selected.id,
+          fahrer_id: fahrerRow.id,
+          manuell_erledigt: true,
+          manuell_grund: grund.trim() || null,
+          geprueft_am: new Date().toISOString(),
+          geprueft_von: profile?.id ?? null,
+        });
+      if (err) throw new Error(err.message);
+      setManuellFor(null);
+      await loadEinreichungen(selected.id);
+      showToast('Account manuell als erledigt markiert.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Markieren fehlgeschlagen');
+    } finally {
+      setManuellBusy(false);
+    }
+  }
+
+  /** Manuelle Erledigung rückgängig machen (Datensatz löschen). Nur für
+   *  manuell_erledigt-Zeilen — die haben keine Bilder. */
+  async function undoManuellErledigt(einr: FuehrerscheinEinreichung) {
+    setRowBusy(einr.fahrer_id);
+    setError(null);
+    try {
+      const { error: err } = await supabase
+        .from('fuehrerschein_einreichungen')
+        .delete()
+        .eq('id', einr.id);
+      if (err) throw new Error(err.message);
+      if (selectedId) await loadEinreichungen(selectedId);
+      showToast('Manuelle Erledigung zurückgenommen.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rücknahme fehlgeschlagen');
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
+  /** Account dauerhaft von Führerscheinabfragen ausnehmen / wieder
+   *  einbeziehen (Flag am Fahrer). Wirkt abfrageübergreifend. */
+  async function toggleAusgenommen(fahrerRow: FahrerRow) {
+    const next = !fahrerRow.fs_ausgenommen;
+    setRowBusy(fahrerRow.id);
+    setError(null);
+    try {
+      const { error: err } = await supabase
+        .from('fahrer')
+        .update({ fs_ausgenommen: next })
+        .eq('id', fahrerRow.id);
+      if (err) throw new Error(err.message);
+      setFahrer((prev) => prev.map((f) => (f.id === fahrerRow.id ? { ...f, fs_ausgenommen: next } : f)));
+      showToast(next ? 'Account von Abfragen ausgenommen.' : 'Account wieder einbezogen.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Aktualisieren fehlgeschlagen');
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
   async function closeAbfrage() {
     if (!selected) return;
     const { error: err } = await supabase
@@ -148,9 +224,25 @@ export function FuehrerscheinPage() {
     return m;
   }, [einreichungen]);
 
-  const eingereichtCount = einreichungen.length;
-  const geprueftCount = einreichungen.filter((e) => e.geprueft).length;
-  const alleGeprueft = eingereichtCount > 0 && geprueftCount === eingereichtCount;
+  // Relevante Fahrer = aktive, nicht dauerhaft ausgenommene Accounts.
+  // Nur diese müssen erledigt sein, damit die Abfrage abschliessbar ist.
+  const relevanteFahrer = useMemo(() => fahrer.filter((f) => !f.fs_ausgenommen), [fahrer]);
+  const ausgenommeneFahrer = useMemo(() => fahrer.filter((f) => f.fs_ausgenommen), [fahrer]);
+
+  // Status pro relevantem Fahrer für Fortschritt & Abschluss-Logik.
+  const eingereichtCount = relevanteFahrer.filter((f) => {
+    const e = einrByFahrer.get(f.id);
+    return e && !e.manuell_erledigt;
+  }).length;
+  const geprueftCount = relevanteFahrer.filter((f) => einrByFahrer.get(f.id)?.geprueft).length;
+  const manuellCount = relevanteFahrer.filter((f) => einrByFahrer.get(f.id)?.manuell_erledigt).length;
+  // „Erledigt" = geprüfte Einreichung ODER manuell erledigt.
+  const erledigtCount = relevanteFahrer.filter((f) => {
+    const e = einrByFahrer.get(f.id);
+    return !!e && (e.geprueft || e.manuell_erledigt);
+  }).length;
+  // Abschliessbar, sobald jeder relevante Fahrer erledigt ist.
+  const alleErledigt = relevanteFahrer.length > 0 && erledigtCount === relevanteFahrer.length;
 
   if (loading) return <Spinner label="Führerscheinabfragen werden geladen …" />;
 
@@ -217,15 +309,25 @@ export function FuehrerscheinPage() {
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-3 text-sm text-maja-muted">
-              <span>{eingereichtCount} von {fahrer.length} Fahrern eingereicht</span>
+              <span className="font-medium text-maja-ink">
+                {erledigtCount} von {relevanteFahrer.length} erledigt
+              </span>
               <span>·</span>
-              <span>{geprueftCount} von {eingereichtCount} geprüft</span>
+              <span>{geprueftCount} geprüft</span>
+              {manuellCount > 0 && <><span>·</span><span>{manuellCount} manuell</span></>}
+              <span>·</span>
+              <span>{eingereichtCount} eingereicht</span>
+              {ausgenommeneFahrer.length > 0 && (
+                <><span>·</span><span>{ausgenommeneFahrer.length} ausgenommen</span></>
+              )}
               {selected.status === 'offen' && (
                 <button
                   type="button"
                   className="btn-secondary ml-auto text-sm"
-                  disabled={!alleGeprueft}
-                  title={alleGeprueft ? 'Abfrage abschließen' : 'Erst möglich, wenn alle Einreichungen geprüft sind'}
+                  disabled={!alleErledigt}
+                  title={alleErledigt
+                    ? 'Abfrage abschließen'
+                    : 'Erst möglich, wenn alle relevanten Accounts geprüft oder manuell erledigt sind'}
                   onClick={() => setConfirmClose(true)}
                 >
                   Abfrage abschließen
@@ -238,7 +340,7 @@ export function FuehrerscheinPage() {
                 <thead className="bg-maja-light text-left text-maja-navy">
                   <tr>
                     <th className="px-3 py-2 font-semibold">Fahrer</th>
-                    <th className="px-3 py-2 font-semibold">Eingereicht</th>
+                    <th className="px-3 py-2 font-semibold">Status</th>
                     <th className="px-3 py-2 font-semibold">Eingetragener Name</th>
                     <th className="px-3 py-2 font-semibold">Datum</th>
                     <th className="px-3 py-2 font-semibold text-right">Aktion</th>
@@ -248,56 +350,98 @@ export function FuehrerscheinPage() {
                   {fahrer.map((f) => {
                     const e = einrByFahrer.get(f.id) ?? null;
                     const name = resolveFahrerName(f, f.user ?? null) || displayName(f.user ?? null) || '—';
+                    const offen = !f.fs_ausgenommen && !e;
+                    const isOpenAbfrage = selected.status === 'offen';
                     return (
-                      <tr key={f.id} className="hover:bg-maja-light/50">
+                      <tr key={f.id} className={`hover:bg-maja-light/50 ${f.fs_ausgenommen ? 'opacity-60' : ''}`}>
                         <td className="px-3 py-2 font-medium text-maja-ink">{name}</td>
-                        <td className="px-3 py-2">
-                          {e ? (
-                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                              ja
-                            </span>
-                          ) : (
-                            <span className="inline-flex rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
-                              nein
-                            </span>
-                          )}
-                        </td>
+                        <td className="px-3 py-2"><StatusBadge fahrer={f} einr={e} /></td>
                         <td className="px-3 py-2 text-maja-ink">{e?.name_eingetragen ?? '—'}</td>
                         <td className="px-3 py-2 whitespace-nowrap text-maja-muted">
-                          {e ? fmt(e.eingereicht_am) : '—'}
+                          {e?.manuell_erledigt ? fmt(e.geprueft_am) : e ? fmt(e.eingereicht_am) : '—'}
                         </td>
                         <td className="px-3 py-2">
-                          {e ? (
-                            <div className="flex items-center justify-end gap-3">
-                              {e.geprueft ? (
-                                <span className="text-xs font-medium text-emerald-700">
-                                  geprüft {fmt(e.geprueft_am)}
-                                </span>
-                              ) : (
-                                <>
-                                  {(e.bild_vorderseite_pfad || e.bild_rueckseite_pfad) && (
-                                    <button
-                                      type="button"
-                                      className="text-xs font-medium text-maja-accent hover:underline"
-                                      onClick={() => setViewing(e)}
-                                    >
-                                      Ansehen
-                                    </button>
-                                  )}
+                          <div className="flex items-center justify-end gap-3">
+                            {/* Echte, geprüfte Einreichung */}
+                            {e && !e.manuell_erledigt && e.geprueft && (
+                              <span className="text-xs font-medium text-emerald-700">
+                                geprüft {fmt(e.geprueft_am)}
+                              </span>
+                            )}
+                            {/* Echte, offene Einreichung → ansehen + prüfen */}
+                            {e && !e.manuell_erledigt && !e.geprueft && (
+                              <>
+                                {(e.bild_vorderseite_pfad || e.bild_rueckseite_pfad) && (
                                   <button
                                     type="button"
-                                    className="rounded-md bg-maja-navy px-2.5 py-1 text-xs font-medium text-white hover:bg-maja-accent disabled:opacity-50"
-                                    disabled={pruefBusy === e.id}
-                                    onClick={() => void markGeprueft(e)}
+                                    className="text-xs font-medium text-maja-accent hover:underline"
+                                    onClick={() => setViewing(e)}
                                   >
-                                    {pruefBusy === e.id ? 'Prüft …' : 'Geprüft'}
+                                    Ansehen
                                   </button>
-                                </>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="block text-right text-xs text-maja-muted">—</span>
-                          )}
+                                )}
+                                <button
+                                  type="button"
+                                  className="rounded-md bg-maja-navy px-2.5 py-1 text-xs font-medium text-white hover:bg-maja-accent disabled:opacity-50"
+                                  disabled={pruefBusy === e.id}
+                                  onClick={() => void markGeprueft(e)}
+                                >
+                                  {pruefBusy === e.id ? 'Prüft …' : 'Geprüft'}
+                                </button>
+                              </>
+                            )}
+                            {/* Manuell erledigt → rückgängig (nur offene Abfrage) */}
+                            {e && e.manuell_erledigt && (
+                              isOpenAbfrage ? (
+                                <button
+                                  type="button"
+                                  className="text-xs font-medium text-maja-muted hover:text-red-600 hover:underline disabled:opacity-50"
+                                  disabled={rowBusy === f.id}
+                                  onClick={() => void undoManuellErledigt(e)}
+                                >
+                                  {rowBusy === f.id ? 'Wird zurückgenommen …' : 'Rückgängig'}
+                                </button>
+                              ) : (
+                                <span className="text-xs text-maja-muted">—</span>
+                              )
+                            )}
+                            {/* Offener Account (keine Einreichung, nicht ausgenommen) */}
+                            {offen && isOpenAbfrage && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-maja-navy/30 px-2.5 py-1 text-xs font-medium text-maja-navy hover:bg-maja-light disabled:opacity-50"
+                                  disabled={rowBusy === f.id}
+                                  onClick={() => setManuellFor(f)}
+                                >
+                                  Manuell erledigen
+                                </button>
+                                <button
+                                  type="button"
+                                  className="text-xs font-medium text-maja-muted hover:text-maja-navy hover:underline disabled:opacity-50"
+                                  disabled={rowBusy === f.id}
+                                  onClick={() => void toggleAusgenommen(f)}
+                                  title="Diesen Account dauerhaft von Führerscheinabfragen ausnehmen"
+                                >
+                                  Ausnehmen
+                                </button>
+                              </>
+                            )}
+                            {offen && !isOpenAbfrage && (
+                              <span className="text-xs text-maja-muted">—</span>
+                            )}
+                            {/* Dauerhaft ausgenommen → wieder einbeziehen */}
+                            {f.fs_ausgenommen && (
+                              <button
+                                type="button"
+                                className="text-xs font-medium text-maja-accent hover:underline disabled:opacity-50"
+                                disabled={rowBusy === f.id}
+                                onClick={() => void toggleAusgenommen(f)}
+                              >
+                                {rowBusy === f.id ? '…' : 'Einbeziehen'}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -311,6 +455,16 @@ export function FuehrerscheinPage() {
 
       {viewing && (
         <BilderModal einreichung={viewing} onClose={() => setViewing(null)} />
+      )}
+
+      {manuellFor && (
+        <ManuellErledigtDialog
+          fahrerName={resolveFahrerName(manuellFor, manuellFor.user ?? null)
+            || displayName(manuellFor.user ?? null) || 'Account'}
+          busy={manuellBusy}
+          onConfirm={(grund) => void markManuellErledigt(manuellFor, grund)}
+          onClose={() => { if (!manuellBusy) setManuellFor(null); }}
+        />
       )}
 
       {confirmClose && (
@@ -372,6 +526,78 @@ function BilderModal({
         <p className="mt-3 text-xs text-maja-muted">
           Die Links sind aus Datenschutzgründen nur wenige Minuten gültig.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/** Status-Badge pro Fahrer — unterscheidet echte Prüfung klar von der
+ *  manuellen Erledigung und der dauerhaften Ausnahme. */
+function StatusBadge({
+  fahrer, einr,
+}: { fahrer: FahrerRow; einr: FuehrerscheinEinreichung | null }) {
+  const base = 'inline-flex rounded-full px-2 py-0.5 text-xs font-medium';
+  if (fahrer.fs_ausgenommen) {
+    return <span className={`${base} bg-slate-200 text-slate-600`}>ausgenommen</span>;
+  }
+  if (einr?.manuell_erledigt) {
+    return (
+      <span
+        className={`${base} bg-violet-100 text-violet-800`}
+        title={einr.manuell_grund ? `Grund: ${einr.manuell_grund}` : 'Manuell erledigt (keine Einreichung)'}
+      >
+        manuell erledigt
+      </span>
+    );
+  }
+  if (einr?.geprueft) {
+    return <span className={`${base} bg-emerald-100 text-emerald-800`}>geprüft</span>;
+  }
+  if (einr) {
+    return <span className={`${base} bg-amber-100 text-amber-800`}>eingereicht</span>;
+  }
+  return <span className={`${base} bg-gray-200 text-gray-600`}>offen</span>;
+}
+
+/** Dialog zum manuellen Erledigen eines Accounts mit optionalem Grund. */
+function ManuellErledigtDialog({
+  fahrerName, busy, onConfirm, onClose,
+}: {
+  fahrerName: string;
+  busy: boolean;
+  onConfirm: (grund: string) => void;
+  onClose: () => void;
+}) {
+  const [grund, setGrund] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-maja-ink/50 px-4 py-8">
+      <div className="card w-full max-w-md p-5">
+        <h2 className="text-lg font-semibold text-maja-navy">Manuell als erledigt markieren</h2>
+        <p className="mt-1 text-sm text-maja-ink">
+          <span className="font-medium">{fahrerName}</span> wird für diese Abfrage als
+          erledigt verbucht — ohne Einreichung und ohne Bild. In der Liste klar als
+          „manuell erledigt" gekennzeichnet.
+        </p>
+        <div className="mt-4">
+          <label htmlFor="fs-grund" className="label">Grund (optional)</label>
+          <input
+            id="fs-grund"
+            className="input"
+            value={grund}
+            onChange={(e) => setGrund(e.target.value)}
+            placeholder="z.B. fährt nicht, extern geprüft, Test-Account"
+            disabled={busy}
+            autoFocus
+          />
+        </div>
+        <div className="mt-5 flex justify-between gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>
+            Abbrechen
+          </button>
+          <button type="button" className="btn-primary" onClick={() => onConfirm(grund)} disabled={busy}>
+            {busy ? 'Wird gespeichert …' : 'Als erledigt markieren'}
+          </button>
+        </div>
       </div>
     </div>
   );
