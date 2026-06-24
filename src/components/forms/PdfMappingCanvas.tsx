@@ -113,6 +113,7 @@ export function PdfMappingCanvas({
                 pageSize={pageSize}
                 x={entry.x}
                 y={entry.y}
+                align={entry.align ?? 'right'}
                 label={label}
                 selected={isSel}
                 onClick={(e) => { e.stopPropagation(); onMarkerClick?.({ fieldId }); }}
@@ -242,33 +243,36 @@ export function PdfMappingCanvas({
 // ---------- Marker-Komponenten ----------
 
 function PointMarker({
-  pageSize, x, y, label, selected, onClick,
+  pageSize, x, y, label, selected, onClick, align = 'right',
 }: {
   pageSize: { w: number; h: number };
   x: number; y: number;
   label: string; selected: boolean;
+  align?: 'left' | 'right';
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
-  // X-Anker = rechter Rand des Feldes → Marker links vom Anker.
-  // Y wird so umgerechnet, dass das Label IN das Canvas hineinragt: in der
-  // oberen Hälfte hängt es UNTER dem Anker-Punkt, in der unteren Hälfte
-  // ÜBER dem Anker-Punkt — so wird es nie vom Canvas-Rand abgeschnitten.
+  // Das Label wächst in die Richtung, in die der Text auf dem PDF läuft:
+  // 'right' (rechtsbündig) → Anker = rechter Rand, Label nach LINKS
+  // (-translate-x-full); 'left' (linksbündig) → Anker = linker Rand,
+  // Label nach RECHTS. Y so umgerechnet, dass das Label ins Canvas ragt.
   const left = (x / pageSize.w) * 100;
   const topPct = ((pageSize.h - y) / pageSize.h) * 100;
   const labelAbove = topPct > 50;
+  const arrow = align === 'left' ? '⇥ ' : '⇤ ';
   return (
     <button
       type="button"
       onClick={onClick}
       title={label}
       className={
-        'absolute z-20 -translate-x-full whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
+        'absolute z-20 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
+        (align === 'left' ? 'translate-x-0' : '-translate-x-full') + ' ' +
         (labelAbove ? '-translate-y-full' : 'translate-y-0') + ' ' +
         (selected ? 'bg-red-600' : 'bg-maja-accent')
       }
       style={{ left: `${left}%`, top: `${topPct}%` }}
     >
-      {label}
+      {arrow}{label}
     </button>
   );
 }

@@ -473,6 +473,10 @@ export async function fillPdf(
       const defaultSize = entry.fontSize ?? TEXT_DEFAULT_FONT;
       const measure = (s: string, sz: number) => font.widthOfTextAtSize(s, sz);
       const targetPage = page(entry.page);
+      // Ankerpunkt-X je nach Ausrichtung: 'left' beginnt am Anker (x),
+      // sonst rechtsbündig (Anker = rechter Rand → x - Textbreite). Fehlt
+      // align, gilt 'right' (Bestands-Mappings unverändert).
+      const anchorX = (w: number) => (entry.align === 'left' ? entry.x : entry.x - w);
 
       if (entry.maxWidth && entry.maxWidth > 0) {
         // Auto-fit: erst einzeilig schrumpfen (bis 7 pt), dann ggf.
@@ -487,7 +491,7 @@ export async function fillPdf(
         if (fits) {
           const w = measure(text, size);
           targetPage.drawText(text, {
-            x: entry.x - w, y: entry.y, size, font, color: INK,
+            x: anchorX(w), y: entry.y, size, font, color: INK,
           });
         } else {
           // Auch bei 7 pt zu lang: auf bis zu 3 Zeilen umbrechen,
@@ -501,7 +505,7 @@ export async function fillPdf(
           lines.forEach((line, i) => {
             const w = measure(line, wrapSize);
             targetPage.drawText(line, {
-              x: entry.x - w,
+              x: anchorX(w),
               y: entry.y + topOffset - i * lineHeight,
               size: wrapSize, font, color: INK,
             });
@@ -512,12 +516,11 @@ export async function fillPdf(
           );
         }
       } else {
-        // Kein maxWidth gesetzt → altes Verhalten (rechtsbündig, eine Zeile,
-        // kein Schrumpfen). Für Bestands-Templates ohne Migration des
-        // Mappings. Neue/aktualisierte Templates setzen maxWidth.
+        // Kein maxWidth gesetzt → einzeilig, kein Schrumpfen. Ausrichtung
+        // weiterhin über anchorX (Default rechtsbündig wie bisher).
         const w = measure(text, defaultSize);
         targetPage.drawText(text, {
-          x: entry.x - w, y: entry.y, size: defaultSize, font, color: INK,
+          x: anchorX(w), y: entry.y, size: defaultSize, font, color: INK,
         });
       }
       continue;

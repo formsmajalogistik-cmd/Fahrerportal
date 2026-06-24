@@ -137,6 +137,13 @@ export type TextEntry = {
    *  dann wird umbrochen (max. 3 Zeilen). Ohne maxWidth verhält sich
    *  das Mapping wie früher (rechtsbündig, einzeilig, kein Schrumpfen). */
   maxWidth?: number;
+  /** Textausrichtung relativ zum Ankerpunkt (x):
+   *  - 'right' (Default, auch wenn das Feld fehlt): Ankerpunkt = rechter
+   *    Rand, Text endet am Anker und wächst nach LINKS — bisheriges
+   *    Verhalten, damit Bestands-Mappings unverändert bleiben.
+   *  - 'left': Ankerpunkt = linker Rand, Text beginnt am Anker und wächst
+   *    nach RECHTS. */
+  align?: 'left' | 'right';
 };
 
 export type BoxEntry = {

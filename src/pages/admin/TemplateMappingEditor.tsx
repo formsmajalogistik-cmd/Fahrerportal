@@ -834,8 +834,17 @@ function DetailPanel({
               maxWidth: v > 0 ? v : undefined,
             })}
           />
+          <AlignToggle
+            value={entry.align ?? 'right'}
+            onChange={(a) => onUpdateText(selection.fieldId, { align: a })}
+          />
         </div>
         <p className="mt-2 text-xs text-maja-muted">
+          Ausrichtung legt fest, wie der Text zum Ankerpunkt (X) läuft:
+          rechtsbündig endet am Anker (Text wächst nach links), linksbündig
+          beginnt am Anker (Text wächst nach rechts).
+        </p>
+        <p className="mt-1 text-xs text-maja-muted">
           Max-Breite aktiviert die Auto-Anpassung: zu lange Texte verkleinern sich
           erst (bis 7 pt) und werden danach auf bis zu 3 Zeilen umbrochen.
         </p>
@@ -965,6 +974,40 @@ function DetailPanel({
   }
 
   return null;
+}
+
+/** Segmentierter Umschalter für die Textausrichtung relativ zum Anker. */
+function AlignToggle({
+  value, onChange,
+}: { value: 'left' | 'right'; onChange: (a: 'left' | 'right') => void }) {
+  const btn = (active: boolean) =>
+    'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ' +
+    (active ? 'bg-maja-navy text-white' : 'bg-maja-light text-maja-ink hover:bg-maja-navy/10');
+  return (
+    <label className="block">
+      <span className="label">Ausrichtung</span>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          className={btn(value === 'right')}
+          aria-pressed={value === 'right'}
+          title="Rechtsbündig: Ankerpunkt rechts, Text wächst nach links"
+          onClick={() => onChange('right')}
+        >
+          ⇤ Rechtsbündig
+        </button>
+        <button
+          type="button"
+          className={btn(value === 'left')}
+          aria-pressed={value === 'left'}
+          title="Linksbündig: Ankerpunkt links, Text wächst nach rechts"
+          onClick={() => onChange('left')}
+        >
+          Linksbündig ⇥
+        </button>
+      </div>
+    </label>
+  );
 }
 
 function NumberCell({
