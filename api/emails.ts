@@ -14,7 +14,7 @@
 //   flag         POST  ?action=flag       body: { mailbox, messageId, flagged }
 //   delete       POST  ?action=delete     body: { mailbox, messageId }
 //   markRead     POST  ?action=markRead   body: { mailbox, messageId, isRead }
-//   eingang-send POST  ?action=eingang-send body: { to[], cc?, subject, body, attachments?[{ name, contentType, onedrive_path }] }
+//   eingang-send POST  ?action=eingang-send body: { to[], cc?, subject, body, attachments?[{ name, contentType, onedrive_path }], manualAttachments?[{ name, contentType, content_base64 }] }
 //
 // Alle Aktionen prüfen Admin-Auth + Mailbox-Whitelist (sofern Mailbox-Argument).
 // eingang-send nutzt das im env hinterlegte ONEDRIVE_USER_EMAIL und lädt
@@ -308,6 +308,16 @@ export default async function handler(req: Req, res: Res) {
         if (!bytes) { failed.push(name); continue; }
         attachments.push({ name, contentType: ctype, bytes });
       }
+      // Manuell hinzugefügte Dateien (base64 inline) anhängen. Defense-in-
+      // depth-Größencheck: das clientseitige Limit wird hier gespiegelt,
+      // damit ein manipulierter Request Graph sendMail nicht sprengt.
+      const MAX_MANUAL_TOTAL = 3 * 1024 * 1024;
+      const manual = decodeAttachments(body.manualAttachments);
+      const manualTotal = manual.reduce((sum, m) => sum + m.bytes.byteLength, 0);
+      if (manualTotal > MAX_MANUAL_TOTAL) {
+        throw new HttpError(413, `Manuelle Anhänge zu groß (${manualTotal} Bytes, max. ${MAX_MANUAL_TOTAL}).`);
+      }
+      for (const m of manual) attachments.push(m);
       let bodyText = asString(body.body) ?? '';
       let bodyHtml = asString(body.bodyHtml);
       if (failed.length > 0) {

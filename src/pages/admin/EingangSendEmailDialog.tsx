@@ -43,6 +43,63 @@ interface EmailOption {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// --- Manuelle Anhänge ------------------------------------------------
+// Erlaubte gängige Anhang-Typen: PDF, Bilder, Office-Dokumente.
+const ALLOWED_EXT = ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'xlsx'];
+const ALLOWED_MIME = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+const FILE_ACCEPT = '.pdf,.jpg,.jpeg,.png,.docx,.xlsx,application/pdf,image/jpeg,image/png';
+// Grenzen: manuelle Dateien reisen als base64 IM JSON-Body der Vercel-
+// Function (~4,5 MB Limit) und gehen inline an Graph sendMail (~4 MB pro
+// Nachricht). base64 bläht ~+37 % auf. Die generierten PDFs werden dagegen
+// serverseitig per onedrive_path geladen und zählen NICHT zum Body. Daher
+// für die manuellen Dateien ein konservatives, zuverlässig sendbares
+// Budget (statt der nicht transportierbaren 10–15 MB).
+const MAX_FILE_BYTES = 3 * 1024 * 1024;   // 3 MB pro Datei
+const MAX_TOTAL_BYTES = 3 * 1024 * 1024;  // 3 MB gesamt (manuell)
+
+interface ManualFile { id: string; file: File }
+
+function fileExt(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+function isAllowedFile(file: File): boolean {
+  return ALLOWED_MIME.has(file.type) || ALLOWED_EXT.includes(fileExt(file.name));
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Liest eine Datei als reinen base64-String (ohne data:-Präfix). */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = typeof reader.result === 'string' ? reader.result : '';
+      const comma = res.indexOf(',');
+      resolve(comma >= 0 ? res.slice(comma + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Datei konnte nicht gelesen werden'));
+    reader.readAsDataURL(file);
+  });
+}
+
+let manualIdSeq = 0;
+function nextManualId(): string {
+  manualIdSeq += 1;
+  return `mf-${manualIdSeq}`;
+}
+
 function norm(s: string): string {
   return s.trim().toLowerCase();
 }
@@ -175,6 +232,11 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
   const [subject, setSubject] = useState(initial.subject);
   const [body, setBody] = useState(initial.body);
   const [attachments, setAttachments] = useState<AttachmentDraft[]>(initial.attachments);
+  // Manuell hinzugefügte Dateien (nur für diesen Versand, kein Upload).
+  const [manualFiles, setManualFiles] = useState<ManualFile[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Absender: bevorzugt das im Template (E-Mail 3) konfigurierte Postfach,
@@ -198,6 +260,48 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
   function toggleAttachment(id: string) {
     setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, selected: !a.selected } : a)));
   }
+
+  /** Neue Dateien validieren und übernehmen (Typ, Einzel- und Gesamt-
+   *  größe). Ungültige Dateien werden mit Sammel-Fehlermeldung abgewiesen. */
+  function addFiles(incoming: FileList | File[]) {
+    const list = Array.from(incoming);
+    if (list.length === 0) return;
+    const errors: string[] = [];
+    setManualFiles((prev) => {
+      let total = prev.reduce((sum, m) => sum + m.file.size, 0);
+      const next = [...prev];
+      for (const file of list) {
+        if (!isAllowedFile(file)) {
+          errors.push(`${file.name}: Dateityp nicht erlaubt (PDF, JPG, PNG, DOCX, XLSX).`);
+          continue;
+        }
+        if (file.size > MAX_FILE_BYTES) {
+          errors.push(`${file.name}: zu groß (${formatBytes(file.size)}, max. ${formatBytes(MAX_FILE_BYTES)}).`);
+          continue;
+        }
+        // Duplikate (gleicher Name + Größe) überspringen.
+        if (next.some((m) => m.file.name === file.name && m.file.size === file.size)) continue;
+        if (total + file.size > MAX_TOTAL_BYTES) {
+          errors.push(`${file.name}: Gesamtgröße überschreitet ${formatBytes(MAX_TOTAL_BYTES)}.`);
+          continue;
+        }
+        total += file.size;
+        next.push({ id: nextManualId(), file });
+      }
+      return next;
+    });
+    setAttachError(errors.length > 0 ? errors.join(' ') : null);
+  }
+
+  function removeManualFile(id: string) {
+    setManualFiles((prev) => prev.filter((m) => m.id !== id));
+    setAttachError(null);
+  }
+
+  const manualTotal = useMemo(
+    () => manualFiles.reduce((sum, m) => sum + m.file.size, 0),
+    [manualFiles],
+  );
 
   // Adressen, die als NEU gelten (= weder in Favoriten noch in Auftraggeber-
   // Liste bekannt). Für diese zeigen wir die optionale „Als Favorit
@@ -264,6 +368,16 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
         }
       }
 
+      // Manuelle Dateien als base64 einlesen — sie werden nur für diesen
+      // Versand mitgeschickt (kein OneDrive/Supabase-Upload).
+      const manualAttachments = await Promise.all(
+        manualFiles.map(async (m) => ({
+          name: m.file.name,
+          contentType: m.file.type || 'application/octet-stream',
+          content_base64: await fileToBase64(m.file),
+        })),
+      );
+
       // Plain-Text wird HTML-escaped + Signatur angehängt (Aufgabe 1).
       const bodyHtml = bodyWithSignatureHtml({ body, sig });
       const result = await sendEmail({
@@ -278,6 +392,7 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
           contentType: 'application/pdf',
           onedrive_path: a.onedrive_path,
         })),
+        manualAttachments: manualAttachments.length > 0 ? manualAttachments : undefined,
       });
       if (result.missing.length > 0) {
         setError(
@@ -285,6 +400,10 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
           + `${result.missing.join(', ')}. PDFs ggf. neu erzeugen und erneut senden.`,
         );
       } else {
+        // Anhänge-Liste zurücksetzen (Dialog wird i. d. R. ohnehin
+        // geschlossen, aber defensiv leeren).
+        setManualFiles([]);
+        setAttachError(null);
         onSent();
       }
     } catch (err) {
@@ -382,10 +501,11 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
           </div>
 
           <div>
-            <span className="label">Anhänge</span>
+            <span className="label">Generierte Dokumente</span>
             {attachments.length === 0 ? (
               <p className="text-xs text-maja-muted">
-                Keine PDF-Vorlagen am Template — der Versand enthält keine Anhänge.
+                Keine PDF-Vorlagen am Template — es werden keine generierten
+                Dokumente angehängt.
               </p>
             ) : (
               <ul className="space-y-1">
@@ -404,6 +524,82 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          <div>
+            <span className="label">Eigene Anhänge</span>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); }
+              }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
+              }}
+              className={
+                'flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed '
+                + 'px-4 py-5 text-center text-sm transition '
+                + (dragOver
+                  ? 'border-maja-navy bg-maja-navy/5 text-maja-navy'
+                  : 'border-maja-navy/25 text-maja-muted hover:border-maja-navy/50 hover:bg-maja-light/40')
+              }
+            >
+              <span className="font-medium text-maja-ink">Datei hinzufügen</span>
+              <span className="text-xs">
+                Klicken oder hierher ziehen · PDF, JPG, PNG, DOCX, XLSX ·
+                max. {formatBytes(MAX_FILE_BYTES)} pro Datei
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={FILE_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) addFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+
+            {manualFiles.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {manualFiles.map((m) => (
+                  <li
+                    key={m.id}
+                    className="flex items-center gap-2 rounded-md border border-maja-navy/10 bg-maja-light/40 px-2 py-1.5 text-sm"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium text-maja-ink" title={m.file.name}>
+                      {m.file.name}
+                    </span>
+                    <span className="shrink-0 text-xs text-maja-muted">{formatBytes(m.file.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeManualFile(m.id)}
+                      className="shrink-0 rounded-md p-1 text-maja-muted hover:bg-maja-navy/10 hover:text-red-600"
+                      aria-label={`${m.file.name} entfernen`}
+                      title="Entfernen"
+                    >
+                      <XIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {manualFiles.length > 0 && (
+              <p className="mt-1 text-xs text-maja-muted">
+                {manualFiles.length} Datei(en) · {formatBytes(manualTotal)} von {formatBytes(MAX_TOTAL_BYTES)}
+              </p>
+            )}
+            {attachError && (
+              <p role="alert" className="mt-1 text-xs text-red-600">{attachError}</p>
             )}
           </div>
 

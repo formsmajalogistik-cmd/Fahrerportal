@@ -438,6 +438,9 @@ export async function sendEmail(args: {
    *  ONEDRIVE_USER_EMAIL. Muss in der Mailbox-Whitelist stehen. */
   from?: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
+  /** Optional: manuell hinzugefügte Dateien, die als base64 direkt
+   *  mitgeschickt werden (kein OneDrive-Upload). */
+  manualAttachments?: Array<{ name: string; contentType: string; content_base64: string }>;
 }): Promise<SendEmailResult> {
   const resp = await fetchWithAuthRetry('/api/emails?action=eingang-send', {
     method: 'POST',
