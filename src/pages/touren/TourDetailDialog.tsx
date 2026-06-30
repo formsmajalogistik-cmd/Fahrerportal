@@ -383,7 +383,7 @@ export function TourDetailDialog({
         .from('fahrer')
         .select('id, user_id, aktiv, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
         .eq('aktiv', true),
-      supabase.from('formular_templates').select('id, name').order('name'),
+      supabase.from('formular_templates').select('id, name').eq('archiviert', false).order('name'),
       supabase.from('greimel_zugaenge').select('*'),
     ]);
     if (tRes.error) { setError(tRes.error.message); setLoading(false); return; }
@@ -2284,6 +2284,9 @@ function EingangPdfDownloads({
     pdfs: template.pdfs ?? [],
     email_config: null,
     sichtbar: true,
+    ist_einmalig: false,
+    archiviert: false,
+    archiviert_am: null,
   };
   // Bevorzuge die persistierten pdf_paths (= tatsächlich erzeugte PDFs);
   // Legacy-Fallback auf template.pdfs für ältere Eingänge.

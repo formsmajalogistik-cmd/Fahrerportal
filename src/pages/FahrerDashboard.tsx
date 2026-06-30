@@ -70,7 +70,10 @@ export function FahrerDashboard() {
     // lädt es separat).
     let tplQuery = supabase
       .from('formular_templates')
-      .select('id, name, sichtbar');
+      .select('id, name, sichtbar')
+      // Archivierte (Einmal-)Templates nie in der Auswahl — eingereichte
+      // Formulare + Tour-Protokoll-Karten bleiben separat erhalten.
+      .eq('archiviert', false);
     if (!isAdminView) tplQuery = tplQuery.eq('sichtbar', true);
     const tplPromise = tplQuery.order('name');
 

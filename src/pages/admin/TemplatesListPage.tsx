@@ -22,6 +22,7 @@ export function TemplatesListPage() {
   const [error, setError] = useState<string | null>(null);
   const [showFahrzeugDialog, setShowFahrzeugDialog] = useState(false);
   const [deleting, setDeleting] = useState<Row | null>(null);
+  const [archivedOpen, setArchivedOpen] = useState(false);
 
   const [wuensche, setWuensche] = useState<WunschRow[]>([]);
 
@@ -74,6 +75,19 @@ export function TemplatesListPage() {
       .single();
     if (err || !data) { setError(err?.message ?? 'Anlegen fehlgeschlagen'); return; }
     navigate(`/templates/${data.id}`);
+  }
+
+  async function handleRestore(t: Row) {
+    setRows((prev) => prev.map((r) => (r.id === t.id
+      ? { ...r, archiviert: false, archiviert_am: null } : r)));
+    const { error: err } = await supabase
+      .from('formular_templates')
+      .update({ archiviert: false, archiviert_am: null })
+      .eq('id', t.id);
+    if (err) {
+      setError(err.message);
+      setRows((prev) => prev.map((r) => (r.id === t.id ? t : r)));
+    }
   }
 
   async function handleToggleSichtbar(t: Row) {
@@ -166,14 +180,19 @@ export function TemplatesListPage() {
         );
       })()}
 
-      {rows.length === 0 ? (
+      {(() => {
+        const active = rows.filter((t) => !t.archiviert);
+        const archived = rows.filter((t) => t.archiviert);
+        return (
+      <>
+      {active.length === 0 ? (
         <div className="card p-6 text-sm text-maja-muted">
           Noch keine Templates angelegt. Nutze „Neues Template" (leeres Gerüst)
           oder „Fahrzeugprotokoll anlegen" (Maja-Logistik-Standard).
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((t) => {
+          {active.map((t) => {
             const sectionCount = t.schema?.sections?.length ?? 0;
             const fieldCount = (t.schema?.sections ?? []).reduce(
               (acc, s) => acc + (s.fields?.length ?? 0), 0,
@@ -185,11 +204,18 @@ export function TemplatesListPage() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="text-base font-semibold text-maja-navy">{t.name}</h3>
-                  {!t.sichtbar && (
-                    <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-700">
-                      Versteckt
-                    </span>
-                  )}
+                  <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                    {t.ist_einmalig && (
+                      <span className="inline-block rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-700">
+                        Einmalig
+                      </span>
+                    )}
+                    {!t.sichtbar && (
+                      <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-700">
+                        Versteckt
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-2 text-xs text-maja-muted">
                   {sectionCount} Sektionen · {fieldCount} Felder
@@ -231,6 +257,60 @@ export function TemplatesListPage() {
           })}
         </ul>
       )}
+
+      {archived.length > 0 && (
+        <section className="rounded-xl border border-maja-navy/10 bg-white">
+          <button
+            type="button"
+            onClick={() => setArchivedOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+            aria-expanded={archivedOpen}
+          >
+            <span className="text-sm font-semibold text-maja-navy">
+              Archivierte Templates ({archived.length})
+            </span>
+            <span className="text-xs text-maja-muted">
+              {archivedOpen ? 'Einklappen' : 'Ausklappen'}
+            </span>
+          </button>
+          {archivedOpen && (
+            <div className="border-t border-maja-navy/10 px-4 py-3">
+              <p className="mb-2 text-xs text-maja-muted">
+                Aus den Auswahllisten ausgeblendet, aber erhalten — eingereichte
+                Formulare und PDFs funktionieren weiter. Bei Bedarf wiederherstellen.
+              </p>
+              <ul className="divide-y divide-maja-navy/10">
+                {archived.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium text-maja-ink">{t.name}</span>
+                      {t.archiviert_am && (
+                        <span className="ml-2 text-xs text-maja-muted">
+                          archiviert {formatDateTime(t.archiviert_am)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Link
+                        to={`/templates/${t.id}`}
+                        className="text-xs font-medium text-maja-accent hover:underline"
+                      >Bearbeiten</Link>
+                      <button
+                        type="button"
+                        onClick={() => void handleRestore(t)}
+                        className="text-xs font-medium text-maja-navy hover:underline"
+                      >Wiederherstellen</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+      </>
+        );
+      })()}
 
       {showFahrzeugDialog && (
         <TemplateNewDialog

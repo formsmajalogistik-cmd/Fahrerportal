@@ -282,6 +282,9 @@ export function EingaengePage() {
         pdfs: r.template.pdfs ?? [],
         email_config: null,
         sichtbar: true,
+        ist_einmalig: false,
+        archiviert: false,
+        archiviert_am: null,
       };
       const generated = await generateAndUploadFormPdfs(tpl, r);
       // pdf_paths wurde von generateAndUploadFormPdfs persistiert — wir
@@ -517,6 +520,9 @@ export function EingaengePage() {
           pdfs: t.pdfs ?? [],
           email_config: t.email_config ?? null,
           sichtbar: true,
+          ist_einmalig: false,
+          archiviert: false,
+          archiviert_am: null,
         };
         return (
           <EingangSendEmailDialog
@@ -612,6 +618,9 @@ function EingangCard({
     pdfs: row.template.pdfs ?? [],
     email_config: row.template.email_config ?? null,
     sichtbar: true,
+    ist_einmalig: false,
+    archiviert: false,
+    archiviert_am: null,
   } : null;
 
   const ungesehen = isAdmin && !row.gesehen_am;

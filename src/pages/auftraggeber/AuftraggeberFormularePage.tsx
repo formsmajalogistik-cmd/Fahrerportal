@@ -45,7 +45,8 @@ export function AuftraggeberFormularePage() {
     // Templates: für echte Auftraggeber filtert RLS auf Freigaben; im
     // Test-Modus wird zusätzlich nach dem gewählten Auftraggeber
     // gefiltert (sonst sähe der Test-User alle Templates).
-    let tplQuery = supabase.from('formular_templates').select('id, name').order('name');
+    let tplQuery = supabase.from('formular_templates')
+      .select('id, name').eq('archiviert', false).order('name');
     if (isTestUser && scopeAuftraggeberId) {
       const { data: freigaben } = await supabase
         .from('template_auftraggeber_freigaben')
@@ -54,6 +55,7 @@ export function AuftraggeberFormularePage() {
       const ids = (freigaben ?? []).map((r) => r.template_id);
       tplQuery = supabase.from('formular_templates')
         .select('id, name')
+        .eq('archiviert', false)
         .in('id', ids.length > 0 ? ids : ['00000000-0000-0000-0000-000000000000'])
         .order('name');
     }

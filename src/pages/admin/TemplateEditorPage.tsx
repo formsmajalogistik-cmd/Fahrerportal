@@ -53,6 +53,8 @@ export function TemplateEditorPage() {
   const [pdfs, setPdfs] = useState<TemplatePdf[]>([]);
   const [activePdfId, setActivePdfId] = useState<string | null>(null);
   const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
+  // Einmal-Verwendung: nach der ersten Einreichung automatisch archivieren.
+  const [istEinmalig, setIstEinmalig] = useState(false);
 
   const [tab, setTab] = useState<Tab>('struktur');
   const [loading, setLoading] = useState(true);
@@ -68,8 +70,8 @@ export function TemplateEditorPage() {
   // Renders zulässig ist.
   const [savedSnapshot, setSavedSnapshot] = useState<string>('');
   const liveSnapshot = useMemo(
-    () => JSON.stringify({ name, schema, pdfs, emailConfig }),
-    [name, schema, pdfs, emailConfig],
+    () => JSON.stringify({ name, schema, pdfs, emailConfig, istEinmalig }),
+    [name, schema, pdfs, emailConfig, istEinmalig],
   );
   const dirty = !loading && savedSnapshot !== '' && savedSnapshot !== liveSnapshot;
   /** Pending-Navigation: ziel-URL oder Funktion, die nach Bestätigung läuft. */
@@ -108,6 +110,8 @@ export function TemplateEditorPage() {
     setActivePdfId((cur) => cur ?? loadedPdfs[0]?.id ?? null);
     const loadedEmailConfig = (t.email_config as EmailConfig | null) ?? null;
     setEmailConfig(loadedEmailConfig);
+    const loadedEinmalig = t.ist_einmalig ?? false;
+    setIstEinmalig(loadedEinmalig);
     // Snapshot des zuletzt-gespeicherten Stands für Dirty-Vergleich.
     setSavedSnapshot(JSON.stringify({
       name: t.name,
@@ -115,6 +119,7 @@ export function TemplateEditorPage() {
         ? t.schema as FormSchema : { sections: [] },
       pdfs: loadedPdfs,
       emailConfig: loadedEmailConfig,
+      istEinmalig: loadedEinmalig,
     }));
     setLoading(false);
   }, [id]);
@@ -161,6 +166,7 @@ export function TemplateEditorPage() {
         schema: schema as unknown as Json,
         pdfs: pdfs as unknown as Json,
         email_config: (emailConfig ?? null) as unknown as Json,
+        ist_einmalig: istEinmalig,
       })
       .eq('id', template.id);
     setSaving(false);
@@ -168,7 +174,7 @@ export function TemplateEditorPage() {
     // Snapshot nach erfolgreichem Save aktualisieren — Editor ist
     // wieder „sauber".
     setSavedSnapshot(JSON.stringify({
-      name: cleanName, schema, pdfs, emailConfig,
+      name: cleanName, schema, pdfs, emailConfig, istEinmalig,
     }));
     setStatusMsg('Template gespeichert.');
     // Auto-hide nach 3 s
@@ -199,6 +205,7 @@ export function TemplateEditorPage() {
           schema: schema as unknown as Json,
           pdfs: [] as unknown as Json,
           email_config: (emailConfig ?? null) as unknown as Json,
+          ist_einmalig: istEinmalig,
         })
         .select('id')
         .single();
@@ -365,6 +372,25 @@ export function TemplateEditorPage() {
           <label htmlFor="tpl-name" className="label">Name</label>
           <input id="tpl-name" className="input" value={name}
                  onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <label className="flex cursor-pointer items-start gap-2 text-sm text-maja-ink">
+            <input
+              type="checkbox"
+              checked={istEinmalig}
+              onChange={(e) => setIstEinmalig(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-navy"
+            />
+            <span>
+              <span className="font-medium">Einmal-Verwendung (nach Einreichung archivieren)</span>
+              <span className="block text-xs text-maja-muted">
+                Wird nach der ersten Einreichung automatisch archiviert und aus
+                Auswahl- und Übersichtslisten ausgeblendet. Eingereichte Formulare
+                und PDFs bleiben erhalten.
+                {template?.archiviert && ' — Dieses Template ist bereits archiviert.'}
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 

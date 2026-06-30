@@ -846,6 +846,9 @@ export type Database = {
           pdfs: Json;
           email_config: Json | null;
           sichtbar: boolean;
+          ist_einmalig: boolean;
+          archiviert: boolean;
+          archiviert_am: string | null;
         };
         Insert: {
           id?: string;
@@ -854,6 +857,9 @@ export type Database = {
           pdfs?: Json;
           email_config?: Json | null;
           sichtbar?: boolean;
+          ist_einmalig?: boolean;
+          archiviert?: boolean;
+          archiviert_am?: string | null;
         };
         Update: {
           id?: string;
@@ -862,6 +868,9 @@ export type Database = {
           pdfs?: Json;
           email_config?: Json | null;
           sichtbar?: boolean;
+          ist_einmalig?: boolean;
+          archiviert?: boolean;
+          archiviert_am?: string | null;
         };
         Relationships: [];
       };

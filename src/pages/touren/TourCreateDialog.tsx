@@ -151,7 +151,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
           .from('fahrer')
           .select('*, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true),
-        supabase.from('formular_templates').select('id, name').order('name'),
+        supabase.from('formular_templates').select('id, name').eq('archiviert', false).order('name'),
         supabase.from('greimel_zugaenge').select('*'),
       ]);
       setAuftraggeber(Array.isArray(agRes.data) ? (agRes.data as unknown as Auftraggeber[]) : []);
