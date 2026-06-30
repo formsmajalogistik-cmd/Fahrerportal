@@ -394,6 +394,13 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
         })),
         manualAttachments: manualAttachments.length > 0 ? manualAttachments : undefined,
       });
+      // Versand-Zeitpunkt am Eingang festhalten (analog zu Rechnungen) —
+      // die Mail ging raus, auch wenn einzelne Anhänge fehlten.
+      const versendetAm = new Date().toISOString();
+      await supabase
+        .from('ausgefuellte_formulare')
+        .update({ email_versendet_am: versendetAm })
+        .eq('id', formular.id);
       if (result.missing.length > 0) {
         setError(
           `E-Mail versendet, aber ${result.missing.length} Anhang/Anhänge fehlten: `

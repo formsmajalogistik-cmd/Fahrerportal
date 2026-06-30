@@ -1579,6 +1579,7 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewB
             <span className="whitespace-pre-wrap">{tour.info}</span>
           </DetailItem>
         )}
+        {isAdmin && <ViewModeRechnungsRef tourId={tour.id} />}
       </div>
 
       {/* Bereich 3: Protokoll */}
@@ -2532,6 +2533,44 @@ function RelinkLauncher({
  * Template-Namen, das Editieren passiert ausschließlich im Edit-Modus
  * über die `ProtokollSection`.
  */
+/**
+ * Read-only Anzeige der Rechnung(en), auf denen diese Tour als Position
+ * verwendet wird. Automatisch aus rechnungspositionen.tour_id →
+ * rechnungen ermittelt — NICHT ins manuelle Info-Feld geschrieben.
+ * Rendert nichts, solange keine Verknüpfung besteht. Nur Admin (Aufrufer
+ * gated), daher ist der RLS-Lesezugriff auf Rechnungen unkritisch.
+ */
+function ViewModeRechnungsRef({ tourId }: { tourId: string }) {
+  const [nummern, setNummern] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('rechnungspositionen')
+        .select('rechnung:rechnung_id (id, rechnungsnummer)')
+        .eq('tour_id', tourId);
+      if (cancelled) return;
+      type Row = { rechnung: { id: string; rechnungsnummer: string } | null };
+      const seen = new Set<string>();
+      const list: string[] = [];
+      for (const r of (data as unknown as Row[]) ?? []) {
+        const re = r.rechnung;
+        if (!re || seen.has(re.id)) continue;
+        seen.add(re.id);
+        list.push(re.rechnungsnummer);
+      }
+      setNummern(list);
+    })();
+    return () => { cancelled = true; };
+  }, [tourId]);
+  if (nummern.length === 0) return null;
+  return (
+    <DetailItem label={nummern.length > 1 ? 'Auf Rechnungen' : 'Auf Rechnung'} full>
+      <span className="font-medium">{nummern.join(', ')}</span>
+    </DetailItem>
+  );
+}
+
 function ViewModeProtokollList({ tourId }: { tourId: string }) {
   const [items, setItems] = useState<TourProtokollZuweisung[]>([]);
   const [loading, setLoading] = useState(true);

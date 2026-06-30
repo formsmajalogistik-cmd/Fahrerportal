@@ -25,6 +25,10 @@ interface TourProtokoll {
     | 'schriftliches_protokoll_id' | 'protokoll_art'>;
   template: Pick<FormularTemplate, 'id' | 'name'>;
   auftraggeber: Pick<Auftraggeber, 'name'> | null;
+  /** Falls bereits ein offener Entwurf für diese Tour+Template existiert:
+   *  dessen Id — die Karte öffnet dann genau diesen Entwurf (Konsistenz
+   *  mit der Tourenliste), statt einen neuen anzulegen. */
+  draftId: string | null;
 }
 
 export function FahrerDashboard() {
@@ -124,7 +128,20 @@ export function FahrerDashboard() {
       setError((prev) => prev ?? draftRes.error?.message ?? 'Entwürfe konnten nicht geladen werden.');
     }
     setTemplates((Array.isArray(tplRes.data) ? tplRes.data : []) as unknown as AssignedTemplate[]);
-    setDrafts((Array.isArray(draftRes.data) ? draftRes.data : []) as unknown as DraftRow[]);
+    const draftList = (Array.isArray(draftRes.data) ? draftRes.data : []) as unknown as DraftRow[];
+    setDrafts(draftList);
+
+    // Hilfsfunktion: offener Entwurf dieses Fahrers für (Template, Tour).
+    // Drafts, die aus einer Tour entstanden sind, tragen daten._tour_id —
+    // so öffnen Tourenliste UND Formulare-Reiter denselben Entwurf.
+    const findOpenDraft = (templateId: string, tourId: string): DraftRow | null => {
+      const matches = draftList.filter((d) =>
+        d.template_id === templateId
+        && (d.daten as Record<string, unknown> | null)?._tour_id === tourId);
+      // jüngsten zuerst (created_at desc)
+      matches.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+      return matches[0] ?? null;
+    };
 
     // Tour-Protokoll-Zuweisungen clientseitig auf Status der Tour
     // filtern und pro Zuweisung als eigenständiger Eintrag rendern —
@@ -150,8 +167,15 @@ export function FahrerDashboard() {
       if (!a.template || !a.tour) continue;
       if (a.tour.protokoll_art !== 'schriftlich') continue;
       if (a.tour.fahrer_id !== fahrerRow?.id) continue;
+      const openDraft = findOpenDraft(a.template.id, a.tour.id);
+      // „To-Do"-Ansicht (vereinfachte Regel): anzeigen, solange die Tour
+      // geplant/aktiv ist ODER noch ein offener Entwurf existiert. Sobald
+      // die Tour abgeschlossen ist UND kein offener Entwurf mehr besteht
+      // (i.d.R. nach dem Einreichen), verschwindet das Protokoll hier —
+      // über Tourenliste/Eingänge bleibt es weiter einsehbar.
       const s = computeTourStatus(a.tour.startdatum, a.tour.enddatum);
-      if (s !== 'geplant' && s !== 'aktiv') continue;
+      const aktiv = s === 'geplant' || s === 'aktiv';
+      if (!aktiv && !openDraft) continue;
       filtered.push({
         tour: {
           ...a.tour,
@@ -160,6 +184,7 @@ export function FahrerDashboard() {
         } as unknown as TourProtokoll['tour'],
         template: a.template,
         auftraggeber: a.tour.auftraggeber,
+        draftId: openDraft?.id ?? null,
       });
     }
     setTourProtokolle(filtered);
@@ -236,6 +261,13 @@ export function FahrerDashboard() {
     );
   }
 
+  // Tour-Entwürfe, die bereits als Tour-Protokoll-Karte (mit Tour-Bezug)
+  // erscheinen, NICHT zusätzlich unter „In Bearbeitung" doppeln.
+  const claimedDraftIds = new Set(
+    tourProtokolle.map((tp) => tp.draftId).filter((x): x is string => !!x),
+  );
+  const visibleDrafts = drafts.filter((d) => !claimedDraftIds.has(d.id));
+
   return (
     <div className="space-y-6">
       <div>
@@ -245,14 +277,14 @@ export function FahrerDashboard() {
         </p>
       </div>
 
-      {/* Begonnene Formulare */}
-      {drafts.length > 0 && (
+      {/* Begonnene Formulare (ohne die, die als Tour-Protokoll erscheinen) */}
+      {visibleDrafts.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-maja-muted">
             In Bearbeitung
           </h2>
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {drafts.map((d) => (
+            {visibleDrafts.map((d) => (
               <DraftCard
                 key={d.id}
                 draft={d}
@@ -282,6 +314,10 @@ export function FahrerDashboard() {
                   item={tp}
                   opening={opening === busyKey}
                   onOpen={() => {
+                    // Konsistenz: existiert bereits ein offener Entwurf für
+                    // diese Tour+Template, denselben öffnen (kein zweiter
+                    // Stand) — sonst neu anlegen (mit Vorgaben).
+                    if (tp.draftId) { navigate(`/formular/${tp.draftId}`); return; }
                     const raw = (tp.tour as unknown as { vorgefuellte_daten?: unknown }).vorgefuellte_daten;
                     const prefill = raw && typeof raw === 'object'
                       ? raw as Record<string, unknown>
@@ -405,9 +441,16 @@ function TourProtokollCard({
         <span className="inline-block rounded-full bg-maja-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-maja-accent">
           Tour-Protokoll
         </span>
-        {item.tour.tour_id && (
-          <span className="text-xs font-semibold text-maja-muted">{item.tour.tour_id}</span>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {item.draftId && (
+            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+              In Bearbeitung
+            </span>
+          )}
+          {item.tour.tour_id && (
+            <span className="text-xs font-semibold text-maja-muted">{item.tour.tour_id}</span>
+          )}
+        </div>
       </div>
       <h3 className="mt-2 text-base font-semibold text-maja-navy">
         {item.template.name}
@@ -419,7 +462,7 @@ function TourProtokollCard({
       </div>
       <div className="mt-4">
         <button onClick={onOpen} disabled={opening} className="btn-primary w-full">
-          {opening ? 'Öffne …' : 'Protokoll öffnen'}
+          {opening ? 'Öffne …' : item.draftId ? 'Protokoll fortsetzen' : 'Protokoll öffnen'}
         </button>
       </div>
     </li>

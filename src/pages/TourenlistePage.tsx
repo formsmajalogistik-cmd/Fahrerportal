@@ -124,6 +124,23 @@ export function TourenlistePage() {
         setOpeningProtokoll(null);
         return;
       }
+      // Konsistenz mit dem Formulare-Reiter: existiert für diese
+      // Tour+Template bereits ein offener Entwurf dieses Fahrers, denselben
+      // öffnen (kein zweiter, getrennter Stand). Sonst neu anlegen.
+      const { data: existingDraft } = await supabase
+        .from('ausgefuellte_formulare')
+        .select('id')
+        .eq('fahrer_id', fahrerRow.id)
+        .eq('template_id', tplId)
+        .eq('status', 'draft')
+        .eq('daten->>_tour_id', t.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existingDraft?.id) {
+        navigate(`/formular/${existingDraft.id}`);
+        return;
+      }
       // Prefill-Daten der Zuweisung mitnehmen, sofern vorhanden.
       const { data: assignment } = await supabase
         .from('tour_protokoll_zuweisungen')
@@ -290,6 +307,41 @@ export function TourenlistePage() {
   }, [isAdmin, scopedFahrerIds]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Rechnungs-Referenzen pro Tour (read-only, nur Admin): aus welchen
+  // Rechnungen die Tour als Position stammt. Separat geladen, damit das
+  // manuelle Info-Feld der Tour unberührt bleibt.
+  const [rechnungByTour, setRechnungByTour] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    if (!isAdmin || rows.length === 0) {
+      // Asynchron zurücksetzen, damit kein synchrones setState im Effect
+      // läuft (react-hooks/set-state-in-effect).
+      queueMicrotask(() => setRechnungByTour({}));
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ids = rows.map((r) => r.id);
+      const { data } = await supabase
+        .from('rechnungspositionen')
+        .select('tour_id, rechnung:rechnung_id (id, rechnungsnummer)')
+        .in('tour_id', ids);
+      if (cancelled) return;
+      type PosRow = { tour_id: string | null; rechnung: { id: string; rechnungsnummer: string } | null };
+      const map: Record<string, string[]> = {};
+      const seen: Record<string, Set<string>> = {};
+      for (const p of (data as unknown as PosRow[]) ?? []) {
+        const tid = p.tour_id; const re = p.rechnung;
+        if (!tid || !re) continue;
+        if (!map[tid]) { map[tid] = []; seen[tid] = new Set(); }
+        if (seen[tid].has(re.id)) continue;
+        seen[tid].add(re.id);
+        map[tid].push(re.rechnungsnummer);
+      }
+      setRechnungByTour(map);
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin, rows]);
 
   // Reset Pagination wenn Filter sich ändern
   useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter]);
@@ -781,6 +833,7 @@ export function TourenlistePage() {
               isAdmin={isAdmin}
               todayYmd={todayYmd}
               onToggleBearbeitet={() => void toggleBearbeitet(t.id, t.bearbeitet_markiert_am ?? null)}
+              rechnungsnummern={rechnungByTour[t.id]}
             />
           ))}
         </ul>
@@ -878,9 +931,13 @@ interface CardProps {
   isAdmin: boolean;
   todayYmd: string;
   onToggleBearbeitet: () => void;
+  /** Rechnungsnummern, auf denen die Tour als Position verwendet wird
+   *  (read-only, aus rechnungspositionen ermittelt). Nur für Admin. */
+  rechnungsnummern?: string[];
 }
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
+  rechnungsnummern,
 }: CardProps) {
   // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
   // Zuweisung ein eigener Open-Button. Fallback auf die Legacy-Spalte,
@@ -1068,6 +1125,14 @@ function TourCard({
             {tour.ist_e_fahrzeug && (
               <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
                 E-Fahrzeug
+              </span>
+            )}
+            {isAdmin && rechnungsnummern && rechnungsnummern.length > 0 && (
+              <span
+                className="inline-block rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-700"
+                title={`Auf Rechnung: ${rechnungsnummern.join(', ')}`}
+              >
+                auf Rechnung
               </span>
             )}
             {isAdmin && (

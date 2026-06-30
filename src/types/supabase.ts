@@ -889,6 +889,7 @@ export type Database = {
           pdf_status: string | null;
           pdf_fehler: string | null;
           email_send_log: Json;
+          email_versendet_am: string | null;
         };
         Insert: {
           id?: string;
@@ -904,6 +905,7 @@ export type Database = {
           pdf_status?: string | null;
           pdf_fehler?: string | null;
           email_send_log?: Json;
+          email_versendet_am?: string | null;
         };
         Update: {
           id?: string;
@@ -919,6 +921,7 @@ export type Database = {
           pdf_status?: string | null;
           pdf_fehler?: string | null;
           email_send_log?: Json;
+          email_versendet_am?: string | null;
         };
         Relationships: [
           {

@@ -15,6 +15,7 @@ import {
   DownloadIcon, EyeIcon, FileTextIcon, MailIcon, RefreshIcon, XIcon,
 } from '../../components/icons';
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
+import { formatDateTime } from '../../lib/touren';
 import { EingangLinkDialog } from './EingangLinkDialog';
 import { EingangSendEmailDialog } from './EingangSendEmailDialog';
 import { EingangFormularViewDialog } from './EingangFormularViewDialog';
@@ -107,7 +108,7 @@ export function EingaengePage() {
       .select(`
         id, fahrer_id, template_id, daten, status, created_at, gesehen_am,
         zwischenprotokoll_url, zwischenprotokoll_erstellt_am,
-        pdf_paths, pdf_status, pdf_fehler, email_send_log,
+        pdf_paths, pdf_status, pdf_fehler, email_send_log, email_versendet_am,
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
         template:template_id (id, name, pdfs, schema, email_config)
       `)
@@ -533,6 +534,8 @@ export function EingaengePage() {
               setResending(null);
               setLinkToast('E-Mail versendet.');
               window.setTimeout(() => setLinkToast(null), 4000);
+              // Liste neu laden, damit der Versand-Zeitpunkt erscheint.
+              reload();
             }}
           />
         );
@@ -673,6 +676,11 @@ function EingangCard({
             {row.template?.name ?? '—'}
             {' · '}{formatGermanDate(summary.datum) || formatGermanDate(row.created_at)}
           </div>
+          {row.email_versendet_am && (
+            <div className="mt-1 text-xs font-medium text-emerald-700">
+              E-Mail versendet: {formatDateTime(row.email_versendet_am)}
+            </div>
+          )}
 
           <dl className="mt-3 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
             <Detail label="Fahrer">{fahrer}</Detail>
