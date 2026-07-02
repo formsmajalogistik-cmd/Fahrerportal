@@ -439,8 +439,12 @@ export async function sendEmail(args: {
   from?: string;
   attachments: Array<{ name: string; contentType: string; onedrive_path: string }>;
   /** Optional: manuell hinzugefügte Dateien, die als base64 direkt
-   *  mitgeschickt werden (kein OneDrive-Upload). */
+   *  mitgeschickt werden (kein OneDrive-Upload). Nur für Admins. */
   manualAttachments?: Array<{ name: string; contentType: string; content_base64: string }>;
+  /** Formular-Id des Eingangs. Für Nicht-Admins (Fahrer beim Submit)
+   *  PFLICHT sobald Anhänge dabei sind — der Server autorisiert jeden
+   *  Anhang-Pfad gegen dieses Formular (RLS). */
+  formular_id?: string;
 }): Promise<SendEmailResult> {
   const resp = await fetchWithAuthRetry('/api/emails?action=eingang-send', {
     method: 'POST',

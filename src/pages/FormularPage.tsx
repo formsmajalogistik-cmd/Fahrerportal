@@ -366,21 +366,35 @@ export function FormularPage() {
 
     // Automatische E-Mails (Bestätigung + Schieberegler) — Fehler hier
     // brechen den Submit NICHT ab, sondern landen im email_send_log.
+    // Zusätzlicher try/catch: selbst ein unerwarteter Crash der Routine
+    // darf die (bereits persistierte) Einreichung nicht kippen.
     const fahrerName = profile ? displayName(profile) : null;
-    const log = await runSubmissionEmails(template, submitted, {
-      submitterEmail,
-      fahrerEmail: submitterEmail, // Fahrer-Profil-Mail = eingeloggte Mail
-      fahrerName,
-    });
+    let log: Awaited<ReturnType<typeof runSubmissionEmails>> = [];
+    try {
+      log = await runSubmissionEmails(template, submitted, {
+        submitterEmail,
+        fahrerEmail: submitterEmail, // Fahrer-Profil-Mail = eingeloggte Mail
+        fahrerName,
+      });
+    } catch (mailErr) {
+      console.warn('[Einreichung] Versand-Routine unerwartet fehlgeschlagen', mailErr);
+      log = [{
+        type: 'confirmation', recipients: [],
+        sent_at: new Date().toISOString(), success: false,
+        error: mailErr instanceof Error ? mailErr.message : String(mailErr),
+      }];
+    }
     setSaving('idle');
     setStatusMsg(null);
 
     const failed = log.filter((l) => !l.success);
     let summary = 'Formular wurde eingereicht.';
     if (failed.length > 0) {
-      const addrs = failed.flatMap((l) => l.recipients).join(', ');
-      summary += ` E-Mail an ${addrs} konnte nicht versendet werden. `
-        + 'Die PDFs können über Eingänge manuell generiert und versendet werden.';
+      const addrs = failed.flatMap((l) => l.recipients).filter(Boolean).join(', ');
+      summary += addrs
+        ? ` E-Mail an ${addrs} konnte nicht versendet werden. `
+        : ` ${failed.length} automatische E-Mail(s) konnten nicht versendet werden. `;
+      summary += 'Die PDFs können über Eingänge manuell generiert und versendet werden.';
     }
     setSubmittedSummary(summary);
     // Auto-Redirect: 3-Sekunden-Countdown.

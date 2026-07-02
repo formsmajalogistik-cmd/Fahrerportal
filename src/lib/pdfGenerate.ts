@@ -1072,6 +1072,7 @@ export async function sendTemplateEmail(
 
   const result = await sendEmail({
     to, cc: cc.length > 0 ? cc : undefined, subject, body, attachments,
+    formular_id: formular.id,
   });
   return { sent: true, missing: result.missing };
 }

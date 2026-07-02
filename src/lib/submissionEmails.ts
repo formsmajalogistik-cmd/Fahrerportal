@@ -115,14 +115,44 @@ export async function runSubmissionEmails(
   options: RunOptions = {},
 ): Promise<EmailSendLogEntry[]> {
   const cfg = template.email_config;
+  // Diagnose-Log: zeigt im Fehlerfall sofort, OB die Routine läuft und
+  // ob die Template-E-Mail-Konfiguration überhaupt mitgeladen wurde.
+  console.log('[Einreichung] Versand-Routine gestartet', {
+    formularId: formular.id,
+    templateId: template.id,
+    emailConfig: cfg
+      ? {
+          confirmationEnabled: cfg.confirmation?.enabled ?? false,
+          slidersEnabled: cfg.sliders?.enabled ?? false,
+          sliderCount: cfg.sliders?.count ?? 0,
+        }
+      : null,
+    schiebereglerAktiv: ([0, 1] as const).map((i) => {
+      const s = readSliderState(formular.daten as Record<string, unknown>, i);
+      return { index: i, enabled: s.enabled, email: s.email };
+    }),
+  });
   if (!cfg) return [];
 
   const log: EmailSendLogEntry[] = [];
 
+  // Die drei Mail-Arten (Bestätigung, Schieberegler 0, Schieberegler 1)
+  // laufen unabhängig: ein unerwarteter Crash in einem Block darf die
+  // anderen NICHT verhindern — und nie die Einreichung selbst.
+
   // ---- 1. Bestätigungs-E-Mail -------------------------------------
   if (cfg.confirmation?.enabled) {
-    const entry = await runConfirmation(template, formular, options);
-    if (entry) log.push(entry);
+    try {
+      const entry = await runConfirmation(template, formular, options);
+      if (entry) log.push(entry);
+    } catch (err) {
+      console.warn('[Einreichung] Bestätigungs-Mail unerwartet fehlgeschlagen', err);
+      log.push({
+        type: 'confirmation', recipients: [],
+        sent_at: new Date().toISOString(), success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // ---- 2. Schieberegler-E-Mails -----------------------------------
@@ -150,8 +180,17 @@ export async function runSubmissionEmails(
 
     for (const idx of activeIndexes) {
       const state = readSliderState(formular.daten as Record<string, unknown>, idx);
-      const entry = await runSlider(template, formular, idx, state, generated, pdfError, options);
-      log.push(entry);
+      try {
+        const entry = await runSlider(template, formular, idx, state, generated, pdfError, options);
+        log.push(entry);
+      } catch (err) {
+        console.warn(`[Einreichung] Schieberegler-Mail ${idx} unerwartet fehlgeschlagen`, err);
+        log.push({
+          type: 'slider', slider_index: idx, recipients: [state.email.trim()],
+          sent_at: new Date().toISOString(), success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 
@@ -229,12 +268,17 @@ async function runConfirmation(
   }
 
   try {
-    await sendEmail({
+    const result = await sendEmail({
       to: recipients,
       subject,
       body,
       from: cfg.from || undefined,
       attachments,
+      formular_id: formular.id,
+    });
+    console.log('[Einreichung] Mail-Versand Response', {
+      type: 'confirmation', empfaenger: recipients,
+      attached: result.attached, missing: result.missing,
     });
     return {
       type: 'confirmation',
@@ -243,6 +287,10 @@ async function runConfirmation(
       success: true,
     };
   } catch (err) {
+    console.warn('[Einreichung] Mail-Versand Response', {
+      type: 'confirmation', empfaenger: recipients,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return {
       type: 'confirmation',
       recipients,
@@ -286,12 +334,17 @@ async function runSlider(
   }));
 
   try {
-    await sendEmail({
+    const result = await sendEmail({
       to: [recipient],
       subject,
       body,
       from: cfg.from || undefined,
       attachments,
+      formular_id: formular.id,
+    });
+    console.log('[Einreichung] Mail-Versand Response', {
+      type: 'slider', sliderIndex: idx, empfaenger: [recipient],
+      attached: result.attached, missing: result.missing,
     });
     return {
       type: 'slider',
@@ -301,6 +354,10 @@ async function runSlider(
       success: true,
     };
   } catch (err) {
+    console.warn('[Einreichung] Mail-Versand Response', {
+      type: 'slider', sliderIndex: idx, empfaenger: [recipient],
+      error: err instanceof Error ? err.message : String(err),
+    });
     return {
       type: 'slider',
       slider_index: idx,

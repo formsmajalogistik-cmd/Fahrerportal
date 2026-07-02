@@ -22,6 +22,7 @@
 
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 import { assertMailboxAllowed } from '../server-lib/mailboxAuth.js';
+import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
 import {
   downloadFile, forwardMail, getAttachmentBase64, getAttachmentBytes, getMessage,
   listFolders, listMessages, moveMessage, patchMessage,
@@ -95,13 +96,22 @@ export default async function handler(req: Req, res: Res) {
   try {
     const auth = asString(req.headers?.authorization as string | undefined);
     const user = await getAuthedUser(auth);
-    if (user.role !== 'admin') throw new HttpError(403, 'Nur Admins');
     const token = (auth ?? '').replace(/^bearer\s+/i, '');
 
     const action = qString(req.query?.action)
       ?? (typeof (req.body as Record<string, unknown> | null)?.action === 'string'
             ? ((req.body as Record<string, unknown>).action as string)
             : '');
+
+    // Posteingang-/Mailbox-Aktionen sind Admin-only. Einzige Ausnahme:
+    // eingang-send — die automatischen Mails nach Formular-Einreichung
+    // (Bestätigung/Schieberegler) laufen mit dem JWT des einreichenden
+    // FAHRERS. Für Nicht-Admins gelten dort strengere Checks (siehe
+    // eingang-send: formular_id-Pflicht + Pfad-Autorisierung, keine
+    // manuellen base64-Anhänge). Test-/Auftraggeber-Profile senden nie.
+    const isEingangSend = req.method === 'POST' && action === 'eingang-send';
+    const allowed = user.role === 'admin' || (isEingangSend && user.role === 'fahrer');
+    if (!allowed) throw new HttpError(403, 'Keine Berechtigung für diese Aktion');
     const body = (req.body && typeof req.body === 'object')
       ? req.body as Record<string, unknown>
       : {};
@@ -298,6 +308,25 @@ export default async function handler(req: Req, res: Res) {
             && !(a.onedrive_path as string).includes('..'),
           )
         : [];
+      // Nicht-Admins (Fahrer beim Submit): jeder Anhang-Pfad muss zu einem
+      // per RLS sichtbaren EIGENEN Formular gehören — sonst könnte ein
+      // manipulierter Request beliebige OneDrive-PDFs exfiltrieren.
+      // Manuelle base64-Anhänge sind dem Admin-Dialog vorbehalten.
+      if (user.role !== 'admin') {
+        const formularId = asString(body.formular_id);
+        if (requested.length > 0) {
+          if (!formularId) {
+            throw new HttpError(400, 'formular_id fehlt (für Anhänge erforderlich)');
+          }
+          for (const a of requested) {
+            await assertCanAccessPdfPath(user, token, formularId, a.onedrive_path as string);
+          }
+        }
+        const manual = body.manualAttachments;
+        if (Array.isArray(manual) && manual.length > 0) {
+          throw new HttpError(403, 'Manuelle Anhänge nur für Admins');
+        }
+      }
       const attachments: Array<{ name: string; contentType: string; bytes: Uint8Array }> = [];
       const failed: string[] = [];
       for (const a of requested) {
