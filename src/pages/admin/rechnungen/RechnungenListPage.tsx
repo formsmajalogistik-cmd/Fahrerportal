@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
+import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
 import { RECHNUNG_STATUS_LABEL } from './rechnungLabels';
 import type {
   Auftraggeber, AuftraggeberKontakt, Rechnung, RechnungStatus,
 } from '../../../types/db';
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 interface RechnungRow extends Rechnung {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name'> | null;
@@ -38,6 +43,17 @@ export function RechnungenListPage() {
   const [statusFilter, setStatusFilter] = useState<RechnungStatus | 'alle'>('alle');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+
+  // Mehrfach-Auswahl für Sammelaktionen (als bezahlt / offen markieren).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<null | 'bezahlt' | 'offen'>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  function showToast(t: string) {
+    setToast(t);
+    window.setTimeout(() => setToast((cur) => (cur === t ? null : cur)), 4000);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,8 +142,13 @@ export function RechnungenListPage() {
     });
   }, [rows, yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
 
-  // Reset Pagination bei Filter-Änderungen.
-  useEffect(() => { setPage(1); }, [yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
+  // Reset Pagination + Auswahl bei Filter-Änderungen — sonst könnten
+  // nicht mehr sichtbare (ausgefilterte) Rechnungen in der Sammelaktion
+  // landen, ohne dass man sie sieht.
+  useEffect(() => {
+    setPage(1);
+    setSelected(new Set());
+  }, [yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
 
   // Empfänger-Optionen aus den geladenen Rechnungen, sobald ein
   // Auftraggeber gefiltert wird — eine Map nach Id mit Name.
@@ -174,6 +195,63 @@ export function RechnungenListPage() {
     for (const r of rows) c[r.status] = (c[r.status] ?? 0) + 1;
     return c;
   }, [rows]);
+
+  // ---- Mehrfach-Auswahl ------------------------------------------------
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // „Alle auswählen" bezieht sich auf die aktuell GEFILTERTEN Rechnungen
+  // (über alle Seiten der Pagination hinweg — die Filter sind die
+  // sichtbare Menge).
+  const allFilteredSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+  const someFilteredSelected = filtered.some((r) => selected.has(r.id));
+  function toggleSelectAll() {
+    setSelected(allFilteredSelected ? new Set() : new Set(filtered.map((r) => r.id)));
+  }
+
+  /**
+   * Sammelaktion: setzt den Status der ausgewählten Rechnungen — mit
+   * demselben Patch wie der Einzel-Flow in der Detail-Ansicht
+   * (bezahlt → { status, bezahlt_am }; offen → { status, bezahlt_am: null }).
+   * Umgestellt werden NUR Rechnungen, für die der Übergang im Einzel-Flow
+   * existiert: offen → bezahlt bzw. bezahlt → offen. Entwürfe und bereits
+   * im Zielstatus befindliche werden übersprungen.
+   */
+  async function runBulkStatus(target: 'bezahlt' | 'offen', bezahltAm?: string) {
+    const eligible = rows.filter((r) =>
+      selected.has(r.id)
+      && (target === 'bezahlt' ? r.status === 'offen' : r.status === 'bezahlt'));
+    const ids = eligible.map((r) => r.id);
+    setBulkAction(null);
+    if (ids.length === 0) {
+      showToast(target === 'bezahlt'
+        ? 'Keine offene Rechnung in der Auswahl — nichts umgestellt.'
+        : 'Keine bezahlte Rechnung in der Auswahl — nichts umgestellt.');
+      return;
+    }
+    setBulkBusy(true);
+    const patch = target === 'bezahlt'
+      ? { status: 'bezahlt' as const, bezahlt_am: bezahltAm ?? todayIso() }
+      : { status: 'offen' as const, bezahlt_am: null };
+    const { error: err } = await supabase
+      .from('rechnungen')
+      .update(patch)
+      .in('id', ids);
+    setBulkBusy(false);
+    if (err) { setError(err.message); return; }
+    setSelected(new Set());
+    await load();
+    const skipped = selected.size - ids.length;
+    showToast(
+      `${ids.length} Rechnung${ids.length === 1 ? '' : 'en'} als ${target === 'bezahlt' ? 'bezahlt' : 'offen'} markiert`
+      + (skipped > 0 ? ` (${skipped} übersprungen)` : ''),
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -302,6 +380,39 @@ export function RechnungenListPage() {
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
 
+      {/* Aktionsleiste für die Mehrfach-Auswahl */}
+      {selected.size > 0 && (
+        <div className="card flex flex-wrap items-center gap-3 border border-maja-navy/15 p-3">
+          <span className="text-sm font-medium text-maja-ink">
+            {selected.size} ausgewählt
+          </span>
+          <button
+            type="button"
+            className="btn-primary text-sm"
+            disabled={bulkBusy}
+            onClick={() => setBulkAction('bezahlt')}
+          >
+            {bulkBusy ? 'Wird umgestellt …' : 'Als bezahlt markieren'}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary text-sm"
+            disabled={bulkBusy}
+            onClick={() => setBulkAction('offen')}
+          >
+            Als offen markieren
+          </button>
+          <button
+            type="button"
+            className="text-sm font-medium text-maja-muted hover:text-maja-navy hover:underline"
+            disabled={bulkBusy}
+            onClick={() => setSelected(new Set())}
+          >
+            Auswahl aufheben
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <Spinner label="Rechnungen werden geladen …" />
       ) : filtered.length === 0 ? (
@@ -313,12 +424,20 @@ export function RechnungenListPage() {
           <table className="w-full text-sm">
             <thead className="bg-maja-light text-left text-maja-navy">
               <tr>
+                <th className="w-10 px-3 py-2">
+                  <SelectAllCheckbox
+                    checked={allFilteredSelected}
+                    indeterminate={someFilteredSelected && !allFilteredSelected}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 <th className="px-3 py-2 font-semibold">Rechnung</th>
                 <th className="px-3 py-2 font-semibold">Datum</th>
                 <th className="px-3 py-2 font-semibold">Auftraggeber</th>
                 <th className="px-3 py-2 font-semibold">Zeitraum</th>
                 <th className="px-3 py-2 text-right font-semibold">Pos.</th>
                 <th className="px-3 py-2 text-right font-semibold">Netto</th>
+                <th className="px-3 py-2 text-right font-semibold">Brutto</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
               </tr>
             </thead>
@@ -329,6 +448,15 @@ export function RechnungenListPage() {
                   className="cursor-pointer hover:bg-maja-light/40"
                   onClick={() => navigate(`/rechnungen/${r.id}`)}
                 >
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-navy"
+                      checked={selected.has(r.id)}
+                      onChange={() => toggleSelected(r.id)}
+                      aria-label={`Rechnung ${r.rechnungsnummer} auswählen`}
+                    />
+                  </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold text-maja-ink">{r.rechnungsnummer}</span>
@@ -355,6 +483,9 @@ export function RechnungenListPage() {
                   <td className="px-3 py-2 text-right font-medium tabular-nums">
                     {formatEuro(Number(r.netto_summe))}
                   </td>
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-maja-navy">
+                    {formatEuro(Number(r.brutto_summe))}
+                  </td>
                   <td className="px-3 py-2"><RechnungStatusBadge status={r.status} /></td>
                 </tr>
               ))}
@@ -380,6 +511,97 @@ export function RechnungenListPage() {
           >Weiter</button>
         </div>
       )}
+
+      {bulkAction === 'bezahlt' && (
+        <BulkBezahltDialog
+          count={selected.size}
+          onCancel={() => setBulkAction(null)}
+          onConfirm={(datum) => void runBulkStatus('bezahlt', datum)}
+        />
+      )}
+      {bulkAction === 'offen' && (
+        <ConfirmDialog
+          title="Als offen markieren?"
+          message={
+            <>
+              {selected.size} ausgewählte Rechnung{selected.size === 1 ? '' : 'en'} zurück
+              auf <strong>offen</strong> setzen? Das Bezahlt-Datum wird entfernt.
+              Nur bezahlte Rechnungen werden umgestellt.
+            </>
+          }
+          confirmLabel="Als offen markieren"
+          onConfirm={() => runBulkStatus('offen')}
+          onClose={() => setBulkAction(null)}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Kopf-Checkbox mit indeterminate-Zustand (teilweise Auswahl). */
+function SelectAllCheckbox({
+  checked, indeterminate, onChange,
+}: { checked: boolean; indeterminate: boolean; onChange: () => void }) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-navy"
+      checked={checked}
+      onChange={onChange}
+      aria-label="Alle gefilterten Rechnungen auswählen"
+    />
+  );
+}
+
+/**
+ * Bestätigung der Sammelaktion „Als bezahlt markieren" — mit demselben
+ * „Bezahlt am"-Datum wie der Einzel-Flow (BezahltDialog in der
+ * Detail-Ansicht). Default: heute.
+ */
+function BulkBezahltDialog({
+  count, onCancel, onConfirm,
+}: { count: number; onCancel: () => void; onConfirm: (datum: string) => void }) {
+  const [d, setD] = useState(todayIso());
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
+      <div className="card w-full max-w-sm p-5">
+        <h3 className="text-base font-semibold text-maja-navy">
+          {count} Rechnung{count === 1 ? '' : 'en'} als bezahlt markieren?
+        </h3>
+        <p className="mt-1 text-xs text-maja-muted">
+          Nur offene Rechnungen werden umgestellt — Entwürfe und bereits
+          bezahlte bleiben unverändert.
+        </p>
+        <label htmlFor="bulk-bezahlt-am" className="label mt-3">Bezahlt am</label>
+        <input
+          id="bulk-bezahlt-am"
+          type="date" className="input" value={d}
+          onChange={(e) => setD(e.target.value)}
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onCancel}>
+            Abbrechen
+          </button>
+          <button
+            type="button" className="btn-primary"
+            disabled={!d}
+            onClick={() => onConfirm(d)}
+          >
+            Als bezahlt markieren
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
