@@ -191,7 +191,7 @@ export const RECHNUNG_PLATZHALTER = [
   'start', 'ziel', 'rueckfuehrung',
   'datum', 'datum_von', 'datum_bis',
   'kennzeichen', 'kennzeichen_hin', 'kennzeichen_rueck',
-  'kundenname', 'fin', 'tourenart',
+  'kundenname', 'fin', 'fin_rueck', 'tourenart',
   'kategorie', 'sondervereinbarung', 'ansprechpartner',
 ] as const;
 
@@ -220,6 +220,7 @@ export interface RechnungVorschauTour {
   kennzeichen_rueck?: string;
   kundenname?: string;
   fin?: string;
+  fin_rueck?: string;
   preis: number;
   zusaetze: Array<{ kategorie: string; anzahl: number; betrag: number; notiz?: string }>;
 }
@@ -285,6 +286,7 @@ function buildPlaceholders(t: RechnungVorschauTour): Record<string, string> {
     kennzeichen_rueck: t.kennzeichen_rueck ?? '',
     kundenname: t.kundenname ?? '',
     fin: t.fin ?? '',
+    fin_rueck: t.fin_rueck ?? '',
     tourenart: t.tourenart,
   };
 }
@@ -368,6 +370,7 @@ export interface TourForRechnung {
   kennzeichen: string[];
   kundenname: string | null;
   fin: string | null;
+  fin_rueck: string | null;
   sondervereinbarung: string | null;
   verguetung: number | null;
   /** Freitext-Notiz aus der Tour. Wird im Rechnungs-Editor als Hinweis
@@ -485,6 +488,7 @@ function placeholdersForTour(
     kennzeichen_rueck: kzRueck,
     kundenname: t.kundenname ?? '',
     fin: t.fin ?? '',
+    fin_rueck: t.fin_rueck ?? '',
     tourenart: format.tourenart_anzeigen ? (t.tourenart ?? '') : '',
     sondervereinbarung: t.sondervereinbarung ?? 'SV',
   };

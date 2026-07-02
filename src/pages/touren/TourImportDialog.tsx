@@ -50,6 +50,7 @@ interface ParsedRow {
   kontakt_ziel?: KontaktJson | null;
   kontakt_rueckfuehrung?: KontaktJson | null;
   fin?: string | null;
+  fin_rueck?: string | null;
   kundenname?: string | null;
   km_hin?: number | null;
   km_rueck?: number | null;
@@ -86,6 +87,7 @@ const HEADER_KEYS = {
   kontakt_rueck_tel:  ['kontakt rück tel', 'kontakt rueck tel'],
   kontakt_rueck_mail: ['kontakt rück e-mail', 'kontakt rück email', 'kontakt rueck e-mail'],
   fin:             ['fin'],
+  fin_rueck:       ['fin rück', 'fin rueck'],
   kundenname:      ['kundenname', 'kunde'],
   status:          ['status'],
   bestaetigt:      ['bestätigt', 'bestaetigt'],
@@ -360,6 +362,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       kontakt_rueck_tel:  findColumnExact(cols, HEADER_KEYS.kontakt_rueck_tel),
       kontakt_rueck_mail: findColumnExact(cols, HEADER_KEYS.kontakt_rueck_mail),
       fin:             findColumnExact(cols, HEADER_KEYS.fin),
+      fin_rueck:       findColumnExact(cols, HEADER_KEYS.fin_rueck),
       kundenname:      findColumnExact(cols, HEADER_KEYS.kundenname),
       status:          findColumnExact(cols, HEADER_KEYS.status),
       bestaetigt:      findColumnExact(cols, HEADER_KEYS.bestaetigt),
@@ -421,6 +424,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         ? buildKontakt(at(r, oIdx.kontakt_rueck_name), at(r, oIdx.kontakt_rueck_tel), at(r, oIdx.kontakt_rueck_mail))
         : undefined;
       const fin = oIdx.fin >= 0 ? cellStr(at(r, oIdx.fin)) : undefined;
+      const fin_rueck = oIdx.fin_rueck >= 0 ? cellStr(at(r, oIdx.fin_rueck)) : undefined;
       const kundenname = oIdx.kundenname >= 0 ? cellStr(at(r, oIdx.kundenname)) : undefined;
       const status = oIdx.status >= 0 ? parseStatusCell(at(r, oIdx.status)) : undefined;
       const bestaetigt = oIdx.bestaetigt >= 0 ? parseBoolCell(at(r, oIdx.bestaetigt)) : undefined;
@@ -461,6 +465,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         kontakt_ziel,
         kontakt_rueckfuehrung,
         fin,
+        fin_rueck,
         kundenname,
         status,
         bestaetigt,
@@ -558,6 +563,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.kontakt_ziel !== undefined) base.kontakt_ziel = r.kontakt_ziel as TourInsert['kontakt_ziel'];
         if (r.kontakt_rueckfuehrung !== undefined) base.kontakt_rueckfuehrung = r.kontakt_rueckfuehrung as TourInsert['kontakt_rueckfuehrung'];
         if (r.fin !== undefined) base.fin = r.fin;
+        if (r.fin_rueck !== undefined) base.fin_rueck = r.fin_rueck;
         if (r.kundenname !== undefined) base.kundenname = r.kundenname;
         if (r.status != null) base.status = r.status as TourInsert['status'];
         if (r.bestaetigt != null) base.bestaetigt = r.bestaetigt;

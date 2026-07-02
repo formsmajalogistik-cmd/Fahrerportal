@@ -265,6 +265,7 @@ export type Database = {
           greimel_zugang_id: string | null;
           ist_e_fahrzeug: boolean;
           fin: string | null;
+          fin_rueck: string | null;
           kontakt_id: string | null;
           eingang_id: string | null;
           eingang_id_bc: string | null;
@@ -315,6 +316,7 @@ export type Database = {
           greimel_zugang_id?: string | null;
           ist_e_fahrzeug?: boolean;
           fin?: string | null;
+          fin_rueck?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
           eingang_id_bc?: string | null;
@@ -365,6 +367,7 @@ export type Database = {
           greimel_zugang_id?: string | null;
           ist_e_fahrzeug?: boolean;
           fin?: string | null;
+          fin_rueck?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
           eingang_id_bc?: string | null;
@@ -1137,6 +1140,7 @@ export type Database = {
           kennzeichen: string[];
           ist_e_fahrzeug: boolean;
           fin: string | null;
+          fin_rueck: string | null;
           adresse_start: string | null;
           adresse_ziel: string | null;
           adresse_rueckfuehrung: string | null;

@@ -48,6 +48,7 @@ interface ExportRow {
   kontakt_rueckfuehrung: KontaktJson | null;
   kennzeichen: string[] | null;
   fin: string | null;
+  fin_rueck: string | null;
   kundenname: string | null;
   km_hin: number | null;
   km_rueck: number | null;
@@ -127,7 +128,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     'Kontakt Start Name', 'Kontakt Start Tel', 'Kontakt Start E-Mail',
     'Kontakt Ziel Name', 'Kontakt Ziel Tel', 'Kontakt Ziel E-Mail',
     'Kontakt Rück Name', 'Kontakt Rück Tel', 'Kontakt Rück E-Mail',
-    'Kennzeichen Rück', 'FIN', 'Kundenname',
+    'Kennzeichen Rück', 'FIN', 'FIN Rück', 'Kundenname',
     'km Hin', 'km Rück', 'Info', 'created_at', 'Bestätigt',
   ];
 
@@ -161,6 +162,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       kr.name, kr.tel, kr.mail,
       kennz[1] ?? '',
       t.fin ?? '',
+      t.fin_rueck ?? '',
       t.kundenname ?? '',
       t.km_hin ?? '',
       t.km_rueck ?? '',

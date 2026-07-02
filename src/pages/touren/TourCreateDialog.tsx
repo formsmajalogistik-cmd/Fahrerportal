@@ -98,6 +98,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   // E-Fahrzeug + FIN + Kontakt
   const [istEFahrzeug, setIstEFahrzeug] = useState(false);
   const [fin, setFin] = useState(initial?.fin ?? '');
+  const [finRueck, setFinRueck] = useState('');
   const [kontaktId, setKontaktId] = useState('');
   const [kontakte, setKontakte] = useState<AuftraggeberKontakt[]>([]);
 
@@ -223,6 +224,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       setRueckfuehrungStadt('');
       setKmRueck('');
       setKennzeichenRueck('');
+      setFinRueck('');
     } else {
       setHatRueckfuehrung(true);
     }
@@ -321,6 +323,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       kennzeichen,
       ist_e_fahrzeug: istEFahrzeug,
       fin: fin.trim() || null,
+      fin_rueck: hatRueckfuehrung ? (finRueck.trim().toUpperCase() || null) : null,
       protokoll_art: protokollArt,
       schriftliches_protokoll_id: schriftlichEffective,
       greimel_zugang_id: greimelEffective,
@@ -634,11 +637,19 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               E-Fahrzeug
             </label>
             <div>
-              <label htmlFor="t-fin" className="label">FIN</label>
+              <label htmlFor="t-fin" className="label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
               <input id="t-fin" className="input"
                      value={fin}
                      onChange={(e) => setFin(e.target.value.toUpperCase())} />
             </div>
+            {hatRueckfuehrung && (
+              <div>
+                <label htmlFor="t-fin-rueck" className="label">FIN Rück</label>
+                <input id="t-fin-rueck" className="input"
+                       value={finRueck}
+                       onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
+              </div>
+            )}
           </div>
 
           {/* Vergütung */}

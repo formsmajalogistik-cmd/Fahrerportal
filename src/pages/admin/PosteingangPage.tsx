@@ -502,7 +502,10 @@ export function PosteingangPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] min-h-[28rem] flex-col gap-4 overflow-hidden">
+    // Höhen-Korsett nur auf Desktop (lg): dort scrollen Liste/Detail in
+    // eigenen Spalten. Auf Mobile normale Seiten-Höhe + Seiten-Scroll —
+    // sonst quetschen sich die Panes in winzige Scroll-Container.
+    <div className="flex flex-col gap-4 lg:h-[calc(100vh-7rem)] lg:min-h-[28rem] lg:overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-maja-navy">Posteingang</h1>
@@ -551,7 +554,7 @@ export function PosteingangPage() {
       </div>
 
       {pendingTour && openMail ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
           {pendingTour.mode === 'create' ? (
             <TourFromEmailPanel
               mail={openMail}
@@ -578,13 +581,30 @@ export function PosteingangPage() {
           )}
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[14rem_minmax(0,2fr)_minmax(0,3fr)]">
-          <FolderSidebar
-            folders={folders}
-            loading={foldersLoading}
-            activeId={activeFolderId}
-            onChoose={chooseFolder}
-          />
+        // Mobile (<lg): gestapelte Navigation — Ordner-Dropdown + Liste in
+        // voller Breite/Höhe; geöffnete E-Mail ERSETZT die Liste (Vollbild)
+        // mit „← Posteingang"-Zurück-Button.
+        // Desktop (lg+): unverändert drei Spalten mit eigenem Scroll.
+        <div className="min-h-0 flex-1 space-y-3 lg:grid lg:gap-4 lg:space-y-0 lg:overflow-hidden lg:grid-cols-[14rem_minmax(0,2fr)_minmax(0,3fr)]">
+          {!openId && (
+            <div className="lg:hidden">
+              <FolderDropdown
+                folders={folders}
+                loading={foldersLoading}
+                activeId={activeFolderId}
+                onChoose={chooseFolder}
+              />
+            </div>
+          )}
+          <div className="hidden min-h-0 lg:grid lg:grid-rows-[minmax(0,1fr)]">
+            <FolderSidebar
+              folders={folders}
+              loading={foldersLoading}
+              activeId={activeFolderId}
+              onChoose={chooseFolder}
+            />
+          </div>
+          <div className={`${openId ? 'hidden lg:grid' : 'grid'} min-h-0 lg:grid-rows-[minmax(0,1fr)]`}>
           <ListPane
             threads={visibleThreads}
             loading={listLoading}
@@ -592,7 +612,12 @@ export function PosteingangPage() {
             search={search}
             onSearch={(s) => { setSearch(s); setPage(1); }}
             openId={openId}
-            onOpen={(id) => setOpenId(id)}
+            onOpen={(id) => {
+              setOpenId(id);
+              // Mobile: die Detail-Ansicht ersetzt die Liste — nach oben
+              // scrollen, damit die E-Mail am Kopf beginnt.
+              if (window.innerWidth < 1024) window.scrollTo({ top: 0 });
+            }}
             onFlag={handleToggleFlag}
             page={page}
             onPage={setPage}
@@ -607,6 +632,15 @@ export function PosteingangPage() {
             ownAddresses={ownAddresses}
             onRefresh={refreshAll}
           />
+          </div>
+          <div className={`${openId ? 'grid' : 'hidden lg:grid'} min-h-0 gap-2 lg:grid-rows-[minmax(0,1fr)]`}>
+          <button
+            type="button"
+            onClick={() => { setOpenId(null); window.scrollTo({ top: 0 }); }}
+            className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-maja-navy/15 bg-white px-3 py-1.5 text-sm font-medium text-maja-navy hover:bg-maja-light lg:hidden"
+          >
+            ← Posteingang
+          </button>
           <DetailPane
             mailbox={activeMailbox}
             loading={openLoading}
@@ -626,6 +660,7 @@ export function PosteingangPage() {
             onDelete={(id) => requestDelete(id)}
             onMove={handleMove}
           />
+          </div>
         </div>
       )}
 
@@ -717,6 +752,51 @@ function FolderSidebar({
 
 function isFolderActive(active: string, f: MailFolder): boolean {
   return active === f.id || (!!f.wellKnown && active === f.wellKnown);
+}
+
+/** Mobile Ordner-Auswahl (<lg): Dropdown statt Sidebar-Spalte. */
+function FolderDropdown({
+  folders, loading, activeId, onChoose,
+}: {
+  folders: MailFolder[];
+  loading: boolean;
+  activeId: string;
+  onChoose: (id: string) => void;
+}) {
+  const wellKnown = folders.filter((f) => !!f.wellKnown);
+  const custom = folders
+    .filter((f) => !f.wellKnown)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'de', { sensitivity: 'base' }));
+  // Selektierten Wert auf dieselben IDs normalisieren wie FolderRow
+  // (well-known-ID bevorzugt, sonst Roh-ID).
+  const value = [...wellKnown, ...custom]
+    .find((f) => isFolderActive(activeId, f));
+  return (
+    <label className="block">
+      <span className="sr-only">Ordner</span>
+      <select
+        className="input"
+        disabled={loading}
+        value={value ? (value.wellKnown ?? value.id) : activeId}
+        onChange={(e) => onChoose(e.target.value)}
+        aria-label="Ordner wählen"
+      >
+        {loading && <option value={activeId}>Ordner werden geladen …</option>}
+        {wellKnown.map((f) => (
+          <option key={f.id} value={f.wellKnown ?? f.id}>
+            {f.displayName || '(unbenannt)'}
+            {f.unreadItemCount > 0 ? ` (${f.unreadItemCount})` : ''}
+          </option>
+        ))}
+        {custom.map((f) => (
+          <option key={f.id} value={f.id}>
+            {f.displayName || '(unbenannt)'}
+            {f.unreadItemCount > 0 ? ` (${f.unreadItemCount})` : ''}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function FolderRow({

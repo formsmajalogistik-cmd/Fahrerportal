@@ -126,7 +126,7 @@ function buildTourSelectCols(admin: boolean): string {
     adresse_start, adresse_ziel, adresse_rueckfuehrung,
     kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
     tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
-    greimel_zugang_id, ist_e_fahrzeug, fin, kontakt_id, eingang_id,
+    greimel_zugang_id, ist_e_fahrzeug, fin, fin_rueck, kontakt_id, eingang_id,
     kontakt_start, kontakt_ziel, kontakt_rueckfuehrung, app_notiz,
     created_at, updated_at,
     auftraggeber:auftraggeber_id (id, name, kontakt, externe_app_name, externe_app_url),
@@ -205,6 +205,7 @@ interface EditDraft {
   greimelZugangId: string | null;
   istEFahrzeug: boolean;
   fin: string;
+  finRueck: string;
   kontaktId: string;
   appNotiz: string;
   // Kontakt pro Adresse (Start / Ziel / Rückführung)
@@ -255,6 +256,7 @@ function draftFromTour(t: FullTour): EditDraft {
     greimelZugangId: t.greimel_zugang_id ?? null,
     istEFahrzeug: !!t.ist_e_fahrzeug,
     fin: t.fin ?? '',
+    finRueck: t.fin_rueck ?? '',
     kontaktId: t.kontakt_id ?? '',
     appNotiz: t.app_notiz ?? '',
     kontaktStartName:    readKontaktField(t.kontakt_start, 'name'),
@@ -485,6 +487,7 @@ export function TourDetailDialog({
         rueckfuehrungStadt: '',
         kmRueck: '',
         kennzeichenRueck: '',
+        finRueck: '',
         adresseRueckfuehrung: '',
       });
     } else {
@@ -677,6 +680,9 @@ export function TourDetailDialog({
           : null,
         ist_e_fahrzeug: draft.istEFahrzeug,
         fin: draft.fin.trim() || null,
+        fin_rueck: draft.hatRueckfuehrung
+          ? (draft.finRueck.trim().toUpperCase() || null)
+          : null,
         protokoll_art: draft.protokollArt,
         schriftliches_protokoll_id: nextSchriftlichesId,
         greimel_zugang_id: nextGreimelId,
@@ -2024,7 +2030,10 @@ function VehicleAndAddressView({
         {hatRueckfuehrung && (
           <DetailItem label="Kennzeichen Rück">{tour.kennzeichen?.[1] ?? '—'}</DetailItem>
         )}
-        <DetailItem label="FIN">{tour.fin || '—'}</DetailItem>
+        <DetailItem label={hatRueckfuehrung ? 'FIN Hin' : 'FIN'}>{tour.fin || '—'}</DetailItem>
+        {hatRueckfuehrung && (
+          <DetailItem label="FIN Rück">{tour.fin_rueck || '—'}</DetailItem>
+        )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <AddressBlockView
@@ -2127,13 +2136,30 @@ function VehicleAndAddressEdit({
           </div>
         </div>
       )}
-      {/* FIN */}
-      <div>
-        <label className="label">FIN</label>
-        <input className="input"
-               value={draft.fin}
-               onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
-      </div>
+      {/* FIN — analog zum Kennzeichen: bei Rückführung Hin/Rück getrennt */}
+      {!draft.hatRueckfuehrung ? (
+        <div>
+          <label className="label">FIN</label>
+          <input className="input"
+                 value={draft.fin}
+                 onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">FIN Hin</label>
+            <input className="input"
+                   value={draft.fin}
+                   onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
+          </div>
+          <div>
+            <label className="label">FIN Rück</label>
+            <input className="input"
+                   value={draft.finRueck}
+                   onChange={(e) => patchDraft({ finRueck: e.target.value.toUpperCase() })} />
+          </div>
+        </div>
+      )}
 
       {/* Adresse + Kontakt pro Stadt */}
       <AddressBlockEdit

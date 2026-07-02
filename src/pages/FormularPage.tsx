@@ -153,23 +153,52 @@ export function FormularPage() {
 
       // Vorausgefüllte Daten der verknüpften Tour (sofern bekannt) mergen.
       // Felder, die der Fahrer schon angefasst hat (_touched), bleiben.
+      //
+      // WICHTIG: Seit Migration 054 pflegt der Admin die Vorgaben pro
+      // Zuweisung in tour_protokoll_zuweisungen.vorgefuellte_daten (siehe
+      // PrefillDialog/ProtokollSection). Der Refresh hier las aber noch
+      // die Legacy-Spalte touren.vorgefuellte_daten (053) — dadurch kamen
+      // nachträgliche Admin-Vorgaben (z.B. Kundendaten) NIE im Formular
+      // an. Jetzt: Zuweisung zuerst, Legacy-Spalte nur als Fallback für
+      // Alt-Touren aus der Zeit vor 054.
       const tourId = typeof nextData._tour_id === 'string' ? nextData._tour_id : null;
       if (tourId) {
         try {
-          const { data: tour } = await supabase
-            .from('touren')
+          let prefill: Record<string, unknown> | null = null;
+          let quelle = 'keine';
+          const { data: zuweisung } = await supabase
+            .from('tour_protokoll_zuweisungen')
             .select('vorgefuellte_daten')
-            .eq('id', tourId)
+            .eq('tour_id', tourId)
+            .eq('template_id', af.template_id)
             .maybeSingle();
-          const prefill = tour?.vorgefuellte_daten as Record<string, unknown> | null;
-          if (prefill && typeof prefill === 'object') {
+          if (zuweisung?.vorgefuellte_daten && typeof zuweisung.vorgefuellte_daten === 'object') {
+            prefill = zuweisung.vorgefuellte_daten as Record<string, unknown>;
+            quelle = 'tour_protokoll_zuweisungen';
+          } else {
+            const { data: tour } = await supabase
+              .from('touren')
+              .select('vorgefuellte_daten')
+              .eq('id', tourId)
+              .maybeSingle();
+            if (tour?.vorgefuellte_daten && typeof tour.vorgefuellte_daten === 'object') {
+              prefill = tour.vorgefuellte_daten as Record<string, unknown>;
+              quelle = 'touren (Legacy)';
+            }
+          }
+          if (prefill) {
             const touched = (nextData._touched && typeof nextData._touched === 'object')
               ? nextData._touched as Record<string, unknown>
               : {};
             const merged: Record<string, unknown> = { ...nextData };
+            const uebernommen: string[] = [];
             for (const [k, v] of Object.entries(prefill)) {
-              if (!touched[k]) merged[k] = v;
+              if (!touched[k]) { merged[k] = v; uebernommen.push(k); }
             }
+            console.log('[Kundendaten-Verknüpfung]', {
+              quelle, tourId, templateId: af.template_id,
+              zielFelder: Object.keys(prefill), uebernommen,
+            });
             nextData = merged;
           }
         } catch (err) {

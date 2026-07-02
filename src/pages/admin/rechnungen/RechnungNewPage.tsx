@@ -353,7 +353,7 @@ export function RechnungNewPage() {
       .select(`
         id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
         startdatum, enddatum, tourenart, kennzeichen,
-        kundenname, fin, sondervereinbarung, verguetung, info,
+        kundenname, fin, fin_rueck, sondervereinbarung, verguetung, info,
         rechnungsdatum, rechnungsdatum_abweichend, status,
         zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
       `)
@@ -377,7 +377,7 @@ export function RechnungNewPage() {
       start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
       startdatum: string | null; enddatum: string | null;
       tourenart: TourenartReal; kennzeichen: string[] | null;
-      kundenname: string | null; fin: string | null;
+      kundenname: string | null; fin: string | null; fin_rueck: string | null;
       sondervereinbarung: string | null; verguetung: number | null;
       info: string | null;
       rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
@@ -396,6 +396,7 @@ export function RechnungNewPage() {
       kennzeichen: t.kennzeichen ?? [],
       kundenname: t.kundenname,
       fin: t.fin,
+      fin_rueck: t.fin_rueck,
       sondervereinbarung: t.sondervereinbarung,
       verguetung: t.verguetung,
       info: t.info,
@@ -488,7 +489,7 @@ export function RechnungNewPage() {
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, sondervereinbarung, verguetung, info,
+          kundenname, fin, fin_rueck, sondervereinbarung, verguetung, info,
           rechnungsdatum, rechnungsdatum_abweichend,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
@@ -501,7 +502,7 @@ export function RechnungNewPage() {
         start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
         startdatum: string | null; enddatum: string | null;
         tourenart: TourenartReal; kennzeichen: string[] | null;
-        kundenname: string | null; fin: string | null;
+        kundenname: string | null; fin: string | null; fin_rueck: string | null;
         sondervereinbarung: string | null; verguetung: number | null;
         info: string | null;
         rechnungsdatum: string | null; rechnungsdatum_abweichend: boolean | null;
@@ -514,6 +515,7 @@ export function RechnungNewPage() {
         startdatum: t.startdatum, enddatum: t.enddatum,
         tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [],
         kundenname: t.kundenname, fin: t.fin,
+        fin_rueck: t.fin_rueck,
         sondervereinbarung: t.sondervereinbarung,
         verguetung: t.verguetung,
         info: t.info,
