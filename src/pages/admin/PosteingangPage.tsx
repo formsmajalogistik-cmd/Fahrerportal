@@ -881,7 +881,7 @@ function ListPane({
     return !!addr && ownAddresses.includes(addr);
   }
   return (
-    <div className="card flex min-h-0 flex-col overflow-hidden">
+    <div className="card flex min-h-0 flex-col lg:overflow-hidden">
       <div className="flex items-center gap-2 border-b border-maja-navy/10 p-3">
         <input
           className="input"
@@ -927,7 +927,7 @@ function ListPane({
       ) : threads.length === 0 ? (
         <p className="p-6 text-center text-sm text-maja-muted">Keine E-Mails gefunden.</p>
       ) : (
-        <ul className="flex-1 divide-y divide-maja-navy/5 overflow-y-auto overscroll-contain">
+        <ul className="flex-1 divide-y divide-maja-navy/5 lg:overflow-y-auto lg:overscroll-contain">
           {threads.map((thread) => {
             const key = threadKey(thread);
             const newest = thread[thread.length - 1];
@@ -1104,13 +1104,13 @@ function DetailPane({
   onReply, onForward, onCreateTour, onOpenTour, onAddZusaetze, onAddZusaetzeBelege,
   onDelete, onMove,
 }: DetailPaneProps) {
-  if (loading) return <div className="card flex min-h-0 overflow-y-auto overscroll-contain p-6"><Spinner label="E-Mail wird geladen …" /></div>;
+  if (loading) return <div className="card flex min-h-0 p-6 lg:overflow-y-auto lg:overscroll-contain"><Spinner label="E-Mail wird geladen …" /></div>;
   if (error) {
-    return <div role="alert" className="card min-h-0 overflow-y-auto overscroll-contain p-4 text-sm text-red-700">{error}</div>;
+    return <div role="alert" className="card min-h-0 p-4 text-sm text-red-700 lg:overflow-y-auto lg:overscroll-contain">{error}</div>;
   }
   if (!mail) {
     return (
-      <div className="card flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain p-12 text-sm text-maja-muted">
+      <div className="card flex min-h-0 items-center justify-center p-12 text-sm text-maja-muted lg:overflow-y-auto lg:overscroll-contain">
         Wähle links eine E-Mail aus.
       </div>
     );
@@ -1120,7 +1120,7 @@ function DetailPane({
     return !!addr && ownAddresses.includes(addr);
   };
   return (
-    <div className="card flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-5">
+    <div className="card flex min-h-0 flex-col gap-4 p-5 lg:overflow-y-auto lg:overscroll-contain">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <EmailMessageHeader mail={thread ? thread[thread.length - 1] : mail} />
         <div className="flex flex-wrap gap-2">
