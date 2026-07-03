@@ -328,7 +328,10 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       schriftliches_protokoll_id: schriftlichEffective,
       greimel_zugang_id: greimelEffective,
       app_notiz: protokollArt === 'app' && appNotiz.trim() ? appNotiz.trim() : null,
-      rechnungsdatum_abweichend: rechnungsdatumAbweichend,
+      // Haken ohne eingetragenes Datum wird beim Speichern automatisch
+      // bereinigt — sonst hätte die Tour ein leeres effektives
+      // Rechnungsdatum und würde nie in eine Rechnung gezogen.
+      rechnungsdatum_abweichend: rechnungsdatumAbweichend && !!rechnungsdatum,
       rechnungsdatum: rechnungsdatumAbweichend && rechnungsdatum ? rechnungsdatum : null,
       adresse_start: adresseStart.trim() || null,
       adresse_ziel: adresseZiel.trim() || null,

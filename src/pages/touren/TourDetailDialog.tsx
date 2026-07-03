@@ -699,7 +699,10 @@ export function TourDetailDialog({
             draft.kontaktRueckName, draft.kontaktRueckTelefon, draft.kontaktRueckEmail,
           )
           : null,
-        rechnungsdatum_abweichend: draft.rechnungsdatumAbweichend,
+        // Haken ohne eingetragenes Datum wird beim Speichern automatisch
+        // bereinigt — sonst fällt die Tour aus den Rechnungs-Queries
+        // (leeres effektives Rechnungsdatum).
+        rechnungsdatum_abweichend: draft.rechnungsdatumAbweichend && !!draft.rechnungsdatum,
         rechnungsdatum: draft.rechnungsdatumAbweichend && draft.rechnungsdatum
           ? draft.rechnungsdatum
           : null,

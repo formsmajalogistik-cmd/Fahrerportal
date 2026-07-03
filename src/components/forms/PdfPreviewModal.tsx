@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fillPdf } from '../../lib/pdfGenerate';
 import { fetchPdfBytes } from '../../lib/pdfStorage';
+import { PdfCanvasPages } from '../PdfCanvasPages';
 import type { FormularTemplate, TemplatePdf } from '../../types/db';
 
 interface Props {
@@ -28,6 +29,10 @@ export function PdfPreviewModal({ template, data, onClose }: Props) {
   const [activeIdx, setActiveIdx] = useState(0);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Mobile (< 640px): iframe-PDFs sind dort unzuverlässig (Platzhalter
+  // statt Inhalt) → pdf.js-Canvas-Rendering. Einmal beim Öffnen
+  // entschieden; Desktop/Tablet bleibt beim iframe.
+  const [usePdfJs] = useState(() => window.matchMedia('(max-width: 639px)').matches);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,12 +133,18 @@ export function PdfPreviewModal({ template, data, onClose }: Props) {
             wurde.
           </div>
         ) : active ? (
-          <iframe
-            key={active.url}
-            src={active.url}
-            title={active.pdf.name}
-            className="h-full w-full border-0"
-          />
+          usePdfJs ? (
+            <div key={active.url} className="h-full overflow-y-auto p-3">
+              <PdfCanvasPages blobUrl={active.url} />
+            </div>
+          ) : (
+            <iframe
+              key={active.url}
+              src={active.url}
+              title={active.pdf.name}
+              className="h-full w-full border-0"
+            />
+          )
         ) : null}
       </div>
     </div>

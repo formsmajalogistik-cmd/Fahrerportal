@@ -332,7 +332,12 @@ export async function previewOneDrivePdf(
   path: string, opts?: { formularId?: string | null; filename?: string },
 ): Promise<boolean> {
   const filename = opts?.filename || path.split('/').pop() || 'preview.pdf';
-  const useModalDirectly = isSafari() || isStandalonePwa();
+  // Mobile (< 640px) immer ins Modal: dort rendert PdfBlobPreviewModal
+  // die PDF mit pdf.js als Canvas — Blob-URLs in neuen Tabs / iframes
+  // sind auf iOS Safari wie Android Chrome unzuverlässig (Platzhalter
+  // mit funktionslosem „Öffnen"-Button).
+  const isMobile = window.matchMedia('(max-width: 639px)').matches;
+  const useModalDirectly = isSafari() || isStandalonePwa() || isMobile;
 
   // Bei "klassischen" Browsern: Platzhalter-Tab SYNCHRON öffnen (zählt
   // als User-Gesture). Bei Safari/PWA überspringen wir das.
