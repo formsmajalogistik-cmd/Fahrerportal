@@ -6,6 +6,7 @@ import { OfflineBanner } from './OfflineBanner';
 import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { TestModeBanner } from './TestModeBanner';
 import { FuehrerscheinPopupGate } from './FuehrerscheinPopupGate';
+import { FuehrerscheinReminderDot } from './FuehrerscheinReminderDot';
 
 interface NavItem { to: string; label: string }
 
@@ -26,7 +27,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-10 border-b border-maja-navy/10 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3 lg:px-8">
           <MajaLogo className="h-9" />
-          <ProfilMenu />
+          {/* Erinnerungs-Punkt für offene Führerscheinabfragen sitzt als
+              Overlay am Profil-Menü — dort erreicht der Fahrer sein Konto. */}
+          <div className="relative">
+            <FuehrerscheinReminderDot />
+            <ProfilMenu />
+          </div>
         </div>
         <nav className="mx-auto max-w-screen-2xl overflow-x-auto px-2 lg:px-6">
           <ul className="flex gap-1 py-1">

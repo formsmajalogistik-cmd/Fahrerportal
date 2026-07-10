@@ -121,7 +121,13 @@ export function FuehrerscheinPopupGate() {
         fahrerId={fahrerId ?? 'test-demo'}
         testMode={isTestFahrer}
         defaultName={fahrerName(activeFahrer, profile) || ''}
-        onDone={() => { setDone(true); setNeedsSubmit(false); }}
+        onDone={() => {
+          setDone(true);
+          setNeedsSubmit(false);
+          // Erinnerungs-Punkt (FuehrerscheinReminderDot) sofort
+          // aktualisieren — nicht erst beim nächsten Poll.
+          window.dispatchEvent(new CustomEvent('maja:fuehrerschein-changed'));
+        }}
         onLater={() => setDismissed(true)}
       />
     </Overlay>

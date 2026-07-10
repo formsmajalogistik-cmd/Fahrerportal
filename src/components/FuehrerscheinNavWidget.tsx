@@ -5,11 +5,14 @@ import { supabase } from '../lib/supabase';
 /**
  * Einstiegspunkt „Führerscheinabfrage" am unteren Rand der Admin-Sidebar.
  * Zeigt das Datum der letzten Abfrage; ist diese >= 3 Monate her, wird
- * das Datum gelb (nächste Abfrage fällig).
+ * das Datum gelb (nächste Abfrage fällig). Zusätzlich ein Notification-
+ * Punkt (Stil wie der Eingänge-Blip), solange ungeprüfte Einreichungen
+ * vorliegen — verschwindet, sobald alles geprüft/abgehakt ist.
  */
 export function FuehrerscheinNavWidget() {
   const [lastAt, setLastAt] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [ungeprueft, setUngeprueft] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,6 +31,44 @@ export function FuehrerscheinNavWidget() {
       finally { if (!cancelled) setLoaded(true); }
     }
     return () => { cancelled = true; window.clearTimeout(t); };
+  }, []);
+
+  // Blip: ungecachter head-COUNT auf ungeprüfte ECHTE Einreichungen
+  // (manuell erledigte zählen nicht). Realtime + 30-s-Polling + Fokus-
+  // Refresh — analog zum Eingänge-Blip in EingaengeContext.
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      const { count, error } = await supabase
+        .from('fuehrerschein_einreichungen')
+        .select('id', { count: 'exact', head: true })
+        .eq('geprueft', false)
+        .eq('manuell_erledigt', false);
+      if (cancelled) return;
+      if (error) { console.warn('[FuehrerscheinNavWidget] count failed', error); return; }
+      setUngeprueft(count ?? 0);
+    }
+    const t = window.setTimeout(() => { void refresh(); }, 0);
+    const channel = supabase
+      .channel('fuehrerschein-notifications')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'fuehrerschein_einreichungen' },
+        () => { void refresh(); },
+      )
+      .subscribe();
+    const pollHandle = window.setInterval(() => { void refresh(); }, 30_000);
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      void supabase.removeChannel(channel);
+      window.clearInterval(pollHandle);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, []);
 
   const faellig = (() => {
@@ -55,6 +96,13 @@ export function FuehrerscheinNavWidget() {
       <span className="flex items-center gap-1.5">
         <KeyIcon className="h-4 w-4" />
         Führerscheinabfrage
+        {ungeprueft > 0 && (
+          <span
+            aria-label={`${ungeprueft} ungeprüfte Einreichung(en)`}
+            title={`${ungeprueft} ungeprüfte Einreichung(en)`}
+            className="ml-1 inline-block h-2 w-2 shrink-0 rounded-full bg-red-500"
+          />
+        )}
       </span>
       {loaded && (
         <span

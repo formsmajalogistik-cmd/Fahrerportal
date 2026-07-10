@@ -224,7 +224,8 @@ export function TourenlistePage() {
       bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at
     `;
     const adminCols = `${baseCols},
-      verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung`;
+      verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
+      rechnungsdatum_abweichend, rechnungsdatum`;
     const cols = isAdmin
       ? `
         ${adminCols},
@@ -312,17 +313,22 @@ export function TourenlistePage() {
   // Rechnungen die Tour als Position stammt. Separat geladen, damit das
   // manuelle Info-Feld der Tour unberührt bleibt.
   const [rechnungByTour, setRechnungByTour] = useState<Record<string, string[]>>({});
+  // Erst NACH Abschluss der Positions-Query dürfen „Ohne Rechnung"-
+  // Hinweise erscheinen — sonst flackern sie an jeder Tour auf, solange
+  // die Map noch leer ist.
+  const [rechnungInfoGeladen, setRechnungInfoGeladen] = useState(false);
   useEffect(() => {
     if (!isAdmin || rows.length === 0) {
       // Asynchron zurücksetzen, damit kein synchrones setState im Effect
       // läuft (react-hooks/set-state-in-effect).
-      queueMicrotask(() => setRechnungByTour({}));
+      queueMicrotask(() => { setRechnungByTour({}); setRechnungInfoGeladen(false); });
       return undefined;
     }
     let cancelled = false;
     void (async () => {
+      setRechnungInfoGeladen(false);
       const ids = rows.map((r) => r.id);
-      const { data } = await supabase
+      const { data, error: posErr } = await supabase
         .from('rechnungspositionen')
         .select('tour_id, rechnung:rechnung_id (id, rechnungsnummer)')
         .in('tour_id', ids);
@@ -339,6 +345,7 @@ export function TourenlistePage() {
         map[tid].push(re.rechnungsnummer);
       }
       setRechnungByTour(map);
+      if (!posErr) setRechnungInfoGeladen(true);
     })();
     return () => { cancelled = true; };
   }, [isAdmin, rows]);
@@ -355,6 +362,14 @@ export function TourenlistePage() {
    */
   const todayYmd = useMemo(() => {
     const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, []);
+  // Untergrenze für Abrechnungs-Hinweise: maximal 7 Tage zurückschauen —
+  // ältere Touren bleiben ohne Markierung (keine Alt-Touren-Flut).
+  const hinweisCutoffYmd = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }, []);
@@ -834,6 +849,19 @@ export function TourenlistePage() {
               todayYmd={todayYmd}
               onToggleBearbeitet={() => void toggleBearbeitet(t.id, t.bearbeitet_markiert_am ?? null)}
               rechnungsnummern={rechnungByTour[t.id]}
+              hinweisKeinPreis={(() => {
+                if (!isAdmin) return false;
+                const s = computeTourStatus(t.startdatum, t.enddatum);
+                if (s !== 'aktiv' && s !== 'abgeschlossen') return false;
+                if (!t.enddatum || t.enddatum < hinweisCutoffYmd) return false;
+                return !(Number(t.verguetung) > 0);
+              })()}
+              hinweisOhneRechnung={(() => {
+                if (!isAdmin || !rechnungInfoGeladen) return false;
+                if (computeTourStatus(t.startdatum, t.enddatum) !== 'abgeschlossen') return false;
+                if (!t.enddatum || t.enddatum < hinweisCutoffYmd) return false;
+                return (rechnungByTour[t.id]?.length ?? 0) === 0;
+              })()}
             />
           ))}
         </ul>
@@ -934,10 +962,14 @@ interface CardProps {
   /** Rechnungsnummern, auf denen die Tour als Position verwendet wird
    *  (read-only, aus rechnungspositionen ermittelt). Nur für Admin. */
   rechnungsnummern?: string[];
+  /** Abrechnungs-Hinweise (nur Admin, Enddatum max. 7 Tage zurück):
+   *  kein Preis berechnet bzw. abgeschlossen ohne Rechnungsposition. */
+  hinweisKeinPreis?: boolean;
+  hinweisOhneRechnung?: boolean;
 }
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
-  rechnungsnummern,
+  rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung,
 }: CardProps) {
   // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
   // Zuweisung ein eigener Open-Button. Fallback auf die Legacy-Spalte,
@@ -1133,6 +1165,32 @@ function TourCard({
                 title={`Auf Rechnung: ${rechnungsnummern.join(', ')}`}
               >
                 auf Rechnung
+              </span>
+            )}
+            {/* Abweichendes Rechnungsdatum — nur wenn wirklich gesetzt. */}
+            {isAdmin && tour.rechnungsdatum_abweichend && tour.rechnungsdatum && (
+              <span
+                className="inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-800"
+                title="Abweichendes Rechnungsdatum — die Tour wird zu diesem Datum abgerechnet, nicht zum Enddatum."
+              >
+                Rechnungsdatum {formatDate(tour.rechnungsdatum)}
+              </span>
+            )}
+            {/* Abrechnungs-Hinweise (max. 7 Tage zurück, nur Admin). */}
+            {hinweisKeinPreis && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800"
+                title="Für diese Tour ist noch kein Preis berechnet (Vergütung leer/0)."
+              >
+                <span aria-hidden="true">⚠</span> Kein Preis
+              </span>
+            )}
+            {hinweisOhneRechnung && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-orange-700"
+                title="Abgeschlossene Tour ohne Rechnungsposition — noch nicht berechnet."
+              >
+                <span aria-hidden="true">⚠</span> Ohne Rechnung
               </span>
             )}
             {isAdmin && (
