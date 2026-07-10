@@ -196,6 +196,9 @@ export function TourenlistePage() {
   const [openTourId, setOpenTourId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<TourRow | null>(null);
   const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
+  /** Aktiver Abrechnungs-Warnungs-Filter (Banner-Klick): zeigt exklusiv
+   *  die betroffenen Touren; zweiter Klick hebt ihn wieder auf. */
+  const [hinweisFilter, setHinweisFilter] = useState<null | 'kein_preis' | 'ohne_rechnung'>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -351,7 +354,7 @@ export function TourenlistePage() {
   }, [isAdmin, rows]);
 
   // Reset Pagination wenn Filter sich ändern
-  useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter]);
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter]);
 
   /**
    * Toggle für die "Heute bearbeitet"-Markierung pro aktiver Tour.
@@ -373,6 +376,28 @@ export function TourenlistePage() {
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }, []);
+
+  // Abrechnungs-Hinweise über ALLE geladenen Touren (unabhängig vom
+  // Datumsbereich-Filter, das 7-Tage-Fenster begrenzt ohnehin) — speist
+  // die Karten-Badges UND die Zusammenfassung oben.
+  const hinweise = useMemo(() => {
+    const keinPreis = new Set<string>();
+    const ohneRechnung = new Set<string>();
+    if (!isAdmin) return { keinPreis, ohneRechnung };
+    for (const t of rows) {
+      if (!t.enddatum || t.enddatum < hinweisCutoffYmd) continue;
+      const s = computeTourStatus(t.startdatum, t.enddatum);
+      if ((s === 'aktiv' || s === 'abgeschlossen') && !(Number(t.verguetung) > 0)) {
+        keinPreis.add(t.id);
+      }
+      if (s === 'abgeschlossen' && rechnungInfoGeladen
+          && (rechnungByTour[t.id]?.length ?? 0) === 0) {
+        ohneRechnung.add(t.id);
+      }
+    }
+    return { keinPreis, ohneRechnung };
+  }, [isAdmin, rows, hinweisCutoffYmd, rechnungInfoGeladen, rechnungByTour]);
+
   const toggleBearbeitet = useCallback(async (tourId: string, current: string | null) => {
     if (!isAdmin) return;
     const next = current === todayYmd ? null : todayYmd;
@@ -458,6 +483,14 @@ export function TourenlistePage() {
 
   // ---- Gefilterte Touren (Status [computed] + Suche) ----
   const filteredRows = useMemo(() => {
+    // Hinweis-Filter (Klick auf die Warn-Zusammenfassung): exklusiver
+    // Modus — zeigt genau die betroffenen Touren, unabhängig von
+    // Datums-/Status-/Such-Filtern, damit Zähler und Liste immer
+    // übereinstimmen.
+    if (hinweisFilter) {
+      const set = hinweisFilter === 'kein_preis' ? hinweise.keinPreis : hinweise.ohneRechnung;
+      return (rows ?? []).filter((t) => set.has(t.id));
+    }
     const q = search.trim().toLowerCase();
     return (rangeRows ?? []).filter((t) => {
       if (statusFilter !== 'alle' && computeTourStatus(t.startdatum, t.enddatum) !== statusFilter) return false;
@@ -477,7 +510,7 @@ export function TourenlistePage() {
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rangeRows, statusFilter, search, auftraggeberFilter, fahrerFilter]);
+  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise]);
 
   // ---- KPI-Daten ----
   // Alle KPIs respektieren Auftraggeber- und Fahrer-Filter (siehe Spec:
@@ -729,6 +762,51 @@ export function TourenlistePage() {
         </div>
       </div>
 
+      {/* Abrechnungs-Warnungen (nur Admin, letzte 7 Tage) — Klick filtert
+          die Liste exklusiv auf die betroffenen Touren; zweiter Klick
+          bzw. „Filter aufheben" stellt die normale Ansicht wieder her.
+          Ohne Warnungen erscheint gar nichts. */}
+      {isAdmin && (hinweise.keinPreis.size > 0 || hinweise.ohneRechnung.size > 0 || hinweisFilter) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-400/30">
+          <span aria-hidden="true" className="text-amber-800">⚠</span>
+          {hinweise.keinPreis.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHinweisFilter((cur) => (cur === 'kein_preis' ? null : 'kein_preis'))}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                hinweisFilter === 'kein_preis'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-amber-100 text-amber-800 hover:ring-1 hover:ring-amber-400'
+              }`}
+            >
+              {hinweise.keinPreis.size} {hinweise.keinPreis.size === 1 ? 'Tour' : 'Touren'} ohne Preis
+            </button>
+          )}
+          {hinweise.ohneRechnung.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHinweisFilter((cur) => (cur === 'ohne_rechnung' ? null : 'ohne_rechnung'))}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                hinweisFilter === 'ohne_rechnung'
+                  ? 'bg-orange-600 text-white'
+                  : 'bg-orange-100 text-orange-700 hover:ring-1 hover:ring-orange-400'
+              }`}
+            >
+              {hinweise.ohneRechnung.size} abgeschlossene ohne Rechnung
+            </button>
+          )}
+          {hinweisFilter && (
+            <button
+              type="button"
+              onClick={() => setHinweisFilter(null)}
+              className="text-xs font-medium text-amber-800 underline hover:no-underline"
+            >
+              Filter aufheben
+            </button>
+          )}
+        </div>
+      )}
+
       {/* KPI-Karten — Summe Ansicht (Vergütung) nur für Admins */}
       <div className={`grid gap-3 sm:grid-cols-2 ${isAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         <KpiCard
@@ -849,19 +927,8 @@ export function TourenlistePage() {
               todayYmd={todayYmd}
               onToggleBearbeitet={() => void toggleBearbeitet(t.id, t.bearbeitet_markiert_am ?? null)}
               rechnungsnummern={rechnungByTour[t.id]}
-              hinweisKeinPreis={(() => {
-                if (!isAdmin) return false;
-                const s = computeTourStatus(t.startdatum, t.enddatum);
-                if (s !== 'aktiv' && s !== 'abgeschlossen') return false;
-                if (!t.enddatum || t.enddatum < hinweisCutoffYmd) return false;
-                return !(Number(t.verguetung) > 0);
-              })()}
-              hinweisOhneRechnung={(() => {
-                if (!isAdmin || !rechnungInfoGeladen) return false;
-                if (computeTourStatus(t.startdatum, t.enddatum) !== 'abgeschlossen') return false;
-                if (!t.enddatum || t.enddatum < hinweisCutoffYmd) return false;
-                return (rechnungByTour[t.id]?.length ?? 0) === 0;
-              })()}
+              hinweisKeinPreis={hinweise.keinPreis.has(t.id)}
+              hinweisOhneRechnung={hinweise.ohneRechnung.has(t.id)}
             />
           ))}
         </ul>

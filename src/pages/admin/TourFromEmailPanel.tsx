@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { EmailMessageHeader, EmailMessageView } from './EmailMessageView';
+import { EmailThreadView } from './EmailMessageView';
 import { supabase } from '../../lib/supabase';
 import { replyToEmail, type MailDetail } from '../../lib/emails';
 import { bodyWithSignatureHtml, signatureFromProfile } from '../../lib/emailSignature';
@@ -9,6 +9,11 @@ import { TourCreateDialog } from '../touren/TourCreateDialog';
 
 interface Props {
   mail: MailDetail;
+  /** Ganze Konversation (chronologisch, inkl. eigener Antworten) —
+   *  fällt auf [mail] zurück, wenn nicht übergeben. */
+  thread?: MailDetail[] | null;
+  /** Eigene Postfach-Adressen für „Gesendet"-Badges. */
+  ownAddresses?: string[];
   mailbox: string;
   onClose: () => void;
   onCreated: (label: string) => void;
@@ -25,7 +30,7 @@ interface Props {
  * <Nummer>" auf die Ursprungs-E-Mail angeboten. Nutzer entscheidet
  * pro Tour, ob die Antwort rausgeht.
  */
-export function TourFromEmailPanel({ mail, mailbox, onClose, onCreated }: Props) {
+export function TourFromEmailPanel({ mail, thread, ownAddresses, mailbox, onClose, onCreated }: Props) {
   const [tab, setTab] = useState<'mail' | 'form'>('mail');
   const { profile } = useAuth();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
@@ -126,10 +131,11 @@ export function TourFromEmailPanel({ mail, mailbox, onClose, onCreated }: Props)
         <div
           className={`${tab === 'mail' ? '' : 'hidden'} min-h-0 md:block md:overflow-y-auto md:overscroll-contain`}
         >
-          <div className="card flex flex-col p-5">
-            <EmailMessageHeader mail={mail} />
-            <EmailMessageView mail={mail} mailbox={mailbox} />
-          </div>
+          <EmailThreadView
+            thread={thread && thread.length > 0 ? thread : [mail]}
+            mailbox={mailbox}
+            ownAddresses={ownAddresses}
+          />
         </div>
         <div
           className={`${tab === 'form' ? '' : 'hidden'} min-h-0 pb-12 md:block md:overflow-y-auto md:overscroll-contain`}

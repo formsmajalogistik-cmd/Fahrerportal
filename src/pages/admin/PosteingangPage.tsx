@@ -4,7 +4,7 @@ import {
 import { Spinner } from '../../components/Spinner';
 import { MailIcon } from '../../components/icons';
 import {
-  deleteEmail, formatMailDate, getEmail, listEmails, listFolders,
+  deleteEmail, formatMailDate, getEmail, listConversation, listEmails, listFolders,
   markEmailRead, moveEmail, setFlagStatus, NEXT_FLAG_STATUS,
   type FlagStatus, type MailDetail, type MailFolder, type MailListItem,
 } from '../../lib/emails';
@@ -290,10 +290,35 @@ export function PosteingangPage() {
       try {
         const cur = listRef.current.find((m) => m.id === openId);
         const convId = cur?.conversationId ?? null;
-        const threadItems = convId
-          ? listRef.current.filter((m) => m.conversationId === convId)
-          : [];
-        const ids = threadItems.length > 1 ? threadItems.map((m) => m.id) : [openId];
+        // Thread ORDNERÜBERGREIFEND auflösen (Posteingang + Gesendete
+        // Elemente), damit auch die eigenen Antworten erscheinen. Bei
+        // Fehlern (z.B. Graph-Filter-Limits) Fallback auf die bereits
+        // geladene Ordner-Liste — Verhalten wie vorher.
+        let ids: string[] = [openId];
+        if (convId) {
+          let convItems: MailListItem[] = [];
+          try {
+            convItems = await listConversation(activeMailbox, convId);
+          } catch (convErr) {
+            console.warn('[Posteingang] Konversations-Query fehlgeschlagen — Fallback auf Ordner-Liste', convErr);
+          }
+          // Mit den Ordner-Listen-Treffern mergen (dedupe) — falls die
+          // Konversations-Query einzelne Nachrichten nicht liefert.
+          const merged = new Map<string, MailListItem>();
+          for (const m of convItems) merged.set(m.id, m);
+          for (const m of listRef.current.filter((x) => x.conversationId === convId)) {
+            if (!merged.has(m.id)) merged.set(m.id, m);
+          }
+          if (merged.size > 0) {
+            ids = [...merged.values()]
+              .sort((a, b) => (a.receivedDateTime || '').localeCompare(b.receivedDateTime || ''))
+              // Sicherheits-Cap: sehr lange Threads nicht mit dutzenden
+              // Detail-Requests fluten.
+              .slice(-20)
+              .map((m) => m.id);
+          }
+          if (!ids.includes(openId)) ids.push(openId);
+        }
         const details = await Promise.all(ids.map((id) => getEmail(activeMailbox, id)));
         if (cancelled) return;
         details.sort((a, b) =>
@@ -558,6 +583,8 @@ export function PosteingangPage() {
           {pendingTour.mode === 'create' ? (
             <TourFromEmailPanel
               mail={openMail}
+              thread={openThread}
+              ownAddresses={ownAddresses}
               mailbox={activeMailbox}
               onClose={() => setPendingTour(null)}
               onCreated={(label) => { setPendingTour(null); showToast(`Tour erstellt: ${label}`); }}
@@ -565,6 +592,8 @@ export function PosteingangPage() {
           ) : pendingTour.mode === 'edit' ? (
             <TourEditFromEmailPanel
               mail={openMail}
+              thread={openThread}
+              ownAddresses={ownAddresses}
               mailbox={activeMailbox}
               tourId={pendingTour.tourId}
               onClose={() => setPendingTour(null)}
@@ -573,6 +602,8 @@ export function PosteingangPage() {
           ) : (
             <ZusaetzeFromEmailPanel
               mail={openMail}
+              thread={openThread}
+              ownAddresses={ownAddresses}
               mailbox={activeMailbox}
               tourId={pendingTour.tourId}
               mode={pendingTour.mode === 'zusaetze-belege' ? 'zusaetze-belege' : 'zusaetze'}

@@ -25,7 +25,7 @@ import { assertMailboxAllowed } from '../server-lib/mailboxAuth.js';
 import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
 import {
   downloadFile, forwardMail, getAttachmentBase64, getAttachmentBytes, getMessage,
-  listFolders, listMessages, moveMessage, patchMessage,
+  listConversationMessages, listFolders, listMessages, moveMessage, patchMessage,
   replyMail, sendMail, sendMailFrom,
 } from '../server-lib/graph.js';
 
@@ -136,6 +136,19 @@ export default async function handler(req: Req, res: Res) {
         await assertMailboxAllowed(token, mailbox);
         const folders = await listFolders(mailbox);
         res.status(200).json({ value: folders });
+        return;
+      }
+      if (action === 'conversation') {
+        // Alle Nachrichten einer Konversation — ordnerübergreifend
+        // (inkl. Gesendete Elemente), für die Thread-Ansicht.
+        const mailbox = qString(req.query?.mailbox);
+        const conversationId = qString(req.query?.conversationId);
+        if (!mailbox || !conversationId) {
+          throw new HttpError(400, 'mailbox und conversationId sind Pflicht');
+        }
+        await assertMailboxAllowed(token, mailbox);
+        const value = await listConversationMessages({ mailbox, conversationId });
+        res.status(200).json({ value });
         return;
       }
       if (action === 'message') {

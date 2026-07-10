@@ -129,6 +129,20 @@ export async function listFolders(mailbox: string): Promise<MailFolder[]> {
   return j.value;
 }
 
+/**
+ * Alle Nachrichten einer Konversation — ORDNERÜBERGREIFEND (Posteingang
+ * + Gesendete Elemente), chronologisch aufsteigend. Damit enthalten
+ * Threads auch die eigenen gesendeten Antworten.
+ */
+export async function listConversation(
+  mailbox: string, conversationId: string,
+): Promise<MailListItem[]> {
+  const j = await getAction<{ value: MailListItem[] }>(
+    'conversation', new URLSearchParams({ mailbox, conversationId }),
+  );
+  return j.value ?? [];
+}
+
 export async function moveEmail(args: {
   mailbox: string; messageId: string; destinationId: string;
 }): Promise<void> {

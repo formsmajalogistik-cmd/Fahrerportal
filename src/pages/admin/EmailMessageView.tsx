@@ -12,6 +12,43 @@ interface Props {
 }
 
 /**
+ * Ganze Konversation untereinander — für die Side-by-Side-Panels
+ * (Tour aus E-Mail, Zusätze/Belege). Jede Nachricht als eigene Card
+ * mit Header, Body und Anhängen; eigene (gesendete) Nachrichten
+ * erhalten ein „Gesendet"-Badge. Scrollen übernimmt der Eltern-
+ * Container der Panels.
+ */
+export function EmailThreadView({
+  thread, mailbox, ownAddresses,
+}: {
+  thread: MailDetail[];
+  mailbox: string;
+  ownAddresses?: string[];
+}) {
+  const own = (ownAddresses ?? []).map((a) => a.toLowerCase());
+  return (
+    <div className="space-y-3">
+      {thread.map((m) => {
+        const isOwn = own.includes((m.from.address ?? '').toLowerCase());
+        return (
+          <div key={m.id} className="card flex flex-col p-5">
+            <div className="flex items-start justify-between gap-2">
+              <EmailMessageHeader mail={m} />
+              {isOwn && (
+                <span className="inline-flex shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                  Gesendet
+                </span>
+              )}
+            </div>
+            <EmailMessageView mail={m} mailbox={mailbox} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * Header-Block einer E-Mail (Betreff + From/To/CC/Datum). Wird sowohl
  * im Posteingang-Detail als auch in den Side-by-Side-Panels verwendet,
  * damit dieselbe Optik überall greift.

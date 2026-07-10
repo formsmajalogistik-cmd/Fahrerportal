@@ -560,6 +560,49 @@ export async function listMessages(args: {
   return { value, totalCount: j['@odata.count'] };
 }
 
+/**
+ * Alle Nachrichten einer Konversation — ORDNERÜBERGREIFEND (Posteingang
+ * UND Gesendete Elemente etc.), damit Threads auch die eigenen
+ * Antworten enthalten. Läuft über /messages (ohne mailFolders-Scope)
+ * mit $filter auf conversationId. Bewusst OHNE $orderby: die
+ * Kombination mit diesem Filter wirft bei Graph gern
+ * "InefficientFilter" — sortiert wird clientseitig.
+ */
+export async function listConversationMessages(args: {
+  mailbox: string;
+  conversationId: string;
+}): Promise<MailListItem[]> {
+  const params = new URLSearchParams();
+  params.set('$top', '50');
+  // Single quotes im OData-Literal verdoppeln (Escaping).
+  params.set('$filter', `conversationId eq '${args.conversationId.replace(/'/g, "''")}'`);
+  params.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,hasAttachments,isRead,flag,inferenceClassification,conversationId');
+  const url = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/messages?${params.toString()}`;
+  const resp = await graphFetch('GET', url, undefined, { ConsistencyLevel: 'eventual' });
+  if (!resp.ok) {
+    throw new Error(`listConversationMessages: ${resp.status} ${await resp.text()}`);
+  }
+  const j = await resp.json() as { value?: RawMessage[] };
+  const value = (j.value ?? []).map((m): MailListItem => ({
+    id: m.id,
+    subject: m.subject ?? '',
+    from: recipient(m.from),
+    receivedDateTime: m.receivedDateTime ?? '',
+    bodyPreview: m.bodyPreview ?? '',
+    hasAttachments: !!m.hasAttachments,
+    isRead: !!m.isRead,
+    flagged: m.flag?.flagStatus === 'flagged',
+    flagStatus: normFlagStatus(m.flag?.flagStatus),
+    inferenceClassification: m.inferenceClassification === 'focused' ? 'focused'
+      : m.inferenceClassification === 'other' ? 'other'
+      : null,
+    conversationId: m.conversationId ?? null,
+  }));
+  // Chronologisch aufsteigend — die Thread-Ansicht rendert älteste zuerst.
+  value.sort((a, b) => (a.receivedDateTime || '').localeCompare(b.receivedDateTime || ''));
+  return value;
+}
+
 /** Holt eine einzelne Nachricht inkl. Body + Anhangs-Metadaten. */
 export async function getMessage(args: {
   mailbox: string;

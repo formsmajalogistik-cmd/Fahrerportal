@@ -12,11 +12,16 @@ import { compressImage } from '../../lib/photo';
 import {
   fetchAttachmentBlob, type MailDetail,
 } from '../../lib/emails';
-import { EmailMessageHeader, EmailMessageView } from './EmailMessageView';
+import { EmailThreadView } from './EmailMessageView';
 import type { TourZusatz } from '../../types/db';
 
 interface Props {
   mail: MailDetail;
+  /** Ganze Konversation (chronologisch, inkl. eigener Antworten) —
+   *  der Belege-Import (Modus 5) übernimmt die Anhänge ALLER
+   *  Thread-Nachrichten, nicht nur der zuletzt geöffneten. */
+  thread?: MailDetail[] | null;
+  ownAddresses?: string[];
   mailbox: string;
   tourId: string;
   /**
@@ -59,7 +64,7 @@ function decimalToInput(value: number | null | undefined): string {
  * gewählten Tour. Im Modus "zusaetze-belege" werden alle Mail-Anhänge
  * beim Mount in den Belege-Speicher übernommen (Aufgabe 5).
  */
-export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }: Props) {
+export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, tourId, mode, onClose }: Props) {
   const [tab, setTab] = useState<'mail' | 'form'>('mail');
   const [tour, setTour] = useState<TourHead | null>(null);
   const [zusaetze, setZusaetze] = useState<TourZusatz[]>([]);
@@ -112,10 +117,13 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
   }, [load]);
 
   // ---- Belege automatisch aus Anhängen importieren (Modus 5) ----
+  // Berücksichtigt die Anhänge ALLER Nachrichten der Konversation —
+  // relevante Belege stecken oft in früheren Mails des Threads.
   useEffect(() => {
     if (mode !== 'zusaetze-belege') return;
     if (belegeImportedRef.current) return;
-    if (mail.attachments.length === 0) {
+    const mails = thread && thread.length > 0 ? thread : [mail];
+    if (!mails.some((m) => m.attachments.length > 0)) {
       belegeImportedRef.current = true;
       return;
     }
@@ -126,7 +134,8 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
       let files = 0;
       try {
         const records: Array<{ blob: Blob; source: 'pdf-seite' | 'email-anhang'; name: string }> = [];
-        for (const att of mail.attachments) {
+        for (const m of mails) {
+        for (const att of m.attachments) {
           const isImage = att.contentType.startsWith('image/');
           const isPdf = att.contentType === 'application/pdf';
           if (!isImage && !isPdf) continue;
@@ -141,7 +150,7 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
           }
           try {
             const blob = await fetchAttachmentBlob({
-              mailbox, messageId: mail.id, attachmentId: att.id, disposition: 'attachment',
+              mailbox, messageId: m.id, attachmentId: att.id, disposition: 'attachment',
             });
             if (isImage) {
               const file = new File([blob], att.name, { type: att.contentType });
@@ -161,13 +170,14 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
             console.warn('[ZusaetzeFromEmailPanel] Anhang konnte nicht importiert werden', att.name, err);
           }
         }
+        }
         if (records.length > 0) await addBelege(records);
         setBelegeInfo({ files, pages });
       } finally {
         setBelegeImportBusy(false);
       }
     })();
-  }, [mode, mail, mailbox]);
+  }, [mode, mail, thread, mailbox]);
 
   // ---- Zusatz hinzufügen ----
   async function handleAddZusatz() {
@@ -266,10 +276,11 @@ export function ZusaetzeFromEmailPanel({ mail, mailbox, tourId, mode, onClose }:
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-hidden md:grid-cols-2">
         <div className={`${tab === 'mail' ? '' : 'hidden'} min-h-0 md:block md:overflow-y-auto md:overscroll-contain`}>
-          <div className="card flex flex-col p-5">
-            <EmailMessageHeader mail={mail} />
-            <EmailMessageView mail={mail} mailbox={mailbox} />
-          </div>
+          <EmailThreadView
+            thread={thread && thread.length > 0 ? thread : [mail]}
+            mailbox={mailbox}
+            ownAddresses={ownAddresses}
+          />
         </div>
         <div className={`${tab === 'form' ? '' : 'hidden'} min-h-0 pb-12 md:block md:overflow-y-auto md:overscroll-contain`}>
           <div className="card space-y-4 p-5">

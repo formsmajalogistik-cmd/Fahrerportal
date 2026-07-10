@@ -1,10 +1,13 @@
 import { useState } from 'react';
-import { EmailMessageHeader, EmailMessageView } from './EmailMessageView';
+import { EmailThreadView } from './EmailMessageView';
 import type { MailDetail } from '../../lib/emails';
 import { TourDetailDialog } from '../touren/TourDetailDialog';
 
 interface Props {
   mail: MailDetail;
+  /** Ganze Konversation (chronologisch, inkl. eigener Antworten). */
+  thread?: MailDetail[] | null;
+  ownAddresses?: string[];
   mailbox: string;
   tourId: string;
   onClose: () => void;
@@ -17,7 +20,7 @@ interface Props {
  * öffnen"). TourDetailDialog läuft im neuen variant="embedded" und
  * öffnet sich beim Mount direkt in den Edit-Modus.
  */
-export function TourEditFromEmailPanel({ mail, mailbox, tourId, onClose, onSaved }: Props) {
+export function TourEditFromEmailPanel({ mail, thread, ownAddresses, mailbox, tourId, onClose, onSaved }: Props) {
   const [tab, setTab] = useState<'mail' | 'form'>('mail');
   // Wenn die Tour gelöscht wird, schließen wir das Panel — das ist
   // dieselbe Semantik wie im normalen TourDetailDialog.
@@ -41,10 +44,11 @@ export function TourEditFromEmailPanel({ mail, mailbox, tourId, onClose, onSaved
         <div
           className={`${tab === 'mail' ? '' : 'hidden'} min-h-0 md:block md:overflow-y-auto md:overscroll-contain`}
         >
-          <div className="card flex flex-col p-5">
-            <EmailMessageHeader mail={mail} />
-            <EmailMessageView mail={mail} mailbox={mailbox} />
-          </div>
+          <EmailThreadView
+            thread={thread && thread.length > 0 ? thread : [mail]}
+            mailbox={mailbox}
+            ownAddresses={ownAddresses}
+          />
         </div>
         <div
           className={`${tab === 'form' ? '' : 'hidden'} min-h-0 pb-12 md:block md:overflow-y-auto md:overscroll-contain`}
