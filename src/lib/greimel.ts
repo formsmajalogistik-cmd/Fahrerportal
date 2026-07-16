@@ -35,6 +35,31 @@ export async function assignFahrerToZugang(
   if (updateErr) throw updateErr;
 }
 
+/**
+ * Entfernt einen Fahrer aus einem Zugang, ABER nur wenn er keine andere
+ * nicht-abgeschlossene Tour (enddatum >= heute) mit demselben Zugang hat
+ * — z.B. beim Löschen einer Tour oder beim Fahrer-Wechsel. `excludeTourId`
+ * nimmt die gerade gelöschte/geänderte Tour aus der Prüfung heraus.
+ */
+export async function releaseZugangIfUnused(
+  zugangId: string,
+  fahrerId: string,
+  excludeTourId?: string | null,
+): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  let q = supabase
+    .from('touren')
+    .select('id', { count: 'exact', head: true })
+    .eq('greimel_zugang_id', zugangId)
+    .eq('fahrer_id', fahrerId)
+    .gte('enddatum', today);
+  if (excludeTourId) q = q.neq('id', excludeTourId);
+  const { count, error } = await q;
+  if (error) throw error;
+  if ((count ?? 0) > 0) return; // andere aktive Tour nutzt den Zugang noch
+  await unassignFahrerFromZugang(zugangId, fahrerId);
+}
+
 /** Entfernt einen Fahrer aus einem Greimel-Zugang (idempotent). */
 export async function unassignFahrerFromZugang(
   zugangId: string,

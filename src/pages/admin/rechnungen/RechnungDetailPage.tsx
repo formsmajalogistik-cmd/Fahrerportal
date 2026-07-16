@@ -459,49 +459,83 @@ export function RechnungDetailPage() {
    */
   async function generierePdf() {
     if (!rechnung) return;
+    // Ungespeicherte Änderungen würden in der PDF fehlen (die Generierung
+    // liest frisch aus der DB) — erst speichern lassen.
+    if (editingKopf || editingPos) {
+      setError('Bitte zuerst die offene Bearbeitung speichern — die PDF wird aus dem gespeicherten Stand erzeugt.');
+      return;
+    }
     setGeneratingPdf(true);
     setError(null);
     try {
-      const defaultSatz = Number(rechnung.ust_satz) || 0;
-      const pdfPositionen: RechnungPdfPosition[] = positionen.map((p, idx) => ({
+      // Rechnung + Positionen IMMER frisch aus der DB laden — niemals
+      // aus dem UI-State bauen. Der State kann veraltet sein (Änderung
+      // von anderem Gerät / anderem Tab / gerade abgeschlossener Save),
+      // was früher dazu führte, dass "PDF neu generieren" die ALTE
+      // Version erzeugte.
+      const [fRes, pRes] = await Promise.all([
+        supabase
+          .from('rechnungen')
+          .select(`
+            *,
+            auftraggeber:auftraggeber_id (id, name, kontakt, kunden_uid, zahlungsziel_tage),
+            rechnungsadresse:rechnungsadresse_id (
+              id, firma, ansprechpartner, strasse, plz_ort, land, ist_standard, auftraggeber_id, created_at
+            )
+          `)
+          .eq('id', rechnung.id)
+          .single(),
+        supabase
+          .from('rechnungspositionen')
+          .select('*')
+          .eq('rechnung_id', rechnung.id)
+          .order('position_nr', { ascending: true }),
+      ]);
+      if (fRes.error) throw fRes.error;
+      if (pRes.error) throw pRes.error;
+      const fresh = fRes.data as unknown as RechnungFull;
+      const freshPositionen = (pRes.data ?? []) as Rechnungsposition[];
+
+      const defaultSatz = Number(fresh.ust_satz) || 0;
+      const pdfPositionen: RechnungPdfPosition[] = freshPositionen.map((p, idx) => ({
         position_nr: idx + 1,
         bezeichnung: p.bezeichnung,
-        unterzeilen: p.unterzeilen,
+        unterzeilen: p.unterzeilen ?? [],
         menge: Number(p.menge),
         einzelpreis: Number(p.einzelpreis),
         gesamtpreis: Number(p.gesamtpreis),
         ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
       }));
       // Fällig-Datum aus Auftraggeber-Zahlungsziel + Rechnungsdatum.
-      const zahlungsziel = rechnung.auftraggeber?.zahlungsziel_tage ?? null;
+      const zahlungsziel = fresh.auftraggeber?.zahlungsziel_tage ?? null;
       let faelligAm: string | null = null;
-      if (zahlungsziel != null && Number.isFinite(zahlungsziel) && rechnung.datum) {
-        const d = new Date(`${rechnung.datum}T12:00:00`);
+      if (zahlungsziel != null && Number.isFinite(zahlungsziel) && fresh.datum) {
+        const d = new Date(`${fresh.datum}T12:00:00`);
         d.setDate(d.getDate() + Number(zahlungsziel));
         faelligAm = d.toISOString().slice(0, 10);
       }
       const blob = await generateRechnungPdf({
-        rechnungsnummer: rechnung.rechnungsnummer,
-        datum: rechnung.datum,
-        anrede: rechnung.anrede,
-        kundennummer: rechnung.kundennummer,
-        sachbearbeiter: rechnung.sachbearbeiter,
+        rechnungsnummer: fresh.rechnungsnummer,
+        datum: fresh.datum,
+        anrede: fresh.anrede,
+        kundennummer: fresh.kundennummer,
+        sachbearbeiter: fresh.sachbearbeiter,
         faelligAm,
         empfaenger: {
-          firma:           rechnung.rechnungsadresse_firma   ?? rechnung.rechnungsadresse?.firma           ?? null,
-          ansprechpartner: rechnung.ansprechpartner          ?? rechnung.rechnungsadresse?.ansprechpartner ?? null,
-          strasse:         rechnung.rechnungsadresse_strasse ?? rechnung.rechnungsadresse?.strasse         ?? null,
-          plz_ort:         rechnung.rechnungsadresse_plz_ort ?? rechnung.rechnungsadresse?.plz_ort         ?? null,
-          land:            rechnung.rechnungsadresse_land    ?? rechnung.rechnungsadresse?.land            ?? null,
+          firma:           fresh.rechnungsadresse_firma   ?? fresh.rechnungsadresse?.firma           ?? null,
+          ansprechpartner: fresh.ansprechpartner          ?? fresh.rechnungsadresse?.ansprechpartner ?? null,
+          strasse:         fresh.rechnungsadresse_strasse ?? fresh.rechnungsadresse?.strasse         ?? null,
+          plz_ort:         fresh.rechnungsadresse_plz_ort ?? fresh.rechnungsadresse?.plz_ort         ?? null,
+          land:            fresh.rechnungsadresse_land    ?? fresh.rechnungsadresse?.land            ?? null,
         },
-        kundenUid: rechnung.auftraggeber?.kunden_uid ?? null,
+        kundenUid: fresh.auftraggeber?.kunden_uid ?? null,
         zahlungszielTage: zahlungsziel,
         ustSatzDefault: defaultSatz,
         positionen: pdfPositionen,
       });
 
-      const jahr = (rechnung.datum ?? '').slice(0, 4) || String(new Date().getFullYear());
-      const filename = rechnungPdfFilename(rechnung.rechnungsnummer);
+      const jahr = (fresh.datum ?? '').slice(0, 4) || String(new Date().getFullYear());
+      const filename = rechnungPdfFilename(fresh.rechnungsnummer);
       const path = `Maja-Logistik/Rechnungen/${jahr}/${filename}`;
       await uploadToOneDrive(path, blob);
       const { error: uErr } = await supabase

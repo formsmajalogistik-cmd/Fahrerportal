@@ -38,6 +38,8 @@ export function GreimelZugaengePage() {
   const [error, setError]     = useState<string | null>(null);
   const [editing, setEditing] = useState<GreimelZugang | 'new' | null>(null);
   const [deleting, setDeleting] = useState<GreimelZugang | null>(null);
+  /** Zugang, dessen Fahrer-Zuweisung manuell freigegeben werden soll. */
+  const [releasing, setReleasing] = useState<GreimelZugang | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,6 +112,19 @@ export function GreimelZugaengePage() {
     void load();
   }
 
+  /** Manuelle Freigabe: entfernt ALLE Fahrer-Zuweisungen des Zugangs —
+   *  für blockierte Zugänge ohne verknüpfte Tour (Altfälle), ohne auf
+   *  den nächtlichen Cron warten zu müssen. */
+  async function handleRelease(z: GreimelZugang) {
+    const { error: err } = await supabase
+      .from('greimel_zugaenge')
+      .update({ fahrer_ids: [] })
+      .eq('id', z.id);
+    setReleasing(null);
+    if (err) { setError(err.message); return; }
+    void load();
+  }
+
   if (loading) return <Spinner label="Greimel Zugänge werden geladen …" />;
   if (error)   return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
 
@@ -148,6 +163,7 @@ export function GreimelZugaengePage() {
               assignedTours={toursByZugang.get(z.id) ?? []}
               onEdit={() => setEditing(z)}
               onDelete={() => setDeleting(z)}
+              onRelease={() => setReleasing(z)}
             />
           ))}
         </ul>
@@ -158,6 +174,27 @@ export function GreimelZugaengePage() {
           initial={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void load(); }}
+        />
+      )}
+
+      {releasing && isAdmin && (
+        <ConfirmDialog
+          title="Zuweisung freigeben?"
+          message={
+            <>
+              Die Fahrer-Zuweisung von „<strong>{releasing.titel}</strong>" wird
+              entfernt — der Zugang ist danach wieder frei verfügbar.
+              {(toursByZugang.get(releasing.id) ?? []).length > 0 && (
+                <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                  Achtung: An diesem Zugang hängen noch aktive/geplante Touren —
+                  deren Fahrer verliert die Sichtbarkeit des Zugangs.
+                </div>
+              )}
+            </>
+          }
+          confirmLabel="Zuweisung freigeben"
+          onConfirm={() => handleRelease(releasing)}
+          onClose={() => setReleasing(null)}
         />
       )}
 
@@ -184,9 +221,10 @@ interface CardProps {
   assignedTours: AssignedTour[];
   onEdit: () => void;
   onDelete: () => void;
+  onRelease: () => void;
 }
 
-function ZugangCard({ zugang, isAdmin, fahrerById, assignedTours, onEdit, onDelete }: CardProps) {
+function ZugangCard({ zugang, isAdmin, fahrerById, assignedTours, onEdit, onDelete, onRelease }: CardProps) {
   const [showPw, setShowPw] = useState(false);
   const [copied, setCopied] = useState<'user' | 'pw' | null>(null);
 
@@ -306,6 +344,25 @@ function ZugangCard({ zugang, isAdmin, fahrerById, assignedTours, onEdit, onDele
                   {n}
                 </span>
               ))
+            )}
+            {/* Manuelle Freigabe: prominent, wenn der Zugang zugewiesen
+                ist, aber KEINE Tour mehr dranhängt (Blockade-Altfall);
+                sonst dezent mit Warnung im Bestätigungs-Dialog. */}
+            {!zugang.sichtbar_fuer_alle && (zugang.fahrer_ids?.length ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={onRelease}
+                className={`text-xs font-medium hover:underline ${
+                  assignedTours.length === 0
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-maja-muted'
+                }`}
+                title={assignedTours.length === 0
+                  ? 'Zugewiesen ohne verknüpfte Tour — Zuweisung freigeben'
+                  : 'Zuweisung freigeben (Achtung: aktive Touren hängen dran)'}
+              >
+                Zuweisung freigeben
+              </button>
             )}
           </div>
         </div>

@@ -67,5 +67,19 @@ export default async function handler(req: Req, res: Res) {
     console.error('[cron-release-greimel]', error);
     res.status(500).json({ error: error.message }); return;
   }
-  res.status(200).json({ ok: true, released: data ?? 0 });
+  // Selbstheilung: zusätzlich verwaiste Zuweisungen freigeben (Fahrer im
+  // fahrer_ids-Array ohne irgendeine nicht-abgeschlossene Tour mit diesem
+  // Zugang — z.B. nach Tour-Löschung). Läuft BEWUSST nur hier im Cron,
+  // nicht im Frontend-RPC (siehe Migration 069).
+  const { data: orphaned, error: orphanErr } = await supa.rpc('release_orphaned_greimel_zugaenge');
+  if (orphanErr) {
+    // Nicht fatal — der Haupt-Release lief durch. Loggen + weitergeben.
+    console.error('[cron-release-greimel] Waisen-Freigabe fehlgeschlagen', orphanErr);
+  }
+  res.status(200).json({
+    ok: true,
+    released: data ?? 0,
+    orphaned_released: orphaned ?? 0,
+    orphan_error: orphanErr?.message ?? null,
+  });
 }

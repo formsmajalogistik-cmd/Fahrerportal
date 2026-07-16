@@ -21,9 +21,9 @@ import {
   type TourPriceBreakdown,
 } from '../../lib/touren';
 import {
-  asPdfPathList, downloadFormPdf, expectedOneDrivePath, previewFormPdf, resolveFilename,
+  asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../../lib/pdfGenerate';
-import { assignFahrerToZugang, isGreimelAuftraggeber, unassignFahrerFromZugang } from '../../lib/greimel';
+import { assignFahrerToZugang, isGreimelAuftraggeber, releaseZugangIfUnused } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import {
   loadTourProtokollZuweisungen, ProtokollSection,
@@ -712,16 +712,23 @@ export function TourDetailDialog({
 
     // Greimel-Zugang Zuweisung synchron halten:
     // - Wenn Tour 'abgeschlossen' wurde → vorherige Zuweisung freigeben.
-    // - Wenn neuer Zugang gewählt → Fahrer hinzufügen.
-    // - Wenn Zugang gewechselt/entfernt → vorherigen Fahrer entfernen.
+    // - Wenn Zugang gewechselt/entfernt ODER Fahrer gewechselt →
+    //   vorherigen Fahrer entfernen (sofern keine andere aktive Tour
+    //   von ihm denselben Zugang nutzt).
+    // - Wenn neuer Zugang/Fahrer → Fahrer hinzufügen.
+    const nextFahrerId = draft.fahrerId || null;
     try {
       if (willComplete && previousGreimelId && previousFahrerId) {
-        await unassignFahrerFromZugang(previousGreimelId, previousFahrerId);
-      } else if (previousGreimelId && previousGreimelId !== nextGreimelId && previousFahrerId) {
-        await unassignFahrerFromZugang(previousGreimelId, previousFahrerId);
+        await releaseZugangIfUnused(previousGreimelId, previousFahrerId, tour.id);
+      } else if (
+        previousGreimelId && previousFahrerId
+        && (previousGreimelId !== nextGreimelId || previousFahrerId !== nextFahrerId)
+      ) {
+        await releaseZugangIfUnused(previousGreimelId, previousFahrerId, tour.id);
       }
-      if (nextGreimelId && draft.fahrerId && nextGreimelId !== previousGreimelId) {
-        await assignFahrerToZugang(nextGreimelId, draft.fahrerId);
+      if (nextGreimelId && nextFahrerId
+          && (nextGreimelId !== previousGreimelId || nextFahrerId !== previousFahrerId)) {
+        await assignFahrerToZugang(nextGreimelId, nextFahrerId);
       }
     } catch (e) {
       console.warn('Greimel-Zugang-Zuweisung konnte nicht synchronisiert werden', e);
@@ -839,6 +846,16 @@ export function TourDetailDialog({
   async function handleDeleteTour() {
     if (!tour) return;
     if (guard()) return;
+    // Hängt ein Greimel-Zugang an der Tour: Fahrer-Zuweisung freigeben,
+    // bevor die Tour weg ist — sonst bleibt der Zugang als „zugewiesen"
+    // blockiert, obwohl keine verknüpfte Tour mehr existiert.
+    if (tour.greimel_zugang_id && tour.fahrer_id) {
+      try {
+        await releaseZugangIfUnused(tour.greimel_zugang_id, tour.fahrer_id, tour.id);
+      } catch (e) {
+        console.warn('Greimel-Freigabe beim Tour-Löschen fehlgeschlagen', e);
+      }
+    }
     const { error: err } = await supabase.from('touren').delete().eq('id', tour.id);
     if (err) throw err;
     onDeleted();
@@ -2302,36 +2319,22 @@ function AddressBlockEdit(p: AddressBlockEditProps) {
 // ---------- Eingang-PDF-Downloads ----------
 
 function EingangPdfDownloads({
-  template, formular,
+  formular,
 }: {
-  template: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown };
+  /** Template wird seit dem pdf_paths-Umbau nicht mehr benötigt —
+   *  bleibt in den Props der Aufrufer, hier aber ungenutzt. */
+  template?: { id: string; name: string; pdfs: TemplatePdf[]; schema: unknown };
   formular: AusgefuelltesFormular;
 }) {
-  const tpl: FormularTemplate = {
-    id: template.id,
-    name: template.name,
-    schema: (template.schema as FormularTemplate['schema']) ?? { sections: [] },
-    pdfs: template.pdfs ?? [],
-    email_config: null,
-    sichtbar: true,
-    ist_einmalig: false,
-    archiviert: false,
-    archiviert_am: null,
-  };
-  // Bevorzuge die persistierten pdf_paths (= tatsächlich erzeugte PDFs);
-  // Legacy-Fallback auf template.pdfs für ältere Eingänge.
+  // NUR tatsächlich generierte PDFs (pdf_paths) verlinken — der frühere
+  // Fallback auf die Template-Konfiguration zeigte Buttons für nie
+  // erzeugte Dateien (Klick lief ins Leere).
   const persisted = asPdfPathList((formular as unknown as { pdf_paths?: unknown }).pdf_paths);
-  const list = persisted.length > 0
-    ? persisted.map((p) => ({
-        id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
-      }))
-    : (tpl.pdfs ?? []).map((p) => ({
-        id: p.id, name: p.name,
-        filename: resolveFilename(p.filename_pattern, formular.daten, p.id),
-        onedrive_path: expectedOneDrivePath(tpl, formular, p),
-      }));
+  const list = persisted.map((p) => ({
+    id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
+  }));
   if (list.length === 0) {
-    return <span className="text-xs text-maja-muted">keine PDFs erzeugt</span>;
+    return <span className="text-xs text-maja-muted">Noch keine PDFs generiert.</span>;
   }
   return (
     <div className="flex flex-wrap justify-end gap-2">

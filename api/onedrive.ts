@@ -120,7 +120,11 @@ export default async function handler(req: Req, res: Res) {
         'Content-Disposition',
         `${inline ? 'inline' : 'attachment'}; filename="${filename.replace(/"/g, '')}"`,
       );
-      res.setHeader('Cache-Control', 'private, max-age=3600');
+      // Kein Browser-Caching: PDFs werden unter GLEICHBLEIBENDEM Pfad
+      // regeneriert (Rechnungen "PDF neu generieren", Protokolle "PDFs
+      // erzeugen"). Mit max-age lieferte der HTTP-Cache nach einer
+      // Regenerierung noch die ALTE Datei aus.
+      res.setHeader('Cache-Control', 'private, no-store');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (res.send) res.send(Buffer.from(bytes) as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

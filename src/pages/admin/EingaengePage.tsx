@@ -6,9 +6,9 @@ import { useAuth } from '../../auth/AuthContext';
 import { useTestMode } from '../../auth/TestModeContext';
 import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
-  asPdfPathList, deleteFormPdf, downloadFormPdf, expectedOneDrivePath,
+  asPdfPathList, deleteFormPdf, downloadFormPdf,
   generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll,
-  previewFormPdf, resolveFilename,
+  previewFormPdf,
   type PdfPathEntry,
 } from '../../lib/pdfGenerate';
 import {
@@ -803,25 +803,20 @@ function Detail({
 }
 
 /**
- * Liefert die Liste der tatsächlich vorhandenen PDFs für einen Eingang.
- * Bevorzugt das persistierte pdf_paths-Feld (neu seit Migration 037);
- * für Legacy-Eingänge ohne pdf_paths fallback auf alle Template-PDFs
- * (vorherige Logik). So bleiben alte Eingänge weiter downloadbar.
+ * Liefert die Liste der TATSÄCHLICH generierten PDFs eines Eingangs —
+ * ausschließlich aus dem persistierten pdf_paths-Feld (Migration 037).
+ * Der frühere Fallback auf die Template-Konfiguration (welche PDFs es
+ * geben KÖNNTE) zeigte Buttons für nie erzeugte Dateien; Klicks liefen
+ * ins Leere. Eingänge ohne Einträge zeigen stattdessen den Hinweis +
+ * „PDFs erzeugen" — das füllt pdf_paths und lässt die Buttons ohne
+ * Refresh erscheinen (regeneratePdfs patcht den Zeilen-State).
  */
 function effectivePdfList(
-  template: FormularTemplate, formular: Row,
+  _template: FormularTemplate, formular: Row,
 ): Array<{ id: string; name: string; filename: string; onedrive_path: string }> {
   const persisted = asPdfPathList((formular as unknown as { pdf_paths?: unknown }).pdf_paths);
-  if (persisted.length > 0) {
-    return persisted.map((p) => ({
-      id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
-    }));
-  }
-  return (template.pdfs ?? []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    filename: resolveFilename(p.filename_pattern, formular.daten, p.id),
-    onedrive_path: expectedOneDrivePath(template, formular, p),
+  return persisted.map((p) => ({
+    id: p.pdf_id, name: p.pdf_name, filename: p.filename, onedrive_path: p.onedrive_path,
   }));
 }
 
@@ -830,7 +825,7 @@ function PdfDownloads({
 }: { template: FormularTemplate; formular: Row }) {
   const list = effectivePdfList(template, formular);
   if (list.length === 0) {
-    return <span className="text-xs text-maja-muted">keine PDFs erzeugt</span>;
+    return <span className="text-xs text-maja-muted">Noch keine PDFs generiert.</span>;
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
