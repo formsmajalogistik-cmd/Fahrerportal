@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { pdfjsLib } from '../../lib/pdfjs';
 import {
+  baseFieldId,
   computeDynamicSlots,
   isBoxEntry, isCheckboxesWithTextEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
   OPTION_DEFAULT_SIZE,
@@ -103,7 +104,12 @@ export function PdfMappingCanvas({
            onClick={handleCanvasClick}>
         <canvas ref={canvasRef} className="block max-w-full" />
         {pageSize && Object.entries(mapping).flatMap(([fieldId, entry]) => {
-          const label = fieldLabels?.[fieldId] ?? fieldId;
+          // Instanz-Schlüssel ("feld#2") auf das Schema-Label mappen und
+          // die Platzierungs-Nummer anhängen, damit Mehrfach-Platzierungen
+          // unterscheidbar bleiben.
+          const baseId = baseFieldId(fieldId);
+          const instanzNr = fieldId !== baseId ? fieldId.slice(baseId.length + 1) : null;
+          const label = (fieldLabels?.[baseId] ?? baseId) + (instanzNr ? ` (${instanzNr}.)` : '');
           if (isTextEntry(entry)) {
             if (entry.page !== page) return [];
             const isSel = selected?.fieldId === fieldId && !selected?.optionName;
@@ -251,13 +257,16 @@ function PointMarker({
   align?: 'left' | 'right';
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
-  // Das Label wächst in die Richtung, in die der Text auf dem PDF läuft:
-  // 'right' (rechtsbündig) → Anker = rechter Rand, Label nach LINKS
-  // (-translate-x-full); 'left' (linksbündig) → Anker = linker Rand,
-  // Label nach RECHTS. Y so umgerechnet, dass das Label ins Canvas ragt.
+  // Baseline-genau wie die PDF-Generierung: fillPdf zeichnet Text mit
+  // der BASELINE bei y — der Text erstreckt sich von dort nach OBEN.
+  // Das Label sitzt deshalb IMMER mit seiner Unterkante am Ankerpunkt
+  // (-translate-y-full) und wächst in Textrichtung ('right' → nach
+  // links, 'left' → nach rechts). Die frühere Halbseiten-Heuristik
+  // (Label unterhalb des Ankers in der oberen Seitenhälfte) ließ die
+  // Vorschau dort um eine Zeilenhöhe gegenüber der echten PDF versetzt
+  // erscheinen.
   const left = (x / pageSize.w) * 100;
   const topPct = ((pageSize.h - y) / pageSize.h) * 100;
-  const labelAbove = topPct > 50;
   const arrow = align === 'left' ? '⇥ ' : '⇤ ';
   return (
     <button
@@ -267,7 +276,7 @@ function PointMarker({
       className={
         'absolute z-20 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
         (align === 'left' ? 'translate-x-0' : '-translate-x-full') + ' ' +
-        (labelAbove ? '-translate-y-full' : 'translate-y-0') + ' ' +
+        '-translate-y-full ' +
         (selected ? 'bg-red-600' : 'bg-maja-accent')
       }
       style={{ left: `${left}%`, top: `${topPct}%` }}

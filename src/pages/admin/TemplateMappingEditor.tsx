@@ -4,10 +4,10 @@ import { fetchPdfBytes, getPdfSignedUrl, uploadPdfTemplate } from '../../lib/pdf
 import { PdfMappingCanvas } from '../../components/forms/PdfMappingCanvas';
 import { CheckBoxEmptyIcon, CheckIcon } from '../../components/icons';
 import {
-  fieldsById,
+  baseFieldId, extraInstanceKeys, fieldsById, instanceCount,
   isBoxEntry, isCheckboxesWithTextEntry, isDynamicEntry, isFieldMappedOnPage,
   isOptionsEntry, isTextEntry,
-  makeDefaultEntry, modeFor, OPTION_DEFAULT_SIZE,
+  makeDefaultEntry, modeFor, nextInstanceKey, OPTION_DEFAULT_SIZE,
   PHOTO_DEFAULT_HEIGHT, PHOTO_DEFAULT_WIDTH, removeOption,
   setOptionPart, setOptionPosition,
   TEXT_DEFAULT_FONT,
@@ -114,14 +114,21 @@ export function TemplateMappingEditor({
     setPickerStep(null);
   }
 
-  // Stufe 2a: text/box-Feld direkt platzieren
+  // Stufe 2a: text/box-Feld direkt platzieren. Bereits gemappte Text-/
+  // Box-Felder werden NICHT überschrieben — jede weitere Platzierung
+  // bekommt einen eigenen Instanz-Schlüssel ("feldId#2", …), sodass ein
+  // Feld an mehreren Stellen der PDF stehen kann.
   function placeSimpleField(field: FormField) {
     if (!pending) return;
     const entry = makeDefaultEntry(field, {
       x: Math.round(pending.x), y: Math.round(pending.y), page: pending.page,
     });
-    onMappingChange({ ...mapping, [field.id]: entry });
-    setSelected({ fieldId: field.id });
+    const mode = modeFor(field.type);
+    const key = (mode === 'text' || mode === 'box')
+      ? nextInstanceKey(mapping, field.id)
+      : field.id;
+    onMappingChange({ ...mapping, [key]: entry });
+    setSelected({ fieldId: key });
     setPending(null);
     setPickerStep(null);
   }
@@ -173,8 +180,10 @@ export function TemplateMappingEditor({
       x: Math.round(pending.x),
       y: Math.round(pending.y),
     };
-    onMappingChange({ ...mapping, [key]: entry });
-    setSelected({ fieldId: key });
+    // Auch Sub-Felder (z.B. adresse.strasse) sind mehrfach platzierbar.
+    const instKey = nextInstanceKey(mapping, key);
+    onMappingChange({ ...mapping, [instKey]: entry });
+    setSelected({ fieldId: instKey });
     setPending(null);
     setPickerStep(null);
   }
@@ -381,6 +390,7 @@ export function TemplateMappingEditor({
 
             {selected && (
               <DetailPanel
+                onRemove={removeFieldEntry}
                 selection={selected}
                 mapping={mapping}
                 fieldMap={fieldMap}
@@ -691,7 +701,17 @@ function FieldsSidebar({
                 onClick={() => onSelectField(f.id)}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium text-maja-ink">{f.label}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate font-medium text-maja-ink">{f.label}</span>
+                    {instanceCount(mapping, f.id) > 1 && (
+                      <span
+                        className="inline-flex shrink-0 rounded-full bg-maja-navy/10 px-1.5 text-[10px] font-semibold text-maja-navy"
+                        title={`${instanceCount(mapping, f.id)} Platzierungen auf der PDF`}
+                      >
+                        {instanceCount(mapping, f.id)}×
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-maja-muted">
                     {f.type}
                     {isTextEntry(e) && (
@@ -731,6 +751,51 @@ function FieldsSidebar({
                   )}
                 </div>
               </div>
+
+              {/* Weitere Platzierungen desselben Feldes ("feldId#2", …) —
+                  jede einzeln anwählbar, anspringbar und löschbar. */}
+              {extraInstanceKeys(mapping, f.id).length > 0 && (
+                <ul className="ml-2 border-l border-maja-navy/10 pl-3 pb-1">
+                  {extraInstanceKeys(mapping, f.id).map((instKey) => {
+                    const ie = mapping[instKey];
+                    if (!isTextEntry(ie) && !isBoxEntry(ie)) return null;
+                    const nr = instKey.slice(f.id.length + 1);
+                    const isSel = selected?.fieldId === instKey;
+                    return (
+                      <li
+                        key={instKey}
+                        className={
+                          'flex items-center justify-between rounded px-2 py-1 cursor-pointer ' +
+                          (isSel ? 'bg-maja-accent/10' : 'hover:bg-maja-light/60')
+                        }
+                        onClick={() => onSelectField(instKey)}
+                      >
+                        <span className="truncate text-xs text-maja-ink">
+                          {nr}. Platzierung
+                          <span className="ml-1 text-maja-muted">
+                            S.{ie.page} · ({Math.round(ie.x)}, {Math.round(ie.y)})
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2">
+                          {ie.page !== page && (
+                            <button
+                              type="button"
+                              onClick={(ev) => { ev.stopPropagation(); onJumpToPage(ie.page); }}
+                              className="text-xs text-maja-accent hover:underline"
+                            >S.{ie.page}</button>
+                          )}
+                          <button
+                            type="button"
+                            title="Diese Platzierung entfernen"
+                            onClick={(ev) => { ev.stopPropagation(); onRemoveField(instKey); }}
+                            className="text-xs font-medium text-red-600 hover:underline"
+                          >×</button>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
 
               {isOptionsEntry(e) && (
                 <ul className="ml-2 border-l border-maja-navy/10 pl-3 py-1">
@@ -783,6 +848,7 @@ function FieldsSidebar({
 function DetailPanel({
   selection, mapping, fieldMap,
   onUpdateText, onUpdateBox, onUpdateOption, onUpdateDynamic, onUpdateOptionPart,
+  onRemove,
 }: {
   selection: Selection;
   mapping: FieldMapping;
@@ -797,21 +863,28 @@ function DetailPanel({
     fieldId: string, optionName: string, part: 'checkbox' | 'text',
     patch: Partial<{ page: number; x: number; y: number; size: number; fontSize: number }>,
   ) => void;
+  /** Entfernt genau DIESE Platzierung (Mapping-Schlüssel). */
+  onRemove: (key: string) => void;
 }) {
-  // Composite-Key-Auflösung: Sub-Field-Schlüssel wie "adresse.strasse"
-  // verweisen auf das Eltern-Feld, der Sub-Name liefert das passende Label.
-  const dot = selection.fieldId.indexOf('.');
-  const parentField = dot > 0 ? fieldMap.get(selection.fieldId.slice(0, dot)) : null;
-  const subKey = dot > 0 ? selection.fieldId.slice(dot + 1) : null;
+  // Instanz-Suffix ("#2") strippen, DANN Composite-Key auflösen:
+  // Sub-Field-Schlüssel wie "adresse.strasse" verweisen auf das
+  // Eltern-Feld, der Sub-Name liefert das passende Label.
+  const instBase = baseFieldId(selection.fieldId);
+  const instanzNr = selection.fieldId !== instBase
+    ? selection.fieldId.slice(instBase.length + 1)
+    : null;
+  const dot = instBase.indexOf('.');
+  const parentField = dot > 0 ? fieldMap.get(instBase.slice(0, dot)) : null;
+  const subKey = dot > 0 ? instBase.slice(dot + 1) : null;
   const SUB_LABEL: Record<string, string> = {
     strasse: 'Straße', plz: 'PLZ', stadt: 'Stadt',
   };
-  const field = fieldMap.get(selection.fieldId) ?? parentField;
+  const field = fieldMap.get(instBase) ?? parentField;
   const entry = mapping[selection.fieldId];
   if (!field || !entry) return null;
-  const headerLabel = subKey
+  const headerLabel = (subKey
     ? `${field.label} – ${SUB_LABEL[subKey] ?? subKey}`
-    : field.label;
+    : field.label) + (instanzNr ? ` — ${instanzNr}. Platzierung` : '');
 
   if (isTextEntry(entry)) {
     return (
@@ -848,6 +921,13 @@ function DetailPanel({
           Max-Breite aktiviert die Auto-Anpassung: zu lange Texte verkleinern sich
           erst (bis 7 pt) und werden danach auf bis zu 3 Zeilen umbrochen.
         </p>
+        <button
+          type="button"
+          onClick={() => onRemove(selection.fieldId)}
+          className="mt-3 text-xs font-medium text-red-600 hover:underline"
+        >
+          Diese Platzierung entfernen
+        </button>
       </div>
     );
   }
@@ -869,6 +949,13 @@ function DetailPanel({
           <NumberCell label="Höhe (pt)" value={entry.height ?? PHOTO_DEFAULT_HEIGHT} min={10}
                       onChange={(v) => onUpdateBox(selection.fieldId, { height: v })} />
         </div>
+        <button
+          type="button"
+          onClick={() => onRemove(selection.fieldId)}
+          className="mt-3 text-xs font-medium text-red-600 hover:underline"
+        >
+          Diese Platzierung entfernen
+        </button>
       </div>
     );
   }

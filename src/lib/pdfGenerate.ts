@@ -3,6 +3,7 @@
 
 import { PDFDocument, type PDFPage, StandardFonts, rgb } from 'pdf-lib';
 import {
+  baseFieldId,
   computeDynamicSlots,
   isBoxEntry, isCheckboxesWithTextEntry, isDynamicEntry, isOptionsEntry,
   isTextEntry,
@@ -457,7 +458,10 @@ export async function fillPdf(
     + (photoFieldIds.length > 0 ? ` (${photoFieldIds.join(', ')})` : ''),
   );
 
-  for (const [fieldId, entry] of Object.entries(mapping)) {
+  for (const [mapKey, entry] of Object.entries(mapping)) {
+    // "feldId#2", "feldId#3", … sind ZUSÄTZLICHE Platzierungen desselben
+    // Feldes — Wert und Feld-Meta kommen von der Basis-ID.
+    const fieldId = baseFieldId(mapKey);
     const value = readDataValue(data, fieldId);
     const meta = fields.get(fieldId);
 
@@ -805,7 +809,8 @@ function isImageOnlyAndEmpty(
   let imageEntries = 0;
   let nonImageEntries = 0;
   let hasContent = false;
-  for (const [fieldId, entry] of entries) {
+  for (const [mapKey, entry] of entries) {
+    const fieldId = baseFieldId(mapKey);
     if (isDynamicEntry(entry)) {
       imageEntries += 1;
       const list = asPhotos(readDataValue(data, fieldId));

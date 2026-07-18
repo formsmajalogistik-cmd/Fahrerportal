@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import {
+  baseFieldId,
   computeDynamicSlots,
   isBoxEntry, isDynamicEntry, isOptionsEntry, isTextEntry,
   OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT,
@@ -36,7 +37,8 @@ export async function buildPreviewPdf(
 
   const pages = pdf.getPages();
 
-  for (const [fieldId, entry] of Object.entries(mapping)) {
+  for (const [mapKey, entry] of Object.entries(mapping)) {
+    const fieldId = baseFieldId(mapKey);
     const meta = fieldById.get(fieldId);
     const label = meta?.label ?? fieldId;
 
@@ -68,7 +70,8 @@ export async function buildPreviewPdf(
               ? await pdf.embedPng(bytes)
               : await pdf.embedJpg(bytes);
             page.drawImage(img, {
-              x: entry.x,
+              // Anker wie fillPdf: x = RECHTER Rand, y = oberer Rand.
+              x: entry.x - entry.width,
               y: entry.y - entry.height,
               width: entry.width,
               height: entry.height,
@@ -82,7 +85,8 @@ export async function buildPreviewPdf(
       }
 
       page.drawRectangle({
-        x: entry.x,
+        // Anker wie fillPdf: x = RECHTER Rand, y = oberer Rand.
+        x: entry.x - entry.width,
         y: entry.y - entry.height,
         width: entry.width,
         height: entry.height,
@@ -92,7 +96,7 @@ export async function buildPreviewPdf(
         opacity: 0.5,
       });
       page.drawText(label, {
-        x: entry.x + 4,
+        x: entry.x - entry.width + 4,
         y: entry.y - 12,
         size: 10, font, color: ACCENT,
       });
@@ -105,8 +109,9 @@ export async function buildPreviewPdf(
       for (const [, pos] of Object.entries(entry.options)) {
         const page = pages[Math.max(0, Math.min(pos.page - 1, pages.length - 1))];
         const size = pos.size ?? OPTION_DEFAULT_SIZE;
+        // Rechtsbündig wie fillPdf: das X ENDET am Ankerpunkt.
         page.drawText('X', {
-          x: pos.x,
+          x: pos.x - font.widthOfTextAtSize('X', size),
           y: pos.y,
           size,
           font, color: ACCENT,
@@ -121,7 +126,8 @@ export async function buildPreviewPdf(
       for (const [i, s] of slots.entries()) {
         if (s.pageOffset !== 0) continue;
         page.drawRectangle({
-          x: s.x,
+          // Anker wie fillPdf/aspectFit: x = RECHTER Rand des Slots.
+          x: s.x - s.width,
           y: s.y - s.height,
           width: s.width,
           height: s.height,
@@ -131,7 +137,7 @@ export async function buildPreviewPdf(
           opacity: 0.5,
         });
         page.drawText(`${label} #${i + 1}`, {
-          x: s.x + 4,
+          x: s.x - s.width + 4,
           y: s.y - 12,
           size: 10, font, color: ACCENT,
         });

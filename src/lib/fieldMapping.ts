@@ -14,6 +14,43 @@ export const DYNAMIC_DEFAULT_GAP = 12;
 
 export type MappingMode = 'text' | 'box' | 'options' | 'dynamic' | 'options_text' | 'composite';
 
+// ---- Mehrfach-Platzierungen -----------------------------------------
+// Ein Feld kann an MEHREREN Stellen der PDF stehen (z.B. Kennzeichen auf
+// Seite 1 UND 3). Zusätzliche Platzierungen liegen unter den Schlüsseln
+// "feldId#2", "feldId#3", … im selben Mapping-Record — jede mit eigener
+// Position/Seite/Ausrichtung/Schriftgröße, einzeln editier- und löschbar.
+// Die ERSTE Platzierung behält den nackten Feld-Schlüssel; Bestands-
+// Mappings bleiben dadurch byte-identisch gültig (keine Migration nötig,
+// PDF-Ausgabe unverändert).
+
+/** Liefert die Schema-Feld-ID zu einem Mapping-Schlüssel (strippt das
+ *  "#n"-Instanz-Suffix; Composite-Keys wie "adresse.strasse" bleiben). */
+export function baseFieldId(key: string): string {
+  const m = /^(.*)#\d+$/.exec(key);
+  return m ? m[1] : key;
+}
+
+/** Nächster freier Schlüssel für eine weitere Platzierung des Feldes. */
+export function nextInstanceKey(mapping: FieldMapping, fieldId: string): string {
+  if (!mapping[fieldId]) return fieldId;
+  let n = 2;
+  while (mapping[`${fieldId}#${n}`]) n += 1;
+  return `${fieldId}#${n}`;
+}
+
+/** Alle ZUSÄTZLICHEN Platzierungs-Schlüssel eines Feldes (ohne den
+ *  Basis-Schlüssel), sortiert. */
+export function extraInstanceKeys(mapping: FieldMapping, fieldId: string): string[] {
+  return Object.keys(mapping)
+    .filter((k) => k !== fieldId && baseFieldId(k) === fieldId)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** Anzahl der Platzierungen eines Feldes (für den "N×"-Zähler). */
+export function instanceCount(mapping: FieldMapping, fieldId: string): number {
+  return Object.keys(mapping).filter((k) => baseFieldId(k) === fieldId).length;
+}
+
 export function modeFor(type: FieldType): MappingMode {
   switch (type) {
     case 'text':
