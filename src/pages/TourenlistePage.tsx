@@ -4,12 +4,14 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
-import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useTestGuard, useTestMode } from '../auth/TestModeContext';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
 import { exportTourenExcel } from '../lib/tourenExport';
+import { sendEmail } from '../lib/onedrive';
+import { loadMailboxes } from '../lib/mailboxSettings';
+import { bodyWithSignatureHtml, signatureFromProfile } from '../lib/emailSignature';
 import { flattenedFahrerOptions, type FahrerOptionRaw } from './touren/FahrerSelect';
 import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
@@ -195,6 +197,11 @@ export function TourenlistePage() {
   const [showImport, setShowImport] = useState(false);
   const [openTourId, setOpenTourId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<TourRow | null>(null);
+  const [ablehnToast, setAblehnToastRaw] = useState<string | null>(null);
+  function setAblehnToast(t: string) {
+    setAblehnToastRaw(t);
+    window.setTimeout(() => setAblehnToastRaw((cur) => (cur === t ? null : cur)), 6000);
+  }
   const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
   /** Aktiver Abrechnungs-Warnungs-Filter (Banner-Klick): zeigt exklusiv
    *  die betroffenen Touren; zweiter Klick hebt ihn wieder auf. */
@@ -224,7 +231,8 @@ export function TourenlistePage() {
       tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
       greimel_zugang_id, ist_e_fahrzeug, fin,
       eingang_id, eingang_id_bc, km_gesamt,
-      bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at
+      bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
+      abgelehnt
     `;
     const adminCols = `${baseCols},
       verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
@@ -457,7 +465,7 @@ export function TourenlistePage() {
   // Datums-/Status-Filter, damit nichts untergeht. Fahrer sehen
   // unbestätigte Touren per RLS ohnehin nie (fahrer_id ist null).
   const unbestaetigteRows = useMemo(
-    () => (isAdmin ? (rows ?? []).filter((t) => t.bestaetigt === false) : []),
+    () => (isAdmin ? (rows ?? []).filter((t) => t.bestaetigt === false && !t.abgelehnt) : []),
     [rows, isAdmin],
   );
 
@@ -558,13 +566,67 @@ export function TourenlistePage() {
     void load(true);
   }
 
-  /** Unbestätigte Tour ablehnen = löschen (mit Bestätigungsdialog). */
-  async function handleAblehnen(t: TourRow) {
+  /** Unbestätigte Tour ablehnen: KEIN Hard-Delete mehr — Status
+   *  abgelehnt + Grund + Zeitstempel, damit die Einreichung für den
+   *  Auftraggeber nachvollziehbar bleibt. Optional Info-Mail an die
+   *  hinterlegte Adresse des Einreichers (Fehler beim Versand lassen
+   *  die Ablehnung bestehen — nur Hinweis anzeigen). */
+  async function handleAblehnen(t: TourRow, grund: string, mailSenden: boolean) {
     if (guard()) { setRejecting(null); return; }
-    const { error: err } = await supabase.from('touren').delete().eq('id', t.id);
-    if (err) throw err;
+    const { error: err } = await supabase
+      .from('touren')
+      .update({
+        abgelehnt: true,
+        ablehnungsgrund: grund.trim() || null,
+        abgelehnt_am: new Date().toISOString(),
+      })
+      .eq('id', t.id);
+    if (err) { setError(err.message); setRejecting(null); return; }
     setRejecting(null);
     void load(true);
+
+    if (!mailSenden) { setAblehnToast('Tour abgelehnt.'); return; }
+    try {
+      // Empfänger: E-Mail des einreichenden Auftraggeber-Users; Fallback
+      // auf die Stamm-Adresse (email1) des Auftraggebers.
+      const { data: info } = await supabase
+        .from('touren')
+        .select('erstellt_von, auftraggeber:auftraggeber_id (name, email1)')
+        .eq('id', t.id)
+        .maybeSingle();
+      type Info = { erstellt_von: string | null; auftraggeber: { name: string; email1: string | null } | null };
+      const inf = info as unknown as Info | null;
+      let empfaenger: string | null = null;
+      if (inf?.erstellt_von) {
+        const { data: u } = await supabase
+          .from('app_users').select('email').eq('id', inf.erstellt_von).maybeSingle();
+        if (u?.email && u.email.includes('@')) empfaenger = u.email;
+      }
+      if (!empfaenger && inf?.auftraggeber?.email1?.includes('@')) {
+        empfaenger = inf.auftraggeber.email1;
+      }
+      if (!empfaenger) {
+        setAblehnToast('Tour abgelehnt — keine E-Mail-Adresse hinterlegt, bitte manuell informieren.');
+        return;
+      }
+      const ref = t.tour_id ?? tourTitel(t);
+      const von = (await loadMailboxes()).find((m) => m.key === 'mail_inbox_1')?.address;
+      const body = `Guten Tag,\n\nIhre eingereichte Tour ${ref} wurde abgelehnt.`
+        + (grund.trim() ? `\n\nGrund: ${grund.trim()}` : '')
+        + '\n\nBei Fragen melden Sie sich gern.';
+      await sendEmail({
+        to: [empfaenger],
+        subject: `Tour ${ref} abgelehnt`,
+        body,
+        bodyHtml: bodyWithSignatureHtml({ body, sig: signatureFromProfile(profile) }),
+        from: von || undefined,
+        attachments: [],
+      });
+      setAblehnToast(`Tour abgelehnt — Auftraggeber per E-Mail informiert (${empfaenger}).`);
+    } catch (mailErr) {
+      console.warn('[Tour ablehnen] Info-Mail fehlgeschlagen', mailErr);
+      setAblehnToast('Tour abgelehnt — Info-E-Mail konnte NICHT versendet werden, bitte manuell informieren.');
+    }
   }
 
   /** Excel-Export des aktuell gewählten Zeitraums (+ Auftraggeber-Filter,
@@ -985,20 +1047,72 @@ export function TourenlistePage() {
       )}
 
       {rejecting && (
-        <ConfirmDialog
-          title="Tour ablehnen?"
-          message={
-            <>
-              Die eingereichte Tour <strong>{rejecting.tour_id ?? tourTitel(rejecting)}</strong> wird
-              gelöscht. Der Auftraggeber sieht sie danach nicht mehr.
-            </>
-          }
-          confirmLabel="Ablehnen und löschen"
-          destructive
-          onConfirm={() => handleAblehnen(rejecting)}
+        <TourAblehnenDialog
+          tourLabel={rejecting.tour_id ?? tourTitel(rejecting)}
+          onConfirm={(grund, mailSenden) => void handleAblehnen(rejecting, grund, mailSenden)}
           onClose={() => setRejecting(null)}
         />
       )}
+
+      {ablehnToast && (
+        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {ablehnToast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Ablehnen-Dialog: Pflicht-Grund + optionale Info-Mail an den
+ *  Auftraggeber (Checkbox, default an). */
+function TourAblehnenDialog({
+  tourLabel, onConfirm, onClose,
+}: {
+  tourLabel: string;
+  onConfirm: (grund: string, mailSenden: boolean) => void;
+  onClose: () => void;
+}) {
+  const [grund, setGrund] = useState('');
+  const [mailSenden, setMailSenden] = useState(true);
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/40 px-4">
+      <div className="card w-full max-w-md p-5">
+        <h3 className="text-base font-semibold text-maja-navy">Tour ablehnen?</h3>
+        <p className="mt-1 text-sm text-maja-ink">
+          Die eingereichte Tour <strong>{tourLabel}</strong> wird als
+          <strong> abgelehnt</strong> markiert (nicht gelöscht) und dem
+          Auftraggeber mit Grund angezeigt.
+        </p>
+        <label htmlFor="ablehn-grund" className="label mt-3">Grund der Ablehnung *</label>
+        <textarea
+          id="ablehn-grund"
+          className="input min-h-[4.5rem]"
+          value={grund}
+          onChange={(e) => setGrund(e.target.value)}
+          placeholder="Warum wird abgelehnt? (wird dem Auftraggeber angezeigt)"
+          autoFocus
+        />
+        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+            checked={mailSenden}
+            onChange={(e) => setMailSenden(e.target.checked)}
+          />
+          Auftraggeber per E-Mail informieren
+        </label>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose}>Abbrechen</button>
+          <button
+            type="button"
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            disabled={!grund.trim()}
+            onClick={() => onConfirm(grund, mailSenden)}
+          >
+            Ablehnen
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

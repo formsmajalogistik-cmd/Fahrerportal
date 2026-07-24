@@ -363,7 +363,7 @@ export function RechnungDetailPage() {
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, fin_rueck, sondervereinbarung, verguetung, info,
+          kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
         .eq('auftraggeber_id', rechnung.auftraggeber_id)
@@ -377,6 +377,7 @@ export function RechnungDetailPage() {
         startdatum: string | null; enddatum: string | null;
         tourenart: TourenartReal; kennzeichen: string[] | null;
         kundenname: string | null; fin: string | null; fin_rueck: string | null;
+        km_hin: number | null; km_rueck: number | null; km_gesamt: number | null;
         sondervereinbarung: string | null; verguetung: number | null;
         info: string | null;
         zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
@@ -389,6 +390,9 @@ export function RechnungDetailPage() {
         tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [],
         kundenname: t.kundenname, fin: t.fin,
         fin_rueck: t.fin_rueck,
+      km_hin: t.km_hin,
+      km_rueck: t.km_rueck,
+      km_gesamt: t.km_gesamt,
         sondervereinbarung: t.sondervereinbarung,
         verguetung: t.verguetung,
         info: t.info,

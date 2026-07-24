@@ -47,6 +47,9 @@ interface TourRow {
   kundenname: string | null;
   fin: string | null;
   fin_rueck: string | null;
+  km_hin: number | null;
+  km_rueck: number | null;
+  km_gesamt: number | null;
   sondervereinbarung: string | null;
   verguetung: number | null;
   info: string | null;
@@ -116,7 +119,7 @@ export function AddTourPositionDialog({
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, fin_rueck, sondervereinbarung, verguetung, info,
+          kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
         .eq('auftraggeber_id', auftraggeberId)
@@ -198,6 +201,9 @@ export function AddTourPositionDialog({
       kundenname: t.kundenname,
       fin: t.fin,
       fin_rueck: t.fin_rueck,
+      km_hin: t.km_hin,
+      km_rueck: t.km_rueck,
+      km_gesamt: t.km_gesamt,
       sondervereinbarung: t.sondervereinbarung,
       verguetung: t.verguetung,
       info: t.info,

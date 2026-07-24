@@ -192,8 +192,17 @@ export const RECHNUNG_PLATZHALTER = [
   'datum', 'datum_von', 'datum_bis',
   'kennzeichen', 'kennzeichen_hin', 'kennzeichen_rueck',
   'kundenname', 'fin', 'fin_rueck', 'tourenart',
+  'km', 'km_gesamt', 'km_hin', 'km_rueck',
   'kategorie', 'sondervereinbarung', 'ansprechpartner',
 ] as const;
+
+/** km-Wert für Platzhalter: ganzzahlig gerundet; leer (statt "0"/
+ *  "undefined"), wenn kein Wert vorhanden — die Einheit "km" schreibt
+ *  der Admin selbst ins Pattern (z.B. "{km} km"). */
+function formatKmValue(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(Number(v)) || Number(v) <= 0) return '';
+  return String(Math.round(Number(v)));
+}
 
 export function resolveRechnungsPattern(
   pattern: string,
@@ -221,6 +230,9 @@ export interface RechnungVorschauTour {
   kundenname?: string;
   fin?: string;
   fin_rueck?: string;
+  km_gesamt?: number | null;
+  km_hin?: number | null;
+  km_rueck?: number | null;
   preis: number;
   zusaetze: Array<{ kategorie: string; anzahl: number; betrag: number; notiz?: string }>;
 }
@@ -287,6 +299,10 @@ function buildPlaceholders(t: RechnungVorschauTour): Record<string, string> {
     kundenname: t.kundenname ?? '',
     fin: t.fin ?? '',
     fin_rueck: t.fin_rueck ?? '',
+    km: formatKmValue(t.km_gesamt),
+    km_gesamt: formatKmValue(t.km_gesamt),
+    km_hin: formatKmValue(t.km_hin),
+    km_rueck: formatKmValue(t.km_rueck),
     tourenart: t.tourenart,
   };
 }
@@ -368,6 +384,9 @@ export interface TourForRechnung {
   enddatum: string | null;
   tourenart: TourenartReal;
   kennzeichen: string[];
+  km_hin: number | null;
+  km_rueck: number | null;
+  km_gesamt: number | null;
   kundenname: string | null;
   fin: string | null;
   fin_rueck: string | null;
@@ -489,6 +508,10 @@ function placeholdersForTour(
     kundenname: t.kundenname ?? '',
     fin: t.fin ?? '',
     fin_rueck: t.fin_rueck ?? '',
+    km: formatKmValue(t.km_gesamt),
+    km_gesamt: formatKmValue(t.km_gesamt),
+    km_hin: formatKmValue(t.km_hin),
+    km_rueck: formatKmValue(t.km_rueck),
     tourenart: format.tourenart_anzeigen ? (t.tourenart ?? '') : '',
     sondervereinbarung: t.sondervereinbarung ?? 'SV',
   };

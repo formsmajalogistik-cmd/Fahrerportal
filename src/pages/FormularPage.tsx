@@ -10,7 +10,7 @@ import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { collectPageImageBlobs, countPageImages, sharePhotos } from '../lib/sharePagePhotos';
-import { deleteFormPdf } from '../lib/pdfGenerate';
+import { deleteFormPdf, generateAndUploadZwischenprotokoll } from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
 import { runSubmissionEmails, readSliderState, sliderKey } from '../lib/submissionEmails';
 import {
@@ -81,6 +81,7 @@ export function FormularPage() {
 
   // ---- PDF-Vorschau ----
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [zwischenBusy, setZwischenBusy] = useState(false);
 
   // ---- Browser-Level: beforeunload-Warnung bei dirty ----
   useEffect(() => {
@@ -301,6 +302,64 @@ export function FormularPage() {
     setSavedDataJson(JSON.stringify(data));
   }
 
+  /**
+   * Zwischenprotokoll abschließen (Übernahme-Teil): sichert den aktuellen
+   * Stand + Bilder als PDF, ohne das Formular endgültig einzureichen —
+   * der Übergabe-Teil bleibt weiter bearbeitbar. Zusätzlich werden die
+   * konfigurierten E-Mails ausgelöst (E-Mail-Konfiguration wie gehabt).
+   */
+  async function handleZwischenprotokoll() {
+    if (!formular || !template) return;
+    if (guard()) return;
+    setZwischenBusy(true);
+    setError(null);
+    setStatusMsg(null);
+    try {
+      // 1) Aktuellen Stand persistieren, damit die Generierung auf den
+      //    tatsächlich gespeicherten Daten aufsetzt.
+      const { error: saveErr } = await supabase
+        .from('ausgefuellte_formulare')
+        .update({ daten: data as Json })
+        .eq('id', formular.id);
+      if (saveErr) throw new Error(saveErr.message);
+      await clearLocalDraft();
+      setSavedDataJson(JSON.stringify(data));
+
+      // 2) Zwischenprotokoll-PDF (gemergt, mit Entwurf-Wasserzeichen) in
+      //    OneDrive ablegen und am Formular verlinken.
+      const snapshot = { ...formular, daten: data } as unknown as AusgefuelltesFormular;
+      const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(template, snapshot);
+      const { error: updErr } = await supabase
+        .from('ausgefuellte_formulare')
+        .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
+        .eq('id', formular.id);
+      if (updErr) throw new Error(updErr.message);
+      setFormular({
+        ...formular,
+        ...( { zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am } as object ),
+      } as AusgefuelltesFormular);
+
+      // 3) Konfigurierte E-Mails auslösen (falls Template welche hat) —
+      //    Fehler brechen den Zwischenabschluss NICHT ab.
+      if (template.email_config) {
+        try {
+          await runSubmissionEmails(template, snapshot, {
+            submitterEmail,
+            fahrerEmail: submitterEmail,
+            fahrerName: profile ? displayName(profile) : null,
+          });
+        } catch (mailErr) {
+          console.warn('[Zwischenprotokoll] E-Mail-Versand fehlgeschlagen', mailErr);
+        }
+      }
+      setStatusMsg('Zwischenprotokoll gesichert — du kannst mit dem Übergabe-Teil fortfahren.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Zwischenprotokoll fehlgeschlagen');
+    } finally {
+      setZwischenBusy(false);
+    }
+  }
+
   async function submit() {
     if (!formular || !template) return;
     if (guard()) return;
@@ -512,6 +571,17 @@ export function FormularPage() {
   // hervorgehoben, sonst "Speichern und später fortfahren". Greift
   // automatisch für jedes Template — der letzte Tab ist immer der Abschluss.
   const isLastPage = pages.length === 0 || currentPageIdx >= pages.length - 1;
+
+  // Zwischenprotokoll-Button: erscheint am Ende des Übernahme-Teils —
+  // d.h. auf der Seite, die die im Template konfigurierte Sektion enthält
+  // (schema.zwischenprotokoll_nach_section). Bei einseitigen Formularen
+  // reicht das Vorhandensein der konfigurierten Sektion.
+  const zwischenSectionId = template?.schema?.zwischenprotokoll_nach_section ?? null;
+  const showZwischenButton = !readonly && !!zwischenSectionId && (
+    currentPage
+      ? currentPage.sectionIds.includes(zwischenSectionId)
+      : (template?.schema?.sections ?? []).some((s) => s.id === zwischenSectionId)
+  );
 
   const header = (
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -745,15 +815,28 @@ export function FormularPage() {
 
       {!readonly && !submittedSummary && (
         <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 bg-white/90 px-4 py-3 backdrop-blur">
-          <button
-            type="button"
-            onClick={() => setPreviewOpen(true)}
-            className="btn-secondary"
-            disabled={saving !== 'idle'}
-            title="Vorschau der gefüllten PDF anzeigen"
-          >
-            PDF-Vorschau
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(true)}
+              className="btn-secondary"
+              disabled={saving !== 'idle'}
+              title="Vorschau der gefüllten PDF anzeigen"
+            >
+              PDF-Vorschau
+            </button>
+            {showZwischenButton && (
+              <button
+                type="button"
+                onClick={() => void handleZwischenprotokoll()}
+                className="btn-secondary"
+                disabled={saving !== 'idle' || zwischenBusy}
+                title="Übernahme-Teil als Zwischenprotokoll sichern — Formular bleibt weiter bearbeitbar"
+              >
+                {zwischenBusy ? 'Sichert …' : 'Zwischenprotokoll abschließen'}
+              </button>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => void saveDraft().catch(() => {})}

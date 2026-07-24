@@ -110,6 +110,10 @@ export interface FormSchema {
   sections: FormSection[];
   /** Optional: Seiten-Aufteilung. Wenn leer/fehlend, sind alle Sections auf einer Seite. */
   pages?: FormPage[];
+  /** Optional: erlaubt dem Fahrer, NACH dieser Sektion (id) ein
+   *  Zwischenprotokoll abzuschließen (Übernahme-Snapshot als PDF; das
+   *  Formular bleibt danach weiter bearbeitbar). null/fehlend = aus. */
+  zwischenprotokoll_nach_section?: string | null;
 }
 
 // ---- Field-Mapping (PDF-Positionen) — discriminated union nach `type`.

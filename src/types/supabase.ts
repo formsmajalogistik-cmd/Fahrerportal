@@ -266,6 +266,9 @@ export type Database = {
           ist_e_fahrzeug: boolean;
           fin: string | null;
           fin_rueck: string | null;
+          abgelehnt: boolean;
+          ablehnungsgrund: string | null;
+          abgelehnt_am: string | null;
           kontakt_id: string | null;
           eingang_id: string | null;
           eingang_id_bc: string | null;
@@ -317,6 +320,9 @@ export type Database = {
           ist_e_fahrzeug?: boolean;
           fin?: string | null;
           fin_rueck?: string | null;
+          abgelehnt?: boolean;
+          ablehnungsgrund?: string | null;
+          abgelehnt_am?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
           eingang_id_bc?: string | null;
@@ -368,6 +374,9 @@ export type Database = {
           ist_e_fahrzeug?: boolean;
           fin?: string | null;
           fin_rueck?: string | null;
+          abgelehnt?: boolean;
+          ablehnungsgrund?: string | null;
+          abgelehnt_am?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
           eingang_id_bc?: string | null;
@@ -852,6 +861,7 @@ export type Database = {
           ist_einmalig: boolean;
           archiviert: boolean;
           archiviert_am: string | null;
+          pdfs_zusammenfuehren: boolean;
         };
         Insert: {
           id?: string;
@@ -863,6 +873,7 @@ export type Database = {
           ist_einmalig?: boolean;
           archiviert?: boolean;
           archiviert_am?: string | null;
+          pdfs_zusammenfuehren?: boolean;
         };
         Update: {
           id?: string;
@@ -874,6 +885,7 @@ export type Database = {
           ist_einmalig?: boolean;
           archiviert?: boolean;
           archiviert_am?: string | null;
+          pdfs_zusammenfuehren?: boolean;
         };
         Relationships: [];
       };
@@ -1141,6 +1153,9 @@ export type Database = {
           ist_e_fahrzeug: boolean;
           fin: string | null;
           fin_rueck: string | null;
+          abgelehnt: boolean;
+          ablehnungsgrund: string | null;
+          abgelehnt_am: string | null;
           adresse_start: string | null;
           adresse_ziel: string | null;
           adresse_rueckfuehrung: string | null;

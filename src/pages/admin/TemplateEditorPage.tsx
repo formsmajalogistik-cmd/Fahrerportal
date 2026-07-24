@@ -55,6 +55,8 @@ export function TemplateEditorPage() {
   const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
   // Einmal-Verwendung: nach der ersten Einreichung automatisch archivieren.
   const [istEinmalig, setIstEinmalig] = useState(false);
+  // PDFs bei der Generierung zu EINER Gesamt-Datei zusammenführen.
+  const [pdfsZusammenfuehren, setPdfsZusammenfuehren] = useState(false);
 
   const [tab, setTab] = useState<Tab>('struktur');
   const [loading, setLoading] = useState(true);
@@ -70,8 +72,8 @@ export function TemplateEditorPage() {
   // Renders zulässig ist.
   const [savedSnapshot, setSavedSnapshot] = useState<string>('');
   const liveSnapshot = useMemo(
-    () => JSON.stringify({ name, schema, pdfs, emailConfig, istEinmalig }),
-    [name, schema, pdfs, emailConfig, istEinmalig],
+    () => JSON.stringify({ name, schema, pdfs, emailConfig, istEinmalig, pdfsZusammenfuehren }),
+    [name, schema, pdfs, emailConfig, istEinmalig, pdfsZusammenfuehren],
   );
   const dirty = !loading && savedSnapshot !== '' && savedSnapshot !== liveSnapshot;
   /** Pending-Navigation: ziel-URL oder Funktion, die nach Bestätigung läuft. */
@@ -112,6 +114,8 @@ export function TemplateEditorPage() {
     setEmailConfig(loadedEmailConfig);
     const loadedEinmalig = t.ist_einmalig ?? false;
     setIstEinmalig(loadedEinmalig);
+    const loadedMerge = t.pdfs_zusammenfuehren ?? false;
+    setPdfsZusammenfuehren(loadedMerge);
     // Snapshot des zuletzt-gespeicherten Stands für Dirty-Vergleich.
     setSavedSnapshot(JSON.stringify({
       name: t.name,
@@ -120,6 +124,7 @@ export function TemplateEditorPage() {
       pdfs: loadedPdfs,
       emailConfig: loadedEmailConfig,
       istEinmalig: loadedEinmalig,
+      pdfsZusammenfuehren: loadedMerge,
     }));
     setLoading(false);
   }, [id]);
@@ -167,6 +172,7 @@ export function TemplateEditorPage() {
         pdfs: pdfs as unknown as Json,
         email_config: (emailConfig ?? null) as unknown as Json,
         ist_einmalig: istEinmalig,
+        pdfs_zusammenfuehren: pdfsZusammenfuehren,
       })
       .eq('id', template.id);
     setSaving(false);
@@ -174,7 +180,7 @@ export function TemplateEditorPage() {
     // Snapshot nach erfolgreichem Save aktualisieren — Editor ist
     // wieder „sauber".
     setSavedSnapshot(JSON.stringify({
-      name: cleanName, schema, pdfs, emailConfig, istEinmalig,
+      name: cleanName, schema, pdfs, emailConfig, istEinmalig, pdfsZusammenfuehren,
     }));
     setStatusMsg('Template gespeichert.');
     // Auto-hide nach 3 s
@@ -206,6 +212,7 @@ export function TemplateEditorPage() {
           pdfs: [] as unknown as Json,
           email_config: (emailConfig ?? null) as unknown as Json,
           ist_einmalig: istEinmalig,
+          pdfs_zusammenfuehren: pdfsZusammenfuehren,
         })
         .select('id')
         .single();
@@ -392,6 +399,51 @@ export function TemplateEditorPage() {
             </span>
           </label>
         </div>
+        <div>
+          <label className="flex cursor-pointer items-start gap-2 text-sm text-maja-ink">
+            <input
+              type="checkbox"
+              checked={pdfsZusammenfuehren}
+              onChange={(e) => setPdfsZusammenfuehren(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-navy"
+            />
+            <span>
+              <span className="font-medium">PDFs zu einer Datei zusammenführen</span>
+              <span className="block text-xs text-maja-muted">
+                Die PDF-Vorlagen bleiben einzeln gepflegt (eigenes Mapping),
+                werden bei der Generierung aber in der Reihenfolge der
+                Vorlagen-Liste (PDF-Mapping-Tab, Pfeile ◂ ▸) zu EINER
+                Gesamt-PDF zusammengefügt. Eingänge und E-Mail-Versand
+                zeigen dann eine Datei.
+              </span>
+            </span>
+          </label>
+        </div>
+        <div>
+          <label htmlFor="tpl-zwischen" className="label">
+            Zwischenprotokoll erlauben nach Abschnitt
+          </label>
+          <select
+            id="tpl-zwischen"
+            className="input"
+            value={schema.zwischenprotokoll_nach_section ?? ''}
+            onChange={(e) => setSchema({
+              ...schema,
+              zwischenprotokoll_nach_section: e.target.value || null,
+            })}
+          >
+            <option value="">— aus (kein Zwischenprotokoll) —</option>
+            {(schema.sections ?? []).map((sec) => (
+              <option key={sec.id} value={sec.id}>{sec.title || sec.id}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-maja-muted">
+            Der Fahrer kann dann ab diesem Abschnitt (z.B. Ende des
+            Übernahme-Teils) ein Zwischenprotokoll abschließen — Stand +
+            Bilder werden als PDF gesichert, das Formular bleibt für den
+            Übergabe-Teil weiter bearbeitbar.
+          </p>
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-maja-navy/10">
@@ -460,6 +512,17 @@ export function TemplateEditorPage() {
             onPatternChange={updatePdfPattern}
             placeholders={placeholderTokens}
             canAdd={true}
+            onMove={(id, dir) => {
+              setPdfs((prev) => {
+                const idx = prev.findIndex((p) => p.id === id);
+                const to = idx + dir;
+                if (idx < 0 || to < 0 || to >= prev.length) return prev;
+                const next = [...prev];
+                const [item] = next.splice(idx, 1);
+                next.splice(to, 0, item);
+                return next;
+              });
+            }}
           />
           {activePdf ? (
             <TemplateMappingEditor
@@ -548,6 +611,7 @@ export function TemplateEditorPage() {
 
 function PdfTabs({
   pdfs, activeId, onSelect, onRename, onDelete, onAdd, onPatternChange, placeholders, canAdd,
+  onMove,
 }: {
   pdfs: TemplatePdf[];
   activeId: string | null;
@@ -558,6 +622,8 @@ function PdfTabs({
   onPatternChange: (id: string, pattern: string) => void;
   placeholders: PlaceholderToken[];
   canAdd: boolean;
+  /** Reihenfolge ändern (bestimmt die Merge-Reihenfolge der Gesamt-PDF). */
+  onMove: (id: string, dir: -1 | 1) => void;
 }) {
   const active = pdfs.find((p) => p.id === activeId) ?? null;
   return (
@@ -597,6 +663,22 @@ function PdfTabs({
           </div>
           <div className="text-xs text-maja-muted">
             ID: <code className="rounded bg-maja-light px-1">{active.id}</code>
+          </div>
+          <div className="flex items-center gap-1" title="Reihenfolge (= Merge-Reihenfolge der Gesamt-PDF)">
+            <button
+              type="button"
+              onClick={() => onMove(active.id, -1)}
+              disabled={pdfs.findIndex((p) => p.id === active.id) === 0}
+              className="btn-secondary px-2 py-1 text-sm disabled:opacity-40"
+              aria-label="nach vorne"
+            >◂</button>
+            <button
+              type="button"
+              onClick={() => onMove(active.id, 1)}
+              disabled={pdfs.findIndex((p) => p.id === active.id) === pdfs.length - 1}
+              className="btn-secondary px-2 py-1 text-sm disabled:opacity-40"
+              aria-label="nach hinten"
+            >▸</button>
           </div>
           <button
             type="button"

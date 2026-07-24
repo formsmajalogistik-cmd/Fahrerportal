@@ -82,6 +82,7 @@ export function AuftraggeberTourenPage() {
           adresse_start, adresse_ziel, adresse_rueckfuehrung,
           kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
           protokoll_art, info, bestaetigt, erstellt_von, created_at,
+          abgelehnt, ablehnungsgrund, abgelehnt_am,
           eingang_id, eingang_id_bc
         `)
         .eq('auftraggeber_id', effectiveAuftraggeberId)
@@ -262,7 +263,8 @@ function KundenTourCard({
   onToggle: () => void;
 }) {
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
-  const inPruefung = !tour.bestaetigt;
+  const abgelehnt = !!tour.abgelehnt;
+  const inPruefung = !tour.bestaetigt && !abgelehnt;
   const dateRange = tour.startdatum && tour.enddatum && tour.startdatum !== tour.enddatum
     ? `${formatDate(tour.startdatum)} – ${formatDate(tour.enddatum)}`
     : formatDate(tour.startdatum ?? tour.enddatum);
@@ -277,7 +279,7 @@ function KundenTourCard({
         type="button"
         onClick={onToggle}
         className={`card w-full p-5 text-left transition hover:shadow-lg ${
-          inPruefung ? 'ring-1 ring-amber-400' : ''
+          abgelehnt ? 'ring-1 ring-red-300' : inPruefung ? 'ring-1 ring-amber-400' : ''
         }`}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -307,6 +309,20 @@ function KundenTourCard({
               {tour.kundenname && <div>{tour.kundenname}</div>}
             </div>
 
+            {abgelehnt && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <span className="font-semibold">Diese Tour wurde abgelehnt.</span>
+                {tour.ablehnungsgrund && (
+                  <span className="block mt-0.5">Grund: {tour.ablehnungsgrund}</span>
+                )}
+                {tour.abgelehnt_am && (
+                  <span className="block mt-0.5 text-xs text-red-700">
+                    am {formatDate(tour.abgelehnt_am)}
+                  </span>
+                )}
+              </div>
+            )}
+
             {linkedEingaenge.length > 0 && (
               <div className="mt-3" onClick={(e) => e.stopPropagation()}>
                 {linkedEingaenge.map((e) => (
@@ -316,7 +332,14 @@ function KundenTourCard({
             )}
           </div>
           <div className="flex flex-col items-end gap-2">
-            {inPruefung ? (
+            {abgelehnt ? (
+              <span
+                className="inline-block rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700"
+                title={tour.ablehnungsgrund ?? undefined}
+              >
+                Abgelehnt
+              </span>
+            ) : inPruefung ? (
               <span className="inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
                 In Prüfung
               </span>

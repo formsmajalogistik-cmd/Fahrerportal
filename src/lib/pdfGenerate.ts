@@ -852,11 +852,18 @@ export async function generateAndUploadFormPdfs(
   const selected = filterSet
     ? allPdfs.filter((p) => filterSet.has(p.id))
     : allPdfs;
+  // Merge-Modus: die erzeugten Einzel-PDFs werden — in Vorlagen-
+  // Reihenfolge — zu EINER Gesamt-PDF zusammengeführt (Template-Option).
+  // Bestehende Templates (Flag false) verhalten sich exakt wie bisher.
+  const mergeMode = !!(template as { pdfs_zusammenfuehren?: boolean }).pdfs_zusammenfuehren;
   console.info(
     `[generateAndUploadFormPdfs] Template "${template.name}": ${selected.length} `
-    + `von ${allPdfs.length} PDF-Vorlagen werden erzeugt`,
+    + `von ${allPdfs.length} PDF-Vorlagen werden erzeugt${mergeMode ? ' (Merge → 1 Datei)' : ''}`,
   );
   const generated: GeneratedPdf[] = [];
+  // Im Merge-Modus sammeln wir die gefüllten Bytes statt sie einzeln
+  // hochzuladen.
+  const mergeParts: Array<{ tplPdf: TemplatePdf; bytes: Uint8Array }> = [];
   for (const tplPdf of selected) {
     if (!tplPdf.path) {
       console.info(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: SKIP (keine PDF-Datei hochgeladen)`);
@@ -898,6 +905,13 @@ export async function generateAndUploadFormPdfs(
       continue;
     }
 
+    if (mergeMode) {
+      // NICHT einzeln hochladen — für die Gesamt-PDF sammeln.
+      mergeParts.push({ tplPdf, bytes: out });
+      console.info(`[generateAndUploadFormPdfs]   – ${tplPdf.id}: gefüllt (für Merge gesammelt)`);
+      continue;
+    }
+
     const filename = resolveFilename(tplPdf.filename_pattern, formular.daten, tplPdf.id);
     const onedrivePath = pathForPdf(folder, filename);
     const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
@@ -913,8 +927,40 @@ export async function generateAndUploadFormPdfs(
     );
     generated.push({ pdf: tplPdf, filename, onedrive_path: onedrivePath });
   }
+
+  // Merge-Modus: alle gesammelten Teile in EIN Dokument (Vorlagen-
+  // Reihenfolge) zusammenführen und als eine Datei hochladen.
+  if (mergeMode && mergeParts.length > 0) {
+    try {
+      const merged = await PDFDocument.create();
+      for (const part of mergeParts) {
+        const doc = await PDFDocument.load(part.bytes as unknown as ArrayBuffer);
+        const copied = await merged.copyPages(doc, doc.getPageIndices());
+        for (const pg of copied) merged.addPage(pg);
+      }
+      const mergedBytes = await merged.save();
+      // Dateiname: filename_pattern der ERSTEN Vorlage, sonst Template-Name.
+      const first = mergeParts[0].tplPdf;
+      const filename = resolveFilename(first.filename_pattern, formular.daten, `${first.id}_gesamt`);
+      const onedrivePath = pathForPdf(folder, filename);
+      const blob = new Blob([mergedBytes as unknown as ArrayBuffer], { type: 'application/pdf' });
+      await uploadToOneDrive(onedrivePath, blob);
+      // EIN GeneratedPdf-Eintrag mit einem virtuellen "Gesamt"-PDF, damit
+      // Eingänge/E-Mail genau eine Datei anbieten.
+      const gesamtPdf: TemplatePdf = {
+        id: 'gesamt', name: 'Gesamt-PDF', path: null, field_mapping: {},
+        filename_pattern: first.filename_pattern ?? null,
+      };
+      generated.push({ pdf: gesamtPdf, filename, onedrive_path: onedrivePath });
+      console.info(
+        `[generateAndUploadFormPdfs] Merge OK: ${mergeParts.length} Teil-PDFs → ${filename} (${blob.size} bytes)`,
+      );
+    } catch (err) {
+      console.error('[generateAndUploadFormPdfs] Merge fehlgeschlagen', err);
+    }
+  }
   console.info(
-    `[generateAndUploadFormPdfs] fertig: ${generated.length}/${allPdfs.length} PDFs erzeugt`,
+    `[generateAndUploadFormPdfs] fertig: ${generated.length} Ausgabe-PDF(s) erzeugt`,
   );
 
   // Persistiere die Liste der TATSÄCHLICH erzeugten PDFs auf dem

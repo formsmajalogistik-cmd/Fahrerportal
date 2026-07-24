@@ -30,7 +30,7 @@ interface Row extends AusgefuelltesFormular {
     user?: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
   } | null;
   template?:
-    & Pick<FormularTemplate, 'id' | 'name' | 'email_config'>
+    & Pick<FormularTemplate, 'id' | 'name' | 'email_config' | 'pdfs_zusammenfuehren'>
     & { pdfs: TemplatePdf[]; schema: unknown }
     | null;
   /** Verknüpfte Tour (oder null). */
@@ -110,7 +110,7 @@ export function EingaengePage() {
         zwischenprotokoll_url, zwischenprotokoll_erstellt_am,
         pdf_paths, pdf_status, pdf_fehler, email_send_log, email_versendet_am,
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
-        template:template_id (id, name, pdfs, schema, email_config)
+        template:template_id (id, name, pdfs, schema, email_config, pdfs_zusammenfuehren)
       `)
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
@@ -286,6 +286,7 @@ export function EingaengePage() {
         ist_einmalig: false,
         archiviert: false,
         archiviert_am: null,
+        pdfs_zusammenfuehren: r.template.pdfs_zusammenfuehren ?? false,
       };
       const generated = await generateAndUploadFormPdfs(tpl, r);
       // pdf_paths wurde von generateAndUploadFormPdfs persistiert — wir
@@ -524,6 +525,7 @@ export function EingaengePage() {
           ist_einmalig: false,
           archiviert: false,
           archiviert_am: null,
+          pdfs_zusammenfuehren: t.pdfs_zusammenfuehren ?? false,
         };
         return (
           <EingangSendEmailDialog
@@ -624,6 +626,7 @@ function EingangCard({
     ist_einmalig: false,
     archiviert: false,
     archiviert_am: null,
+    pdfs_zusammenfuehren: row.template.pdfs_zusammenfuehren ?? false,
   } : null;
 
   const ungesehen = isAdmin && !row.gesehen_am;
