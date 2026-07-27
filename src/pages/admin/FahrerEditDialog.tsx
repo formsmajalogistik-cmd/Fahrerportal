@@ -78,7 +78,7 @@ export function FahrerEditDialog({ initial, onClose, onSaved }: Props) {
         </h2>
         <p className="mb-4 text-xs text-maja-muted">
           {isNew
-            ? 'Wähle einen Benutzer (Admin oder Fahrer), der Formulare ausfüllen können soll. Das Konto muss vorher in Supabase Auth angelegt sein.'
+            ? 'Wähle einen Benutzer (Admin oder Fahrer), der Formulare ausfüllen können soll. Das Benutzerkonto muss vorher in der Benutzerverwaltung angelegt sein.'
             : 'Name wird im Benutzerprofil gespeichert.'}
         </p>
 
@@ -107,7 +107,7 @@ export function FahrerEditDialog({ initial, onClose, onSaved }: Props) {
               </select>
               {candidates.length === 0 && (
                 <p className="mt-1 text-xs text-maja-muted">
-                  Keine freien Benutzerkonten verfügbar. Lege sie zuerst in Supabase Auth an.
+                  Keine freien Benutzerkonten verfügbar. Lege sie zuerst in der Benutzerverwaltung an.
                 </p>
               )}
             </div>

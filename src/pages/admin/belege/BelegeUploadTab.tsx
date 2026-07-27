@@ -593,7 +593,7 @@ export function BelegeUploadTab() {
               className="btn-primary"
               disabled={items.length === 0 || busy !== null}
               onClick={() => setAssignOpen(true)}
-              title="Erstellt die PDF, lädt sie in OneDrive hoch und verknüpft sie mit der gewählten Rechnung."
+              title="Erstellt die PDF, legt sie im Dokumentenspeicher ab und verknüpft sie mit der gewählten Rechnung."
             >
               {busyAction === 'assign' ? (busy ?? 'PDF wird erstellt …') : 'PDF erstellen & Rechnung zuordnen'}
             </button>

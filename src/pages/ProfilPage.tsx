@@ -25,6 +25,11 @@ export function ProfilPage() {
   const [telefon, setTelefon]   = useState(profile?.telefon ?? '');
   const [position, setPosition] = useState(profile?.position ?? '');
 
+  // Auftraggeber versenden keine E-Mails mit Maja-Signatur — die
+  // Signatur-Hinweise (und das Feld „Position / Rolle" mit dem
+  // Maja-Default) blenden wir für diese Rolle aus.
+  const istAuftraggeber = profile?.role === 'auftraggeber';
+
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg]       = useState<string | null>(null);
   const [profileErr, setProfileErr]       = useState<string | null>(null);
@@ -95,7 +100,7 @@ export function ProfilPage() {
           <label className="label">E-Mail</label>
           <input className="input bg-maja-light" value={profile.email} disabled readOnly />
           <p className="mt-1 text-xs text-maja-muted">
-            Die E-Mail-Adresse kann nur über Supabase Auth geändert werden.
+            Die E-Mail-Adresse kann nur durch einen Administrator geändert werden.
           </p>
         </div>
 
@@ -116,20 +121,29 @@ export function ProfilPage() {
                    placeholder="z.B. 0173 8727757"
                    value={telefon}
                    onChange={(e) => setTelefon(e.target.value)} />
-            <p className="mt-1 text-xs text-maja-muted">
-              Wird in der E-Mail-Signatur angezeigt.
-            </p>
+            {/* Signatur-Hinweis nur für Rollen, die tatsächlich E-Mails
+                mit Maja-Signatur versenden. Für Auftraggeber bleibt das
+                Feld als allgemeine Kontaktangabe — ohne Hinweis. */}
+            {!istAuftraggeber && (
+              <p className="mt-1 text-xs text-maja-muted">
+                Wird in der E-Mail-Signatur angezeigt.
+              </p>
+            )}
           </div>
-          <div>
-            <label htmlFor="p-position" className="label">Position / Rolle</label>
-            <input id="p-position" className="input"
-                   placeholder="Maja-Logistik"
-                   value={position}
-                   onChange={(e) => setPosition(e.target.value)} />
-            <p className="mt-1 text-xs text-maja-muted">
-              Erscheint unter dem Namen in der E-Mail-Signatur. Default „Maja-Logistik".
-            </p>
-          </div>
+          {/* „Position / Rolle" mit Default „Maja-Logistik" ergibt für
+              externe Auftraggeber keinen Sinn → dort ausgeblendet. */}
+          {!istAuftraggeber && (
+            <div>
+              <label htmlFor="p-position" className="label">Position / Rolle</label>
+              <input id="p-position" className="input"
+                     placeholder="Maja-Logistik"
+                     value={position}
+                     onChange={(e) => setPosition(e.target.value)} />
+              <p className="mt-1 text-xs text-maja-muted">
+                Erscheint unter dem Namen in der E-Mail-Signatur. Default „Maja-Logistik".
+              </p>
+            </div>
+          )}
         </div>
 
         {profileErr && (

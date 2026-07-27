@@ -5,6 +5,8 @@ import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
 import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { TestModeBanner } from './TestModeBanner';
+import { useAuth } from '../auth/AuthContext';
+import { useTestMode } from '../auth/TestModeContext';
 
 interface NavItem { to: string; label: string }
 
@@ -17,6 +19,16 @@ const auftraggeberNav: NavItem[] = [
 ];
 
 export function AuftraggeberShell({ children }: { children: ReactNode }) {
+  const { profile } = useAuth();
+  const { isTestUser } = useTestMode();
+  // Ohne verknüpften Auftraggeber liefert die Kundensicht (RLS:
+  // auftraggeber_id = current_auftraggeber_id()) systembedingt KEINE
+  // Zeilen. Statt einer stillen leeren Liste zeigen wir den Grund.
+  // Test-Profile wählen ihren Auftraggeber im Banner — dort nicht nötig.
+  const ohneZuordnung = !isTestUser
+    && profile?.role === 'auftraggeber'
+    && !profile?.auftraggeber_id;
+
   return (
     <div className="min-h-screen bg-maja-light">
       <TestModeBanner />
@@ -48,7 +60,22 @@ export function AuftraggeberShell({ children }: { children: ReactNode }) {
           </ul>
         </nav>
       </header>
-      <main className="mx-auto max-w-screen-2xl px-4 py-6 lg:px-8">{children}</main>
+      <main className="mx-auto max-w-screen-2xl px-4 py-6 lg:px-8">
+        {ohneZuordnung && (
+          <div
+            role="alert"
+            className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          >
+            <div className="font-semibold">Diesem Konto ist kein Auftraggeber zugeordnet.</div>
+            <p className="mt-1">
+              Deshalb werden hier keine Touren und Formulare angezeigt. Bitte
+              wenden Sie sich an den Administrator, damit die Zuordnung
+              ergänzt wird.
+            </p>
+          </div>
+        )}
+        {children}
+      </main>
       <PdfPreviewProvider />
     </div>
   );
