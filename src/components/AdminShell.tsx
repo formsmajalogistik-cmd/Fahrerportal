@@ -23,6 +23,9 @@ function NavBadge({ count, pulse, label }: { count: number; pulse?: boolean; lab
   );
 }
 
+/** Zeitfenster für "Zur Bestätigung" — muss zur Tourenliste passen. */
+export const BESTAETIGUNG_FENSTER_TAGE = 14;
+
 /**
  * Leichtgewichtige Zähler für die Nav-Punkte: unbestätigte Touren
  * (Auftraggeber-Einreichungen → Tourenliste) und offene Formular-
@@ -35,10 +38,24 @@ function useAdminPendingCounts(): { unbestaetigt: number; wuensche: number } {
     let cancelled = false;
     async function refresh() {
       try {
+        // Nur AKTUELL relevante offene Einreichungen zählen:
+        //  - nicht bestätigt UND nicht abgelehnt (abgelehnte sind
+        //    ebenfalls bestaetigt=false und leuchteten bisher weiter),
+        //  - nicht zurückgestellt ("Später"),
+        //  - Start innerhalb des 14-Tage-Fensters (weiter entfernte
+        //    Einreichungen liegen im Bereich "Zukünftige Einreichungen"
+        //    und sollen den Punkt nicht dauerhaft leuchten lassen).
+        const fensterBis = new Date();
+        fensterBis.setDate(fensterBis.getDate() + BESTAETIGUNG_FENSTER_TAGE);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const bisYmd = `${fensterBis.getFullYear()}-${pad(fensterBis.getMonth() + 1)}-${pad(fensterBis.getDate())}`;
         const [t, w] = await Promise.all([
           supabase.from('touren')
             .select('id', { count: 'exact', head: true })
-            .eq('bestaetigt', false),
+            .eq('bestaetigt', false)
+            .eq('abgelehnt', false)
+            .eq('zurueckgestellt', false)
+            .lte('startdatum', bisYmd),
           supabase.from('formular_wuensche')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'offen'),
@@ -54,11 +71,16 @@ function useAdminPendingCounts(): { unbestaetigt: number; wuensche: number } {
     const interval = window.setInterval(() => { void refresh(); }, 60_000);
     const onFocus = () => { void refresh(); };
     window.addEventListener('focus', onFocus);
+    // Sofort-Invalidierung: die Tourenliste feuert dieses Event nach
+    // Bestätigen/Ablehnen/Zurückstellen — der Punkt verschwindet damit
+    // ohne Reload und ohne auf das 60-s-Polling zu warten.
+    window.addEventListener('maja:einreichungen-changed', onFocus);
     return () => {
       cancelled = true;
       window.clearTimeout(t);
       window.clearInterval(interval);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('maja:einreichungen-changed', onFocus);
     };
   }, []);
   return counts;

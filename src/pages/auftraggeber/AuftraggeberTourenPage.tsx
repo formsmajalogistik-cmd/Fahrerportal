@@ -56,6 +56,20 @@ export function AuftraggeberTourenPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  /** "Verstanden": quittiert eine Ablehnung — die Tour verschwindet aus
+   *  der Auftraggeber-Liste (bleibt in der DB und für Admins sichtbar).
+   *  Läuft über eine SECURITY-DEFINER-RPC, weil Auftraggeber-Profile
+   *  kein UPDATE-Recht auf touren haben (H-1). */
+  const [ackBusy, setAckBusy] = useState<string | null>(null);
+  async function handleAblehnungVerstanden(tourId: string) {
+    setAckBusy(tourId);
+    const { error: err } = await supabase.rpc('ag_ablehnung_bestaetigen', { p_tour_id: tourId });
+    setAckBusy(null);
+    if (err) { setError(err.message); return; }
+    // Optimistisch aus der Liste nehmen; load() bestätigt es serverseitig.
+    setRows((prev) => prev.filter((t) => t.id !== tourId));
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -82,7 +96,7 @@ export function AuftraggeberTourenPage() {
           adresse_start, adresse_ziel, adresse_rueckfuehrung,
           kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
           protokoll_art, info, bestaetigt, erstellt_von, created_at,
-          abgelehnt, ablehnungsgrund, abgelehnt_am,
+          abgelehnt, ablehnungsgrund, abgelehnt_am, ablehnung_bestaetigt_am,
           eingang_id, eingang_id_bc
         `)
         .eq('auftraggeber_id', effectiveAuftraggeberId)
@@ -220,6 +234,8 @@ export function AuftraggeberTourenPage() {
               eingaenge={eingaenge}
               expanded={expandedId === t.id}
               onToggle={() => setExpandedId((cur) => (cur === t.id ? null : t.id))}
+              ackBusy={ackBusy === t.id}
+              onAblehnungVerstanden={() => void handleAblehnungVerstanden(t.id)}
             />
           ))}
         </ul>
@@ -255,12 +271,14 @@ function KontaktZeile({ label, kontakt }: { label: string; kontakt: KontaktVorOr
 }
 
 function KundenTourCard({
-  tour, eingaenge, expanded, onToggle,
+  tour, eingaenge, expanded, onToggle, ackBusy, onAblehnungVerstanden,
 }: {
   tour: TourKundensicht;
   eingaenge: Map<string, EingangLite>;
   expanded: boolean;
   onToggle: () => void;
+  ackBusy?: boolean;
+  onAblehnungVerstanden?: () => void;
 }) {
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const abgelehnt = !!tour.abgelehnt;
@@ -319,6 +337,17 @@ function KundenTourCard({
                   <span className="block mt-0.5 text-xs text-red-700">
                     am {formatDate(tour.abgelehnt_am)}
                   </span>
+                )}
+                {onAblehnungVerstanden && (
+                  <button
+                    type="button"
+                    className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                    disabled={ackBusy}
+                    onClick={(e) => { e.stopPropagation(); onAblehnungVerstanden(); }}
+                    title="Hinweis zur Kenntnis nehmen — die Tour wird hier ausgeblendet"
+                  >
+                    {ackBusy ? 'Wird ausgeblendet …' : 'Verstanden — ausblenden'}
+                  </button>
                 )}
               </div>
             )}

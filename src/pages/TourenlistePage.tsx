@@ -9,6 +9,7 @@ import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
 import { exportTourenExcel } from '../lib/tourenExport';
+import { BESTAETIGUNG_FENSTER_TAGE } from '../components/AdminShell';
 import { sendEmail } from '../lib/onedrive';
 import { loadMailboxes } from '../lib/mailboxSettings';
 import { bodyWithSignatureHtml, signatureFromProfile } from '../lib/emailSignature';
@@ -232,7 +233,7 @@ export function TourenlistePage() {
       greimel_zugang_id, ist_e_fahrzeug, fin,
       eingang_id, eingang_id_bc, km_gesamt,
       bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
-      abgelehnt
+      abgelehnt, zurueckgestellt
     `;
     const adminCols = `${baseCols},
       verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
@@ -464,10 +465,49 @@ export function TourenlistePage() {
   // Erscheinen für Admins in einem eigenen Bereich GANZ OBEN — ohne
   // Datums-/Status-Filter, damit nichts untergeht. Fahrer sehen
   // unbestätigte Touren per RLS ohnehin nie (fahrer_id ist null).
-  const unbestaetigteRows = useMemo(
+  /** Alle offenen Einreichungen (nicht bestätigt, nicht abgelehnt). */
+  const offeneEinreichungen = useMemo(
     () => (isAdmin ? (rows ?? []).filter((t) => t.bestaetigt === false && !t.abgelehnt) : []),
     [rows, isAdmin],
   );
+
+  /**
+   * Dreiteilung der offenen Einreichungen (Punkt 4):
+   *  - aktuell:      Start innerhalb der nächsten 14 Tage → oben,
+   *                  zählt für den Notification-Blip.
+   *  - zukuenftig:   Start weiter in der Zukunft → eingeklappt.
+   *  - zurueckgestellt: manuell per "Später" → eingeklappt, zählt nicht.
+   * Rutscht eine zukünftige Tour ins Fenster, erscheint sie automatisch
+   * oben (rein datumsbasiert, kein Zustand nötig).
+   */
+  const fensterBisYmd = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + BESTAETIGUNG_FENSTER_TAGE);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, []);
+
+  const unbestaetigteRows = useMemo(
+    () => offeneEinreichungen.filter(
+      (t) => !t.zurueckgestellt && (!t.startdatum || t.startdatum <= fensterBisYmd),
+    ),
+    [offeneEinreichungen, fensterBisYmd],
+  );
+  const zukuenftigeRows = useMemo(
+    () => offeneEinreichungen.filter(
+      (t) => !t.zurueckgestellt && !!t.startdatum && t.startdatum > fensterBisYmd,
+    ),
+    [offeneEinreichungen, fensterBisYmd],
+  );
+  const zurueckgestellteRows = useMemo(
+    () => offeneEinreichungen.filter((t) => t.zurueckgestellt),
+    [offeneEinreichungen],
+  );
+
+  const [zukunftOffen, setZukunftOffen] = useState(false);
+  const [zurueckOffen, setZurueckOffen] = useState(false);
+  /** Auswahl für die Sammelaktion "Ausgewählte zurückstellen". */
+  const [selectedEinreichungen, setSelectedEinreichungen] = useState<Set<string>>(new Set());
 
   // ---- Touren im gewählten Datums-Bereich ----
   // Maßgeblich ist das ENDDATUM (Fallback auf startdatum, falls noch
@@ -564,6 +604,28 @@ export function TourenlistePage() {
     setConfirmBusyId(null);
     if (err) { setError(err.message); return; }
     void load(true);
+    window.dispatchEvent(new CustomEvent('maja:einreichungen-changed'));
+  }
+
+  /** Einreichung(en) zurückstellen ("Später") bzw. wieder aktivieren. */
+  async function setZurueckgestellt(ids: string[], wert: boolean) {
+    if (ids.length === 0) return;
+    if (guard()) return;
+    const { error: err } = await supabase
+      .from('touren')
+      .update({
+        zurueckgestellt: wert,
+        zurueckgestellt_am: wert ? new Date().toISOString() : null,
+      })
+      .in('id', ids);
+    if (err) { setError(err.message); return; }
+    setSelectedEinreichungen(new Set());
+    void load(true);
+    // Blip sofort aktualisieren — zurückgestellte zählen nicht mehr.
+    window.dispatchEvent(new CustomEvent('maja:einreichungen-changed'));
+    setAblehnToast(wert
+      ? `${ids.length} Einreichung${ids.length === 1 ? '' : 'en'} zurückgestellt.`
+      : 'Einreichung wieder aktiviert.');
   }
 
   /** Unbestätigte Tour ablehnen: KEIN Hard-Delete mehr — Status
@@ -584,6 +646,8 @@ export function TourenlistePage() {
     if (err) { setError(err.message); setRejecting(null); return; }
     setRejecting(null);
     void load(true);
+    // Abgelehnte zählen nicht mehr → Blip sofort neu berechnen.
+    window.dispatchEvent(new CustomEvent('maja:einreichungen-changed'));
 
     if (!mailSenden) { setAblehnToast('Tour abgelehnt.'); return; }
     try {
@@ -696,62 +760,154 @@ export function TourenlistePage() {
         </div>
       </div>
 
-      {/* Zur Bestätigung: von Auftraggebern eingereichte Touren */}
+      {/* Zur Bestätigung: von Auftraggebern eingereichte Touren.
+          Dreigeteilt (Punkt 4): aktuelles 14-Tage-Fenster oben,
+          weiter entfernte und manuell zurückgestellte eingeklappt. */}
       {isAdmin && unbestaetigteRows.length > 0 && (
         <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
           <h2 className="text-sm font-semibold text-amber-900">
             Zur Bestätigung ({unbestaetigteRows.length})
           </h2>
           <p className="text-xs text-amber-800">
-            Von Auftraggebern eingereichte Touren. Öffnen, fehlende Daten
+            Von Auftraggebern eingereichte Touren mit Start in den nächsten
+            {' '}{BESTAETIGUNG_FENSTER_TAGE} Tagen. Öffnen, fehlende Daten
             (Fahrer, km, Preis) ergänzen und bestätigen — oder ablehnen.
           </p>
-          <ul className="space-y-2">
-            {unbestaetigteRows.map((t) => (
-              <li key={t.id} className="card flex flex-wrap items-center justify-between gap-3 p-4 ring-1 ring-amber-300">
+
+          {/* Sammelaktion: bewusst nur "Zurückstellen" — Bestätigen und
+              Ablehnen brauchen pro Tour Daten bzw. einen Grund. */}
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-amber-900">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                checked={unbestaetigteRows.every((t) => selectedEinreichungen.has(t.id))}
+                onChange={(e) => setSelectedEinreichungen(
+                  e.target.checked ? new Set(unbestaetigteRows.map((t) => t.id)) : new Set(),
+                )}
+              />
+              Alle auswählen
+            </label>
+            {selectedEinreichungen.size > 0 && (
+              <>
+                <span className="font-medium text-amber-900">
+                  {selectedEinreichungen.size} ausgewählt
+                </span>
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left"
-                  onClick={() => setOpenTourId(t.id)}
+                  className="rounded-full bg-amber-600 px-3 py-1 font-semibold text-white hover:bg-amber-700"
+                  onClick={() => void setZurueckgestellt([...selectedEinreichungen], true)}
                 >
-                  <div className="flex flex-wrap items-center gap-2">
-                    {t.tour_id && (
-                      <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
-                        {t.tour_id}
-                      </span>
-                    )}
-                    <span className="text-sm font-semibold text-maja-navy">{tourTitel(t)}</span>
-                    <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-                      Unbestätigt
-                    </span>
-                  </div>
-                  <div className="mt-1 text-xs text-maja-muted">
-                    {formatDate(t.startdatum)} – {formatDate(t.enddatum)}
-                    {t.auftraggeber?.name && <> · {t.auftraggeber.name}</>}
-                    {(t.kennzeichen ?? []).length > 0 && <> · {(t.kennzeichen ?? []).join(', ')}</>}
-                    {t.kundenname && <> · {t.kundenname}</>}
-                  </div>
+                  Ausgewählte zurückstellen
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="btn-primary px-3 py-1.5 text-sm"
-                    disabled={confirmBusyId === t.id}
-                    onClick={() => void handleBestaetigen(t)}
-                  >
-                    {confirmBusyId === t.id ? 'Bestätigt …' : 'Tour bestätigen'}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
-                    onClick={() => setRejecting(t)}
-                  >
-                    Ablehnen
-                  </button>
-                </div>
-              </li>
+                <button
+                  type="button"
+                  className="font-medium text-amber-900 underline hover:no-underline"
+                  onClick={() => setSelectedEinreichungen(new Set())}
+                >
+                  Auswahl aufheben
+                </button>
+              </>
+            )}
+          </div>
+
+          <ul className="space-y-2">
+            {unbestaetigteRows.map((t) => (
+              <EinreichungCard
+                key={t.id}
+                tour={t}
+                selectable
+                selected={selectedEinreichungen.has(t.id)}
+                onToggleSelected={() => setSelectedEinreichungen((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                  return next;
+                })}
+                busy={confirmBusyId === t.id}
+                onOpen={() => setOpenTourId(t.id)}
+                onBestaetigen={() => void handleBestaetigen(t)}
+                onAblehnen={() => setRejecting(t)}
+                onSpaeter={() => void setZurueckgestellt([t.id], true)}
+              />
             ))}
           </ul>
+        </section>
+      )}
+
+      {/* Zukünftige Einreichungen (Start jenseits des Fensters) */}
+      {isAdmin && zukuenftigeRows.length > 0 && (
+        <section className="rounded-xl border border-maja-navy/15 bg-white">
+          <button
+            type="button"
+            onClick={() => setZukunftOffen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+            aria-expanded={zukunftOffen}
+          >
+            <span className="text-sm font-semibold text-maja-navy">
+              Zukünftige Einreichungen ({zukuenftigeRows.length})
+            </span>
+            <span className="text-xs text-maja-muted">
+              {zukunftOffen ? 'Einklappen' : 'Ausklappen'}
+            </span>
+          </button>
+          {zukunftOffen && (
+            <div className="border-t border-maja-navy/10 px-4 py-3">
+              <p className="mb-2 text-xs text-maja-muted">
+                Start liegt mehr als {BESTAETIGUNG_FENSTER_TAGE} Tage in der
+                Zukunft. Sie rücken automatisch nach oben, sobald das Fenster
+                erreicht ist — bearbeiten geht aber jederzeit auch hier.
+              </p>
+              <ul className="space-y-2">
+                {zukuenftigeRows.map((t) => (
+                  <EinreichungCard
+                    key={t.id}
+                    tour={t}
+                    busy={confirmBusyId === t.id}
+                    onOpen={() => setOpenTourId(t.id)}
+                    onBestaetigen={() => void handleBestaetigen(t)}
+                    onAblehnen={() => setRejecting(t)}
+                    onSpaeter={() => void setZurueckgestellt([t.id], true)}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Zurückgestellte Einreichungen */}
+      {isAdmin && zurueckgestellteRows.length > 0 && (
+        <section className="rounded-xl border border-maja-navy/15 bg-white">
+          <button
+            type="button"
+            onClick={() => setZurueckOffen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+            aria-expanded={zurueckOffen}
+          >
+            <span className="text-sm font-semibold text-maja-navy">
+              Zurückgestellt ({zurueckgestellteRows.length})
+            </span>
+            <span className="text-xs text-maja-muted">
+              {zurueckOffen ? 'Einklappen' : 'Ausklappen'}
+            </span>
+          </button>
+          {zurueckOffen && (
+            <div className="border-t border-maja-navy/10 px-4 py-3">
+              <ul className="space-y-2">
+                {zurueckgestellteRows.map((t) => (
+                  <EinreichungCard
+                    key={t.id}
+                    tour={t}
+                    busy={confirmBusyId === t.id}
+                    onOpen={() => setOpenTourId(t.id)}
+                    onBestaetigen={() => void handleBestaetigen(t)}
+                    onAblehnen={() => setRejecting(t)}
+                    onReaktivieren={() => void setZurueckgestellt([t.id], false)}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
@@ -1060,6 +1216,101 @@ export function TourenlistePage() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Karte einer offenen Einreichung im Bestätigungs-Bereich. Wird für alle
+ * drei Gruppen (aktuell / zukünftig / zurückgestellt) genutzt — je nach
+ * Gruppe mit „Später" oder „Wieder aktivieren".
+ */
+function EinreichungCard({
+  tour, busy, onOpen, onBestaetigen, onAblehnen, onSpaeter, onReaktivieren,
+  selectable, selected, onToggleSelected,
+}: {
+  tour: TourRow;
+  busy: boolean;
+  onOpen: () => void;
+  onBestaetigen: () => void;
+  onAblehnen: () => void;
+  onSpaeter?: () => void;
+  onReaktivieren?: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelected?: () => void;
+}) {
+  return (
+    <li className="card flex flex-wrap items-center justify-between gap-3 p-4 ring-1 ring-amber-300">
+      {selectable && (
+        <input
+          type="checkbox"
+          className="h-4 w-4 shrink-0 rounded border-maja-navy/30 text-maja-navy"
+          checked={!!selected}
+          onChange={onToggleSelected}
+          aria-label={`${tour.tour_id ?? tourTitel(tour)} auswählen`}
+        />
+      )}
+      <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
+        <div className="flex flex-wrap items-center gap-2">
+          {tour.tour_id && (
+            <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+              {tour.tour_id}
+            </span>
+          )}
+          <span className="text-sm font-semibold text-maja-navy">{tourTitel(tour)}</span>
+          <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+            Unbestätigt
+          </span>
+          {tour.zurueckgestellt && (
+            <span className="inline-block rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-700">
+              Zurückgestellt
+            </span>
+          )}
+        </div>
+        <div className="mt-1 text-xs text-maja-muted">
+          {formatDate(tour.startdatum)} – {formatDate(tour.enddatum)}
+          {tour.auftraggeber?.name && <> · {tour.auftraggeber.name}</>}
+          {(tour.kennzeichen ?? []).length > 0 && <> · {(tour.kennzeichen ?? []).join(', ')}</>}
+          {tour.kundenname && <> · {tour.kundenname}</>}
+        </div>
+      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="btn-primary px-3 py-1.5 text-sm"
+          disabled={busy}
+          onClick={onBestaetigen}
+        >
+          {busy ? 'Bestätigt …' : 'Tour bestätigen'}
+        </button>
+        <button
+          type="button"
+          className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+          onClick={onAblehnen}
+        >
+          Ablehnen
+        </button>
+        {onSpaeter && (
+          <button
+            type="button"
+            className="rounded-lg border border-maja-navy/25 bg-white px-3 py-1.5 text-sm font-medium text-maja-navy hover:bg-maja-light"
+            title="Einreichung zurückstellen — verschwindet aus diesem Bereich und zählt nicht mehr für den Hinweis-Punkt"
+            onClick={onSpaeter}
+          >
+            Später
+          </button>
+        )}
+        {onReaktivieren && (
+          <button
+            type="button"
+            className="rounded-lg border border-maja-navy/25 bg-white px-3 py-1.5 text-sm font-medium text-maja-navy hover:bg-maja-light"
+            onClick={onReaktivieren}
+          >
+            Wieder aktivieren
+          </button>
+        )}
+      </div>
+    </li>
   );
 }
 

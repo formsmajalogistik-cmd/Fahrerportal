@@ -269,6 +269,9 @@ export type Database = {
           abgelehnt: boolean;
           ablehnungsgrund: string | null;
           abgelehnt_am: string | null;
+          ablehnung_bestaetigt_am: string | null;
+          zurueckgestellt: boolean;
+          zurueckgestellt_am: string | null;
           kontakt_id: string | null;
           eingang_id: string | null;
           eingang_id_bc: string | null;
@@ -323,6 +326,9 @@ export type Database = {
           abgelehnt?: boolean;
           ablehnungsgrund?: string | null;
           abgelehnt_am?: string | null;
+          ablehnung_bestaetigt_am?: string | null;
+          zurueckgestellt?: boolean;
+          zurueckgestellt_am?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
           eingang_id_bc?: string | null;
@@ -377,6 +383,9 @@ export type Database = {
           abgelehnt?: boolean;
           ablehnungsgrund?: string | null;
           abgelehnt_am?: string | null;
+          ablehnung_bestaetigt_am?: string | null;
+          zurueckgestellt?: boolean;
+          zurueckgestellt_am?: string | null;
           kontakt_id?: string | null;
           eingang_id?: string | null;
           eingang_id_bc?: string | null;
@@ -1156,6 +1165,7 @@ export type Database = {
           abgelehnt: boolean;
           ablehnungsgrund: string | null;
           abgelehnt_am: string | null;
+          ablehnung_bestaetigt_am: string | null;
           adresse_start: string | null;
           adresse_ziel: string | null;
           adresse_rueckfuehrung: string | null;
@@ -1219,6 +1229,14 @@ export type Database = {
       release_completed_greimel_zugaenge: {
         Args: Record<PropertyKey, never>;
         Returns: number;
+      };
+      release_orphaned_greimel_zugaenge: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
+      };
+      ag_ablehnung_bestaetigen: {
+        Args: { p_tour_id: string };
+        Returns: boolean;
       };
       expand_fahrer_with_subaccounts: {
         Args: { p_ids: string[] };
