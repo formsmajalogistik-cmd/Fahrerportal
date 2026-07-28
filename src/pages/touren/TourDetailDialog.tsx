@@ -8,6 +8,7 @@ import { useFahrerContext } from '../../auth/FahrerContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { TourDokumenteSection } from '../../components/TourDokumenteSection';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import { CheckIcon, DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
 import { fahrerName } from '../../lib/names';
@@ -1606,6 +1607,11 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewB
           </DetailItem>
         )}
         {isAdmin && <ViewModeRechnungsRef tourId={tour.id} />}
+        {/* Extern hochgeladene Protokolle (076) — Upload/Löschen nur Admin,
+            Fahrer sehen ihre eigenen Tour-Dokumente read-only. */}
+        <div className="sm:col-span-2">
+          <TourDokumenteSection tourId={tour.id} canEdit={isAdmin} />
+        </div>
       </div>
 
       {/* Bereich 3: Protokoll */}

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter,
   useSensor, useSensors, type DragEndEvent,
@@ -181,17 +181,72 @@ interface RowCtx {
   removeUnterzeile: (key: string, idx: number) => void;
 }
 
+/**
+ * Dezimal-Eingabe, die WÄHREND des Tippens rohen Text hält und erst bei
+ * Blur/Enter parst.
+ *
+ * Vorher war der Input voll kontrolliert mit
+ *   value={formatDecimal(x)}  onChange={... parseDecimal(...)}
+ * — bei jedem Tastendruck wurde also geparst UND sofort auf zwei
+ * Nachkommastellen zurückformatiert. Tippt man in ein Feld mit "0,00"
+ * eine 6, entstand "0,006" → 0.006 → gerundet "0,01". Genau das
+ * Symptom "bei Eingabe von 6 wird die nächste Zahl übernommen".
+ * Akzeptiert Komma UND Punkt als Dezimaltrenner.
+ */
+function DecimalInput({
+  value, onCommit, className,
+}: { value: number; onCommit: (n: number) => void; className?: string }) {
+  const [text, setText] = useState<string | null>(null);
+  const anzeige = text ?? formatDecimal(value);
+  function commit() {
+    if (text === null) return;
+    const n = parseDecimal(text);
+    setText(null);
+    if (n !== value) onCommit(n);
+  }
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className={className}
+      value={anzeige}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={(e) => {
+        // Beim Fokussieren den Inhalt markieren — Tippen ersetzt dann den
+        // Wert, statt sich an "0,00" anzuhängen.
+        setText(formatDecimal(value));
+        requestAnimationFrame(() => e.target.select?.());
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+        if (e.key === 'Escape') { setText(null); (e.target as HTMLInputElement).blur(); }
+      }}
+    />
+  );
+}
+
 function SortableRow({
   position: p, index, ctx,
 }: { position: EditorPosition; index: number; ctx: RowCtx }) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({ id: p.key, disabled: ctx.readOnly });
+  } = useSortable({
+    id: p.key,
+    disabled: ctx.readOnly,
+    // Layout-Animation AUS: in <table>-Zeilen ließ dnd-kit nach dem Drop
+    // kurzzeitig einen Rest-Transform stehen. Die Zeile war dann visuell
+    // um einen Slot verschoben gegenüber ihrer echten Position — ein
+    // Klick auf "Position 5" traf dadurch Position 4.
+    animateLayoutChanges: () => false,
+  });
   const cellRef = useRef<HTMLTableCellElement | null>(null);
 
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+    // Transform/Transition NUR während des aktiven Ziehens anwenden —
+    // danach sitzt die Zeile exakt auf ihrer DOM-Position (siehe oben).
+    transform: isDragging ? CSS.Transform.toString(transform) : undefined,
+    transition: isDragging ? transition : undefined,
     opacity: isDragging ? 0.5 : 1,
     boxShadow: isDragging
       ? '0 6px 16px rgba(15, 23, 42, 0.18)'
@@ -269,12 +324,10 @@ function SortableRow({
         {ctx.readOnly ? (
           <span className="tabular-nums">{formatDecimal(p.menge)}</span>
         ) : (
-          <input
-            type="text"
-            inputMode="decimal"
+          <DecimalInput
             className="input w-20 text-right tabular-nums"
-            value={formatDecimal(p.menge)}
-            onChange={(e) => ctx.patch(p.key, { menge: parseDecimal(e.target.value) })}
+            value={p.menge}
+            onCommit={(n) => ctx.patch(p.key, { menge: n })}
           />
         )}
       </td>
@@ -282,12 +335,10 @@ function SortableRow({
         {ctx.readOnly ? (
           <span className="tabular-nums">{formatEuro(p.einzelpreis)}</span>
         ) : (
-          <input
-            type="text"
-            inputMode="decimal"
+          <DecimalInput
             className="input w-24 text-right tabular-nums"
-            value={formatDecimal(p.einzelpreis)}
-            onChange={(e) => ctx.patch(p.key, { einzelpreis: parseDecimal(e.target.value) })}
+            value={p.einzelpreis}
+            onCommit={(n) => ctx.patch(p.key, { einzelpreis: n })}
           />
         )}
       </td>

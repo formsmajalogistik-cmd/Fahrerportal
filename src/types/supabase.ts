@@ -1144,6 +1144,39 @@ export type Database = {
           },
         ];
       };
+      tour_dokumente: {
+        Row: {
+          id: string;
+          tour_id: string;
+          bezeichnung: string | null;
+          onedrive_path: string;
+          dateiname: string;
+          content_type: string | null;
+          hochgeladen_von: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tour_id: string;
+          bezeichnung?: string | null;
+          onedrive_path: string;
+          dateiname: string;
+          content_type?: string | null;
+          hochgeladen_von?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string;
+          bezeichnung?: string | null;
+          onedrive_path?: string;
+          dateiname?: string;
+          content_type?: string | null;
+          hochgeladen_von?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       tour_notizen_auftraggeber: {
         Row: {
           id: string;

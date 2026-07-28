@@ -5,7 +5,7 @@
 // Routing über ?action=<name>:
 //   upload         POST  body: { path, contentType, content_base64 }
 //   upload-session POST  body: { path }                  → liefert uploadUrl
-//   download       GET   ?path=&filename=&formular_id=&inline=1
+//   download       GET   ?path=&filename=&formular_id=&tour_dokument_id=&inline=1
 //                  (auch ohne action: für direkte Browser-Links)
 //   delete-pdf     POST  body: { path, formular_id }
 //   files          GET   ?folder=
@@ -15,7 +15,7 @@
 // als "download" (= alter /api/download-Pfad).
 
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
-import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
+import { assertCanAccessPdfPath, assertCanAccessTourDokument } from '../server-lib/formularAuth.js';
 import {
   createUploadSession, deleteFile, downloadFile, listChildren, uploadFile,
 } from '../server-lib/graph.js';
@@ -92,6 +92,7 @@ export default async function handler(req: Req, res: Res) {
       }
       const filename = qString(req.query?.filename) || path.split('/').pop() || 'download';
       const formularId = qString(req.query?.formular_id);
+      const tourDokumentId = qString(req.query?.tour_dokument_id);
       const inline = qString(req.query?.inline) === '1';
 
       console.info('[Download] User:', {
@@ -102,7 +103,11 @@ export default async function handler(req: Req, res: Res) {
         path,
       });
 
-      if (formularId) {
+      if (tourDokumentId) {
+        // Extern hochgeladenes Tour-Dokument (076): RLS entscheidet, ob
+        // der User es sehen darf (Admin / AG der Tour / Fahrer der Tour).
+        await assertCanAccessTourDokument(user, token, tourDokumentId, path);
+      } else if (formularId) {
         await assertCanAccessPdfPath(user, token, formularId, path);
       } else if (user.role === 'admin') {
         // Admin-Dokumente (z.B. Rechnungs-PDFs) ohne formular_id ok.
@@ -209,10 +214,18 @@ export default async function handler(req: Req, res: Res) {
       }
       const path = asString(body.path);
       const formularId = asString(body.formular_id);
-      if (!path || path.includes('..') || !formularId) {
-        throw new HttpError(400, 'path und formular_id sind Pflicht');
+      const tourDokumentId = asString(body.tour_dokument_id);
+      if (!path || path.includes('..') || (!formularId && !tourDokumentId)) {
+        throw new HttpError(400, 'path und formular_id bzw. tour_dokument_id sind Pflicht');
       }
-      await assertCanAccessPdfPath(user, token, formularId, path);
+      if (tourDokumentId) {
+        // Tour-Dokument (076): RLS entscheidet. Der Aufrufer löscht die
+        // DB-Zeile erst NACH der Datei — sonst wäre die Prüfung hier
+        // nicht mehr möglich.
+        await assertCanAccessTourDokument(user, token, tourDokumentId, path);
+      } else {
+        await assertCanAccessPdfPath(user, token, formularId!, path);
+      }
       await deleteFile(path);
       res.status(200).json({ ok: true });
       return;

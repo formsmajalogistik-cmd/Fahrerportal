@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
 import { XIcon } from '../../components/icons';
 import type { Auftraggeber, AuftraggeberKontakt } from '../../types/db';
@@ -11,6 +11,11 @@ interface Props {
   initial: Auftraggeber | null;
   onClose: () => void;
   onSaved: () => void;
+  /** Nächste freie Kundennummer — bei Neuanlage vorbelegt, bleibt
+   *  editierbar. */
+  kundennummerVorschlag?: string;
+  /** Bereits vergebene Nummern — für den Duplikat-Hinweis. */
+  vergebeneNummern?: string[];
 }
 
 interface KontaktDraft {
@@ -44,7 +49,7 @@ function fromServer(k: AuftraggeberKontakt): KontaktDraft {
   };
 }
 
-export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
+export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummerVorschlag, vergebeneNummern }: Props) {
   const isNew = !initial;
   const [name, setName]       = useState(initial?.name ?? '');
   const [strasse, setStrasse] = useState(initial?.strasse ?? '');
@@ -56,7 +61,18 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
   const [externeAppUrl,  setExterneAppUrl]  = useState(initial?.externe_app_url  ?? '');
 
   // Rechnungs-Metadaten
-  const [kundennummer,   setKundennummer]   = useState(initial?.kundennummer ?? '');
+  // Neuanlage: nächste freie Nummer vorbelegen (editierbar).
+  const [kundennummer,   setKundennummer]   = useState(
+    initial?.kundennummer ?? (initial ? '' : (kundennummerVorschlag ?? '')),
+  );
+  const kundennummerDuplikat = useMemo(() => {
+    const v = kundennummer.trim();
+    if (!v) return false;
+    return (vergebeneNummern ?? [])
+      .filter((x) => x.trim() !== (initial?.kundennummer ?? '').trim())
+      .some((x) => x.trim() === v);
+  }, [kundennummer, vergebeneNummern, initial]);
+
   const [sachbearbeiter, setSachbearbeiter] = useState(initial?.sachbearbeiter ?? '');
   const [kundenUid,      setKundenUid]      = useState(initial?.kunden_uid ?? '');
   const [zahlungsziel,   setZahlungsziel]   = useState<string>(
@@ -275,6 +291,16 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved }: Props) {
                 <label htmlFor="ag-kdnr" className="label">Kundennummer</label>
                 <input id="ag-kdnr" className="input"
                        value={kundennummer} onChange={(e) => setKundennummer(e.target.value)} />
+                {!initial && kundennummerVorschlag && kundennummer === kundennummerVorschlag && (
+                  <p className="mt-1 text-xs text-maja-muted">
+                    Automatisch vorbelegt (nächste freie Nummer) — änderbar.
+                  </p>
+                )}
+                {kundennummerDuplikat && (
+                  <p className="mt-1 text-xs font-medium text-amber-700">
+                    Achtung: Diese Kundennummer ist bereits vergeben.
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor="ag-sb" className="label">Sachbearbeiter</label>

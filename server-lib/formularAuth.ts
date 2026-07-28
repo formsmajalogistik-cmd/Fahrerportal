@@ -86,3 +86,32 @@ export async function assertCanAccessPdfPath(
     throw new HttpError(403, 'Pfad nicht erlaubt');
   }
 }
+
+/**
+ * Autorisierung für Tour-Dokumente (extern hochgeladene Protokolle,
+ * Migration 076). Gleiches Prinzip wie assertCanAccessPdfPath: die Zeile
+ * wird MIT dem JWT des Users gelesen — findet RLS sie, ist er berechtigt
+ * (Admin, Auftraggeber der Tour, Fahrer der Tour, Test read-only).
+ * Zusätzlich muss der angefragte Pfad exakt der gespeicherte sein, damit
+ * eine gültige Dokument-Id nicht als Generalschlüssel taugt.
+ */
+export async function assertCanAccessTourDokument(
+  user: AuthedUser, token: string, dokumentId: string, path: string,
+): Promise<void> {
+  const supa = userClient(token);
+  const { data, error } = await supa
+    .from('tour_dokumente')
+    .select('id, onedrive_path')
+    .eq('id', dokumentId)
+    .maybeSingle();
+  if (error) throw new HttpError(500, `DB-Fehler: ${error.message}`);
+  if (!data) throw new HttpError(404, 'Dokument nicht gefunden oder kein Zugriff');
+  const row = data as unknown as { onedrive_path: string };
+  const norm = (p: string) => p.replace(/^\/+/, '');
+  if (norm(row.onedrive_path) !== norm(path)) {
+    throw new HttpError(403, 'Pfad gehört nicht zu diesem Dokument');
+  }
+  console.info('[assertCanAccessTourDokument]', {
+    userId: user.id, role: user.role, dokumentId, path,
+  });
+}

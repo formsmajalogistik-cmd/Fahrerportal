@@ -599,8 +599,13 @@ export function RechnungNewPage() {
       positionen: EditorPosition[],
       istAuslagen: boolean,
       customNummer: string | null,
+      /** Auch OHNE Positionen anlegen? Für die Haupt-Rechnung ja — so
+       *  lässt sich eine Rechnung nur mit Auftraggeber erstellen und die
+       *  Nummer ist reserviert. Eine leere AUSLAGEN-Rechnung wäre dagegen
+       *  sinnlos und wird weiterhin übersprungen. */
+      erlaubeLeer = false,
     ): Promise<{ ok: boolean; id?: string; error?: string }> {
-      if (positionen.length === 0) return { ok: true };
+      if (positionen.length === 0 && !erlaubeLeer) return { ok: true };
       // Brutto + USt-Summe mehrmonatig korrekt: pro USt-Satz aggregieren.
       const sum = berechneSummenProUst(positionen, ustSatz);
       type Insert = Database['public']['Tables']['rechnungen']['Insert'];
@@ -670,7 +675,7 @@ export function RechnungNewPage() {
       let nummerUsed = false;
       if (getrennt) {
         if (erstelleTouren) {
-          const r = await insertOne(haupt, false, nummerUsed ? null : manuelleNummer);
+          const r = await insertOne(haupt, false, nummerUsed ? null : manuelleNummer, true);
           if (!r.ok) throw new Error(r.error);
           if (r.id) { firstId = r.id; nummerUsed = true; }
         }
@@ -680,7 +685,7 @@ export function RechnungNewPage() {
           if (!firstId && r.id) firstId = r.id;
         }
       } else {
-        const r = await insertOne(haupt, false, manuelleNummer);
+        const r = await insertOne(haupt, false, manuelleNummer, true);
         if (!r.ok) throw new Error(r.error);
         if (r.id) firstId = r.id;
       }
@@ -971,7 +976,10 @@ export function RechnungNewPage() {
       </section>
 
       {/* Haupt-Positionen — im "Auslagen-only"-Schnellmodus ausgeblendet */}
-      {!auslagenOnly && (haupt.length > 0 || auslagen.length > 0) && (
+      {/* Positions-Bereich erscheint, sobald ein Auftraggeber gewählt ist
+          — NICHT erst wenn Touren geladen wurden. Nur so lassen sich
+          manuelle Positionen ohne vorherigen Touren-Load anlegen. */}
+      {!auslagenOnly && !!auftraggeber && (
         <section className="card space-y-3 p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-maja-navy">{hauptTitle}</h2>
@@ -1005,7 +1013,7 @@ export function RechnungNewPage() {
       )}
 
       {/* Getrennte Auslagen */}
-      {getrennt && auslagen.length > 0 && (
+      {getrennt && !!auftraggeber && (
         <section className="card space-y-3 p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-maja-navy">Auslagen-Positionen</h2>

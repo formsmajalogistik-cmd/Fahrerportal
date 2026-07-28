@@ -189,10 +189,11 @@ async function fetchWithTimeout(
 }
 
 export async function downloadFromOneDrive(
-  path: string, opts?: { formularId?: string | null },
+  path: string, opts?: { formularId?: string | null; tourDokumentId?: string | null },
 ): Promise<Blob> {
   const qs = new URLSearchParams({ action: 'download', path });
   if (opts?.formularId) qs.set('formular_id', opts.formularId);
+  if (opts?.tourDokumentId) qs.set('tour_dokument_id', opts.tourDokumentId);
   const resp = await fetchWithAuthRetry(
     `/api/onedrive?${qs.toString()}`,
     { timeoutMs: 60_000 },
@@ -273,7 +274,7 @@ function downloadBlobViaDataUrl(blob: Blob, filename: string): Promise<boolean> 
  * mehr involviert ist; Nachteil: der Token landet in der History.
  */
 async function downloadViaWindowLocation(
-  path: string, opts?: { formularId?: string | null },
+  path: string, opts?: { formularId?: string | null; tourDokumentId?: string | null },
 ): Promise<boolean> {
   // Token MUSS frisch sein — sonst landet der Server-Aufruf im 401.
   const token = await getValidToken();
@@ -283,13 +284,14 @@ async function downloadViaWindowLocation(
   }
   const qs = new URLSearchParams({ action: 'download', path, token });
   if (opts?.formularId) qs.set('formular_id', opts.formularId);
+  if (opts?.tourDokumentId) qs.set('tour_dokument_id', opts.tourDokumentId);
   window.location.href = `/api/onedrive?${qs.toString()}`;
   return true;
 }
 
 /** Lädt eine Datei aus OneDrive und triggert einen Browser-Download mit Wunsch-Filename. */
 export async function triggerOneDriveDownload(
-  path: string, filename: string, opts?: { formularId?: string | null },
+  path: string, filename: string, opts?: { formularId?: string | null; tourDokumentId?: string | null },
 ): Promise<boolean> {
   try {
     const blob = await downloadFromOneDrive(path, opts);
@@ -329,7 +331,7 @@ export async function triggerOneDriveDownload(
  * Name aus dem Dateinamen am Pfad-Ende ab.
  */
 export async function previewOneDrivePdf(
-  path: string, opts?: { formularId?: string | null; filename?: string },
+  path: string, opts?: { formularId?: string | null; filename?: string; tourDokumentId?: string | null },
 ): Promise<boolean> {
   const filename = opts?.filename || path.split('/').pop() || 'preview.pdf';
   // Mobile (< 640px) immer ins Modal: dort rendert PdfBlobPreviewModal
@@ -346,6 +348,7 @@ export async function previewOneDrivePdf(
   try {
     const qs = new URLSearchParams({ action: 'download', path, inline: '1' });
     if (opts?.formularId) qs.set('formular_id', opts.formularId);
+  if (opts?.tourDokumentId) qs.set('tour_dokument_id', opts.tourDokumentId);
     const resp = await fetchWithAuthRetry(
       `/api/onedrive?${qs.toString()}`,
       { timeoutMs: 60_000 },
@@ -394,7 +397,7 @@ export async function previewOneDrivePdf(
  * Achtung: muss vom Aufrufer mit URL.revokeObjectURL freigegeben werden.
  */
 export async function getOneDriveObjectUrl(
-  path: string, opts?: { formularId?: string | null },
+  path: string, opts?: { formularId?: string | null; tourDokumentId?: string | null },
 ): Promise<string | null> {
   try {
     const blob = await downloadFromOneDrive(path, opts);
@@ -409,12 +412,16 @@ export async function getOneDriveObjectUrl(
  * Löscht eine Datei aus OneDrive. Nutzt /api/onedrive?action=delete-pdf
  * mit derselben Pro-Resource-Authorisierung wie der Download.
  */
-export async function deleteFromOneDrive(path: string, formularId: string): Promise<boolean> {
+export async function deleteFromOneDrive(
+  path: string,
+  formularId: string | null,
+  opts?: { tourDokumentId?: string | null },
+): Promise<boolean> {
   try {
     const resp = await fetchWithAuthRetry('/api/onedrive?action=delete-pdf', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, formular_id: formularId }),
+      body: JSON.stringify({ path, formular_id: formularId, tour_dokument_id: opts?.tourDokumentId ?? null }),
       timeoutMs: 30_000,
     });
     return resp.ok;

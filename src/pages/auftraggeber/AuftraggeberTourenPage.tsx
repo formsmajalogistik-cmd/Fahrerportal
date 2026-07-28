@@ -7,6 +7,7 @@ import { DownloadIcon, EyeIcon } from '../../components/icons';
 import { AuftraggeberTourCreateDialog } from './AuftraggeberTourCreateDialog';
 import { useTestMode } from '../../auth/TestModeContext';
 import { useAuth } from '../../auth/AuthContext';
+import { TourDokumenteSection } from '../../components/TourDokumenteSection';
 import type { KontaktVorOrt, TourKundensicht, TourStatus } from '../../types/db';
 
 /**
@@ -447,6 +448,12 @@ function KundenTourCard({
           und Test-Konten laden diesen Bereich gar nicht erst (die Seite
           existiert für sie nicht) und hätten per RLS ohnehin keinen
           Zugriff auf die Tabelle. */}
+      {expanded && (
+        <div className="mt-2 space-y-3" onClick={(e) => e.stopPropagation()}>
+          {/* Extern hochgeladene Protokolle (076) — read-only. */}
+          <TourDokumenteSection tourId={tour.id} canEdit={false} />
+        </div>
+      )}
       {expanded && <InterneNotiz tourId={tour.id} auftraggeberId={tour.auftraggeber_id} />}
     </li>
   );
