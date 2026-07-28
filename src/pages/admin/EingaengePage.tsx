@@ -1045,7 +1045,9 @@ function EmailSendLog({ log }: { log: EmailSendLogEntry[] | null | undefined }) 
         {log.map((entry, i) => {
           const kind = entry.type === 'confirmation'
             ? 'Bestätigung'
-            : `Schieberegler ${typeof entry.slider_index === 'number' ? entry.slider_index + 1 : '?'}`;
+            : entry.type === 'zwischenprotokoll'
+              ? 'Zwischenprotokoll'
+              : `Schieberegler ${typeof entry.slider_index === 'number' ? entry.slider_index + 1 : '?'}`;
           return (
             <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span className={entry.success ? 'text-emerald-700' : 'text-red-700'}>

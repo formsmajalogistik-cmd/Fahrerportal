@@ -1144,6 +1144,43 @@ export type Database = {
           },
         ];
       };
+      tour_notizen_auftraggeber: {
+        Row: {
+          id: string;
+          tour_id: string;
+          auftraggeber_id: string;
+          notiz: string | null;
+          erstellt_von: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          tour_id: string;
+          auftraggeber_id: string;
+          notiz?: string | null;
+          erstellt_von?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string;
+          auftraggeber_id?: string;
+          notiz?: string | null;
+          erstellt_von?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'tour_notizen_auftraggeber_tour_id_fkey';
+            columns: ['tour_id'];
+            referencedRelation: 'touren';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
     };
     Views: {
       touren_kundensicht: {

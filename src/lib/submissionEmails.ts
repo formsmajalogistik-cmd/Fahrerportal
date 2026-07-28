@@ -218,6 +218,101 @@ export async function runSubmissionEmails(
   return log;
 }
 
+/**
+ * Zwischenprotokoll-E-Mail (Vorlage 4). Wird NICHT beim Formularabschluss
+ * ausgelöst, sondern beim "Zwischenprotokoll abschließen" — separat von
+ * runSubmissionEmails, damit der finale Abschluss unverändert bleibt.
+ * Läuft im Hintergrund; Fehler landen im email_send_log statt den
+ * Fahrer zu blockieren.
+ */
+export async function runZwischenprotokollEmail(
+  template: FormularTemplate,
+  formular: AusgefuelltesFormular,
+  options: RunOptions = {},
+): Promise<EmailSendLogEntry | null> {
+  const cfg = template.email_config?.zwischenprotokoll;
+  if (!cfg?.enabled) return null;
+  const data = enrich(formular.daten as Record<string, unknown>, template, formular, options);
+
+  const to: string[] = [];
+  if (cfg.recipient_fahrer && options.fahrerEmail && EMAIL_RE.test(options.fahrerEmail)) {
+    to.push(options.fahrerEmail);
+  }
+  if (cfg.recipient_self && options.submitterEmail && EMAIL_RE.test(options.submitterEmail)) {
+    to.push(options.submitterEmail);
+  }
+  for (const raw of splitList(resolvePattern(cfg.recipient_extra ?? '', data))) {
+    if (EMAIL_RE.test(raw)) to.push(raw);
+  }
+  const recipients = dedupe(to);
+  const now = () => new Date().toISOString();
+  if (recipients.length === 0) {
+    return {
+      type: 'zwischenprotokoll', recipients: [], sent_at: now(),
+      success: false, error: 'Keine Empfänger konfiguriert / auflösbar.',
+    };
+  }
+
+  // Anhänge: die im Template gewählten PDF-Vorlagen (z.B. Protokoll-Teil
+  // + Fotos Übernahme). generateAndUploadFormPdfs respektiert dabei die
+  // "PDFs zusammenführen"-Option und liefert dann EINE Datei.
+  let attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
+  if (cfg.attach_pdf_ids && cfg.attach_pdf_ids.length > 0) {
+    try {
+      const generated = await generateAndUploadFormPdfs(template, formular, cfg.attach_pdf_ids);
+      attachments = generated.map((g) => ({
+        name: g.filename, contentType: 'application/pdf', onedrive_path: g.onedrive_path,
+      }));
+    } catch (err) {
+      console.warn('[Zwischenprotokoll] PDF-Erzeugung für Anhänge fehlgeschlagen', err);
+    }
+  }
+
+  const subject = resolvePattern(cfg.subject ?? '', data) || `Zwischenprotokoll — ${template.name}`;
+  const body = resolvePattern(cfg.body ?? '', data);
+  try {
+    const result = await sendEmail({
+      to: recipients, subject, body,
+      from: cfg.from || undefined,
+      attachments,
+      formular_id: formular.id,
+    });
+    console.log('[Zwischenprotokoll] Mail-Versand Response', {
+      empfaenger: recipients, attached: result.attached, missing: result.missing,
+    });
+    return { type: 'zwischenprotokoll', recipients, sent_at: now(), success: true };
+  } catch (err) {
+    console.warn('[Zwischenprotokoll] Mail-Versand fehlgeschlagen', err);
+    return {
+      type: 'zwischenprotokoll', recipients, sent_at: now(), success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/** Hängt einen Log-Eintrag an ausgefuellte_formulare.email_send_log an. */
+export async function appendEmailLog(
+  formularId: string, entries: EmailSendLogEntry[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  try {
+    const { data: existing } = await supabase
+      .from('ausgefuellte_formulare')
+      .select('email_send_log')
+      .eq('id', formularId)
+      .maybeSingle();
+    const prev = Array.isArray(existing?.email_send_log)
+      ? (existing!.email_send_log as unknown as EmailSendLogEntry[])
+      : [];
+    await supabase
+      .from('ausgefuellte_formulare')
+      .update({ email_send_log: [...prev, ...entries] as unknown as Json })
+      .eq('id', formularId);
+  } catch (err) {
+    console.warn('[appendEmailLog] konnte nicht gespeichert werden', err);
+  }
+}
+
 async function runConfirmation(
   template: FormularTemplate,
   formular: AusgefuelltesFormular,

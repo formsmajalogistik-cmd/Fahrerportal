@@ -12,7 +12,10 @@ import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { collectPageImageBlobs, countPageImages, sharePhotos } from '../lib/sharePagePhotos';
 import { deleteFormPdf, generateAndUploadZwischenprotokoll } from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
-import { runSubmissionEmails, readSliderState, sliderKey } from '../lib/submissionEmails';
+import {
+  appendEmailLog, runSubmissionEmails, runZwischenprotokollEmail,
+  readSliderState, sliderKey,
+} from '../lib/submissionEmails';
 import {
   deleteFormDraft, enqueueSubmission, getFormDraft, getUploadsForFormular,
   saveFormDraft,
@@ -311,12 +314,29 @@ export function FormularPage() {
   async function handleZwischenprotokoll() {
     if (!formular || !template) return;
     if (guard()) return;
+
+    // (1) Uploads prüfen — läuft die Generierung los, während Fotos noch
+    // in der Offline-Queue liegen, fehlen sie in der PDF und der Lauf
+    // dauert unnötig lange. Klare Meldung statt Fehler.
+    const pending = await getUploadsForFormular(formular.id).catch(() => []);
+    if (pending.length > 0) {
+      setError(
+        `${pending.length} ${pending.length === 1 ? 'Bild wird' : 'Bilder werden'} noch hochgeladen. `
+        + 'Bitte kurz warten und es dann erneut versuchen — die Bilder fehlen sonst im Zwischenprotokoll.',
+      );
+      triggerSync();
+      return;
+    }
+    if (!navigator.onLine) {
+      setError('Offline — das Zwischenprotokoll kann erst mit Verbindung erzeugt werden.');
+      return;
+    }
+
     setZwischenBusy(true);
     setError(null);
     setStatusMsg(null);
     try {
-      // 1) Aktuellen Stand persistieren, damit die Generierung auf den
-      //    tatsächlich gespeicherten Daten aufsetzt.
+      // (2) Aktuellen Stand persistieren — die Generierung setzt darauf auf.
       const { error: saveErr } = await supabase
         .from('ausgefuellte_formulare')
         .update({ daten: data as Json })
@@ -324,40 +344,73 @@ export function FormularPage() {
       if (saveErr) throw new Error(saveErr.message);
       await clearLocalDraft();
       setSavedDataJson(JSON.stringify(data));
-
-      // 2) Zwischenprotokoll-PDF (gemergt, mit Entwurf-Wasserzeichen) in
-      //    OneDrive ablegen und am Formular verlinken.
-      const snapshot = { ...formular, daten: data } as unknown as AusgefuelltesFormular;
-      const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(template, snapshot);
-      const { error: updErr } = await supabase
-        .from('ausgefuellte_formulare')
-        .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
-        .eq('id', formular.id);
-      if (updErr) throw new Error(updErr.message);
-      setFormular({
-        ...formular,
-        ...( { zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am } as object ),
-      } as AusgefuelltesFormular);
-
-      // 3) Konfigurierte E-Mails auslösen (falls Template welche hat) —
-      //    Fehler brechen den Zwischenabschluss NICHT ab.
-      if (template.email_config) {
-        try {
-          await runSubmissionEmails(template, snapshot, {
-            submitterEmail,
-            fahrerEmail: submitterEmail,
-            fahrerName: profile ? displayName(profile) : null,
-          });
-        } catch (mailErr) {
-          console.warn('[Zwischenprotokoll] E-Mail-Versand fehlgeschlagen', mailErr);
-        }
-      }
-      setStatusMsg('Zwischenprotokoll gesichert — du kannst mit dem Übergabe-Teil fortfahren.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Zwischenprotokoll fehlgeschlagen');
-    } finally {
       setZwischenBusy(false);
+      setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+      return;
     }
+    setZwischenBusy(false);
+
+    // (3) Sofortige Bestätigung — PDF-Erzeugung und Versand laufen im
+    // HINTERGRUND. Der Fahrer wird nie blockiert und der Übergabe-Teil
+    // bleibt sofort weiter bearbeitbar. Fehler landen im
+    // email_send_log bzw. pdf_fehler und sind in Eingänge sichtbar +
+    // dort wiederholbar.
+    setStatusMsg(
+      'Zwischenprotokoll wird im Hintergrund erstellt und versendet — '
+      + 'du kannst direkt mit dem Übergabe-Teil weitermachen.',
+    );
+    const snapshot = { ...formular, daten: data } as unknown as AusgefuelltesFormular;
+    const tpl = template;
+    void (async () => {
+      try {
+        const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(tpl, snapshot);
+        await supabase
+          .from('ausgefuellte_formulare')
+          .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
+          .eq('id', snapshot.id);
+        setFormular((cur) => (cur && cur.id === snapshot.id
+          ? ({ ...cur, ...({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am } as object) } as AusgefuelltesFormular)
+          : cur));
+        setStatusMsg('Zwischenprotokoll erstellt.');
+      } catch (err) {
+        // Echten Fehler sichtbar machen — "Failed to load" allein half
+        // niemandem weiter.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Zwischenprotokoll] Erzeugung fehlgeschlagen', err);
+        await supabase
+          .from('ausgefuellte_formulare')
+          .update({ pdf_status: 'fehler', pdf_fehler: `Zwischenprotokoll: ${msg}` })
+          .eq('id', snapshot.id)
+          .then(undefined, () => { /* nicht kritisch */ });
+        setError(
+          `Zwischenprotokoll konnte nicht erstellt werden: ${msg} — `
+          + 'dein Formularstand ist gespeichert; das Protokoll kann in Eingänge erneut erzeugt werden.',
+        );
+        return;
+      }
+      // (4) Konfigurierte Zwischenprotokoll-E-Mail versenden.
+      try {
+        const entry = await runZwischenprotokollEmail(tpl, snapshot, {
+          submitterEmail,
+          fahrerEmail: submitterEmail,
+          fahrerName: profile ? displayName(profile) : null,
+        });
+        if (entry) {
+          await appendEmailLog(snapshot.id, [entry]);
+          if (!entry.success) {
+            setError(
+              `Zwischenprotokoll erstellt, aber die E-Mail ging nicht raus: ${entry.error ?? 'unbekannter Fehler'} — `
+              + 'in Eingänge erneut versendbar.',
+            );
+          } else {
+            setStatusMsg('Zwischenprotokoll erstellt und versendet.');
+          }
+        }
+      } catch (mailErr) {
+        console.warn('[Zwischenprotokoll] E-Mail-Versand fehlgeschlagen', mailErr);
+      }
+    })();
   }
 
   async function submit() {

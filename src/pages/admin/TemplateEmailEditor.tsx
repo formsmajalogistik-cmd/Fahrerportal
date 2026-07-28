@@ -62,6 +62,20 @@ export function TemplateEmailEditor({ config, onChange, pdfs, placeholders }: Pr
   const setSliders = (patch: Partial<NonNullable<EmailConfig['sliders']>>) =>
     setCfg({ sliders: { ...sliders, ...patch } });
 
+  // ---- Zwischenprotokoll (Vorlage 4) ------------------------------
+  const zwischen = cfg.zwischenprotokoll ?? {
+    enabled: false,
+    recipient_self: true,
+    recipient_fahrer: false,
+    recipient_extra: '',
+    from: defaultMailbox,
+    subject: '',
+    body: '',
+    attach_pdf_ids: [],
+  };
+  const setZwischen = (patch: Partial<NonNullable<EmailConfig['zwischenprotokoll']>>) =>
+    setCfg({ zwischenprotokoll: { ...zwischen, ...patch } });
+
   return (
     <div className="space-y-6">
       <ConfirmationPanel
@@ -77,6 +91,21 @@ export function TemplateEmailEditor({ config, onChange, pdfs, placeholders }: Pr
         pdfs={pdfs}
         placeholders={placeholders}
         mailboxes={mailboxes}
+      />
+      <ConfirmationPanel
+        conf={zwischen}
+        setConf={setZwischen}
+        pdfs={pdfs}
+        placeholders={placeholders}
+        mailboxes={mailboxes}
+        titel="E-Mail 4: Zwischenprotokoll (Übernahme)"
+        beschreibung={
+          'Wird automatisch versendet, sobald der Fahrer "Zwischenprotokoll '
+          + 'abschließen" klickt. Erzeugung und Versand laufen im Hintergrund — '
+          + 'das Formular bleibt für den Übergabe-Teil bearbeitbar. Voraussetzung: '
+          + 'im Reiter Struktur ist "Zwischenprotokoll erlauben nach Abschnitt" gesetzt.'
+        }
+        checkboxLabel="Zwischenprotokoll automatisch erzeugen und versenden"
       />
       <ManualPanel
         cfg={cfg}
@@ -95,22 +124,27 @@ export function TemplateEmailEditor({ config, onChange, pdfs, placeholders }: Pr
 
 function ConfirmationPanel({
   conf, setConf, pdfs, placeholders, mailboxes,
+  titel = 'E-Mail 1: Bestätigung bei Formularabschluss',
+  beschreibung = 'Wird beim Einreichen automatisch versendet. Standardmäßig ohne Anhang.',
+  checkboxLabel = 'Bestätigungs-E-Mail bei Abschluss senden',
 }: {
   conf: NonNullable<EmailConfig['confirmation']>;
   setConf: (patch: Partial<NonNullable<EmailConfig['confirmation']>>) => void;
   pdfs: TemplatePdf[];
   placeholders: PlaceholderToken[];
   mailboxes: MailboxConfig[];
+  /** Überschrift/Beschreibung/Label — das Panel wird auch für die
+   *  Zwischenprotokoll-Vorlage (E-Mail 4) wiederverwendet, die exakt
+   *  dieselbe Feld-Struktur hat. */
+  titel?: string;
+  beschreibung?: string;
+  checkboxLabel?: string;
 }) {
   return (
     <section className="card space-y-4 p-5">
       <header>
-        <h3 className="text-sm font-semibold text-maja-navy">
-          E-Mail 1: Bestätigung bei Formularabschluss
-        </h3>
-        <p className="mt-0.5 text-xs text-maja-muted">
-          Wird beim Einreichen automatisch versendet. Standardmäßig ohne Anhang.
-        </p>
+        <h3 className="text-sm font-semibold text-maja-navy">{titel}</h3>
+        <p className="mt-0.5 text-xs text-maja-muted">{beschreibung}</p>
       </header>
 
       <label className="flex items-center gap-2 text-sm">
@@ -120,7 +154,7 @@ function ConfirmationPanel({
           checked={conf.enabled}
           onChange={(e) => setConf({ enabled: e.target.checked })}
         />
-        <span className="font-medium text-maja-ink">Bestätigungs-E-Mail bei Abschluss senden</span>
+        <span className="font-medium text-maja-ink">{checkboxLabel}</span>
       </label>
 
       {conf.enabled && (

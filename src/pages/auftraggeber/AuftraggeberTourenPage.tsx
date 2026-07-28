@@ -6,6 +6,7 @@ import { asPdfPathList, downloadFormPdf, previewFormPdf } from '../../lib/pdfGen
 import { DownloadIcon, EyeIcon } from '../../components/icons';
 import { AuftraggeberTourCreateDialog } from './AuftraggeberTourCreateDialog';
 import { useTestMode } from '../../auth/TestModeContext';
+import { useAuth } from '../../auth/AuthContext';
 import type { KontaktVorOrt, TourKundensicht, TourStatus } from '../../types/db';
 
 /**
@@ -55,6 +56,7 @@ export function AuftraggeberTourenPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('alle');
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [notizTourIds, setNotizTourIds] = useState<Set<string>>(new Set());
 
   /** "Verstanden": quittiert eine Ablehnung — die Tour verschwindet aus
    *  der Auftraggeber-Liste (bleibt in der DB und für Admins sichtbar).
@@ -140,6 +142,16 @@ export function AuftraggeberTourenPage() {
     } else {
       setEingaenge(new Map());
     }
+    // Tour-IDs mit interner Notiz — für den Indikator in der Liste.
+    // RLS liefert ausschließlich Notizen des eigenen Auftraggebers.
+    try {
+      const { data: notizen } = await supabase
+        .from('tour_notizen_auftraggeber')
+        .select('tour_id');
+      const ids = new Set(((notizen ?? []) as Array<{ tour_id: string }>).map((n) => n.tour_id));
+      setNotizTourIds(ids);
+    } catch { /* Indikator ist optional */ }
+
     setLoading(false);
   }, [isTestUser, effectiveAuftraggeberId]);
 
@@ -234,6 +246,7 @@ export function AuftraggeberTourenPage() {
               eingaenge={eingaenge}
               expanded={expandedId === t.id}
               onToggle={() => setExpandedId((cur) => (cur === t.id ? null : t.id))}
+              hatNotiz={notizTourIds.has(t.id)}
               ackBusy={ackBusy === t.id}
               onAblehnungVerstanden={() => void handleAblehnungVerstanden(t.id)}
             />
@@ -271,12 +284,13 @@ function KontaktZeile({ label, kontakt }: { label: string; kontakt: KontaktVorOr
 }
 
 function KundenTourCard({
-  tour, eingaenge, expanded, onToggle, ackBusy, onAblehnungVerstanden,
+  tour, eingaenge, expanded, onToggle, ackBusy, onAblehnungVerstanden, hatNotiz,
 }: {
   tour: TourKundensicht;
   eingaenge: Map<string, EingangLite>;
   expanded: boolean;
   onToggle: () => void;
+  hatNotiz?: boolean;
   ackBusy?: boolean;
   onAblehnungVerstanden?: () => void;
 }) {
@@ -311,6 +325,14 @@ function KundenTourCard({
               <h3 className="text-base font-semibold text-maja-navy break-words">
                 {tourTitel(tour)}
               </h3>
+              {hatNotiz && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full bg-maja-navy/10 px-2 py-0.5 text-[10px] font-semibold text-maja-navy"
+                  title="Interne Notiz vorhanden — nur für Ihr Unternehmen sichtbar"
+                >
+                  ✎ Notiz
+                </span>
+              )}
             </div>
             <div className="mt-2 grid gap-1.5 text-sm text-maja-ink sm:grid-cols-2">
               <div>{dateRange}</div>
@@ -421,7 +443,98 @@ function KundenTourCard({
           </div>
         )}
       </button>
+      {/* Interne Notiz — nur in der Auftraggeber-Ansicht. Admin-, Fahrer-
+          und Test-Konten laden diesen Bereich gar nicht erst (die Seite
+          existiert für sie nicht) und hätten per RLS ohnehin keinen
+          Zugriff auf die Tabelle. */}
+      {expanded && <InterneNotiz tourId={tour.id} auftraggeberId={tour.auftraggeber_id} />}
     </li>
+  );
+}
+
+/**
+ * Interne Notiz des Auftraggebers zu einer Tour. Liegt in der separaten
+ * Tabelle tour_notizen_auftraggeber, die per RLS ausschließlich Konten
+ * desselben Auftraggebers lesen/schreiben dürfen (Migration 075).
+ */
+function InterneNotiz({
+  tourId, auftraggeberId,
+}: { tourId: string; auftraggeberId: string | null }) {
+  const { profile } = useAuth();
+  const [notiz, setNotiz] = useState('');
+  const [geladen, setGeladen] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await supabase
+        .from('tour_notizen_auftraggeber')
+        .select('notiz')
+        .eq('tour_id', tourId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) console.warn('[InterneNotiz] Laden fehlgeschlagen', error.message);
+      const val = data?.notiz ?? '';
+      setNotiz(val);
+      setGeladen(val);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [tourId]);
+
+  async function speichern() {
+    if (!auftraggeberId) return;
+    setSaving(true); setErr(null); setMsg(null);
+    // Upsert auf dem Unique-Key tour_id — eine Notiz pro Tour.
+    const { error } = await supabase
+      .from('tour_notizen_auftraggeber')
+      .upsert({
+        tour_id: tourId,
+        auftraggeber_id: auftraggeberId,
+        notiz: notiz.trim() || null,
+        erstellt_von: profile?.id ?? null,
+      }, { onConflict: 'tour_id' });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setGeladen(notiz);
+    setMsg('Notiz gespeichert.');
+    window.setTimeout(() => setMsg((m) => (m === 'Notiz gespeichert.' ? null : m)), 3000);
+  }
+
+  if (loading) return null;
+  return (
+    <div
+      className="mt-2 rounded-xl border border-maja-navy/15 bg-maja-light/40 p-4"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <label htmlFor={`notiz-${tourId}`} className="label">Interne Notiz</label>
+      <textarea
+        id={`notiz-${tourId}`}
+        className="input min-h-[4.5rem]"
+        value={notiz}
+        onChange={(e) => setNotiz(e.target.value)}
+        placeholder="z.B. Ansprechpartner, interne Referenz, Besonderheiten …"
+      />
+      <p className="mt-1 text-xs text-maja-muted">
+        Nur für Mitarbeiter Ihres Unternehmens sichtbar.
+      </p>
+      {err && <p role="alert" className="mt-1 text-xs text-red-600">{err}</p>}
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          className="btn-primary px-3 py-1.5 text-sm"
+          disabled={saving || notiz === geladen}
+          onClick={() => void speichern()}
+        >
+          {saving ? 'Speichert …' : 'Notiz speichern'}
+        </button>
+        {msg && <span className="text-xs text-emerald-700">{msg}</span>}
+      </div>
+    </div>
   );
 }
 

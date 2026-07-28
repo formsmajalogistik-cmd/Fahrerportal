@@ -140,21 +140,77 @@ function dataUrlToBytes(dataUrl: string): Uint8Array | null {
   return out;
 }
 
+/**
+ * Cache für bereits geladene Bild-Bytes innerhalb EINES Generierungs-
+ * Laufs. Dieselbe Datei wird oft von mehreren Vorlagen referenziert
+ * (Protokoll + Fotoseite) und beim Merge mehrfach gefüllt — ohne Cache
+ * lud sie der Client jedes Mal neu.
+ */
+const photoBytesCache = new Map<string, Promise<ArrayBuffer | null>>();
+
+/** Cache leeren — vor jedem neuen Generierungs-Lauf. */
+export function resetPhotoCache(): void {
+  photoBytesCache.clear();
+}
+
 async function fetchSubmittedPhotoBytes(
   path: string, formularId: string | null,
 ): Promise<ArrayBuffer | null> {
+  const key = `${formularId ?? '-'}::${path}`;
+  const hit = photoBytesCache.get(key);
+  if (hit) return await hit;
   // Photos liegen in OneDrive. Der Download-Proxy verlangt für Fahrer
   // zwingend formular_id (Pro-Resource-Auth); für Admin ist es optional,
   // wir reichen es aber durch, sobald wir es haben.
-  try {
-    const blob = await downloadFromOneDrive(path, { formularId });
-    const buf = await blob.arrayBuffer();
-    console.info(`[PDF] Bild geladen: ${path.split('/').pop()} (${buf.byteLength} B)`);
-    return buf;
-  } catch (err) {
-    console.error('[PDF] Bild-Download fehlgeschlagen', { path, formularId, err });
-    return null;
-  }
+  const p = (async (): Promise<ArrayBuffer | null> => {
+    try {
+      const blob = await downloadFromOneDrive(path, { formularId });
+      const buf = await blob.arrayBuffer();
+      console.info(`[PDF] Bild geladen: ${path.split('/').pop()} (${buf.byteLength} B)`);
+      return buf;
+    } catch (err) {
+      console.error('[PDF] Bild-Download fehlgeschlagen', { path, formularId, err });
+      return null;
+    }
+  })();
+  photoBytesCache.set(key, p);
+  return await p;
+}
+
+/**
+ * Lädt alle in `daten` referenzierten Bilder VORAB mit begrenzter
+ * Parallelität in den Cache. Das ist der entscheidende Hebel gegen die
+ * lange Laufzeit: vorher wurden bis zu 16+ Fotos streng SEQUENZIELL
+ * durch den Download-Proxy geholt (je bis 60 s Timeout), was in
+ * Safari als „Failed to load" endete.
+ */
+export async function prefetchFormPhotos(
+  daten: Record<string, unknown>,
+  formularId: string | null,
+  concurrency = 4,
+): Promise<number> {
+  const paths = new Set<string>();
+  const collect = (v: unknown): void => {
+    if (!v) return;
+    if (Array.isArray(v)) { for (const x of v) collect(x); return; }
+    if (typeof v === 'object') {
+      const sp = (v as { storage_path?: unknown }).storage_path;
+      if (typeof sp === 'string' && sp) paths.add(sp);
+    }
+  };
+  for (const v of Object.values(daten ?? {})) collect(v);
+  const list = [...paths];
+  let idx = 0;
+  const worker = async (): Promise<void> => {
+    while (idx < list.length) {
+      const my = idx; idx += 1;
+      await fetchSubmittedPhotoBytes(list[my], formularId);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, list.length) }, () => worker()),
+  );
+  return list.length;
 }
 
 /**
@@ -860,6 +916,10 @@ export async function generateAndUploadFormPdfs(
     `[generateAndUploadFormPdfs] Template "${template.name}": ${selected.length} `
     + `von ${allPdfs.length} PDF-Vorlagen werden erzeugt${mergeMode ? ' (Merge → 1 Datei)' : ''}`,
   );
+  // Bilder EINMAL parallel vorladen (siehe prefetchFormPhotos).
+  resetPhotoCache();
+  const vorgeladen = await prefetchFormPhotos(formular.daten, formular.id);
+  console.info(`[generateAndUploadFormPdfs] ${vorgeladen} Bild(er) vorgeladen`);
   const generated: GeneratedPdf[] = [];
   // Im Merge-Modus sammeln wir die gefüllten Bytes statt sie einzeln
   // hochzuladen.
@@ -1037,6 +1097,11 @@ export async function generateAndUploadZwischenprotokoll(
   if (allPdfs.length === 0) {
     throw new Error('Template hat keine PDF-Vorlage mit Field-Mapping.');
   }
+  // Bilder EINMAL parallel vorladen — sonst holt fillPdf sie pro Vorlage
+  // sequenziell (Hauptursache für die langen Laufzeiten/Timeouts).
+  resetPhotoCache();
+  const vorgeladen = await prefetchFormPhotos(formular.daten, formular.id);
+  console.info(`[Zwischenprotokoll] ${vorgeladen} Bild(er) vorgeladen`);
 
   // Alle Vorlagen füllen und in EIN PDF-Dokument zusammenführen.
   const merged = await PDFDocument.create();

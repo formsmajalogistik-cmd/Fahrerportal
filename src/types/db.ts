@@ -232,6 +232,20 @@ export interface EmailConfig {
     attach_pdf_ids?: string[]; // optional Anhänge
   };
 
+  /** Vorlage 4: Zwischenprotokoll-E-Mail (Übernahme-Teil). Wird beim
+   *  Klick auf "Zwischenprotokoll abschließen" automatisch erzeugt und
+   *  versendet. Ohne Konfiguration passiert nichts (Default aus). */
+  zwischenprotokoll?: {
+    enabled: boolean;
+    recipient_self: boolean;
+    recipient_fahrer: boolean;
+    recipient_extra: string;
+    from: string;
+    subject: string;
+    body: string;
+    attach_pdf_ids?: string[];
+  };
+
   /** Vorlage 2: Schieberegler-E-Mail (Fahrer-gesteuerter Versand). */
   sliders?: {
     enabled: boolean;
@@ -251,7 +265,7 @@ export interface EmailConfig {
  * Bestätigungen / Schieberegler-Mails rausgingen.
  */
 export interface EmailSendLogEntry {
-  type: 'confirmation' | 'slider';
+  type: 'confirmation' | 'slider' | 'zwischenprotokoll';
   /** Schieberegler-Index 0 oder 1 — nur bei type='slider'. */
   slider_index?: number;
   recipients: string[];
