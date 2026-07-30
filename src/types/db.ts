@@ -92,6 +92,19 @@ export interface FormField {
     enabled: boolean;
     editable: boolean;
   };
+  /**
+   * Autovervollständigung aus dem firmenweiten Vorschlags-Pool
+   * (`feld_vorschlaege`, Migration 077). Opt-in je Feld — nur für die
+   * Typen `text` und `address` verfügbar, damit Freitext (Schäden,
+   * Notizen) und Zahlen (Kilometerstand) gar nicht erst gesammelt werden.
+   *
+   * `feld_typ` ist der Pool-Schlüssel: Felder mit demselben `feld_typ`
+   * teilen sich die Vorschläge (z.B. alle Adressfelder → `adresse`).
+   */
+  vorschlaege?: {
+    enabled: boolean;
+    feld_typ?: string;
+  };
 }
 
 export interface FormSection {

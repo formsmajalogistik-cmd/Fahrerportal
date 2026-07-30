@@ -23,6 +23,30 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'stamp',          label: 'Stempel (mit Auto-Freistellung)' },
 ];
 
+/** Feldtypen, für die Vorschläge angeboten werden dürfen (Migration 077). */
+const VORSCHLAG_TYPEN: FieldType[] = ['text', 'address'];
+
+/** Bekannte Töpfe als Auswahlhilfe — freie Eingabe bleibt möglich. */
+const FELD_TYP_VORSCHLAEGE = [
+  'adresse', 'kontaktname', 'firma', 'email', 'telefon', 'ort', 'fahrzeugtyp',
+];
+
+/**
+ * Erster Vorschlag für den Topf beim Aktivieren: aus Label/ID geraten,
+ * damit gleichartige Felder automatisch im selben Topf landen.
+ */
+function rateFeldTyp(field: FormField): string {
+  const s = `${field.id} ${field.label}`.toLowerCase();
+  if (field.type === 'address') return 'adresse';
+  if (/mail/.test(s)) return 'email';
+  if (/telefon|tel\.|mobil|handy/.test(s)) return 'telefon';
+  if (/firma|unternehmen|kunde|händler|haendler/.test(s)) return 'firma';
+  if (/kontakt|ansprech|name/.test(s)) return 'kontaktname';
+  if (/ort|stadt|standort/.test(s)) return 'ort';
+  if (/adresse|straße|strasse|anschrift/.test(s)) return 'adresse';
+  return field.id;
+}
+
 interface Props {
   templateId: string;
   schema: FormSchema;
@@ -338,7 +362,19 @@ function FieldEditor({
           <select
             className="input"
             value={field.type}
-            onChange={(e) => onChange({ type: e.target.value as FieldType })}
+            onChange={(e) => {
+              const type = e.target.value as FieldType;
+              // Sinnvolle Vorbelegung: Adressfelder bekommen Vorschläge
+              // automatisch, Typen ohne Vorschlags-Support verlieren die
+              // Einstellung wieder.
+              if (!VORSCHLAG_TYPEN.includes(type)) {
+                onChange({ type, vorschlaege: undefined });
+              } else if (type === 'address' && !field.vorschlaege) {
+                onChange({ type, vorschlaege: { enabled: true, feld_typ: 'adresse' } });
+              } else {
+                onChange({ type });
+              }
+            }}
           >
             {FIELD_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
@@ -408,6 +444,50 @@ function FieldEditor({
             />
             Vom Fahrer änderbar
           </label>
+        )}
+
+        {/* Vorschläge nur für Text- und Adressfelder — Freitext
+            (Schäden, Notizen) und Zahlen (Kilometerstand) sollen gar
+            nicht erst in den Pool wandern. */}
+        {VORSCHLAG_TYPEN.includes(field.type) && (
+          <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+              checked={!!field.vorschlaege?.enabled}
+              onChange={(e) => onChange({
+                vorschlaege: e.target.checked
+                  ? {
+                      enabled: true,
+                      feld_typ: field.vorschlaege?.feld_typ || rateFeldTyp(field),
+                    }
+                  : undefined,
+              })}
+            />
+            Vorschläge aktivieren
+          </label>
+        )}
+
+        {VORSCHLAG_TYPEN.includes(field.type) && field.vorschlaege?.enabled && (
+          <div className="min-w-[220px]">
+            <label className="label">Vorschlags-Topf</label>
+            <input
+              className="input font-mono text-xs"
+              list={`feldtyp-optionen-${field.id}`}
+              value={field.vorschlaege.feld_typ ?? ''}
+              placeholder={field.id}
+              onChange={(e) => onChange({
+                vorschlaege: { enabled: true, feld_typ: e.target.value.trim() },
+              })}
+            />
+            <datalist id={`feldtyp-optionen-${field.id}`}>
+              {FELD_TYP_VORSCHLAEGE.map((t) => <option key={t} value={t} />)}
+            </datalist>
+            <p className="mt-1 text-xs text-maja-muted">
+              Felder mit demselben Topf teilen sich die Vorschläge — z.B.
+              alle Adressfelder. Leer = Feld-ID als Topf.
+            </p>
+          </div>
         )}
 
         {needsOptions && (

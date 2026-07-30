@@ -23,7 +23,8 @@ import {
   saveFormDraft,
 } from '../lib/offlineDb';
 import { useAuth } from '../auth/AuthContext';
-import { useTestGuard } from '../auth/TestModeContext';
+import { useTestGuard, useTestMode } from '../auth/TestModeContext';
+import { merkeAusFormular } from '../lib/feldVorschlaege';
 import { useSync } from '../sync/SyncContext';
 import { displayName } from '../lib/names';
 import type {
@@ -66,6 +67,9 @@ export function FormularPage() {
   const { triggerSync } = useSync();
   const { session, profile } = useAuth();
   const guard = useTestGuard();
+  // Testmodus schreibt nichts in den Vorschlags-Pool (zusätzlich zur
+  // Rollenprüfung in der RPC).
+  const { isTestUser } = useTestMode();
   // E-Mail des aktuell eingeloggten Nutzers — bekommt automatisch eine
   // Kopie jeder Submission als CC.
   const submitterEmail = session?.user?.email ?? null;
@@ -346,6 +350,8 @@ export function FormularPage() {
       if (saveErr) throw new Error(saveErr.message);
       await clearLocalDraft();
       setSavedDataJson(JSON.stringify(data));
+      // Übernahme-Teil ist abgeschlossen → Werte in den Vorschlags-Pool.
+      void merkeAusFormular(template.schema, data, isTestUser);
     } catch (err) {
       setZwischenBusy(false);
       setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -498,6 +504,11 @@ export function FormularPage() {
     setFormular(submitted);
     setSavedDataJson(JSON.stringify(data));
     setStatusMsg('Formular wird eingereicht …');
+
+    // Eingetragene Werte in den Vorschlags-Pool übernehmen (nur Felder
+    // mit aktivierter Option). Läuft nebenher — der Pool ist Komfort,
+    // kein Teil der Einreichung.
+    void merkeAusFormular(template.schema, data, isTestUser);
 
     // Eventuell hinterlegtes Zwischenprotokoll aufräumen — bei manueller
     // PDF-Generierung in Eingänge werden neue PDFs erzeugt; der Entwurf

@@ -23,6 +23,7 @@ import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { EingaengePage } from './pages/admin/EingaengePage';
 import { PosteingangPage } from './pages/admin/PosteingangPage';
 import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
+import { FeldVorschlaegePage } from './pages/admin/FeldVorschlaegePage';
 import { BelegePage } from './pages/admin/BelegePage';
 import { AufstellungPage } from './pages/admin/AufstellungPage';
 import { RechnungenListPage } from './pages/admin/rechnungen/RechnungenListPage';
@@ -158,6 +159,7 @@ export default function App() {
             <Route path="preislisten" element={<PreislistePage />} />
             <Route path="fahrer" element={<FahrerListPage />} />
             <Route path="postfaecher" element={<PostfaecherSettingsPage />} />
+            <Route path="vorschlaege" element={<FeldVorschlaegePage />} />
           </Route>
           {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
           <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />

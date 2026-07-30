@@ -26,6 +26,7 @@ import { uploadToOneDrive } from '../lib/onedrive';
 import { supabase } from '../lib/supabase';
 import { deleteFormPdf } from '../lib/pdfGenerate';
 import { runSubmissionEmails } from '../lib/submissionEmails';
+import { merkeAusFormular } from '../lib/feldVorschlaege';
 import type {
   AusgefuelltesFormular, FormularTemplate, PhotoValue,
 } from '../types/db';
@@ -253,6 +254,9 @@ async function processPendingSubmissions(): Promise<void> {
           console.warn('Zwischenprotokoll-Aufräumen nach Offline-Submit fehlgeschlagen', cleanupErr);
         }
       }
+      // Vorschlags-Pool füttern (Migration 077). Test-Profile filtert die
+      // RPC serverseitig aus — hier läuft der Drainer ohne React-Context.
+      void merkeAusFormular(template.schema, sub.data, false);
       // Automatische E-Mails (Bestätigung + Schieberegler) — Fehler hier
       // brechen den Submit NICHT ab. Das Ergebnis landet im email_send_log
       // der Formular-Zeile.

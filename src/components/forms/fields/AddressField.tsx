@@ -1,4 +1,6 @@
 import type { AddressValue, FormField } from '../../../types/db';
+import { SuggestCombobox } from '../../SuggestCombobox';
+import { adressTeilTyp, feldTypVon } from '../../../lib/feldVorschlaege';
 
 interface Props {
   field: FormField;
@@ -25,33 +27,39 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
     onChange({ ...v, ...p });
   }
   const required = !!field.required;
+  // Straße/PLZ/Stadt haben eigene Töpfe, die sich aber alle Adressfelder
+  // mit demselben feld_typ teilen (z.B. Abhol- und Zieladresse).
+  const basis = feldTypVon(field);
   return (
     <div>
       <label className="label">
         {field.label}{required && <span className="text-red-600"> *</span>}
       </label>
       <div className="space-y-2">
-        <input
-          className="input"
+        <SuggestCombobox
+          feldTyp={basis ? adressTeilTyp(basis, 'strasse') : null}
           placeholder="Straße + Hausnummer"
+          aria-label={`${field.label} — Straße + Hausnummer`}
           value={v.strasse ?? ''}
-          onChange={(e) => patch({ strasse: e.target.value })}
+          onChange={(next) => patch({ strasse: next })}
           disabled={disabled}
         />
         <div className="grid gap-2 sm:grid-cols-[8rem_1fr]">
-          <input
-            className="input"
+          <SuggestCombobox
+            feldTyp={basis ? adressTeilTyp(basis, 'plz') : null}
             placeholder="PLZ"
+            aria-label={`${field.label} — PLZ`}
             value={v.plz ?? ''}
-            onChange={(e) => patch({ plz: e.target.value })}
+            onChange={(next) => patch({ plz: next })}
             disabled={disabled}
             inputMode="numeric"
           />
-          <input
-            className="input"
+          <SuggestCombobox
+            feldTyp={basis ? adressTeilTyp(basis, 'stadt') : null}
             placeholder="Stadt"
+            aria-label={`${field.label} — Stadt`}
             value={v.stadt ?? ''}
-            onChange={(e) => patch({ stadt: e.target.value })}
+            onChange={(next) => patch({ stadt: next })}
             disabled={disabled}
           />
         </div>

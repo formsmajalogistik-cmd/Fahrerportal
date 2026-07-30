@@ -1214,6 +1214,33 @@ export type Database = {
           },
         ];
       };
+      feld_vorschlaege: {
+        Row: {
+          id: string;
+          feld_typ: string;
+          wert: string;
+          anzahl: number;
+          letzte_nutzung: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          feld_typ: string;
+          wert: string;
+          anzahl?: number;
+          letzte_nutzung?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          feld_typ?: string;
+          wert?: string;
+          anzahl?: number;
+          letzte_nutzung?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       touren_kundensicht: {
@@ -1269,6 +1296,10 @@ export type Database = {
       current_auftraggeber_id: {
         Args: Record<PropertyKey, never>;
         Returns: string | null;
+      };
+      feld_vorschlaege_merken: {
+        Args: { p_eintraege: Json };
+        Returns: number;
       };
       auftraggeber_formular_zuweisen: {
         Args: { p_tour_id: string; p_template_id: string };
