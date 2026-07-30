@@ -8,7 +8,7 @@ import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
   asPdfPathList, deleteFormPdf, downloadFormPdf,
   generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll,
-  previewFormPdf,
+  previewFormPdf, zwischenprotokollFilename, zwischenprotokollPdfIds,
   type PdfPathEntry,
 } from '../../lib/pdfGenerate';
 import {
@@ -907,7 +907,11 @@ function ZwischenprotokollSection({
     setError(null);
     onCreate?.();
     try {
-      const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(template, formular);
+      // Gleiche Auswahl wie beim automatischen Versand: die in der
+      // Zwischenprotokoll-Vorlage gewählten PDF-Teile → EINE Datei.
+      const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(
+        template, formular, zwischenprotokollPdfIds(template),
+      );
       const { error: err } = await supabase
         .from('ausgefuellte_formulare')
         .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
@@ -932,7 +936,7 @@ function ZwischenprotokollSection({
   async function download() {
     if (!existing) return;
     setBusy('download');
-    const ok = await downloadFormPdf(existing, 'zwischenprotokoll.pdf', formular.id);
+    const ok = await downloadFormPdf(existing, zwischenprotokollFilename(formular), formular.id);
     setBusy(null);
     if (!ok) setError('Download fehlgeschlagen.');
   }

@@ -1077,6 +1077,30 @@ export function zwischenprotokollPath(formular: AusgefuelltesFormular): string {
 }
 
 /**
+ * Sprechender Dateiname für Anhang/Download:
+ * `Zwischenprotokoll_{Kennzeichen}_{Datum}.pdf`. Der OneDrive-PFAD bleibt
+ * bewusst deterministisch (siehe `zwischenprotokollPath`), damit „neu
+ * generieren" die alte Datei überschreibt statt Kopien anzuhäufen.
+ */
+export function zwischenprotokollFilename(formular: AusgefuelltesFormular): string {
+  const raw = formular.daten?.['kennzeichen'] ?? formular.daten?.['Kennzeichen'];
+  const kennzeichen = typeof raw === 'string' ? sanitizeFilename(raw) : '';
+  const datum = (formular.created_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+  return ['Zwischenprotokoll', kennzeichen, datum].filter(Boolean).join('_') + '.pdf';
+}
+
+/**
+ * Welche PDF-Vorlagen gehören ins Zwischenprotokoll? Maßgeblich ist die
+ * Anhang-Auswahl der Zwischenprotokoll-E-Mail-Vorlage. Ist dort nichts
+ * gewählt, werden ALLE gemappten Vorlagen genommen (Verhalten wie bisher),
+ * damit ein nicht konfiguriertes Template kein leeres Protokoll liefert.
+ */
+export function zwischenprotokollPdfIds(template: FormularTemplate): string[] | undefined {
+  const ids = template.email_config?.zwischenprotokoll?.attach_pdf_ids;
+  return ids && ids.length > 0 ? ids : undefined;
+}
+
+/**
  * Erzeugt aus dem aktuellen Daten-Stand eines Drafts eine zusammengeführte
  * PDF (alle gemappten Template-PDFs hintereinander), versieht jede Seite
  * mit einem „ZWISCHENPROTOKOLL"-Stempel und lädt sie nach OneDrive hoch.
@@ -1090,12 +1114,19 @@ export function zwischenprotokollPath(formular: AusgefuelltesFormular): string {
 export async function generateAndUploadZwischenprotokoll(
   template: FormularTemplate,
   formular: AusgefuelltesFormular,
-): Promise<{ path: string; erstellt_am: string }> {
+  /** Auswahl aus der Zwischenprotokoll-Vorlage: NUR diese Vorlagen kommen
+   *  ins Protokoll — in Template-Reihenfolge. `undefined` = alle gemappten. */
+  pdfIds?: string[],
+): Promise<{ path: string; erstellt_am: string; filename: string; teile: number }> {
+  const filterSet = pdfIds && pdfIds.length > 0 ? new Set(pdfIds) : null;
   const allPdfs = (template.pdfs ?? []).filter(
-    (p) => p.path && p.field_mapping && Object.keys(p.field_mapping).length > 0,
+    (p) => p.path && p.field_mapping && Object.keys(p.field_mapping).length > 0
+      && (!filterSet || filterSet.has(p.id)),
   );
   if (allPdfs.length === 0) {
-    throw new Error('Template hat keine PDF-Vorlage mit Field-Mapping.');
+    throw new Error(filterSet
+      ? 'Keine der in der Zwischenprotokoll-Vorlage gewählten PDF-Vorlagen hat ein Field-Mapping.'
+      : 'Template hat keine PDF-Vorlage mit Field-Mapping.');
   }
   // Bilder EINMAL parallel vorladen — sonst holt fillPdf sie pro Vorlage
   // sequenziell (Hauptursache für die langen Laufzeiten/Timeouts).
@@ -1105,7 +1136,15 @@ export async function generateAndUploadZwischenprotokoll(
 
   // Alle Vorlagen füllen und in EIN PDF-Dokument zusammenführen.
   const merged = await PDFDocument.create();
+  let teile = 0;
   for (const tplPdf of allPdfs) {
+    // Reine Bild-Vorlagen ohne Bilder überspringen — zum
+    // Zwischenprotokoll-Zeitpunkt sind die Übergabe-Fotos naturgemäß noch
+    // leer; solche Vorlagen würden nur leere Seiten beisteuern.
+    if (isImageOnlyAndEmpty(tplPdf.field_mapping ?? {}, formular.daten)) {
+      console.info(`[Zwischenprotokoll] SKIP ${tplPdf.id} (reine Bild-Vorlage ohne Bilder)`);
+      continue;
+    }
     let tplBytes: ArrayBuffer | null = null;
     try { tplBytes = await fetchPdfBytes(tplPdf.path!); }
     catch (err) {
@@ -1123,6 +1162,7 @@ export async function generateAndUploadZwischenprotokoll(
     const part = await PDFDocument.load(filled as unknown as ArrayBuffer);
     const copied = await merged.copyPages(part, part.getPageIndices());
     for (const p of copied) merged.addPage(p);
+    teile += 1;
   }
 
   if (merged.getPageCount() === 0) {
@@ -1140,7 +1180,15 @@ export async function generateAndUploadZwischenprotokoll(
   const path = zwischenprotokollPath(formular);
   const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
   await uploadToOneDrive(path, blob);
-  return { path, erstellt_am: erstelltAm.toISOString() };
+  console.info(
+    `[Zwischenprotokoll] ${teile} Vorlage(n) → 1 PDF (${merged.getPageCount()} Seiten, ${blob.size} bytes)`,
+  );
+  return {
+    path,
+    erstellt_am: erstelltAm.toISOString(),
+    filename: zwischenprotokollFilename(formular),
+    teile,
+  };
 }
 
 /**

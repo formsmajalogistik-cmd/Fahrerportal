@@ -10,7 +10,9 @@ import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { collectPageImageBlobs, countPageImages, sharePhotos } from '../lib/sharePagePhotos';
-import { deleteFormPdf, generateAndUploadZwischenprotokoll } from '../lib/pdfGenerate';
+import {
+  deleteFormPdf, generateAndUploadZwischenprotokoll, zwischenprotokollPdfIds,
+} from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
 import {
   appendEmailLog, runSubmissionEmails, runZwischenprotokollEmail,
@@ -363,8 +365,14 @@ export function FormularPage() {
     const snapshot = { ...formular, daten: data } as unknown as AusgefuelltesFormular;
     const tpl = template;
     void (async () => {
+      let anhang: { path: string; filename: string } | null = null;
       try {
-        const { path, erstellt_am } = await generateAndUploadZwischenprotokoll(tpl, snapshot);
+        // Die Anhang-Auswahl der Zwischenprotokoll-Vorlage bestimmt, welche
+        // PDF-Teile ins Protokoll kommen — zusammengeführt zu EINER Datei.
+        const { path, erstellt_am, filename } = await generateAndUploadZwischenprotokoll(
+          tpl, snapshot, zwischenprotokollPdfIds(tpl),
+        );
+        anhang = { path, filename };
         await supabase
           .from('ausgefuellte_formulare')
           .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
@@ -395,6 +403,8 @@ export function FormularPage() {
           submitterEmail,
           fahrerEmail: submitterEmail,
           fahrerName: profile ? displayName(profile) : null,
+          // Genau das eben erzeugte Dokument anhängen — kein zweiter Lauf.
+          zwischenprotokoll: anhang,
         });
         if (entry) {
           await appendEmailLog(snapshot.id, [entry]);

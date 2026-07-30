@@ -106,6 +106,14 @@ export function TemplateEmailEditor({ config, onChange, pdfs, placeholders }: Pr
           + 'im Reiter Struktur ist "Zwischenprotokoll erlauben nach Abschnitt" gesetzt.'
         }
         checkboxLabel="Zwischenprotokoll automatisch erzeugen und versenden"
+        anhangLabel="Inhalt des Zwischenprotokolls"
+        anhangHinweis={
+          'Die ausgewählten Dokumente werden zu einer PDF zusammengeführt und '
+          + 'als ein Anhang versendet (Reihenfolge wie im Reiter „PDF-Mapping"). '
+          + 'Ohne Auswahl werden alle gemappten PDF-Vorlagen zusammengeführt. '
+          + 'Reine Foto-Vorlagen ohne Bilder — z.B. „Fotos Übergabe" — bleiben '
+          + 'automatisch weg.'
+        }
       />
       <ManualPanel
         cfg={cfg}
@@ -127,6 +135,8 @@ function ConfirmationPanel({
   titel = 'E-Mail 1: Bestätigung bei Formularabschluss',
   beschreibung = 'Wird beim Einreichen automatisch versendet. Standardmäßig ohne Anhang.',
   checkboxLabel = 'Bestätigungs-E-Mail bei Abschluss senden',
+  anhangLabel = 'Anhänge (optional)',
+  anhangHinweis,
 }: {
   conf: NonNullable<EmailConfig['confirmation']>;
   setConf: (patch: Partial<NonNullable<EmailConfig['confirmation']>>) => void;
@@ -139,6 +149,9 @@ function ConfirmationPanel({
   titel?: string;
   beschreibung?: string;
   checkboxLabel?: string;
+  /** Beschriftung + Erklärtext über der Anhang-Auswahl. */
+  anhangLabel?: string;
+  anhangHinweis?: string;
 }) {
   return (
     <section className="card space-y-4 p-5">
@@ -226,7 +239,8 @@ function ConfirmationPanel({
           </FieldRow>
 
           <AttachmentList
-            label="Anhänge (optional)"
+            label={anhangLabel}
+            hinweis={anhangHinweis}
             pdfs={pdfs}
             selected={conf.attach_pdf_ids ?? []}
             onChange={(next) => setConf({ attach_pdf_ids: next })}
@@ -458,9 +472,11 @@ function FromPicker({
 }
 
 function AttachmentList({
-  label, pdfs, selected, onChange,
+  label, hinweis, pdfs, selected, onChange,
 }: {
   label: string;
+  /** Optionaler Erklärtext unter der Beschriftung. */
+  hinweis?: string;
   pdfs: TemplatePdf[];
   selected: string[];
   onChange: (next: string[]) => void;
@@ -471,6 +487,7 @@ function AttachmentList({
   return (
     <div>
       <span className="label">{label}</span>
+      {hinweis && <p className="mb-1 text-xs text-maja-muted">{hinweis}</p>}
       {pdfs.length === 0 ? (
         <p className="text-xs text-maja-muted">
           Noch keine PDF-Vorlagen am Template — lege sie im Tab „PDF-Mapping" an.

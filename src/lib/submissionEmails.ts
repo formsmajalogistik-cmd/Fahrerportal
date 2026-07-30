@@ -17,7 +17,8 @@
 import { supabase } from './supabase';
 import { sendEmail } from './onedrive';
 import {
-  generateAndUploadFormPdfs, resolvePattern, type GeneratedPdf,
+  generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll, resolvePattern,
+  zwischenprotokollPdfIds, type GeneratedPdf,
 } from './pdfGenerate';
 import type {
   AusgefuelltesFormular, EmailSendLogEntry, FormularTemplate,
@@ -73,6 +74,10 @@ interface RunOptions {
   fahrerEmail?: string | null;
   /** Anzeigename des Fahrers — für `{fahrer_name}`-Platzhalter. */
   fahrerName?: string | null;
+  /** Bereits erzeugtes Zwischenprotokoll (eine zusammengeführte PDF), das
+   *  als einziger Anhang verwendet wird. Fehlt es, erzeugt
+   *  `runZwischenprotokollEmail` das Dokument selbst. */
+  zwischenprotokoll?: { path: string; filename: string } | null;
 }
 
 /**
@@ -253,19 +258,29 @@ export async function runZwischenprotokollEmail(
     };
   }
 
-  // Anhänge: die im Template gewählten PDF-Vorlagen (z.B. Protokoll-Teil
-  // + Fotos Übernahme). generateAndUploadFormPdfs respektiert dabei die
-  // "PDFs zusammenführen"-Option und liefert dann EINE Datei.
+  // Anhang: IMMER genau EINE Datei. Die Anhang-Auswahl der Vorlage
+  // bestimmt, welche PDF-Teile (Protokoll-Teil, Fotos Übernahme, Belege …)
+  // in Vorlagen-Reihenfolge zu diesem einen Dokument zusammengeführt
+  // werden — unabhängig von der Template-Option "PDFs zusammenführen",
+  // die nur das finale Protokoll betrifft.
   let attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
-  if (cfg.attach_pdf_ids && cfg.attach_pdf_ids.length > 0) {
+  let doc = options.zwischenprotokoll ?? null;
+  if (!doc) {
+    // Kein vorab erzeugtes Dokument (z.B. erneuter Versand aus Eingänge):
+    // hier erzeugen, damit die Mail nie ohne Anhang rausgeht.
     try {
-      const generated = await generateAndUploadFormPdfs(template, formular, cfg.attach_pdf_ids);
-      attachments = generated.map((g) => ({
-        name: g.filename, contentType: 'application/pdf', onedrive_path: g.onedrive_path,
-      }));
+      const res = await generateAndUploadZwischenprotokoll(
+        template, formular, zwischenprotokollPdfIds(template),
+      );
+      doc = { path: res.path, filename: res.filename };
     } catch (err) {
-      console.warn('[Zwischenprotokoll] PDF-Erzeugung für Anhänge fehlgeschlagen', err);
+      console.warn('[Zwischenprotokoll] PDF-Erzeugung für den Anhang fehlgeschlagen', err);
     }
+  }
+  if (doc) {
+    attachments = [{
+      name: doc.filename, contentType: 'application/pdf', onedrive_path: doc.path,
+    }];
   }
 
   const subject = resolvePattern(cfg.subject ?? '', data) || `Zwischenprotokoll — ${template.name}`;
