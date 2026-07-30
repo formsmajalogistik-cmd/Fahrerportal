@@ -65,6 +65,21 @@ export interface RechnungPdfPosition {
 export interface RechnungPdfInput {
   rechnungsnummer: string;
   datum: string;            // YYYY-MM-DD
+  /**
+   * Überschrift im Navy-Header und Label der Nummern-Zeile im Meta-Block.
+   * Default "Rechnung" — Gutschriften setzen hier die konfigurierte
+   * Dokumentbezeichnung ein. Layout, Logo, Kopf-/Fußzeile, Positions-
+   * tabelle und Summenblock bleiben identisch.
+   */
+  dokumentTitel?: string;
+  /** Optionale Bezugszeile, z.B. "Bezug: Rechnung Re-2026/12 vom 03.03.2026". */
+  bezugszeile?: string | null;
+  /** Optionaler Fließtext unter der Anrede, vor der Positionstabelle. */
+  einleitungstext?: string | null;
+  /** Optionaler Fließtext unter dem Summenblock, vor dem Gruß. */
+  schlusstext?: string | null;
+  /** Beschriftung der Gesamtbetrags-Zeile. Default "Brutto". */
+  summenLabel?: string;
   anrede: string | null;
   kundennummer: string | null;
   sachbearbeiter: string | null;
@@ -158,7 +173,7 @@ interface PageCtx {
   y: number;
 }
 
-function drawHeader(ctx: PageCtx) {
+function drawHeader(ctx: PageCtx, titel: string) {
   const { page, fonts, logo } = ctx;
   // Navy-Streifen
   page.drawRectangle({
@@ -178,7 +193,7 @@ function drawHeader(ctx: PageCtx) {
     });
   }
   // Titel rechts
-  const title = 'Rechnung';
+  const title = winAnsi(titel);
   const size = 20;
   const tw = fonts.bold.widthOfTextAtSize(title, size);
   page.drawText(title, {
@@ -277,7 +292,7 @@ function drawEmpfaengerUndMeta(ctx: PageCtx, input: RechnungPdfInput) {
 
   // --- Meta rechts ---
   const metaLines: Array<[string, string]> = [];
-  metaLines.push(['Rechnung:', input.rechnungsnummer]);
+  metaLines.push([`${input.dokumentTitel ?? 'Rechnung'}:`, input.rechnungsnummer]);
   metaLines.push(['Datum:', formatDateDe(input.datum)]);
   if (input.sachbearbeiter) metaLines.push(['Sachbearbeiter:', input.sachbearbeiter]);
   if (input.faelligAm) metaLines.push(['fällig am:', formatDateDe(input.faelligAm)]);
@@ -304,6 +319,44 @@ function drawEmpfaengerUndMeta(ctx: PageCtx, input: RechnungPdfInput) {
   ctx.y = Math.min(yL, yR) - 10;
 }
 
+/**
+ * Bricht einen Fließtext auf die Tabellenbreite um. Bestehende
+ * Zeilenumbrüche bleiben erhalten; zu lange Zeilen werden an
+ * Wortgrenzen getrennt.
+ */
+function wrapText(text: string, font: PDFFont, size: number, maxW: number): string[] {
+  const out: string[] = [];
+  for (const absatz of text.split(/\r?\n/)) {
+    const woerter = absatz.split(/\s+/).filter(Boolean);
+    if (woerter.length === 0) { out.push(''); continue; }
+    let zeile = '';
+    for (const wort of woerter) {
+      const kandidat = zeile ? `${zeile} ${wort}` : wort;
+      if (font.widthOfTextAtSize(winAnsi(kandidat), size) <= maxW) {
+        zeile = kandidat;
+      } else {
+        if (zeile) out.push(zeile);
+        zeile = wort;
+      }
+    }
+    if (zeile) out.push(zeile);
+  }
+  return out;
+}
+
+/** Zeichnet einen umgebrochenen Fließtext ab dem aktuellen Cursor. */
+function drawFliesstext(ctx: PageCtx, text: string, size = 10) {
+  const zeilen = wrapText(text, ctx.fonts.regular, size, TABLE_W);
+  for (const zeile of zeilen) {
+    if (zeile !== '') {
+      ctx.page.drawText(winAnsi(zeile), {
+        x: MARGIN_X, y: ctx.y, size, font: ctx.fonts.regular, color: INK,
+      });
+    }
+    ctx.y -= size + 4;
+  }
+}
+
 function drawTitelUndAnrede(ctx: PageCtx, input: RechnungPdfInput) {
   const { page, fonts } = ctx;
   // "Rechnungsnummer" als linker Titel-Unterzeile, fett+unterstrichen.
@@ -319,13 +372,27 @@ function drawTitelUndAnrede(ctx: PageCtx, input: RechnungPdfInput) {
     end:   { x: MARGIN_X + nrW, y: ctx.y - 2 },
     thickness: 0.6, color: NAVY,
   });
-  ctx.y -= 22;
+  ctx.y -= 16;
+  // Bezugszeile (Gutschrift → Rechnung). Bei Rechnungen nicht gesetzt,
+  // dort bleibt der Abstand exakt wie bisher.
+  if (input.bezugszeile && input.bezugszeile.trim()) {
+    page.drawText(winAnsi(input.bezugszeile.trim()), {
+      x: MARGIN_X, y: ctx.y,
+      size: 9.5, font: fonts.regular, color: MUTED,
+    });
+    ctx.y -= 14;
+  }
+  ctx.y -= 6;
   if (input.anrede) {
     page.drawText(winAnsi(input.anrede), {
       x: MARGIN_X, y: ctx.y,
       size: 10, font: fonts.regular, color: INK,
     });
     ctx.y -= 18;
+  }
+  if (input.einleitungstext && input.einleitungstext.trim()) {
+    drawFliesstext(ctx, input.einleitungstext.trim());
+    ctx.y -= 6;
   }
 }
 
@@ -498,13 +565,21 @@ function drawSummenBlock(ctx: PageCtx, groups: UstGroup[], summen: { netto: numb
       );
     }
   }
-  lineRight('Brutto:', formatEur(summen.brutto), { bold: true, underline: true, size: 11 });
+  lineRight(
+    `${input.summenLabel ?? 'Brutto'}:`,
+    formatEur(summen.brutto),
+    { bold: true, underline: true, size: 11 },
+  );
 
   ctx.y = Math.min(leftY, rightY) - 6;
 }
 
-function drawAbschluss(ctx: PageCtx) {
+function drawAbschluss(ctx: PageCtx, schlusstext?: string | null) {
   const { page, fonts } = ctx;
+  if (schlusstext && schlusstext.trim()) {
+    ctx.y -= 14;
+    drawFliesstext(ctx, schlusstext.trim());
+  }
   ctx.y -= 18;
   page.drawText(winAnsi('mit freundlichen Grüßen'), {
     x: MARGIN_X, y: ctx.y, size: 10, font: fonts.regular, color: INK,
@@ -516,10 +591,12 @@ function drawAbschluss(ctx: PageCtx) {
   ctx.y -= 14;
 }
 
-function newPage(doc: PDFDocument, fonts: Fonts, logo: PDFImage | null): PageCtx {
+function newPage(
+  doc: PDFDocument, fonts: Fonts, logo: PDFImage | null, titel: string,
+): PageCtx {
   const page = doc.addPage([A4_W, A4_H]);
   const ctx: PageCtx = { page, fonts, logo, y: A4_H - HEADER_H - 8 };
-  drawHeader(ctx);
+  drawHeader(ctx, titel);
   drawFooter(ctx);
   return ctx;
 }
@@ -540,8 +617,10 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
     try { logo = await doc.embedPng(logoBytes); } catch { logo = null; }
   }
 
+  const titel = input.dokumentTitel ?? 'Rechnung';
+
   // Seite 1 mit komplettem Kopf + Tabellen-Header + erste Positionen.
-  let ctx = newPage(doc, fonts, logo);
+  let ctx = newPage(doc, fonts, logo, titel);
   drawAbsenderRechts(ctx);
   // Nach dem Absender-Block den Cursor wieder nach oben links versetzen,
   // damit Empfänger + Meta auf gleicher Höhe stehen.
@@ -559,7 +638,7 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
     // Summen-Block (~ 90 pt) plus Abschluss (~ 60 pt).
     const tail = (i === input.positionen.length - 1) ? 150 : 0;
     if (ctx.y - needed - FOOTER_H - tail < MARGIN_BOTTOM) {
-      ctx = newPage(doc, fonts, logo);
+      ctx = newPage(doc, fonts, logo, titel);
       drawTableHeader(ctx);
     }
     drawPosition(ctx, p, input.ustSatzDefault);
@@ -570,12 +649,17 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
     input.positionen.map((p) => ({ gesamtpreis: p.gesamtpreis, ust_satz: p.ust_satz })),
     input.ustSatzDefault,
   );
-  const summenH = 30 + Math.max(sum.groups.length, 1) * 16 + 60;
+  // Schlusstext braucht zusätzlichen Platz — grob über die Zeilenzahl
+  // geschätzt, damit er nicht in die Fußzeile läuft.
+  const schlussZeilen = input.schlusstext?.trim()
+    ? wrapText(input.schlusstext.trim(), fonts.regular, 10, TABLE_W).length
+    : 0;
+  const summenH = 30 + Math.max(sum.groups.length, 1) * 16 + 60 + schlussZeilen * 14;
   if (ctx.y - summenH - FOOTER_H < MARGIN_BOTTOM) {
-    ctx = newPage(doc, fonts, logo);
+    ctx = newPage(doc, fonts, logo, titel);
   }
   drawSummenBlock(ctx, sum.groups, sum, input);
-  drawAbschluss(ctx);
+  drawAbschluss(ctx, input.schlusstext);
 
   const bytes = await doc.save();
   return new Blob([bytes as unknown as ArrayBuffer], { type: 'application/pdf' });

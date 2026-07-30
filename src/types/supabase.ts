@@ -1214,6 +1214,146 @@ export type Database = {
           },
         ];
       };
+      gutschriften: {
+        Row: {
+          id: string;
+          gutschrift_nr: string;
+          auftraggeber_id: string | null;
+          rechnungsempfaenger_id: string | null;
+          rechnung_id: string | null;
+          datum: string;
+          leistungszeitraum_von: string | null;
+          leistungszeitraum_bis: string | null;
+          anrede: string | null;
+          einleitungstext: string | null;
+          schlusstext: string | null;
+          interne_notizen: string | null;
+          adress_snapshot: Json | null;
+          kundennummer: string | null;
+          sachbearbeiter: string | null;
+          ust_satz: number;
+          netto_summe: number;
+          ust_summe: number;
+          brutto_summe: number;
+          status: 'entwurf' | 'final';
+          pdf_url: string | null;
+          email_versendet_am: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          gutschrift_nr?: string;
+          auftraggeber_id?: string | null;
+          rechnungsempfaenger_id?: string | null;
+          rechnung_id?: string | null;
+          datum?: string;
+          leistungszeitraum_von?: string | null;
+          leistungszeitraum_bis?: string | null;
+          anrede?: string | null;
+          einleitungstext?: string | null;
+          schlusstext?: string | null;
+          interne_notizen?: string | null;
+          adress_snapshot?: Json | null;
+          kundennummer?: string | null;
+          sachbearbeiter?: string | null;
+          ust_satz?: number;
+          netto_summe?: number;
+          ust_summe?: number;
+          brutto_summe?: number;
+          status?: 'entwurf' | 'final';
+          pdf_url?: string | null;
+          email_versendet_am?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          gutschrift_nr?: string;
+          auftraggeber_id?: string | null;
+          rechnungsempfaenger_id?: string | null;
+          rechnung_id?: string | null;
+          datum?: string;
+          leistungszeitraum_von?: string | null;
+          leistungszeitraum_bis?: string | null;
+          anrede?: string | null;
+          einleitungstext?: string | null;
+          schlusstext?: string | null;
+          interne_notizen?: string | null;
+          adress_snapshot?: Json | null;
+          kundennummer?: string | null;
+          sachbearbeiter?: string | null;
+          ust_satz?: number;
+          netto_summe?: number;
+          ust_summe?: number;
+          brutto_summe?: number;
+          status?: 'entwurf' | 'final';
+          pdf_url?: string | null;
+          email_versendet_am?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'gutschriften_rechnung_id_fkey';
+            columns: ['rechnung_id'];
+            referencedRelation: 'rechnungen';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      gutschriftspositionen: {
+        Row: {
+          id: string;
+          gutschrift_id: string;
+          position_nr: number;
+          bezeichnung: string;
+          unterzeilen: Json;
+          menge: number;
+          einzelpreis: number;
+          gesamtpreis: number;
+          ust_satz: number | null;
+          tour_id: string | null;
+          ist_manuell: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          gutschrift_id: string;
+          position_nr?: number;
+          bezeichnung?: string;
+          unterzeilen?: Json;
+          menge?: number;
+          einzelpreis?: number;
+          gesamtpreis?: number;
+          ust_satz?: number | null;
+          tour_id?: string | null;
+          ist_manuell?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          gutschrift_id?: string;
+          position_nr?: number;
+          bezeichnung?: string;
+          unterzeilen?: Json;
+          menge?: number;
+          einzelpreis?: number;
+          gesamtpreis?: number;
+          ust_satz?: number | null;
+          tour_id?: string | null;
+          ist_manuell?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'gutschriftspositionen_gutschrift_id_fkey';
+            columns: ['gutschrift_id'];
+            referencedRelation: 'gutschriften';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       feld_vorschlaege: {
         Row: {
           id: string;
@@ -1296,6 +1436,10 @@ export type Database = {
       current_auftraggeber_id: {
         Args: Record<PropertyKey, never>;
         Returns: string | null;
+      };
+      next_gutschrift_nr: {
+        Args: { p_year?: number };
+        Returns: string;
       };
       feld_vorschlaege_merken: {
         Args: { p_eintraege: Json };

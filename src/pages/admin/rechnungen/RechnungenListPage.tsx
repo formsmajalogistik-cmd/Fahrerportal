@@ -5,6 +5,7 @@ import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
+import { RechnungenTabs } from './RechnungenTabs';
 import { RECHNUNG_STATUS_LABEL } from './rechnungLabels';
 import type {
   Auftraggeber, AuftraggeberKontakt, Rechnung, RechnungStatus,
@@ -255,6 +256,7 @@ export function RechnungenListPage() {
 
   return (
     <div className="space-y-5">
+      <RechnungenTabs />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-maja-navy">Rechnungen</h1>

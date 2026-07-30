@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { MajaLogo } from './Brand';
 import { ProfilMenu } from './ProfilMenu';
 import { OfflineBanner } from './OfflineBanner';
@@ -8,7 +8,15 @@ import { useEingaengeNotifications } from '../sync/EingaengeContext';
 import { FuehrerscheinNavWidget } from './FuehrerscheinNavWidget';
 import { supabase } from '../lib/supabase';
 
-interface NavItem { to: string; label: string; end?: boolean }
+interface NavItem {
+  to: string;
+  label: string;
+  end?: boolean;
+  /** Zusätzliche Pfad-Präfixe, unter denen dieser Punkt aktiv bleibt —
+   *  z.B. bleibt „Rechnungen" markiert, während der Gutschriften-Tab
+   *  offen ist (beide hängen am selben Bereich). */
+  auchAktivAb?: string[];
+}
 
 /** Schlichter Punkt statt Zahlen-Badge — zeigt nur AN/AUS. */
 function NavBadge({ count, pulse, label }: { count: number; pulse?: boolean; label: string }) {
@@ -94,7 +102,7 @@ const adminNav: NavItem[] = [
   { to: '/posteingang',      label: 'Posteingang' },
   { to: '/belege',           label: 'Belege' },
   { to: '/aufstellung',      label: 'Aufstellung' },
-  { to: '/rechnungen',       label: 'Rechnungen' },
+  { to: '/rechnungen',       label: 'Rechnungen', auchAktivAb: ['/gutschriften'] },
   { to: '/templates',        label: 'Templates' },
   { to: '/einstellungen',    label: 'Einstellungen' },
 ];
@@ -102,6 +110,16 @@ const adminNav: NavItem[] = [
 export function AdminShell({ children }: { children: ReactNode }) {
   const { unseen, pulse } = useEingaengeNotifications();
   const { unbestaetigt, wuensche } = useAdminPendingCounts();
+
+  // NavLink kennt nur seinen eigenen Pfad — für Bereiche, die sich zwei
+  // Routen teilen (Rechnungen/Gutschriften), prüfen wir zusätzlich selbst.
+  const pfad = useLocation().pathname;
+  function istAktiv(item: NavItem, navLinkAktiv: boolean): boolean {
+    if (navLinkAktiv) return true;
+    return (item.auchAktivAb ?? []).some(
+      (p) => pfad === p || pfad.startsWith(`${p}/`),
+    );
+  }
 
   function badgeFor(to: string) {
     if (to === '/eingaenge') return <NavBadge count={unseen} pulse={pulse} label="ungesehene Eingänge" />;
@@ -125,7 +143,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   end={item.end ?? false}
                   className={({ isActive }) =>
                     `flex items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
-                      isActive
+                      istAktiv(item, isActive)
                         ? 'bg-maja-navy text-white'
                         : 'text-maja-ink hover:bg-maja-light'
                     }`
@@ -162,7 +180,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     end={item.end ?? false}
                     className={({ isActive }) =>
                       `inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                        isActive
+                        istAktiv(item, isActive)
                           ? 'bg-maja-navy text-white'
                           : 'text-maja-navy hover:bg-maja-light'
                       }`

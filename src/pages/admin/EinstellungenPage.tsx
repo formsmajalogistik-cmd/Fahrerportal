@@ -8,6 +8,7 @@ const subNav: SubNavItem[] = [
   { to: '/einstellungen/fahrer',       label: 'Fahrer' },
   { to: '/einstellungen/postfaecher',  label: 'E-Mail-Postfächer' },
   { to: '/einstellungen/vorschlaege',  label: 'Feld-Vorschläge' },
+  { to: '/einstellungen/gutschriften', label: 'Gutschriften' },
 ];
 
 export function EinstellungenPage() {

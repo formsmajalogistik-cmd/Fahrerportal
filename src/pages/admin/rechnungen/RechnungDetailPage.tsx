@@ -3,7 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
-import { formatDate } from '../../../lib/touren';
+import { formatDate, formatEuro } from '../../../lib/touren';
+import {
+  DEFAULT_GUTSCHRIFT_SETTINGS, loadGutschriftSettings,
+} from '../../../lib/gutschriftSettings';
 import {
   berechneSummenProUst, generatePositionenFromTouren, parseRechnungsformat,
   type TourForRechnung, type TourenartReal,
@@ -35,6 +38,14 @@ interface RechnungFull extends Rechnung {
 }
 
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
+
+/** Gutschrift, die sich auf diese Rechnung bezieht. */
+interface GutschriftBezug {
+  id: string;
+  gutschrift_nr: string;
+  datum: string;
+  brutto_summe: number;
+}
 
 /**
  * Editierbare Stammdaten-Snapshot-Felder. Werden initial aus rechnung
@@ -116,6 +127,13 @@ export function RechnungDetailPage() {
   // E-Mail-Versand (Aufgabe 3)
   const [emailOpen, setEmailOpen] = useState(false);
 
+  // Gutschriften mit Bezug auf diese Rechnung (Migration 078) + die
+  // konfigurierte Dokumentbezeichnung für Button und Hinweis.
+  const [gutschriften, setGutschriften] = useState<GutschriftBezug[]>([]);
+  const [gsBezeichnung, setGsBezeichnung] = useState(
+    DEFAULT_GUTSCHRIFT_SETTINGS.dokumentbezeichnung,
+  );
+
   // Beleg-Zuordnung lösen (Aufgabe 2)
   const handleRemoveBelege = useCallback(async () => {
     if (!rechnung) return;
@@ -188,6 +206,19 @@ export function RechnungDetailPage() {
     } else {
       setTourInfoById(new Map());
     }
+
+    // Verknüpfte Gutschriften — der Bezug wird auf BEIDEN Dokumenten
+    // angezeigt.
+    const [gsRes, gsCfg] = await Promise.all([
+      supabase
+        .from('gutschriften')
+        .select('id, gutschrift_nr, datum, brutto_summe')
+        .eq('rechnung_id', id)
+        .order('datum', { ascending: false }),
+      loadGutschriftSettings(),
+    ]);
+    setGutschriften((gsRes.data as unknown as GutschriftBezug[]) ?? []);
+    setGsBezeichnung(gsCfg.dokumentbezeichnung);
     setLoading(false);
   }, [id]);
 
@@ -829,6 +860,44 @@ export function RechnungDetailPage() {
               disabled={generatingPdf}
             >{generatingPdf ? 'Generiert …' : 'PDF generieren'}</button>
           </div>
+        )}
+      </section>
+
+      {/* Gutschriften / Rechnungskorrekturen zu dieser Rechnung */}
+      <section className="card space-y-2 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-maja-navy">{gsBezeichnung}en</h2>
+          <button
+            type="button"
+            className="btn-secondary text-sm"
+            onClick={() => navigate(`/gutschriften/neu?rechnung=${rechnung.id}`)}
+          >
+            {gsBezeichnung} erstellen
+          </button>
+        </div>
+        {gutschriften.length === 0 ? (
+          <p className="text-sm text-maja-muted">
+            Noch keine {gsBezeichnung} zu dieser Rechnung. Beim Erstellen
+            werden Empfänger, Adresse und Positionen übernommen — einzelne
+            Positionen lassen sich abwählen.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {gutschriften.map((g) => (
+              <li key={g.id} className="text-sm">
+                <button
+                  type="button"
+                  className="text-maja-accent hover:underline"
+                  onClick={() => navigate(`/gutschriften/${g.id}`)}
+                >
+                  {gsBezeichnung} vorhanden: {g.gutschrift_nr}
+                </button>
+                <span className="text-maja-muted">
+                  {' '}· {formatDate(g.datum)} · {formatEuro(Number(g.brutto_summe))}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

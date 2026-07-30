@@ -24,6 +24,10 @@ import { EingaengePage } from './pages/admin/EingaengePage';
 import { PosteingangPage } from './pages/admin/PosteingangPage';
 import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
 import { FeldVorschlaegePage } from './pages/admin/FeldVorschlaegePage';
+import { GutschriftSettingsPage } from './pages/admin/GutschriftSettingsPage';
+import { GutschriftenListPage } from './pages/admin/gutschriften/GutschriftenListPage';
+import { GutschriftNewPage } from './pages/admin/gutschriften/GutschriftNewPage';
+import { GutschriftDetailPage } from './pages/admin/gutschriften/GutschriftDetailPage';
 import { BelegePage } from './pages/admin/BelegePage';
 import { AufstellungPage } from './pages/admin/AufstellungPage';
 import { RechnungenListPage } from './pages/admin/rechnungen/RechnungenListPage';
@@ -151,6 +155,9 @@ export default function App() {
           <Route path="/rechnungen" element={<RechnungenListPage />} />
           <Route path="/rechnungen/neu" element={<RechnungNewPage />} />
           <Route path="/rechnungen/:id" element={<RechnungDetailPage />} />
+          <Route path="/gutschriften" element={<GutschriftenListPage />} />
+          <Route path="/gutschriften/neu" element={<GutschriftNewPage />} />
+          <Route path="/gutschriften/:id" element={<GutschriftDetailPage />} />
           <Route path="/templates" element={<TemplatesListPage />} />
           <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/einstellungen" element={<EinstellungenPage />}>
@@ -160,6 +167,7 @@ export default function App() {
             <Route path="fahrer" element={<FahrerListPage />} />
             <Route path="postfaecher" element={<PostfaecherSettingsPage />} />
             <Route path="vorschlaege" element={<FeldVorschlaegePage />} />
+            <Route path="gutschriften" element={<GutschriftSettingsPage />} />
           </Route>
           {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
           <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />
