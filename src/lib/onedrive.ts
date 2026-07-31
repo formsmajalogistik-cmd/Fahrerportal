@@ -438,6 +438,36 @@ export interface SendEmailResult {
   attached: number;
 }
 
+/**
+ * Meldet dem Admin per E-Mail, dass ein Auftraggeber eine BESTÄTIGTE
+ * Tour geändert hat (Migration 079).
+ *
+ * Es geht bewusst NUR die Tour-ID raus: Empfänger, Betreff und Inhalt
+ * baut der Server aus der Datenbank, nachdem er geprüft hat, dass die
+ * Tour dem aufrufenden Auftraggeber gehört. Damit lässt sich über diesen
+ * Weg weder fremder Inhalt versenden noch ein fremder Empfänger setzen.
+ *
+ * Fehler sind unkritisch — das Protokoll und das Badge in der
+ * Tourenliste informieren den Admin ohnehin.
+ */
+export async function meldeTourAenderung(tourId: string): Promise<boolean> {
+  try {
+    const resp = await fetchWithAuthRetry('/api/emails?action=tour-aenderung-melden', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'tour-aenderung-melden', tour_id: tourId }),
+    });
+    if (!resp.ok) {
+      console.warn('[meldeTourAenderung] fehlgeschlagen', resp.status);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[meldeTourAenderung] warf', err);
+    return false;
+  }
+}
+
 export async function sendEmail(args: {
   to: string[];
   cc?: string[];

@@ -31,47 +31,47 @@ function NavBadge({ count, pulse, label }: { count: number; pulse?: boolean; lab
   );
 }
 
-/** Zeitfenster für "Zur Bestätigung" — muss zur Tourenliste passen. */
-export const BESTAETIGUNG_FENSTER_TAGE = 14;
-
 /**
- * Leichtgewichtige Zähler für die Nav-Punkte: unbestätigte Touren
- * (Auftraggeber-Einreichungen → Tourenliste) und offene Formular-
- * Wünsche (→ Templates). 60s-Polling + Refresh bei Fokus; Fehler
- * (z.B. Migration noch nicht eingespielt) werden still geschluckt.
+ * Leichtgewichtige Zähler für die Nav-Punkte: offene Einreichungen und
+ * unquittierte Auftraggeber-Änderungen (beide → Tourenliste) sowie
+ * offene Formular-Wünsche (→ Templates). 60s-Polling + Refresh bei
+ * Fokus; Fehler (z.B. Migration noch nicht eingespielt) werden still
+ * geschluckt.
  */
-function useAdminPendingCounts(): { unbestaetigt: number; wuensche: number } {
-  const [counts, setCounts] = useState({ unbestaetigt: 0, wuensche: 0 });
+function useAdminPendingCounts(): {
+  unbestaetigt: number; wuensche: number; aenderungen: number;
+} {
+  const [counts, setCounts] = useState({ unbestaetigt: 0, wuensche: 0, aenderungen: 0 });
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
       try {
-        // Nur AKTUELL relevante offene Einreichungen zählen:
+        // Offene Einreichungen zählen:
         //  - nicht bestätigt UND nicht abgelehnt (abgelehnte sind
-        //    ebenfalls bestaetigt=false und leuchteten bisher weiter),
-        //  - nicht zurückgestellt ("Später"),
-        //  - Start innerhalb des 14-Tage-Fensters (weiter entfernte
-        //    Einreichungen liegen im Bereich "Zukünftige Einreichungen"
-        //    und sollen den Punkt nicht dauerhaft leuchten lassen).
-        const fensterBis = new Date();
-        fensterBis.setDate(fensterBis.getDate() + BESTAETIGUNG_FENSTER_TAGE);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const bisYmd = `${fensterBis.getFullYear()}-${pad(fensterBis.getMonth() + 1)}-${pad(fensterBis.getDate())}`;
-        const [t, w] = await Promise.all([
+        //    ebenfalls bestaetigt=false und leuchteten früher weiter),
+        //  - nicht zurückgestellt ("Später").
+        // Bewusst OHNE Datumsfenster: alle offenen Einreichungen stehen
+        // im Bereich "Zur Bestätigung", also muss der Punkt sie auch
+        // alle melden.
+        const [t, w, a] = await Promise.all([
           supabase.from('touren')
             .select('id', { count: 'exact', head: true })
             .eq('bestaetigt', false)
             .eq('abgelehnt', false)
-            .eq('zurueckgestellt', false)
-            .lte('startdatum', bisYmd),
+            .eq('zurueckgestellt', false),
           supabase.from('formular_wuensche')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'offen'),
+          // Unquittierte Auftraggeber-Änderungen (Migration 079).
+          supabase.from('tour_aenderungen')
+            .select('id', { count: 'exact', head: true })
+            .is('gesehen_am', null),
         ]);
         if (cancelled) return;
         setCounts({
           unbestaetigt: t.error ? 0 : (t.count ?? 0),
           wuensche: w.error ? 0 : (w.count ?? 0),
+          aenderungen: a.error ? 0 : (a.count ?? 0),
         });
       } catch { /* still — Badge bleibt einfach aus */ }
     }
@@ -109,7 +109,7 @@ const adminNav: NavItem[] = [
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const { unseen, pulse } = useEingaengeNotifications();
-  const { unbestaetigt, wuensche } = useAdminPendingCounts();
+  const { unbestaetigt, wuensche, aenderungen } = useAdminPendingCounts();
 
   // NavLink kennt nur seinen eigenen Pfad — für Bereiche, die sich zwei
   // Routen teilen (Rechnungen/Gutschriften), prüfen wir zusätzlich selbst.
@@ -123,7 +123,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   function badgeFor(to: string) {
     if (to === '/eingaenge') return <NavBadge count={unseen} pulse={pulse} label="ungesehene Eingänge" />;
-    if (to === '/touren') return <NavBadge count={unbestaetigt} label="unbestätigte Touren" />;
+    // Der Tourenlisten-Punkt meldet beides: offene Einreichungen UND
+    // unquittierte Auftraggeber-Änderungen.
+    if (to === '/touren') {
+      return (
+        <NavBadge
+          count={unbestaetigt + aenderungen}
+          label="offene Einreichungen / Änderungen"
+        />
+      );
+    }
     if (to === '/templates') return <NavBadge count={wuensche} label="offene Formular-Wünsche" />;
     return null;
   }

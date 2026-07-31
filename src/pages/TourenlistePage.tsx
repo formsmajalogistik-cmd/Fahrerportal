@@ -9,19 +9,23 @@ import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
 import { exportTourenExcel } from '../lib/tourenExport';
-import { BESTAETIGUNG_FENSTER_TAGE } from '../components/AdminShell';
 import { sendEmail } from '../lib/onedrive';
 import { loadMailboxes } from '../lib/mailboxSettings';
 import { bodyWithSignatureHtml, signatureFromProfile } from '../lib/emailSignature';
 import { flattenedFahrerOptions, type FahrerOptionRaw } from './touren/FahrerSelect';
 import { fahrerName as resolveFahrerName } from '../lib/names';
 import {
-  computeTourStatus, formatAnzahl, formatDate, formatEuro, formatKm, tourTitel,
+  computeTourStatus, formatAnzahl, formatDate, formatDateTime, formatEuro,
+  formatKm, tourTitel,
 } from '../lib/touren';
 import { letzterWerktagVor, naechsterWerktagNach } from '../lib/rechnungsformat';
 import {
   asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../lib/pdfGenerate';
+import {
+  feldLabel, ladeOffeneAenderungen, quittiereAenderungen, wertLabel,
+  type AenderungsGruppe,
+} from '../lib/tourAenderungen';
 import {
   CheckBoxCheckedIcon, CheckBoxEmptyIcon, DownloadIcon, EyeIcon,
 } from '../components/icons';
@@ -472,42 +476,75 @@ export function TourenlistePage() {
   );
 
   /**
-   * Dreiteilung der offenen Einreichungen (Punkt 4):
-   *  - aktuell:      Start innerhalb der nächsten 14 Tage → oben,
-   *                  zählt für den Notification-Blip.
-   *  - zukuenftig:   Start weiter in der Zukunft → eingeklappt.
-   *  - zurueckgestellt: manuell per "Später" → eingeklappt, zählt nicht.
-   * Rutscht eine zukünftige Tour ins Fenster, erscheint sie automatisch
-   * oben (rein datumsbasiert, kein Zustand nötig).
+   * Zweiteilung der offenen Einreichungen:
+   *  - offen:           ALLE nicht zurückgestellten — unabhängig vom
+   *                     Startdatum. Nichts wird automatisch versteckt.
+   *  - zurueckgestellt: manuell per "Später" → eingeklappt, zählt nicht
+   *                     für den Notification-Blip.
+   *
+   * Die frühere automatische Auslagerung weit entfernter Einreichungen
+   * ("Zukünftige Einreichungen") ist bewusst entfallen — Auslagern ist
+   * ausschließlich eine bewusste Admin-Entscheidung.
+   *
+   * Sortierung: nächstliegendes Startdatum zuerst, damit das Dringende
+   * oben steht. Touren ohne Startdatum hängen sich hinten an.
    */
-  const fensterBisYmd = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + BESTAETIGUNG_FENSTER_TAGE);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }, []);
+  const sortiereNachStart = <T extends { startdatum: string | null }>(list: T[]): T[] =>
+    list.slice().sort((a, b) => {
+      const sa = a.startdatum ?? '9999-99-99';
+      const sb = b.startdatum ?? '9999-99-99';
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
 
   const unbestaetigteRows = useMemo(
-    () => offeneEinreichungen.filter(
-      (t) => !t.zurueckgestellt && (!t.startdatum || t.startdatum <= fensterBisYmd),
-    ),
-    [offeneEinreichungen, fensterBisYmd],
-  );
-  const zukuenftigeRows = useMemo(
-    () => offeneEinreichungen.filter(
-      (t) => !t.zurueckgestellt && !!t.startdatum && t.startdatum > fensterBisYmd,
-    ),
-    [offeneEinreichungen, fensterBisYmd],
+    () => sortiereNachStart(offeneEinreichungen.filter((t) => !t.zurueckgestellt)),
+    [offeneEinreichungen],
   );
   const zurueckgestellteRows = useMemo(
-    () => offeneEinreichungen.filter((t) => t.zurueckgestellt),
+    () => sortiereNachStart(offeneEinreichungen.filter((t) => t.zurueckgestellt)),
     [offeneEinreichungen],
   );
 
-  const [zukunftOffen, setZukunftOffen] = useState(false);
   const [zurueckOffen, setZurueckOffen] = useState(false);
   /** Auswahl für die Sammelaktion "Ausgewählte zurückstellen". */
   const [selectedEinreichungen, setSelectedEinreichungen] = useState<Set<string>>(new Set());
+
+  // ---- Änderungen durch Auftraggeber (Migration 079) ----
+  // Eigener Bereich, getrennt von "Zur Bestätigung": hier geht es nicht
+  // um neue Touren, sondern um nachträgliche Änderungen an bestehenden.
+  const [aenderungen, setAenderungen] = useState<AenderungsGruppe[]>([]);
+  const [aenderungenBusy, setAenderungenBusy] = useState(false);
+
+  const ladeAenderungen = useCallback(async () => {
+    if (!isAdmin) return;
+    setAenderungen(await ladeOffeneAenderungen());
+  }, [isAdmin]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => { void ladeAenderungen(); }, 0);
+    return () => window.clearTimeout(t);
+  }, [ladeAenderungen]);
+
+  /** Tour-IDs mit offenen Änderungen — für das Karten-Badge "Geändert". */
+  const geaenderteTourIds = useMemo(
+    () => new Set(aenderungen.map((g) => g.tour_id)),
+    [aenderungen],
+  );
+
+  async function handleQuittieren(tourIds: string[]) {
+    setAenderungenBusy(true);
+    try {
+      await quittiereAenderungen(tourIds, profile?.id ?? null);
+      await ladeAenderungen();
+      // Gleiche Sofort-Invalidierung wie bei den Einreichungen — der
+      // Blip am Nav-Punkt verschwindet ohne Reload.
+      window.dispatchEvent(new CustomEvent('maja:einreichungen-changed'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Quittieren fehlgeschlagen');
+    } finally {
+      setAenderungenBusy(false);
+    }
+  }
 
   // ---- Touren im gewählten Datums-Bereich ----
   // Maßgeblich ist das ENDDATUM (Fallback auf startdatum, falls noch
@@ -760,18 +797,19 @@ export function TourenlistePage() {
         </div>
       </div>
 
-      {/* Zur Bestätigung: von Auftraggebern eingereichte Touren.
-          Dreigeteilt (Punkt 4): aktuelles 14-Tage-Fenster oben,
-          weiter entfernte und manuell zurückgestellte eingeklappt. */}
+      {/* Zur Bestätigung: ALLE offenen Einreichungen, nächstliegendes
+          Startdatum zuerst. Nur manuell Zurückgestelltes wandert in den
+          eingeklappten Bereich darunter. */}
       {isAdmin && unbestaetigteRows.length > 0 && (
         <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
           <h2 className="text-sm font-semibold text-amber-900">
             Zur Bestätigung ({unbestaetigteRows.length})
           </h2>
           <p className="text-xs text-amber-800">
-            Von Auftraggebern eingereichte Touren mit Start in den nächsten
-            {' '}{BESTAETIGUNG_FENSTER_TAGE} Tagen. Öffnen, fehlende Daten
-            (Fahrer, km, Preis) ergänzen und bestätigen — oder ablehnen.
+            Alle von Auftraggebern eingereichten Touren, nächster Start
+            zuerst. Öffnen, fehlende Daten (Fahrer, km, Preis) ergänzen und
+            bestätigen — oder ablehnen. Mit „Später" wandert eine
+            Einreichung nach unten in den zurückgestellten Bereich.
           </p>
 
           {/* Sammelaktion: bewusst nur "Zurückstellen" — Bestätigen und
@@ -834,44 +872,86 @@ export function TourenlistePage() {
         </section>
       )}
 
-      {/* Zukünftige Einreichungen (Start jenseits des Fensters) */}
-      {isAdmin && zukuenftigeRows.length > 0 && (
-        <section className="rounded-xl border border-maja-navy/15 bg-white">
-          <button
-            type="button"
-            onClick={() => setZukunftOffen((o) => !o)}
-            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
-            aria-expanded={zukunftOffen}
-          >
-            <span className="text-sm font-semibold text-maja-navy">
-              Zukünftige Einreichungen ({zukuenftigeRows.length})
-            </span>
-            <span className="text-xs text-maja-muted">
-              {zukunftOffen ? 'Einklappen' : 'Ausklappen'}
-            </span>
-          </button>
-          {zukunftOffen && (
-            <div className="border-t border-maja-navy/10 px-4 py-3">
-              <p className="mb-2 text-xs text-maja-muted">
-                Start liegt mehr als {BESTAETIGUNG_FENSTER_TAGE} Tage in der
-                Zukunft. Sie rücken automatisch nach oben, sobald das Fenster
-                erreicht ist — bearbeiten geht aber jederzeit auch hier.
-              </p>
-              <ul className="space-y-2">
-                {zukuenftigeRows.map((t) => (
-                  <EinreichungCard
-                    key={t.id}
-                    tour={t}
-                    busy={confirmBusyId === t.id}
-                    onOpen={() => setOpenTourId(t.id)}
-                    onBestaetigen={() => void handleBestaetigen(t)}
-                    onAblehnen={() => setRejecting(t)}
-                    onSpaeter={() => void setZurueckgestellt([t.id], true)}
-                  />
-                ))}
-              </ul>
-            </div>
-          )}
+      {/* Änderungen durch Auftraggeber — eigener Bereich, bewusst
+          getrennt von "Zur Bestätigung". */}
+      {isAdmin && aenderungen.length > 0 && (
+        <section className="space-y-3 rounded-xl border border-sky-300 bg-sky-50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-sky-900">
+              Änderungen durch Auftraggeber ({aenderungen.length})
+            </h2>
+            <button
+              type="button"
+              className="rounded-full bg-sky-700 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-800 disabled:opacity-50"
+              disabled={aenderungenBusy}
+              onClick={() => void handleQuittieren(aenderungen.map((g) => g.tour_id))}
+            >
+              {aenderungenBusy ? 'Wird quittiert …' : 'Alle als gesehen markieren'}
+            </button>
+          </div>
+          <p className="text-xs text-sky-800">
+            Nachträgliche Änderungen an bestehenden Touren. Bei bereits
+            bestätigten Touren bitte prüfen, ob km oder Preis angepasst
+            werden müssen — die Tour bleibt bestätigt.
+          </p>
+          <ul className="space-y-2">
+            {aenderungen.map((g) => (
+              <li
+                key={g.tour_id}
+                className={`rounded-lg border bg-white p-3 ${
+                  g.bestaetigt ? 'border-amber-400' : 'border-sky-200'
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {g.tour_nr && (
+                        <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                          {g.tour_nr}
+                        </span>
+                      )}
+                      <span className="text-sm font-semibold text-maja-navy">{g.route}</span>
+                      {g.bestaetigt && (
+                        <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                          Bereits bestätigt
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-xs text-maja-muted">
+                      Geändert am {formatDateTime(g.geaendert_am)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      onClick={() => setOpenTourId(g.tour_id)}
+                    >
+                      Tour öffnen
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-sky-300 bg-white px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-50"
+                      disabled={aenderungenBusy}
+                      onClick={() => void handleQuittieren([g.tour_id])}
+                    >
+                      Gesehen
+                    </button>
+                  </div>
+                </div>
+                <ul className="mt-2 space-y-1">
+                  {g.eintraege.map((e) => (
+                    <li key={e.id} className="text-sm text-maja-ink">
+                      <span className="font-medium">{feldLabel(e.feld)}:</span>{' '}
+                      <span className="text-maja-muted">{wertLabel(e.feld, e.wert_alt)}</span>
+                      {' → '}
+                      <span className="font-medium">{wertLabel(e.feld, e.wert_neu)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
@@ -1147,6 +1227,7 @@ export function TourenlistePage() {
               rechnungsnummern={rechnungByTour[t.id]}
               hinweisKeinPreis={hinweise.keinPreis.has(t.id)}
               hinweisOhneRechnung={hinweise.ohneRechnung.has(t.id)}
+              geaendert={geaenderteTourIds.has(t.id)}
             />
           ))}
         </ul>
@@ -1398,10 +1479,12 @@ interface CardProps {
    *  kein Preis berechnet bzw. abgeschlossen ohne Rechnungsposition. */
   hinweisKeinPreis?: boolean;
   hinweisOhneRechnung?: boolean;
+  /** Unquittierte Auftraggeber-Änderung an dieser Tour (Migration 079). */
+  geaendert?: boolean;
 }
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
-  rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung,
+  rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung, geaendert,
 }: CardProps) {
   // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
   // Zuweisung ein eigener Open-Button. Fallback auf die Legacy-Spalte,
@@ -1606,6 +1689,16 @@ function TourCard({
                 title="Abweichendes Rechnungsdatum — die Tour wird zu diesem Datum abgerechnet, nicht zum Enddatum."
               >
                 Rechnungsdatum {formatDate(tour.rechnungsdatum)}
+              </span>
+            )}
+            {/* Auftraggeber hat die Tour geändert und es ist noch nicht
+                quittiert — Details stehen oben im Änderungs-Bereich. */}
+            {geaendert && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-800 dark:!bg-sky-900 dark:!text-sky-100"
+                title="Vom Auftraggeber geändert — noch nicht quittiert"
+              >
+                <span aria-hidden="true">✎</span> Geändert
               </span>
             )}
             {/* Abrechnungs-Hinweise (max. 7 Tage zurück, nur Admin). */}

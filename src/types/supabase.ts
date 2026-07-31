@@ -1214,6 +1214,49 @@ export type Database = {
           },
         ];
       };
+      tour_aenderungen: {
+        Row: {
+          id: string;
+          tour_id: string;
+          geaendert_von: string | null;
+          geaendert_am: string;
+          feld: string;
+          wert_alt: string | null;
+          wert_neu: string | null;
+          gesehen_am: string | null;
+          gesehen_von: string | null;
+        };
+        Insert: {
+          id?: string;
+          tour_id: string;
+          geaendert_von?: string | null;
+          geaendert_am?: string;
+          feld: string;
+          wert_alt?: string | null;
+          wert_neu?: string | null;
+          gesehen_am?: string | null;
+          gesehen_von?: string | null;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string;
+          geaendert_von?: string | null;
+          geaendert_am?: string;
+          feld?: string;
+          wert_alt?: string | null;
+          wert_neu?: string | null;
+          gesehen_am?: string | null;
+          gesehen_von?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'tour_aenderungen_tour_id_fkey';
+            columns: ['tour_id'];
+            referencedRelation: 'touren';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       gutschriften: {
         Row: {
           id: string;
@@ -1416,6 +1459,9 @@ export type Database = {
           created_at: string;
           eingang_id: string | null;
           eingang_id_bc: string | null;
+          /** Tour steht auf einer Rechnung/Gutschrift → nicht mehr
+           *  vom Auftraggeber bearbeitbar (Migration 079). */
+          abgerechnet: boolean;
         };
         Relationships: [];
       };
@@ -1436,6 +1482,14 @@ export type Database = {
       current_auftraggeber_id: {
         Args: Record<PropertyKey, never>;
         Returns: string | null;
+      };
+      ag_tour_aktualisieren: {
+        Args: { p_tour_id: string; p_daten: Json };
+        Returns: Json;
+      };
+      tour_ist_abgerechnet: {
+        Args: { p_tour_id: string };
+        Returns: boolean;
       };
       next_gutschrift_nr: {
         Args: { p_year?: number };

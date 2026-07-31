@@ -5,6 +5,7 @@ import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
 import { asPdfPathList, downloadFormPdf, previewFormPdf } from '../../lib/pdfGenerate';
 import { DownloadIcon, EyeIcon } from '../../components/icons';
 import { AuftraggeberTourCreateDialog } from './AuftraggeberTourCreateDialog';
+import { AuftraggeberTourEditDialog } from './AuftraggeberTourEditDialog';
 import { useTestMode } from '../../auth/TestModeContext';
 import { useAuth } from '../../auth/AuthContext';
 import { TourDokumenteSection } from '../../components/TourDokumenteSection';
@@ -58,6 +59,9 @@ export function AuftraggeberTourenPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notizTourIds, setNotizTourIds] = useState<Set<string>>(new Set());
+  /** Tour, die gerade bearbeitet wird (Migration 079). */
+  const [editTour, setEditTour] = useState<TourKundensicht | null>(null);
+  const [hinweis, setHinweis] = useState<string | null>(null);
 
   /** "Verstanden": quittiert eine Ablehnung — die Tour verschwindet aus
    *  der Auftraggeber-Liste (bleibt in der DB und für Admins sichtbar).
@@ -207,6 +211,12 @@ export function AuftraggeberTourenPage() {
         </div>
       </div>
 
+      {hinweis && (
+        <div role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {hinweis}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         <input
           className="input flex-1 min-w-[16rem]"
@@ -250,6 +260,7 @@ export function AuftraggeberTourenPage() {
               hatNotiz={notizTourIds.has(t.id)}
               ackBusy={ackBusy === t.id}
               onAblehnungVerstanden={() => void handleAblehnungVerstanden(t.id)}
+              onBearbeiten={() => setEditTour(t)}
             />
           ))}
         </ul>
@@ -259,6 +270,22 @@ export function AuftraggeberTourenPage() {
         <AuftraggeberTourCreateDialog
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); void load(); }}
+        />
+      )}
+
+      {editTour && (
+        <AuftraggeberTourEditDialog
+          tour={editTour}
+          onClose={() => setEditTour(null)}
+          onSaved={(anzahl) => {
+            setEditTour(null);
+            setHinweis(anzahl === 0
+              ? 'Keine Änderungen — es wurde nichts gespeichert.'
+              : `${anzahl} ${anzahl === 1 ? 'Änderung' : 'Änderungen'} gespeichert. `
+                + 'Maja-Logistik wurde informiert.');
+            window.setTimeout(() => setHinweis(null), 6000);
+            void load();
+          }}
         />
       )}
     </div>
@@ -286,6 +313,7 @@ function KontaktZeile({ label, kontakt }: { label: string; kontakt: KontaktVorOr
 
 function KundenTourCard({
   tour, eingaenge, expanded, onToggle, ackBusy, onAblehnungVerstanden, hatNotiz,
+  onBearbeiten,
 }: {
   tour: TourKundensicht;
   eingaenge: Map<string, EingangLite>;
@@ -294,6 +322,7 @@ function KundenTourCard({
   hatNotiz?: boolean;
   ackBusy?: boolean;
   onAblehnungVerstanden?: () => void;
+  onBearbeiten?: () => void;
 }) {
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const abgelehnt = !!tour.abgelehnt;
@@ -380,6 +409,28 @@ function KundenTourCard({
                 {linkedEingaenge.map((e) => (
                   <EingangPdfButtons key={e.id} eingang={e} />
                 ))}
+              </div>
+            )}
+
+            {/* Bearbeiten: eigene Touren, solange sie weder abgelehnt
+                noch abgerechnet sind. Was tatsächlich gespeichert werden
+                darf, entscheidet die RPC serverseitig (Migration 079). */}
+            {!abgelehnt && (
+              <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+                {tour.abgerechnet ? (
+                  <p className="text-xs text-maja-muted">
+                    Diese Tour wurde bereits abgerechnet. Bitte wenden Sie
+                    sich an Maja-Logistik.
+                  </p>
+                ) : onBearbeiten && (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={onBearbeiten}
+                  >
+                    Tour bearbeiten
+                  </button>
+                )}
               </div>
             )}
           </div>

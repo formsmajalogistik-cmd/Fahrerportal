@@ -23,6 +23,7 @@
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 import { assertMailboxAllowed } from '../server-lib/mailboxAuth.js';
 import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
+import { buildTourAenderungMail } from '../server-lib/tourAenderungMail.js';
 import {
   downloadFile, forwardMail, getAttachmentBase64, getAttachmentBytes, getMessage,
   listConversationMessages, listFolders, listMessages, moveMessage, patchMessage,
@@ -110,7 +111,14 @@ export default async function handler(req: Req, res: Res) {
     // eingang-send: formular_id-Pflicht + Pfad-Autorisierung, keine
     // manuellen base64-Anhänge). Test-/Auftraggeber-Profile senden nie.
     const isEingangSend = req.method === 'POST' && action === 'eingang-send';
-    const allowed = user.role === 'admin' || (isEingangSend && user.role === 'fahrer');
+    // Zweite Ausnahme: tour-aenderung-melden. Der Auftraggeber löst nur
+    // aus, Empfänger/Betreff/Inhalt baut der Server aus der DB — und
+    // erst, nachdem er geprüft hat, dass die Tour ihm gehört. Es geht
+    // kein clientseitiger Inhalt und kein freier Empfänger raus.
+    const isTourAenderung = req.method === 'POST' && action === 'tour-aenderung-melden';
+    const allowed = user.role === 'admin'
+      || (isEingangSend && user.role === 'fahrer')
+      || (isTourAenderung && user.role === 'auftraggeber');
     if (!allowed) throw new HttpError(403, 'Keine Berechtigung für diese Aktion');
     const body = (req.body && typeof req.body === 'object')
       ? req.body as Record<string, unknown>
@@ -297,6 +305,34 @@ export default async function handler(req: Req, res: Res) {
       await assertMailboxAllowed(token, mailbox);
       await patchMessage({ mailbox, messageId, isRead: body.isRead === true });
       res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (action === 'tour-aenderung-melden') {
+      const tourId = asString(body.tour_id);
+      if (!tourId) throw new HttpError(400, 'tour_id fehlt');
+      const mail = await buildTourAenderungMail({
+        userId: user.id, role: user.role, tourId,
+      });
+      if (!mail) {
+        // Nichts zu melden (Tour unbestätigt oder keine offenen
+        // Änderungen) — kein Fehler, damit das Speichern nicht scheitert.
+        res.status(200).json({ sent: false });
+        return;
+      }
+      // Kein assertMailboxAllowed: die Adresse ist nicht vom Client
+      // gesetzt, sondern kommt aus demselben app_settings-Eintrag
+      // (mail_inbox_1), aus dem auch die Whitelist gebaut wird. Der
+      // Whitelist-Check würde hier zudem scheitern, weil er mit dem JWT
+      // des Aufrufers liest — und Auftraggeber sehen app_settings nicht.
+      await sendMail({
+        to: mail.to,
+        subject: mail.subject,
+        bodyText: '',
+        bodyHtml: mail.bodyHtml,
+        from: mail.from,
+      });
+      res.status(200).json({ sent: true });
       return;
     }
 
