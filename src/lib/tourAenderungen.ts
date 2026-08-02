@@ -32,12 +32,12 @@ const FELD_LABEL: Record<string, string> = {
   info: 'Hinweise',
   // Migration 080
   fahrzeugmodell: 'Fahrzeugmodell',
-  abholzeit: 'Abholzeit',
-  abgabezeit: 'Abgabezeit',
-  rueckfuehrung_zeit: 'Zeit Rückführung',
-  zeit_hinweis_start: 'Zeit-Hinweis Abholung',
-  zeit_hinweis_ziel: 'Zeit-Hinweis Abgabe',
-  zeit_hinweis_rueckfuehrung: 'Zeit-Hinweis Rückführung',
+  zeit_start: 'Zeit Start (Abholung)',
+  zeit_ziel: 'Zeit Ziel (Abgabe)',
+  zeit_rueckfuehrung: 'Zeit Rückführung',
+  km_hin: 'km Hin',
+  km_rueck: 'km Rück',
+  km_gesamt: 'km gesamt',
   ansprechpartner_start: 'Ansprechpartner Start',
   ansprechpartner_ziel: 'Ansprechpartner Ziel',
   ansprechpartner_rueckfuehrung: 'Ansprechpartner Rückführung',
@@ -53,11 +53,6 @@ export function wertLabel(feld: string, wert: string | null): string {
   if (feld === 'startdatum' || feld === 'enddatum') {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(wert);
     if (m) return `${m[3]}.${m[2]}.${m[1]}`;
-  }
-  // Zeitspalten kommen als "HH:MM:SS" — die Sekunden helfen niemandem.
-  if (feld.endsWith('zeit') || feld === 'abholzeit' || feld === 'abgabezeit') {
-    const m = /^(\d{2}):(\d{2})/.exec(wert);
-    if (m) return `${m[1]}:${m[2]}`;
   }
   return wert;
 }

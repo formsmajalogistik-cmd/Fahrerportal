@@ -9,8 +9,9 @@ import { ProtokollSection } from './ProtokollSection';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
+import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
 import {
-  inputZuZeit, leereKontaktMap, speichereAlleAnsprechpartner, type KontaktMap,
+  leereKontaktMap, speichereAlleAnsprechpartner, type KontaktMap,
 } from '../../lib/tourAnsprechpartner';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
@@ -117,12 +118,11 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const [stationsKontakte, setStationsKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   // Optionale Zusatzangaben (Migration 080).
   const [fahrzeugmodell, setFahrzeugmodell] = useState('');
-  const [abholzeit, setAbholzeit] = useState('');
-  const [abgabezeit, setAbgabezeit] = useState('');
-  const [rueckZeit, setRueckZeit] = useState('');
-  const [zeitHinweisStart, setZeitHinweisStart] = useState('');
-  const [zeitHinweisZiel, setZeitHinweisZiel] = useState('');
-  const [zeitHinweisRueck, setZeitHinweisRueck] = useState('');
+  // Zeitangabe je Station als Freitext (081) — steht beim jeweiligen
+  // Adressblock, nicht neben dem Datum.
+  const [zeitStart, setZeitStart] = useState('');
+  const [zeitZiel, setZeitZiel] = useState('');
+  const [zeitRueck, setZeitRueck] = useState('');
 
   // Routen-Dialog (km berechnen über Google Routes API). Identisches
   // Verhalten wie im Tour-Detail-Panel.
@@ -343,12 +343,9 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueckfuehrung.trim() || null) : null,
       // kontakt_* setzt der Spiegel-Trigger aus tour_ansprechpartner.
       fahrzeugmodell: fahrzeugmodell.trim() || null,
-      abholzeit: inputZuZeit(abholzeit),
-      abgabezeit: inputZuZeit(abgabezeit),
-      rueckfuehrung_zeit: hatRueckfuehrung ? inputZuZeit(rueckZeit) : null,
-      zeit_hinweis_start: zeitHinweisStart.trim() || null,
-      zeit_hinweis_ziel: zeitHinweisZiel.trim() || null,
-      zeit_hinweis_rueckfuehrung: hatRueckfuehrung ? (zeitHinweisRueck.trim() || null) : null,
+      zeit_start: zeitStart.trim() || null,
+      zeit_ziel: zeitZiel.trim() || null,
+      zeit_rueckfuehrung: hatRueckfuehrung ? (zeitRueck.trim() || null) : null,
     };
 
     const { data: neu, error: err } = await supabase
@@ -535,45 +532,19 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                 <option value="ABA">ABA</option>
               </select>
             </div>
-            <div>
+            <div className="min-w-0">
               <label htmlFor="t-start-dt" className="label">
                 Startdatum <span className="text-red-600">*</span>
               </label>
-              <div className="flex gap-2">
-                <input id="t-start-dt" type="date" className="input flex-1" required
-                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
-                <input id="t-abholzeit" type="time" className="input w-28"
-                       aria-label="Abholzeit (optional)" title="Abholzeit (optional)"
-                       value={abholzeit} onChange={(e) => setAbholzeit(e.target.value)} />
-              </div>
-              <input className="input mt-1 text-xs" placeholder="z.B. vormittags (optional)"
-                     aria-label="Zeit-Hinweis Abholung"
-                     value={zeitHinweisStart} onChange={(e) => setZeitHinweisStart(e.target.value)} />
+              <input id="t-start-dt" type="date" className="input" required
+                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
             </div>
-            <div>
+            <div className="min-w-0">
               <label htmlFor="t-end-dt" className="label">
                 Enddatum <span className="text-red-600">*</span>
               </label>
-              <div className="flex gap-2">
-                <input id="t-end-dt" type="date" className="input flex-1" required
-                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
-                <input id="t-abgabezeit" type="time" className="input w-28"
-                       aria-label="Abgabezeit (optional)" title="Abgabezeit (optional)"
-                       value={abgabezeit} onChange={(e) => setAbgabezeit(e.target.value)} />
-              </div>
-              <input className="input mt-1 text-xs" placeholder="z.B. nach Absprache (optional)"
-                     aria-label="Zeit-Hinweis Abgabe"
-                     value={zeitHinweisZiel} onChange={(e) => setZeitHinweisZiel(e.target.value)} />
-              {hatRueckfuehrung && (
-                <div className="mt-1 flex gap-2">
-                  <input id="t-rueckzeit" type="time" className="input w-28"
-                         aria-label="Zeit Rückführung (optional)" title="Zeit Rückführung (optional)"
-                         value={rueckZeit} onChange={(e) => setRueckZeit(e.target.value)} />
-                  <input className="input flex-1 text-xs" placeholder="Hinweis Rückführung (optional)"
-                         aria-label="Zeit-Hinweis Rückführung"
-                         value={zeitHinweisRueck} onChange={(e) => setZeitHinweisRueck(e.target.value)} />
-                </div>
-              )}
+              <input id="t-end-dt" type="date" className="input" required
+                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
             </div>
           </div>
 
@@ -598,31 +569,6 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             )}
           </div>
 
-          {/* Kennzeichen */}
-          {!hatRueckfuehrung ? (
-            <div>
-              <label htmlFor="t-kz" className="label">Kennzeichen</label>
-              <input id="t-kz" className="input" placeholder="z.B. M-XY 1234"
-                     value={kennzeichenHin}
-                     onChange={(e) => setKennzeichenHin(e.target.value)} />
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="t-kz-hin" className="label">Kennzeichen Hin</label>
-                <input id="t-kz-hin" className="input"
-                       value={kennzeichenHin}
-                       onChange={(e) => setKennzeichenHin(e.target.value)} />
-              </div>
-              <div>
-                <label htmlFor="t-kz-rueck" className="label">Kennzeichen Rück</label>
-                <input id="t-kz-rueck" className="input"
-                       value={kennzeichenRueck}
-                       onChange={(e) => setKennzeichenRueck(e.target.value)} />
-              </div>
-            </div>
-          )}
-
           {/* Protokoll — Zuweisungen erst nach Save möglich (Tour-ID nötig). */}
           <ProtokollSection
             tourId={null}
@@ -644,62 +590,83 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             } : null}
           />
 
-          {/* Sondervereinbarung */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-                checked={istSondervereinbarung}
-                onChange={(e) => setIstSondervereinbarung(e.target.checked)}
-              />
-              Sondervereinbarung
-            </label>
+          {/* Reihenfolge laut Vorgabe: Sondervereinbarung + E-Fahrzeug
+              nebeneinander, darunter Kennzeichen + Fahrzeugmodell,
+              darunter FIN. Auf Mobile bricht das sauber untereinander. */}
+          <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+                  checked={istSondervereinbarung}
+                  onChange={(e) => setIstSondervereinbarung(e.target.checked)}
+                />
+                Sondervereinbarung
+              </label>
+              <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+                  checked={istEFahrzeug}
+                  onChange={(e) => setIstEFahrzeug(e.target.checked)}
+                />
+                E-Fahrzeug
+              </label>
+            </div>
             {istSondervereinbarung && (
-              <div>
+              <div className="min-w-0">
                 <label htmlFor="t-sv-note" className="label">Anmerkung zur Sondervereinbarung</label>
                 <input id="t-sv-note" className="input"
                        value={sondervereinbarung}
                        onChange={(e) => setSondervereinbarung(e.target.value)} />
               </div>
             )}
-          </div>
 
-          {/* E-Fahrzeug-Checkbox + FIN */}
-          <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-end">
-            <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-                checked={istEFahrzeug}
-                onChange={(e) => setIstEFahrzeug(e.target.checked)}
-              />
-              E-Fahrzeug
-            </label>
-            <div>
-              <label htmlFor="t-fin" className="label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
-              <input id="t-fin" className="input"
-                     value={fin}
-                     onChange={(e) => setFin(e.target.value.toUpperCase())} />
-            </div>
-            {hatRueckfuehrung && (
-              <div>
-                <label htmlFor="t-fin-rueck" className="label">FIN Rück</label>
-                <input id="t-fin-rueck" className="input"
-                       value={finRueck}
-                       onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <label htmlFor="t-kz" className="label">
+                  {hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}
+                </label>
+                <input id="t-kz" className="input" placeholder="z.B. M-XY 1234"
+                       value={kennzeichenHin}
+                       onChange={(e) => setKennzeichenHin(e.target.value)} />
               </div>
-            )}
-            {/* Fahrzeugmodell — optional, deshalb unauffällig bei FIN. */}
-            <div>
-              <label htmlFor="t-modell" className="label">Fahrzeugmodell (optional)</label>
-              <SuggestCombobox
-                id="t-modell"
-                feldTyp="fahrzeugmodell"
-                value={fahrzeugmodell}
-                onChange={setFahrzeugmodell}
-                placeholder="z.B. VW Polo"
-              />
+              <div className="min-w-0">
+                <label htmlFor="t-modell" className="label">Fahrzeugmodell (optional)</label>
+                <SuggestCombobox
+                  id="t-modell"
+                  feldTyp="fahrzeugmodell"
+                  value={fahrzeugmodell}
+                  onChange={setFahrzeugmodell}
+                  placeholder="z.B. VW Polo"
+                />
+              </div>
+              {hatRueckfuehrung && (
+                <div className="min-w-0">
+                  <label htmlFor="t-kz-rueck" className="label">Kennzeichen Rück</label>
+                  <input id="t-kz-rueck" className="input"
+                         value={kennzeichenRueck}
+                         onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <label htmlFor="t-fin" className="label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
+                <input id="t-fin" className="input"
+                       value={fin}
+                       onChange={(e) => setFin(e.target.value.toUpperCase())} />
+              </div>
+              {hatRueckfuehrung && (
+                <div className="min-w-0">
+                  <label htmlFor="t-fin-rueck" className="label">FIN Rück</label>
+                  <input id="t-fin-rueck" className="input"
+                         value={finRueck}
+                         onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -760,59 +727,50 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               Adressen &amp; Kontakte vor Ort
             </summary>
             <div className="space-y-4 border-t border-maja-navy/10 p-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="t-adr-start" className="label">Adresse Start</label>
-                  <input id="t-adr-start" className="input"
-                         value={adresseStart}
-                         onChange={(e) => setAdresseStart(e.target.value)} />
-                </div>
-                <div>
-                  <label htmlFor="t-adr-ziel" className="label">Adresse Ziel</label>
-                  <input id="t-adr-ziel" className="input"
-                         value={adresseZiel}
-                         onChange={(e) => setAdresseZiel(e.target.value)} />
-                </div>
-              </div>
-              <RouteCalcRow
-                disabled={!adresseStart.trim() || !adresseZiel.trim()}
-                label="Entfernung berechnen"
-                confirmKm={routeConfirm.hin}
-                onClick={() => setRouteDialog('hin')}
+              {/* Je Station ein Block: Adresse, Zeit (Freitext) und die
+                  Ansprechpartner gehören zusammen. */}
+              <StationBlock
+                titel="Start (Abholung)"
+                idPrefix="t-st1"
+                adresseLabel="Adresse Start"
+                adresse={adresseStart} onAdresse={setAdresseStart}
+                zeit={zeitStart} onZeit={setZeitStart}
+                kontakte={stationsKontakte.start}
+                onKontakte={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
               />
+              <StationBlock
+                titel="Ziel (Abgabe)"
+                idPrefix="t-st2"
+                adresseLabel="Adresse Ziel"
+                adresse={adresseZiel} onAdresse={setAdresseZiel}
+                zeit={zeitZiel} onZeit={setZeitZiel}
+                kontakte={stationsKontakte.ziel}
+                onKontakte={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
+              >
+                <RouteCalcRow
+                  disabled={!adresseStart.trim() || !adresseZiel.trim()}
+                  label="Entfernung berechnen"
+                  confirmKm={routeConfirm.hin}
+                  onClick={() => setRouteDialog('hin')}
+                />
+              </StationBlock>
               {hatRueckfuehrung && (
-                <div>
-                  <label htmlFor="t-adr-rueck" className="label">Adresse Rückführung</label>
-                  <input id="t-adr-rueck" className="input"
-                         value={adresseRueckfuehrung}
-                         onChange={(e) => setAdresseRueckfuehrung(e.target.value)} />
+                <StationBlock
+                  titel="Rückführung"
+                  idPrefix="t-st3"
+                  adresseLabel="Adresse Rückführung"
+                  adresse={adresseRueckfuehrung} onAdresse={setAdresseRueckfuehrung}
+                  zeit={zeitRueck} onZeit={setZeitRueck}
+                  kontakte={stationsKontakte.rueckfuehrung}
+                  onKontakte={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
+                >
                   <RouteCalcRow
                     disabled={!adresseZiel.trim() || !adresseRueckfuehrung.trim()}
                     label="Entfernung Rückweg berechnen"
                     confirmKm={routeConfirm.rueck}
                     onClick={() => setRouteDialog('rueck')}
                   />
-                </div>
-              )}
-              <AnsprechpartnerFeldsatz
-                titel="Kontakt vor Ort — Start"
-                idPrefix="ks"
-                liste={stationsKontakte.start}
-                onChange={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
-              />
-              <AnsprechpartnerFeldsatz
-                titel="Kontakt vor Ort — Ziel"
-                idPrefix="kz"
-                liste={stationsKontakte.ziel}
-                onChange={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
-              />
-              {hatRueckfuehrung && (
-                <AnsprechpartnerFeldsatz
-                  titel="Kontakt vor Ort — Rückführung"
-                  idPrefix="kr"
-                  liste={stationsKontakte.rueckfuehrung}
-                  onChange={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
-                />
+                </StationBlock>
               )}
             </div>
           </details>
@@ -926,3 +884,50 @@ function RouteSmallIcon({ className }: { className?: string }) {
   );
 }
 
+/**
+ * Adress-/Zeit-/Kontakt-Block einer Station. Bewusst einspaltig, damit
+ * auf schmalen Breiten nichts aus dem Container läuft.
+ */
+function StationBlock({
+  titel, idPrefix, adresseLabel, adresse, onAdresse, zeit, onZeit,
+  kontakte, onKontakte, children,
+}: {
+  titel: string;
+  idPrefix: string;
+  adresseLabel: string;
+  adresse: string;
+  onAdresse: (v: string) => void;
+  zeit: string;
+  onZeit: (v: string) => void;
+  kontakte: KontaktMap[keyof KontaktMap];
+  onKontakte: (next: KontaktMap[keyof KontaktMap]) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3 rounded-lg border border-maja-navy/15 p-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
+        {titel}
+      </h3>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <label htmlFor={`${idPrefix}-adr`} className="label">{adresseLabel}</label>
+          <input id={`${idPrefix}-adr`} className="input"
+                 value={adresse} onChange={(e) => onAdresse(e.target.value)} />
+        </div>
+        <div className="min-w-0">
+          <label htmlFor={`${idPrefix}-zeit`} className="label">Zeit (optional)</label>
+          <input id={`${idPrefix}-zeit`} className="input"
+                 placeholder={ZEIT_PLATZHALTER}
+                 value={zeit} onChange={(e) => onZeit(e.target.value)} />
+        </div>
+      </div>
+      {children}
+      <AnsprechpartnerFeldsatz
+        titel="Ansprechpartner"
+        idPrefix={`${idPrefix}-k`}
+        liste={kontakte}
+        onChange={onKontakte}
+      />
+    </section>
+  );
+}

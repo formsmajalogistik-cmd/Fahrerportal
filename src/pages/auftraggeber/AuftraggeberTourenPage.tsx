@@ -327,9 +327,11 @@ function KundenTourCard({
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const abgelehnt = !!tour.abgelehnt;
   const inPruefung = !tour.bestaetigt && !abgelehnt;
+  // Zeitangaben hängen sich dezent ans Datum — nur wenn gepflegt.
+  const zeit = (v: string | null | undefined) => ((v ?? '').trim() ? `, ${(v ?? '').trim()}` : '');
   const dateRange = tour.startdatum && tour.enddatum && tour.startdatum !== tour.enddatum
-    ? `${formatDate(tour.startdatum)} – ${formatDate(tour.enddatum)}`
-    : formatDate(tour.startdatum ?? tour.enddatum);
+    ? `${formatDate(tour.startdatum)}${zeit(tour.zeit_start)} – ${formatDate(tour.enddatum)}${zeit(tour.zeit_ziel)}`
+    : `${formatDate(tour.startdatum ?? tour.enddatum)}${zeit(tour.zeit_start)}`;
   const linkedEingaenge = [tour.eingang_id, tour.eingang_id_bc]
     .filter((x): x is string => !!x)
     .map((id) => eingaenge.get(id))
@@ -377,6 +379,8 @@ function KundenTourCard({
                 <div>FIN: {tour.fin}</div>
               )}
               {tour.kundenname && <div>{tour.kundenname}</div>}
+              {tour.fahrzeugmodell && <div>{tour.fahrzeugmodell}</div>}
+              {tour.km_gesamt != null && <div>{tour.km_gesamt} km</div>}
             </div>
 
             {abgelehnt && (

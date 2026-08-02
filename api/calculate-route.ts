@@ -78,9 +78,12 @@ export default async function handler(req: Req, res: Res) {
     const auth = asString(req.headers?.authorization as string | undefined);
     const user = await getAuthedUser(auth);
     const token = (auth ?? '').replace(/^bearer\s+/i, '');
-    // Routen-Berechnung ist eine reine Admin-Funktion.
-    if (user.role !== 'admin') {
-      throw new HttpError(403, 'Nur Admins dürfen Routen berechnen');
+    // Admins und Auftraggeber dürfen rechnen — Auftraggeber pflegen
+    // seit Migration 081 die km ihrer eigenen Touren selbst. Der
+    // Google-Key bleibt serverseitig und der Endpoint authentifiziert;
+    // Fahrer und Test-Profile bleiben ausgeschlossen.
+    if (user.role !== 'admin' && user.role !== 'auftraggeber') {
+      throw new HttpError(403, 'Keine Berechtigung für die Routenberechnung');
     }
 
     const body = (req.body && typeof req.body === 'object')

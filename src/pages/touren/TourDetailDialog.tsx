@@ -76,9 +76,9 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
 import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
+import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
 import {
-  inputZuZeit, ladeAnsprechpartner, leereKontaktMap, speichereAlleAnsprechpartner,
-  zeitAnzeige, zeitZuInput,
+  ladeAnsprechpartner, leereKontaktMap, speichereAlleAnsprechpartner,
   type KontaktEntwurf, type KontaktMap, type Station,
 } from '../../lib/tourAnsprechpartner';
 const ZUSATZ_KATEGORIEN: readonly string[] = ZUSATZ_KATEGORIEN_BASE;
@@ -219,12 +219,9 @@ interface EditDraft {
   // Fahrzeugmodell + Zeiten je Station (Migration 080). Die Kontakte
   // liegen NICHT mehr im Draft, sondern in tour_ansprechpartner.
   fahrzeugmodell: string;
-  abholzeit: string;
-  abgabezeit: string;
-  rueckZeit: string;
-  zeitHinweisStart: string;
-  zeitHinweisZiel: string;
-  zeitHinweisRueck: string;
+  zeitStart: string;
+  zeitZiel: string;
+  zeitRueck: string;
   // Rechnungsdatum (optional, abweichend vom Tourendatum)
   rechnungsdatumAbweichend: boolean;
   rechnungsdatum: string;
@@ -267,12 +264,9 @@ function draftFromTour(t: FullTour): EditDraft {
     kontaktId: t.kontakt_id ?? '',
     appNotiz: t.app_notiz ?? '',
     fahrzeugmodell: t.fahrzeugmodell ?? '',
-    abholzeit: zeitZuInput(t.abholzeit),
-    abgabezeit: zeitZuInput(t.abgabezeit),
-    rueckZeit: zeitZuInput(t.rueckfuehrung_zeit),
-    zeitHinweisStart: t.zeit_hinweis_start ?? '',
-    zeitHinweisZiel: t.zeit_hinweis_ziel ?? '',
-    zeitHinweisRueck: t.zeit_hinweis_rueckfuehrung ?? '',
+    zeitStart: t.zeit_start ?? '',
+    zeitZiel: t.zeit_ziel ?? '',
+    zeitRueck: t.zeit_rueckfuehrung ?? '',
     rechnungsdatumAbweichend: !!t.rechnungsdatum_abweichend,
     rechnungsdatum: isoToLocalInput(t.rechnungsdatum),
   };
@@ -698,13 +692,10 @@ export function TourDetailDialog({
         // partner liegen in tour_ansprechpartner, ein DB-Trigger spiegelt
         // den ersten je Station in die Alt-Spalten (Migration 080).
         fahrzeugmodell: draft.fahrzeugmodell.trim() || null,
-        abholzeit: inputZuZeit(draft.abholzeit),
-        abgabezeit: inputZuZeit(draft.abgabezeit),
-        rueckfuehrung_zeit: draft.hatRueckfuehrung ? inputZuZeit(draft.rueckZeit) : null,
-        zeit_hinweis_start: draft.zeitHinweisStart.trim() || null,
-        zeit_hinweis_ziel: draft.zeitHinweisZiel.trim() || null,
-        zeit_hinweis_rueckfuehrung: draft.hatRueckfuehrung
-          ? (draft.zeitHinweisRueck.trim() || null) : null,
+        zeit_start: draft.zeitStart.trim() || null,
+        zeit_ziel: draft.zeitZiel.trim() || null,
+        zeit_rueckfuehrung: draft.hatRueckfuehrung
+          ? (draft.zeitRueck.trim() || null) : null,
         // Haken ohne eingetragenes Datum wird beim Speichern automatisch
         // bereinigt — sonst fällt die Tour aus den Rechnungs-Queries
         // (leeres effektives Rechnungsdatum).
@@ -1931,37 +1922,6 @@ function EditMode(p: EditModeProps) {
         } : null}
       />
 
-      {/* E-Fahrzeug-Checkbox (FIN, Kennzeichen, Adressen sind in Bereich 6) */}
-      <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-          checked={draft.istEFahrzeug}
-          onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
-        />
-        E-Fahrzeug
-      </label>
-
-      {/* Sondervereinbarung */}
-      <div className="space-y-2">
-        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-            checked={draft.istSondervereinbarung}
-            onChange={(e) => patchDraft({ istSondervereinbarung: e.target.checked })}
-          />
-          Sondervereinbarung
-        </label>
-        {draft.istSondervereinbarung && (
-          <div>
-            <label className="label">Anmerkung zur Sondervereinbarung</label>
-            <input className="input" value={draft.sondervereinbarung}
-                   onChange={(e) => patchDraft({ sondervereinbarung: e.target.value })} />
-          </div>
-        )}
-      </div>
-
       {/* Vergütung + Kundenname */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -2090,23 +2050,20 @@ function VehicleAndAddressView({
           stadt={tour.start_stadt}
           adresse={tour.adresse_start}
           kontakte={kontakte.start}
-          zeit={tour.abholzeit}
-          zeitHinweis={tour.zeit_hinweis_start}
+          zeit={tour.zeit_start}
         />
         <AddressBlockView
           stadt={tour.ziel_stadt}
           adresse={tour.adresse_ziel}
           kontakte={kontakte.ziel}
-          zeit={tour.abgabezeit}
-          zeitHinweis={tour.zeit_hinweis_ziel}
+          zeit={tour.zeit_ziel}
         />
         {hatRueckfuehrung && tour.rueckfuehrung_stadt && (
           <AddressBlockView
             stadt={tour.rueckfuehrung_stadt}
             adresse={tour.adresse_rueckfuehrung}
             kontakte={kontakte.rueckfuehrung}
-          zeit={tour.rueckfuehrung_zeit}
-          zeitHinweis={tour.zeit_hinweis_rueckfuehrung}
+          zeit={tour.zeit_rueckfuehrung}
           />
         )}
       </div>
@@ -2115,18 +2072,17 @@ function VehicleAndAddressView({
 }
 
 function AddressBlockView({
-  stadt, adresse, kontakte, zeit, zeitHinweis,
+  stadt, adresse, kontakte, zeit,
 }: {
   stadt: string;
   adresse: string | null;
   /** Alle Ansprechpartner der Station (Migration 080). */
   kontakte: KontaktEntwurf[];
+  /** Freitext-Zeitangabe (Migration 081). */
   zeit: string | null;
-  zeitHinweis: string | null;
 }) {
   const gefuellt = kontakte.filter((k) => k.name || k.telefon || k.email);
-  const zeitText = zeitAnzeige(zeit);
-  const hinweis = (zeitHinweis ?? '').trim();
+  const zeitText = (zeit ?? '').trim();
   return (
     <div className="rounded-lg border border-maja-navy/10 p-3">
       <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
@@ -2136,10 +2092,8 @@ function AddressBlockView({
         {adresse || '—'}
       </div>
       {/* Zeit nur zeigen, wenn gepflegt. */}
-      {(zeitText || hinweis) && (
-        <div className="mt-1 text-xs text-maja-muted">
-          {zeitText}{zeitText && hinweis ? ' · ' : ''}{hinweis}
-        </div>
+      {zeitText && (
+        <div className="mt-1 text-xs text-maja-muted">{zeitText}</div>
       )}
       <div className="mt-2 border-t border-maja-navy/10 pt-2">
         <div className="text-[10px] font-medium uppercase tracking-wide text-maja-muted">
@@ -2183,61 +2137,78 @@ function VehicleAndAddressEdit({
 }) {
   return (
     <>
-      {/* Kennzeichen */}
-      {!draft.hatRueckfuehrung ? (
-        <div>
-          <label className="label">Kennzeichen</label>
+      {/* Reihenfolge laut Vorgabe: Sondervereinbarung + E-Fahrzeug
+          nebeneinander, darunter Kennzeichen + Fahrzeugmodell, darunter
+          FIN. Bricht auf schmalen Breiten sauber untereinander um. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+            checked={draft.istSondervereinbarung}
+            onChange={(e) => patchDraft({ istSondervereinbarung: e.target.checked })}
+          />
+          Sondervereinbarung
+        </label>
+        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
+            checked={draft.istEFahrzeug}
+            onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
+          />
+          E-Fahrzeug
+        </label>
+      </div>
+      {draft.istSondervereinbarung && (
+        <div className="min-w-0">
+          <label className="label">Anmerkung zur Sondervereinbarung</label>
+          <input className="input" value={draft.sondervereinbarung}
+                 onChange={(e) => patchDraft({ sondervereinbarung: e.target.value })} />
+        </div>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <label className="label">
+            {draft.hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}
+          </label>
           <input className="input" value={draft.kennzeichenHin}
                  onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
         </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="label">Kennzeichen Hin</label>
-            <input className="input" value={draft.kennzeichenHin}
-                   onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
-          </div>
-          <div>
+        <div className="min-w-0">
+          <label className="label">Fahrzeugmodell (optional)</label>
+          <SuggestCombobox
+            feldTyp="fahrzeugmodell"
+            value={draft.fahrzeugmodell}
+            onChange={(v) => patchDraft({ fahrzeugmodell: v })}
+            placeholder="z.B. VW Polo"
+          />
+        </div>
+        {draft.hatRueckfuehrung && (
+          <div className="min-w-0">
             <label className="label">Kennzeichen Rück</label>
             <input className="input" value={draft.kennzeichenRueck}
                    onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
           </div>
-        </div>
-      )}
-      {/* FIN — analog zum Kennzeichen: bei Rückführung Hin/Rück getrennt */}
-      {!draft.hatRueckfuehrung ? (
-        <div>
-          <label className="label">FIN</label>
+        )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <label className="label">{draft.hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
           <input className="input"
                  value={draft.fin}
                  onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
         </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="label">FIN Hin</label>
-            <input className="input"
-                   value={draft.fin}
-                   onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
-          </div>
-          <div>
+        {draft.hatRueckfuehrung && (
+          <div className="min-w-0">
             <label className="label">FIN Rück</label>
             <input className="input"
                    value={draft.finRueck}
                    onChange={(e) => patchDraft({ finRueck: e.target.value.toUpperCase() })} />
           </div>
-        </div>
-      )}
-
-      {/* Fahrzeugmodell — optional, deshalb unauffällig hinter FIN. */}
-      <div>
-        <label className="label">Fahrzeugmodell (optional)</label>
-        <SuggestCombobox
-          feldTyp="fahrzeugmodell"
-          value={draft.fahrzeugmodell}
-          onChange={(v) => patchDraft({ fahrzeugmodell: v })}
-          placeholder="z.B. VW Polo"
-        />
+        )}
       </div>
 
       {/* Adresse + Kontakt pro Stadt */}
@@ -2245,10 +2216,8 @@ function VehicleAndAddressEdit({
         stadt={draft.startStadt}
         adresseValue={draft.adresseStart}
         onAdresse={(v) => patchDraft({ adresseStart: v })}
-        zeit={draft.abholzeit}
-        onZeit={(v) => patchDraft({ abholzeit: v })}
-        zeitHinweis={draft.zeitHinweisStart}
-        onZeitHinweis={(v) => patchDraft({ zeitHinweisStart: v })}
+        zeit={draft.zeitStart}
+        onZeit={(v) => patchDraft({ zeitStart: v })}
         idPrefix="td-ks"
         kontakte={kontakte.start}
         onKontakte={(next) => onKontakte('start', next)}
@@ -2257,10 +2226,8 @@ function VehicleAndAddressEdit({
         stadt={draft.zielStadt}
         adresseValue={draft.adresseZiel}
         onAdresse={(v) => patchDraft({ adresseZiel: v })}
-        zeit={draft.abgabezeit}
-        onZeit={(v) => patchDraft({ abgabezeit: v })}
-        zeitHinweis={draft.zeitHinweisZiel}
-        onZeitHinweis={(v) => patchDraft({ zeitHinweisZiel: v })}
+        zeit={draft.zeitZiel}
+        onZeit={(v) => patchDraft({ zeitZiel: v })}
         idPrefix="td-kz"
         kontakte={kontakte.ziel}
         onKontakte={(next) => onKontakte('ziel', next)}
@@ -2279,10 +2246,8 @@ function VehicleAndAddressEdit({
             stadt={draft.rueckfuehrungStadt}
             adresseValue={draft.adresseRueckfuehrung}
             onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
-            zeit={draft.rueckZeit}
-            onZeit={(v) => patchDraft({ rueckZeit: v })}
-            zeitHinweis={draft.zeitHinweisRueck}
-            onZeitHinweis={(v) => patchDraft({ zeitHinweisRueck: v })}
+            zeit={draft.zeitRueck}
+            onZeit={(v) => patchDraft({ zeitRueck: v })}
             idPrefix="td-kr"
             kontakte={kontakte.rueckfuehrung}
             onKontakte={(next) => onKontakte('rueckfuehrung', next)}
@@ -2332,11 +2297,9 @@ interface AddressBlockEditProps {
   stadt: string;
   adresseValue: string;
   onAdresse: (v: string) => void;
-  /** Uhrzeit + Freitext-Hinweis der Station (Migration 080). */
+  /** Freitext-Zeitangabe der Station (Migration 081). */
   zeit: string;
   onZeit: (v: string) => void;
-  zeitHinweis: string;
-  onZeitHinweis: (v: string) => void;
   /** Ansprechpartner der Station — der erste wird in kontakt_* gespiegelt. */
   idPrefix: string;
   kontakte: KontaktEntwurf[];
@@ -2355,18 +2318,10 @@ function AddressBlockEdit(p: AddressBlockEditProps) {
         value={p.adresseValue}
         onChange={(e) => p.onAdresse(e.target.value)}
       />
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <div>
-          <label className="label">Uhrzeit (optional)</label>
-          <input className="input" type="time" value={p.zeit}
-                 onChange={(e) => p.onZeit(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Zeit-Hinweis (optional)</label>
-          <input className="input" placeholder="z.B. vormittags"
-                 value={p.zeitHinweis}
-                 onChange={(e) => p.onZeitHinweis(e.target.value)} />
-        </div>
+      <div className="mt-3 min-w-0">
+        <label className="label">Zeit (optional)</label>
+        <input className="input" placeholder={ZEIT_PLATZHALTER}
+               value={p.zeit} onChange={(e) => p.onZeit(e.target.value)} />
       </div>
       <div className="mt-3 border-t border-maja-navy/10 pt-3">
         <AnsprechpartnerFeldsatz

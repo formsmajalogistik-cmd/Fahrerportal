@@ -134,11 +134,11 @@ function KontaktZeile({
   fehler?: boolean;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid min-w-0 gap-3 sm:grid-cols-3">
       <input
         id={`${idPrefix}-name`}
         aria-label={`Name ${titel}`}
-        className={fehler ? 'input border-red-500' : 'input'}
+        className={`min-w-0 ${fehler ? 'input border-red-500' : 'input'}`}
         placeholder="Name"
         value={kontakt.name}
         disabled={disabled}
@@ -147,7 +147,7 @@ function KontaktZeile({
       <input
         id={`${idPrefix}-tel`}
         aria-label={`Telefon ${titel}`}
-        className="input"
+        className="input min-w-0"
         placeholder="Telefon"
         value={kontakt.telefon}
         disabled={disabled}
@@ -156,7 +156,7 @@ function KontaktZeile({
       <input
         id={`${idPrefix}-mail`}
         aria-label={`E-Mail ${titel}`}
-        className="input"
+        className="input min-w-0"
         placeholder="E-Mail"
         value={kontakt.email}
         disabled={disabled}

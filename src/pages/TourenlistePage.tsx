@@ -26,7 +26,6 @@ import {
   feldLabel, ladeOffeneAenderungen, quittiereAenderungen, wertLabel,
   type AenderungsGruppe,
 } from '../lib/tourAenderungen';
-import { zeitAnzeige } from '../lib/tourAnsprechpartner';
 import {
   CheckBoxCheckedIcon, CheckBoxEmptyIcon, DownloadIcon, EyeIcon,
 } from '../components/icons';
@@ -239,7 +238,7 @@ export function TourenlistePage() {
       eingang_id, eingang_id_bc, km_gesamt,
       bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
       abgelehnt, zurueckgestellt,
-      abholzeit, abgabezeit
+      zeit_start, zeit_ziel
     `;
     const adminCols = `${baseCols},
       verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
@@ -1508,11 +1507,12 @@ function TourCard({
   // sie gepflegt sind. Ohne Zeiten sieht die Karte exakt aus wie bisher.
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
+    const zeit = (v: string | null | undefined) => ((v ?? '').trim() ? `, ${(v ?? '').trim()}` : '');
     const start = tour.startdatum
-      ? `${formatDate(tour.startdatum)}${zeitAnzeige(tour.abholzeit) ? `, ${zeitAnzeige(tour.abholzeit)}` : ''}`
+      ? `${formatDate(tour.startdatum)}${zeit(tour.zeit_start)}`
       : null;
     const ende = tour.enddatum
-      ? `${formatDate(tour.enddatum)}${zeitAnzeige(tour.abgabezeit) ? `, ${zeitAnzeige(tour.abgabezeit)}` : ''}`
+      ? `${formatDate(tour.enddatum)}${zeit(tour.zeit_ziel)}`
       : null;
     if (start && ende) return `${start} – ${ende}`;
     return start ?? ende;

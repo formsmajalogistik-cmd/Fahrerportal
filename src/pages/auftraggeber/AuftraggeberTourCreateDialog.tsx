@@ -3,9 +3,10 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
-import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
+import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import {
-  inputZuZeit, leereKontaktMap, toPayload, type KontaktMap,
+  leereKontaktMap, toPayload, type KontaktMap,
 } from '../../lib/tourAnsprechpartner';
 import type { TourenArt } from '../../types/db';
 
@@ -23,6 +24,49 @@ interface Props {
  * die Tour erscheint beim Admin "Zur Bestätigung" und beim Auftraggeber
  * als "In Prüfung".
  */
+/**
+ * km-Feld plus "Entfernung berechnen"-Button. Steht direkt unter der
+ * jeweiligen Adresse — dieselbe Stelle wie in der Admin-Ansicht.
+ */
+function KmZeile({
+  label, kmLabel, km, onKm, disabled, onBerechnen,
+}: {
+  label: string;
+  kmLabel: string;
+  km: string;
+  onKm: (v: string) => void;
+  disabled: boolean;
+  onBerechnen: () => void;
+}) {
+  const id = `km-${kmLabel.replace(/[^a-zA-Z]+/g, '-').toLowerCase()}`;
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="min-w-0 flex-1">
+        <label htmlFor={id} className="label">{kmLabel} (optional)</label>
+        <input id={id} className="input" inputMode="numeric" placeholder="z.B. 120"
+               value={km} onChange={(e) => onKm(e.target.value)} />
+      </div>
+      <button
+        type="button"
+        className="btn-secondary shrink-0 text-xs"
+        disabled={disabled}
+        title={disabled ? 'Beide Adressen ausfüllen, dann ist die Berechnung möglich' : label}
+        onClick={onBerechnen}
+      >
+        {label}
+      </button>
+    </div>
+  );
+}
+
+/** km-Eingabe → Ganzzahl oder null (leeres Feld bleibt leer). */
+function parseKm(v: string): number | null {
+  const t = v.trim().replace(',', '.');
+  if (!t) return null;
+  const n = Math.round(Number(t));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const { profile, session } = useAuth();
   const guard = useTestGuard();
@@ -43,14 +87,16 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const [adresseRueck, setAdresseRueck] = useState('');
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   const [info, setInfo] = useState('');
-  // Optionale Zusatzangaben (Migration 080) — bewusst unauffällig.
+  // Optionale Zusatzangaben. Zeiten sind Freitext je Station (081).
   const [fahrzeugmodell, setFahrzeugmodell] = useState('');
-  const [abholzeit, setAbholzeit] = useState('');
-  const [abgabezeit, setAbgabezeit] = useState('');
-  const [rueckZeit, setRueckZeit] = useState('');
-  const [zeitHinweisStart, setZeitHinweisStart] = useState('');
-  const [zeitHinweisZiel, setZeitHinweisZiel] = useState('');
-  const [zeitHinweisRueck, setZeitHinweisRueck] = useState('');
+  const [zeitStart, setZeitStart] = useState('');
+  const [zeitZiel, setZeitZiel] = useState('');
+  const [zeitRueck, setZeitRueck] = useState('');
+  // km darf der Auftraggeber selbst pflegen (081) — der Preis bleibt
+  // Sache von Maja-Logistik.
+  const [kmHin, setKmHin] = useState('');
+  const [kmRueck, setKmRueck] = useState('');
+  const [routeDialog, setRouteDialog] = useState<null | 'hin' | 'rueck'>(null);
 
   const [missing, setMissing] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -58,6 +104,13 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
 
   // ABA/ABC haben eine Rückführung → Adresse Rückführung wird Pflicht.
   const hatRueckfuehrung = tourenart === 'ABA' || tourenart === 'ABC';
+  // km gesamt ergibt sich aus Hin + Rück (bei AB nur Hin).
+  const kmGesamt = (() => {
+    const hin = parseKm(kmHin) ?? 0;
+    const rueck = hatRueckfuehrung ? (parseKm(kmRueck) ?? 0) : 0;
+    const summe = hin + rueck;
+    return summe > 0 ? summe : null;
+  })();
 
   function inputCls(key: string): string {
     return missing.has(key) ? 'input border-red-500' : 'input';
@@ -121,12 +174,12 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       // unten in tour_ansprechpartner, der DB-Trigger spiegelt den
       // ersten Eintrag je Station in die Alt-Spalten.
       fahrzeugmodell: fahrzeugmodell.trim() || null,
-      abholzeit: inputZuZeit(abholzeit),
-      abgabezeit: inputZuZeit(abgabezeit),
-      rueckfuehrung_zeit: hatRueckfuehrung ? inputZuZeit(rueckZeit) : null,
-      zeit_hinweis_start: zeitHinweisStart.trim() || null,
-      zeit_hinweis_ziel: zeitHinweisZiel.trim() || null,
-      zeit_hinweis_rueckfuehrung: hatRueckfuehrung ? (zeitHinweisRueck.trim() || null) : null,
+      zeit_start: zeitStart.trim() || null,
+      zeit_ziel: zeitZiel.trim() || null,
+      zeit_rueckfuehrung: hatRueckfuehrung ? (zeitRueck.trim() || null) : null,
+      km_hin: parseKm(kmHin),
+      km_rueck: hatRueckfuehrung ? parseKm(kmRueck) : null,
+      km_gesamt: kmGesamt,
       info: info.trim() || null,
       auftraggeber_id: profile.auftraggeber_id,
       bestaetigt: false,
@@ -166,8 +219,10 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+          {/* Kopf: Tourenart + Datumsfelder. Die Datumsfelder bleiben
+              bewusst ohne Zeit-Zusatz — die Zeit steht bei der Station. */}
           <div className="grid gap-3 sm:grid-cols-3">
-            <div>
+            <div className="min-w-0">
               <label htmlFor="at-art" className="label">Tourenart *</label>
               <select id="at-art" className={inputCls('tourenart')}
                       value={tourenart}
@@ -178,156 +233,132 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 <option value="ABC">ABC (Dreieck)</option>
               </select>
             </div>
-            <div>
+            <div className="min-w-0">
               <label htmlFor="at-von" className="label">Startdatum *</label>
-              <div className="flex gap-2">
-                <input id="at-von" type="date" className={`${inputCls('startdatum')} flex-1`}
-                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
-                <input id="at-abholzeit" type="time" className="input w-28"
-                       aria-label="Abholzeit (optional)" title="Abholzeit (optional)"
-                       value={abholzeit} onChange={(e) => setAbholzeit(e.target.value)} />
-              </div>
-              <input className="input mt-1 text-xs" placeholder="z.B. vormittags (optional)"
-                     aria-label="Zeit-Hinweis Abholung"
-                     value={zeitHinweisStart} onChange={(e) => setZeitHinweisStart(e.target.value)} />
+              <input id="at-von" type="date" className={inputCls('startdatum')}
+                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
             </div>
-            <div>
+            <div className="min-w-0">
               <label htmlFor="at-bis" className="label">Enddatum *</label>
-              <div className="flex gap-2">
-                <input id="at-bis" type="date" className={`${inputCls('enddatum')} flex-1`}
-                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
-                <input id="at-abgabezeit" type="time" className="input w-28"
-                       aria-label="Abgabezeit (optional)" title="Abgabezeit (optional)"
-                       value={abgabezeit} onChange={(e) => setAbgabezeit(e.target.value)} />
-              </div>
-              <input className="input mt-1 text-xs" placeholder="z.B. nach Absprache (optional)"
-                     aria-label="Zeit-Hinweis Abgabe"
-                     value={zeitHinweisZiel} onChange={(e) => setZeitHinweisZiel(e.target.value)} />
+              <input id="at-bis" type="date" className={inputCls('enddatum')}
+                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="at-start" className="label">Start-Stadt *</label>
-              <input id="at-start" className={inputCls('startStadt')}
-                     value={startStadt} onChange={(e) => setStartStadt(e.target.value)} />
+          {/* Fahrzeugdaten in der vorgegebenen Reihenfolge:
+              E-Fahrzeug — Kennzeichen + Modell — FIN. */}
+          <div className="space-y-3">
+            <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
+              <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                     checked={istEFahrzeug} onChange={(e) => setIstEFahrzeug(e.target.checked)} />
+              E-Fahrzeug
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <label htmlFor="at-kz" className="label">Kennzeichen *</label>
+                <input id="at-kz" className={inputCls('kennzeichen')}
+                       value={kennzeichenHin} onChange={(e) => setKennzeichenHin(e.target.value)} />
+              </div>
+              <div className="min-w-0">
+                <label htmlFor="at-modell" className="label">Fahrzeugmodell (optional)</label>
+                <SuggestCombobox
+                  id="at-modell"
+                  feldTyp="fahrzeugmodell"
+                  value={fahrzeugmodell}
+                  onChange={setFahrzeugmodell}
+                  placeholder="z.B. VW Polo"
+                />
+              </div>
+              {hatRueckfuehrung && (
+                <div className="min-w-0">
+                  <label htmlFor="at-kz2" className="label">Kennzeichen Rückführung</label>
+                  <input id="at-kz2" className="input"
+                         value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                </div>
+              )}
             </div>
-            <div>
-              <label htmlFor="at-ziel" className="label">Ziel-Stadt *</label>
-              <input id="at-ziel" className={inputCls('zielStadt')}
-                     value={zielStadt} onChange={(e) => setZielStadt(e.target.value)} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <label htmlFor="at-fin" className="label">FIN *</label>
+                <input id="at-fin" className={inputCls('fin')}
+                       value={fin} onChange={(e) => setFin(e.target.value)} />
+              </div>
+              <div className="min-w-0">
+                <label htmlFor="at-kunde" className="label">Kundenname *</label>
+                <input id="at-kunde" className={inputCls('kundenname')}
+                       value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
+              </div>
             </div>
           </div>
+
+          {/* Stationen: Stadt, Zeit, Adresse und Ansprechpartner
+              gehören zusammen — damit ist auch klar, dass es pro Ort
+              eine Zeitangabe gibt. */}
+          <StationFeldsatz
+            titel="Start (Abholung)"
+            idPrefix="at-st1"
+            stadtLabel="Start-Stadt"
+            stadt={startStadt} onStadt={setStartStadt}
+            stadtPflicht stadtFehler={missing.has('startStadt')}
+            adresse={adresseStart} onAdresse={setAdresseStart}
+            adressePflicht adresseFehler={missing.has('adresseStart')}
+            zeit={zeitStart} onZeit={setZeitStart}
+            kontakte={kontakte.start}
+            onKontakte={(next) => setKontakte((m) => ({ ...m, start: next }))}
+            kontaktPflicht kontaktFehler={missing.has('kontaktStart')}
+          />
+
+          <StationFeldsatz
+            titel="Ziel (Abgabe)"
+            idPrefix="at-st2"
+            stadtLabel="Ziel-Stadt"
+            stadt={zielStadt} onStadt={setZielStadt}
+            stadtPflicht stadtFehler={missing.has('zielStadt')}
+            adresse={adresseZiel} onAdresse={setAdresseZiel}
+            adressePflicht adresseFehler={missing.has('adresseZiel')}
+            zeit={zeitZiel} onZeit={setZeitZiel}
+            kontakte={kontakte.ziel}
+            onKontakte={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
+            kontaktPflicht kontaktFehler={missing.has('kontaktZiel')}
+          >
+            <KmZeile
+              label="Entfernung berechnen"
+              kmLabel="km Hin"
+              km={kmHin}
+              onKm={setKmHin}
+              disabled={!adresseStart.trim() || !adresseZiel.trim()}
+              onBerechnen={() => setRouteDialog('hin')}
+            />
+          </StationFeldsatz>
 
           {hatRueckfuehrung && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="at-rueck" className="label">Rückführung-Stadt *</label>
-                <input id="at-rueck" className={inputCls('rueckStadt')}
-                       value={rueckStadt} onChange={(e) => setRueckStadt(e.target.value)} />
-              </div>
-              <div>
-                <label htmlFor="at-rueckzeit" className="label">Zeit Rückführung (optional)</label>
-                <div className="flex gap-2">
-                  <input id="at-rueckzeit" type="time" className="input w-28"
-                         value={rueckZeit} onChange={(e) => setRueckZeit(e.target.value)} />
-                  <input className="input flex-1 text-xs" placeholder="Hinweis (optional)"
-                         aria-label="Zeit-Hinweis Rückführung"
-                         value={zeitHinweisRueck} onChange={(e) => setZeitHinweisRueck(e.target.value)} />
-                </div>
-              </div>
-            </div>
+            <StationFeldsatz
+              titel="Rückführung"
+              idPrefix="at-st3"
+              stadtLabel="Rückführung-Stadt"
+              stadt={rueckStadt} onStadt={setRueckStadt}
+              stadtPflicht stadtFehler={missing.has('rueckStadt')}
+              adresse={adresseRueck} onAdresse={setAdresseRueck}
+              adressePflicht adresseFehler={missing.has('adresseRueck')}
+              zeit={zeitRueck} onZeit={setZeitRueck}
+              kontakte={kontakte.rueckfuehrung}
+              onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
+            >
+              <KmZeile
+                label="Entfernung Rückweg berechnen"
+                kmLabel="km Rück"
+                km={kmRueck}
+                onKm={setKmRueck}
+                disabled={!adresseZiel.trim() || !adresseRueck.trim()}
+                onBerechnen={() => setRouteDialog('rueck')}
+              />
+            </StationFeldsatz>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="at-kz" className="label">Kennzeichen *</label>
-              <input id="at-kz" className={inputCls('kennzeichen')}
-                     value={kennzeichenHin} onChange={(e) => setKennzeichenHin(e.target.value)} />
-            </div>
-            {hatRueckfuehrung && (
-              <div>
-                <label htmlFor="at-kz2" className="label">Kennzeichen Rückführung</label>
-                <input id="at-kz2" className="input"
-                       value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
-              </div>
-            )}
-            <div>
-              <label htmlFor="at-fin" className="label">FIN *</label>
-              <input id="at-fin" className={inputCls('fin')}
-                     value={fin} onChange={(e) => setFin(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="at-kunde" className="label">Kundenname *</label>
-              <input id="at-kunde" className={inputCls('kundenname')}
-                     value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="at-modell" className="label">Fahrzeugmodell (optional)</label>
-              <SuggestCombobox
-                id="at-modell"
-                feldTyp="fahrzeugmodell"
-                value={fahrzeugmodell}
-                onChange={setFahrzeugmodell}
-                placeholder="z.B. VW Polo"
-              />
-            </div>
-          </div>
-
-          <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
-            <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-                   checked={istEFahrzeug} onChange={(e) => setIstEFahrzeug(e.target.checked)} />
-            E-Fahrzeug
-          </label>
-
-          <div className="space-y-3">
-            <div>
-              <label htmlFor="at-adr-start" className="label">Adresse Start *</label>
-              <input id="at-adr-start" className={inputCls('adresseStart')}
-                     placeholder="Straße Nr, PLZ Stadt"
-                     value={adresseStart} onChange={(e) => setAdresseStart(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="at-adr-ziel" className="label">Adresse Ziel *</label>
-              <input id="at-adr-ziel" className={inputCls('adresseZiel')}
-                     placeholder="Straße Nr, PLZ Stadt"
-                     value={adresseZiel} onChange={(e) => setAdresseZiel(e.target.value)} />
-            </div>
-            {hatRueckfuehrung && (
-              <div>
-                <label htmlFor="at-adr-rueck" className="label">Adresse Rückführung *</label>
-                <input id="at-adr-rueck" className={inputCls('adresseRueck')}
-                       placeholder="Straße Nr, PLZ Stadt"
-                       value={adresseRueck} onChange={(e) => setAdresseRueck(e.target.value)} />
-              </div>
-            )}
-          </div>
-
-          <AnsprechpartnerFeldsatz
-            titel="Kontaktperson Start"
-            pflicht
-            idPrefix="at-ks"
-            liste={kontakte.start}
-            fehlerAmErsten={missing.has('kontaktStart')}
-            onChange={(next) => setKontakte((m) => ({ ...m, start: next }))}
-          />
-
-          <AnsprechpartnerFeldsatz
-            titel="Kontaktperson Ziel"
-            pflicht
-            idPrefix="at-kz"
-            liste={kontakte.ziel}
-            fehlerAmErsten={missing.has('kontaktZiel')}
-            onChange={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
-          />
-
-          {hatRueckfuehrung && (
-            <AnsprechpartnerFeldsatz
-              titel="Kontaktperson Rückführung"
-              idPrefix="at-kr"
-              liste={kontakte.rueckfuehrung}
-              onChange={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
-            />
+          {kmGesamt != null && (
+            <p className="text-xs text-maja-muted">
+              km gesamt: <strong className="text-maja-ink">{kmGesamt}</strong>
+            </p>
           )}
 
           <div>
@@ -335,6 +366,20 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             <textarea id="at-info" className="input min-h-[72px]"
                       value={info} onChange={(e) => setInfo(e.target.value)} />
           </div>
+
+          {routeDialog && (
+            <RouteSelectorDialog
+              title={routeDialog === 'hin' ? 'Routen für die Hinstrecke' : 'Routen für die Rückstrecke'}
+              origin={routeDialog === 'hin' ? adresseStart : adresseZiel}
+              destination={routeDialog === 'hin' ? adresseZiel : adresseRueck}
+              onClose={() => setRouteDialog(null)}
+              onApply={(km) => {
+                if (routeDialog === 'hin') setKmHin(String(km));
+                else setKmRueck(String(km));
+                setRouteDialog(null);
+              }}
+            />
+          )}
 
           {error && (
             <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">

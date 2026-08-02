@@ -291,12 +291,9 @@ export type Database = {
           updated_at: string;
           vorgefuellte_daten: Json | null;
           fahrzeugmodell: string | null;
-          abholzeit: string | null;
-          abgabezeit: string | null;
-          rueckfuehrung_zeit: string | null;
-          zeit_hinweis_start: string | null;
-          zeit_hinweis_ziel: string | null;
-          zeit_hinweis_rueckfuehrung: string | null;
+          zeit_start: string | null;
+          zeit_ziel: string | null;
+          zeit_rueckfuehrung: string | null;
         };
         Insert: {
           id?: string;
@@ -355,12 +352,9 @@ export type Database = {
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
           fahrzeugmodell?: string | null;
-          abholzeit?: string | null;
-          abgabezeit?: string | null;
-          rueckfuehrung_zeit?: string | null;
-          zeit_hinweis_start?: string | null;
-          zeit_hinweis_ziel?: string | null;
-          zeit_hinweis_rueckfuehrung?: string | null;
+          zeit_start?: string | null;
+          zeit_ziel?: string | null;
+          zeit_rueckfuehrung?: string | null;
         };
         Update: {
           id?: string;
@@ -419,12 +413,9 @@ export type Database = {
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
           fahrzeugmodell?: string | null;
-          abholzeit?: string | null;
-          abgabezeit?: string | null;
-          rueckfuehrung_zeit?: string | null;
-          zeit_hinweis_start?: string | null;
-          zeit_hinweis_ziel?: string | null;
-          zeit_hinweis_rueckfuehrung?: string | null;
+          zeit_start?: string | null;
+          zeit_ziel?: string | null;
+          zeit_rueckfuehrung?: string | null;
         };
         Relationships: [
           {
@@ -1504,12 +1495,12 @@ export type Database = {
           fin: string | null;
           fin_rueck: string | null;
           fahrzeugmodell: string | null;
-          abholzeit: string | null;
-          abgabezeit: string | null;
-          rueckfuehrung_zeit: string | null;
-          zeit_hinweis_start: string | null;
-          zeit_hinweis_ziel: string | null;
-          zeit_hinweis_rueckfuehrung: string | null;
+          zeit_start: string | null;
+          zeit_ziel: string | null;
+          zeit_rueckfuehrung: string | null;
+          km_hin: number | null;
+          km_rueck: number | null;
+          km_gesamt: number | null;
           abgelehnt: boolean;
           ablehnungsgrund: string | null;
           abgelehnt_am: string | null;

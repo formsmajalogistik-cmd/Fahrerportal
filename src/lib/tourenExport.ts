@@ -51,12 +51,9 @@ interface ExportRow {
   fin_rueck: string | null;
   kundenname: string | null;
   fahrzeugmodell: string | null;
-  abholzeit: string | null;
-  abgabezeit: string | null;
-  rueckfuehrung_zeit: string | null;
-  zeit_hinweis_start: string | null;
-  zeit_hinweis_ziel: string | null;
-  zeit_hinweis_rueckfuehrung: string | null;
+  zeit_start: string | null;
+  zeit_ziel: string | null;
+  zeit_rueckfuehrung: string | null;
   km_hin: number | null;
   km_rueck: number | null;
   km_gesamt: number | null;
@@ -78,13 +75,6 @@ interface ExportRow {
     station: string; name: string | null; telefon: string | null;
     email: string | null; sortierung: number;
   }> | null;
-}
-
-/** "08:00:00" → "08:00"; leer, wenn nichts gepflegt ist. */
-function zeitStr(v: string | null): string {
-  if (!v) return '';
-  const m = /^(\d{2}):(\d{2})/.exec(v);
-  return m ? `${m[1]}:${m[2]}` : '';
 }
 
 function ymd(iso: string | null | undefined): string {
@@ -149,9 +139,8 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     'Kontakt Rück Name', 'Kontakt Rück Tel', 'Kontakt Rück E-Mail',
     'Kennzeichen Rück', 'FIN', 'FIN Rück', 'Kundenname',
     'km Hin', 'km Rück', 'Info', 'created_at', 'Bestätigt',
-    // Migration 080 — optional, der Importer kommt auch ohne sie klar.
-    'Fahrzeugmodell', 'Abholzeit', 'Abgabezeit', 'Zeit Rückführung',
-    'Zeit-Hinweis Start', 'Zeit-Hinweis Ziel', 'Zeit-Hinweis Rückführung',
+    // Migration 080/081 — optional, der Importer kommt auch ohne sie klar.
+    'Fahrzeugmodell', 'Zeit Start', 'Zeit Ziel', 'Zeit Rückführung',
   ];
 
   const dataRows = rows.map((t) => {
@@ -192,12 +181,9 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       ymd(t.created_at),
       t.bestaetigt ? 'ja' : 'nein',
       t.fahrzeugmodell ?? '',
-      zeitStr(t.abholzeit),
-      zeitStr(t.abgabezeit),
-      zeitStr(t.rueckfuehrung_zeit),
-      t.zeit_hinweis_start ?? '',
-      t.zeit_hinweis_ziel ?? '',
-      t.zeit_hinweis_rueckfuehrung ?? '',
+      t.zeit_start ?? '',
+      t.zeit_ziel ?? '',
+      t.zeit_rueckfuehrung ?? '',
     ];
   });
 
