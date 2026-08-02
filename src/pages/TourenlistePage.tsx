@@ -26,6 +26,7 @@ import {
   feldLabel, ladeOffeneAenderungen, quittiereAenderungen, wertLabel,
   type AenderungsGruppe,
 } from '../lib/tourAenderungen';
+import { zeitAnzeige } from '../lib/tourAnsprechpartner';
 import {
   CheckBoxCheckedIcon, CheckBoxEmptyIcon, DownloadIcon, EyeIcon,
 } from '../components/icons';
@@ -237,7 +238,8 @@ export function TourenlistePage() {
       greimel_zugang_id, ist_e_fahrzeug, fin,
       eingang_id, eingang_id_bc, km_gesamt,
       bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
-      abgelehnt, zurueckgestellt
+      abgelehnt, zurueckgestellt,
+      abholzeit, abgabezeit
     `;
     const adminCols = `${baseCols},
       verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
@@ -1502,12 +1504,18 @@ function TourCard({
   const fahrerName = resolveFahrerName(tour.fahrer ?? null, tour.fahrer?.user ?? null) || '— kein Fahrer —';
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const bearbeitetHeute = tour.bearbeitet_markiert_am === todayYmd;
+  // Uhrzeiten hängen sich dezent ans jeweilige Datum — aber nur, wenn
+  // sie gepflegt sind. Ohne Zeiten sieht die Karte exakt aus wie bisher.
   const dateRange = (() => {
     if (!tour.startdatum && !tour.enddatum) return null;
-    if (tour.startdatum && tour.enddatum) {
-      return `${formatDate(tour.startdatum)} – ${formatDate(tour.enddatum)}`;
-    }
-    return formatDate(tour.startdatum ?? tour.enddatum);
+    const start = tour.startdatum
+      ? `${formatDate(tour.startdatum)}${zeitAnzeige(tour.abholzeit) ? `, ${zeitAnzeige(tour.abholzeit)}` : ''}`
+      : null;
+    const ende = tour.enddatum
+      ? `${formatDate(tour.enddatum)}${zeitAnzeige(tour.abgabezeit) ? `, ${zeitAnzeige(tour.abgabezeit)}` : ''}`
+      : null;
+    if (start && ende) return `${start} – ${ende}`;
+    return start ?? ende;
   })();
 
   const zusaetze = tour.zusaetze ?? [];

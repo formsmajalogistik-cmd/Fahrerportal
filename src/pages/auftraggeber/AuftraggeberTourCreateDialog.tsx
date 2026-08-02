@@ -2,6 +2,11 @@ import { useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
+import { SuggestCombobox } from '../../components/SuggestCombobox';
+import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
+import {
+  inputZuZeit, leereKontaktMap, toPayload, type KontaktMap,
+} from '../../lib/tourAnsprechpartner';
 import type { TourenArt } from '../../types/db';
 
 interface Props {
@@ -36,13 +41,16 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const [adresseStart, setAdresseStart] = useState('');
   const [adresseZiel, setAdresseZiel] = useState('');
   const [adresseRueck, setAdresseRueck] = useState('');
-  const [kontaktStartName, setKontaktStartName] = useState('');
-  const [kontaktStartTel, setKontaktStartTel] = useState('');
-  const [kontaktStartMail, setKontaktStartMail] = useState('');
-  const [kontaktZielName, setKontaktZielName] = useState('');
-  const [kontaktZielTel, setKontaktZielTel] = useState('');
-  const [kontaktZielMail, setKontaktZielMail] = useState('');
+  const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   const [info, setInfo] = useState('');
+  // Optionale Zusatzangaben (Migration 080) — bewusst unauffällig.
+  const [fahrzeugmodell, setFahrzeugmodell] = useState('');
+  const [abholzeit, setAbholzeit] = useState('');
+  const [abgabezeit, setAbgabezeit] = useState('');
+  const [rueckZeit, setRueckZeit] = useState('');
+  const [zeitHinweisStart, setZeitHinweisStart] = useState('');
+  const [zeitHinweisZiel, setZeitHinweisZiel] = useState('');
+  const [zeitHinweisRueck, setZeitHinweisRueck] = useState('');
 
   const [missing, setMissing] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -71,8 +79,8 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
     if (!kundenname.trim()) miss.add('kundenname');
     if (!adresseStart.trim()) miss.add('adresseStart');
     if (!adresseZiel.trim()) miss.add('adresseZiel');
-    if (!kontaktStartName.trim()) miss.add('kontaktStart');
-    if (!kontaktZielName.trim()) miss.add('kontaktZiel');
+    if (!kontakte.start[0]?.name.trim()) miss.add('kontaktStart');
+    if (!kontakte.ziel[0]?.name.trim()) miss.add('kontaktZiel');
     if (hatRueckfuehrung) {
       if (!rueckStadt.trim()) miss.add('rueckStadt');
       if (!adresseRueck.trim()) miss.add('adresseRueck');
@@ -95,7 +103,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
     }
 
     setSaving(true);
-    const { error: err } = await supabase.from('touren').insert({
+    const { data: neu, error: err } = await supabase.from('touren').insert({
       start_stadt: startStadt.trim(),
       ziel_stadt: zielStadt.trim(),
       rueckfuehrung_stadt: hatRueckfuehrung ? rueckStadt.trim() : null,
@@ -109,24 +117,40 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       adresse_start: adresseStart.trim(),
       adresse_ziel: adresseZiel.trim(),
       adresse_rueckfuehrung: hatRueckfuehrung ? adresseRueck.trim() : null,
-      kontakt_start: {
-        name: kontaktStartName.trim(),
-        telefon: kontaktStartTel.trim(),
-        email: kontaktStartMail.trim(),
-      },
-      kontakt_ziel: {
-        name: kontaktZielName.trim(),
-        telefon: kontaktZielTel.trim(),
-        email: kontaktZielMail.trim(),
-      },
+      // kontakt_* wird NICHT hier gesetzt — die Ansprechpartner landen
+      // unten in tour_ansprechpartner, der DB-Trigger spiegelt den
+      // ersten Eintrag je Station in die Alt-Spalten.
+      fahrzeugmodell: fahrzeugmodell.trim() || null,
+      abholzeit: inputZuZeit(abholzeit),
+      abgabezeit: inputZuZeit(abgabezeit),
+      rueckfuehrung_zeit: hatRueckfuehrung ? inputZuZeit(rueckZeit) : null,
+      zeit_hinweis_start: zeitHinweisStart.trim() || null,
+      zeit_hinweis_ziel: zeitHinweisZiel.trim() || null,
+      zeit_hinweis_rueckfuehrung: hatRueckfuehrung ? (zeitHinweisRueck.trim() || null) : null,
       info: info.trim() || null,
       auftraggeber_id: profile.auftraggeber_id,
       bestaetigt: false,
       erstellt_von: session.user.id,
       erstellt_von_rolle: 'auftraggeber',
-    });
+    }).select('id').single();
+    if (err) { setSaving(false); setError(err.message); return; }
+
+    // Ansprechpartner anlegen. Beim ANLEGEN einer eigenen Tour hat der
+    // Auftraggeber Insert-Recht auf touren; für die Ansprechpartner-
+    // Tabelle nicht — deshalb läuft das über dieselbe RPC wie beim
+    // späteren Bearbeiten.
+    if (neu?.id) {
+      for (const st of ['start', 'ziel', 'rueckfuehrung'] as const) {
+        if (st === 'rueckfuehrung' && !hatRueckfuehrung) continue;
+        if (toPayload(kontakte[st]).length === 0) continue;
+        await supabase.rpc('ag_tour_ansprechpartner_setzen', {
+          p_tour_id: neu.id,
+          p_station: st,
+          p_liste: toPayload(kontakte[st]) as never,
+        });
+      }
+    }
     setSaving(false);
-    if (err) { setError(err.message); return; }
     onCreated();
   }
 
@@ -156,13 +180,29 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             </div>
             <div>
               <label htmlFor="at-von" className="label">Startdatum *</label>
-              <input id="at-von" type="date" className={inputCls('startdatum')}
-                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+              <div className="flex gap-2">
+                <input id="at-von" type="date" className={`${inputCls('startdatum')} flex-1`}
+                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+                <input id="at-abholzeit" type="time" className="input w-28"
+                       aria-label="Abholzeit (optional)" title="Abholzeit (optional)"
+                       value={abholzeit} onChange={(e) => setAbholzeit(e.target.value)} />
+              </div>
+              <input className="input mt-1 text-xs" placeholder="z.B. vormittags (optional)"
+                     aria-label="Zeit-Hinweis Abholung"
+                     value={zeitHinweisStart} onChange={(e) => setZeitHinweisStart(e.target.value)} />
             </div>
             <div>
               <label htmlFor="at-bis" className="label">Enddatum *</label>
-              <input id="at-bis" type="date" className={inputCls('enddatum')}
-                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+              <div className="flex gap-2">
+                <input id="at-bis" type="date" className={`${inputCls('enddatum')} flex-1`}
+                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+                <input id="at-abgabezeit" type="time" className="input w-28"
+                       aria-label="Abgabezeit (optional)" title="Abgabezeit (optional)"
+                       value={abgabezeit} onChange={(e) => setAbgabezeit(e.target.value)} />
+              </div>
+              <input className="input mt-1 text-xs" placeholder="z.B. nach Absprache (optional)"
+                     aria-label="Zeit-Hinweis Abgabe"
+                     value={zeitHinweisZiel} onChange={(e) => setZeitHinweisZiel(e.target.value)} />
             </div>
           </div>
 
@@ -180,10 +220,22 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
           </div>
 
           {hatRueckfuehrung && (
-            <div>
-              <label htmlFor="at-rueck" className="label">Rückführung-Stadt *</label>
-              <input id="at-rueck" className={inputCls('rueckStadt')}
-                     value={rueckStadt} onChange={(e) => setRueckStadt(e.target.value)} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="at-rueck" className="label">Rückführung-Stadt *</label>
+                <input id="at-rueck" className={inputCls('rueckStadt')}
+                       value={rueckStadt} onChange={(e) => setRueckStadt(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="at-rueckzeit" className="label">Zeit Rückführung (optional)</label>
+                <div className="flex gap-2">
+                  <input id="at-rueckzeit" type="time" className="input w-28"
+                         value={rueckZeit} onChange={(e) => setRueckZeit(e.target.value)} />
+                  <input className="input flex-1 text-xs" placeholder="Hinweis (optional)"
+                         aria-label="Zeit-Hinweis Rückführung"
+                         value={zeitHinweisRueck} onChange={(e) => setZeitHinweisRueck(e.target.value)} />
+                </div>
+              </div>
             </div>
           )}
 
@@ -209,6 +261,16 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
               <label htmlFor="at-kunde" className="label">Kundenname *</label>
               <input id="at-kunde" className={inputCls('kundenname')}
                      value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
+            </div>
+            <div>
+              <label htmlFor="at-modell" className="label">Fahrzeugmodell (optional)</label>
+              <SuggestCombobox
+                id="at-modell"
+                feldTyp="fahrzeugmodell"
+                value={fahrzeugmodell}
+                onChange={setFahrzeugmodell}
+                placeholder="z.B. VW Polo"
+              />
             </div>
           </div>
 
@@ -241,33 +303,32 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             )}
           </div>
 
-          <fieldset className="rounded-lg border border-maja-navy/15 p-3">
-            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-maja-muted">
-              Kontaktperson Start *
-            </legend>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <input aria-label="Name Kontakt Start" className={inputCls('kontaktStart')} placeholder="Name *"
-                     value={kontaktStartName} onChange={(e) => setKontaktStartName(e.target.value)} />
-              <input aria-label="Telefon Kontakt Start" className="input" placeholder="Telefon"
-                     value={kontaktStartTel} onChange={(e) => setKontaktStartTel(e.target.value)} />
-              <input aria-label="E-Mail Kontakt Start" className="input" placeholder="E-Mail"
-                     value={kontaktStartMail} onChange={(e) => setKontaktStartMail(e.target.value)} />
-            </div>
-          </fieldset>
+          <AnsprechpartnerFeldsatz
+            titel="Kontaktperson Start"
+            pflicht
+            idPrefix="at-ks"
+            liste={kontakte.start}
+            fehlerAmErsten={missing.has('kontaktStart')}
+            onChange={(next) => setKontakte((m) => ({ ...m, start: next }))}
+          />
 
-          <fieldset className="rounded-lg border border-maja-navy/15 p-3">
-            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-maja-muted">
-              Kontaktperson Ziel *
-            </legend>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <input aria-label="Name Kontakt Ziel" className={inputCls('kontaktZiel')} placeholder="Name *"
-                     value={kontaktZielName} onChange={(e) => setKontaktZielName(e.target.value)} />
-              <input aria-label="Telefon Kontakt Ziel" className="input" placeholder="Telefon"
-                     value={kontaktZielTel} onChange={(e) => setKontaktZielTel(e.target.value)} />
-              <input aria-label="E-Mail Kontakt Ziel" className="input" placeholder="E-Mail"
-                     value={kontaktZielMail} onChange={(e) => setKontaktZielMail(e.target.value)} />
-            </div>
-          </fieldset>
+          <AnsprechpartnerFeldsatz
+            titel="Kontaktperson Ziel"
+            pflicht
+            idPrefix="at-kz"
+            liste={kontakte.ziel}
+            fehlerAmErsten={missing.has('kontaktZiel')}
+            onChange={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
+          />
+
+          {hatRueckfuehrung && (
+            <AnsprechpartnerFeldsatz
+              titel="Kontaktperson Rückführung"
+              idPrefix="at-kr"
+              liste={kontakte.rueckfuehrung}
+              onChange={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
+            />
+          )}
 
           <div>
             <label htmlFor="at-info" className="label">Hinweise (optional)</label>

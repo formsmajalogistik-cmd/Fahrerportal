@@ -57,6 +57,35 @@ interface ParsedRow {
   status?: string | null;
   bestaetigt?: boolean | null;
   created_at?: string | null;
+  // Migration 080 — ebenfalls optional.
+  fahrzeugmodell?: string | null;
+  abholzeit?: string | null;
+  abgabezeit?: string | null;
+  rueckfuehrung_zeit?: string | null;
+  zeit_hinweis_start?: string | null;
+  zeit_hinweis_ziel?: string | null;
+  zeit_hinweis_rueckfuehrung?: string | null;
+}
+
+/**
+ * Uhrzeit aus einer Excel-Zelle. Excel liefert Zeiten oft als Bruchteil
+ * eines Tages (0,5 = 12:00) — beides wird zu "HH:MM" normalisiert.
+ * Alles Unbrauchbare wird zu null, damit der Import nicht scheitert.
+ */
+function parseZeit(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const minuten = Math.round((v % 1) * 24 * 60);
+    const hh = Math.floor(minuten / 60) % 24;
+    const mm = minuten % 60;
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+  const m = /^\s*(\d{1,2})[:.](\d{2})/.exec(String(v));
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
 const HEADER_KEYS = {
@@ -90,6 +119,13 @@ const HEADER_KEYS = {
   fin_rueck:       ['fin rück', 'fin rueck'],
   kundenname:      ['kundenname', 'kunde'],
   status:          ['status'],
+  fahrzeugmodell:  ['fahrzeugmodell', 'modell'],
+  abholzeit:       ['abholzeit'],
+  abgabezeit:      ['abgabezeit'],
+  rueck_zeit:      ['zeit rückführung', 'zeit rueckfuehrung'],
+  zeit_hinweis_start: ['zeit-hinweis start', 'zeit hinweis start'],
+  zeit_hinweis_ziel:  ['zeit-hinweis ziel', 'zeit hinweis ziel'],
+  zeit_hinweis_rueck: ['zeit-hinweis rückführung', 'zeit-hinweis rueckfuehrung'],
   bestaetigt:      ['bestätigt', 'bestaetigt'],
   created_at:      ['created_at', 'erstellt am'],
 };
@@ -367,6 +403,13 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       status:          findColumnExact(cols, HEADER_KEYS.status),
       bestaetigt:      findColumnExact(cols, HEADER_KEYS.bestaetigt),
       created_at:      findColumnExact(cols, HEADER_KEYS.created_at),
+      fahrzeugmodell:  findColumnExact(cols, HEADER_KEYS.fahrzeugmodell),
+      abholzeit:       findColumnExact(cols, HEADER_KEYS.abholzeit),
+      abgabezeit:      findColumnExact(cols, HEADER_KEYS.abgabezeit),
+      rueck_zeit:      findColumnExact(cols, HEADER_KEYS.rueck_zeit),
+      zeit_hinweis_start: findColumnExact(cols, HEADER_KEYS.zeit_hinweis_start),
+      zeit_hinweis_ziel:  findColumnExact(cols, HEADER_KEYS.zeit_hinweis_ziel),
+      zeit_hinweis_rueck: findColumnExact(cols, HEADER_KEYS.zeit_hinweis_rueck),
     };
     const at = (r: unknown[], idx: number): unknown => (idx >= 0 ? r[idx] : null);
 
@@ -429,6 +472,13 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       const status = oIdx.status >= 0 ? parseStatusCell(at(r, oIdx.status)) : undefined;
       const bestaetigt = oIdx.bestaetigt >= 0 ? parseBoolCell(at(r, oIdx.bestaetigt)) : undefined;
       const created_at = oIdx.created_at >= 0 ? excelDateToISO(at(r, oIdx.created_at)) : undefined;
+      const fahrzeugmodell = oIdx.fahrzeugmodell >= 0 ? cellStr(at(r, oIdx.fahrzeugmodell)) : undefined;
+      const abholzeit = oIdx.abholzeit >= 0 ? parseZeit(at(r, oIdx.abholzeit)) : undefined;
+      const abgabezeit = oIdx.abgabezeit >= 0 ? parseZeit(at(r, oIdx.abgabezeit)) : undefined;
+      const rueckfuehrung_zeit = oIdx.rueck_zeit >= 0 ? parseZeit(at(r, oIdx.rueck_zeit)) : undefined;
+      const zeit_hinweis_start = oIdx.zeit_hinweis_start >= 0 ? cellStr(at(r, oIdx.zeit_hinweis_start)) : undefined;
+      const zeit_hinweis_ziel = oIdx.zeit_hinweis_ziel >= 0 ? cellStr(at(r, oIdx.zeit_hinweis_ziel)) : undefined;
+      const zeit_hinweis_rueckfuehrung = oIdx.zeit_hinweis_rueck >= 0 ? cellStr(at(r, oIdx.zeit_hinweis_rueck)) : undefined;
 
       const errors: string[] = [];
       if (!start_stadt || !ziel_stadt) errors.push('Route konnte nicht geparst werden.');
@@ -470,6 +520,13 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         status,
         bestaetigt,
         created_at,
+        fahrzeugmodell,
+        abholzeit,
+        abgabezeit,
+        rueckfuehrung_zeit,
+        zeit_hinweis_start,
+        zeit_hinweis_ziel,
+        zeit_hinweis_rueckfuehrung,
         // dupKey ist nur intern; wir berechnen ihn erst im Preview neu.
         ...{ _dup_partial: dupKey } as Partial<ParsedRow>,
       });
@@ -568,6 +625,13 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.status != null) base.status = r.status as TourInsert['status'];
         if (r.bestaetigt != null) base.bestaetigt = r.bestaetigt;
         if (r.created_at != null) base.created_at = r.created_at;
+        if (r.fahrzeugmodell !== undefined) base.fahrzeugmodell = r.fahrzeugmodell;
+        if (r.abholzeit !== undefined) base.abholzeit = r.abholzeit;
+        if (r.abgabezeit !== undefined) base.abgabezeit = r.abgabezeit;
+        if (r.rueckfuehrung_zeit !== undefined) base.rueckfuehrung_zeit = r.rueckfuehrung_zeit;
+        if (r.zeit_hinweis_start !== undefined) base.zeit_hinweis_start = r.zeit_hinweis_start;
+        if (r.zeit_hinweis_ziel !== undefined) base.zeit_hinweis_ziel = r.zeit_hinweis_ziel;
+        if (r.zeit_hinweis_rueckfuehrung !== undefined) base.zeit_hinweis_rueckfuehrung = r.zeit_hinweis_rueckfuehrung;
         return base;
       });
       const { error: err } = await supabase.from('touren').insert(payload);

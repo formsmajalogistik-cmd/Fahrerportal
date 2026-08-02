@@ -290,6 +290,13 @@ export type Database = {
           created_at: string;
           updated_at: string;
           vorgefuellte_daten: Json | null;
+          fahrzeugmodell: string | null;
+          abholzeit: string | null;
+          abgabezeit: string | null;
+          rueckfuehrung_zeit: string | null;
+          zeit_hinweis_start: string | null;
+          zeit_hinweis_ziel: string | null;
+          zeit_hinweis_rueckfuehrung: string | null;
         };
         Insert: {
           id?: string;
@@ -347,6 +354,13 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
+          fahrzeugmodell?: string | null;
+          abholzeit?: string | null;
+          abgabezeit?: string | null;
+          rueckfuehrung_zeit?: string | null;
+          zeit_hinweis_start?: string | null;
+          zeit_hinweis_ziel?: string | null;
+          zeit_hinweis_rueckfuehrung?: string | null;
         };
         Update: {
           id?: string;
@@ -404,6 +418,13 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
+          fahrzeugmodell?: string | null;
+          abholzeit?: string | null;
+          abgabezeit?: string | null;
+          rueckfuehrung_zeit?: string | null;
+          zeit_hinweis_start?: string | null;
+          zeit_hinweis_ziel?: string | null;
+          zeit_hinweis_rueckfuehrung?: string | null;
         };
         Relationships: [
           {
@@ -1214,6 +1235,46 @@ export type Database = {
           },
         ];
       };
+      tour_ansprechpartner: {
+        Row: {
+          id: string;
+          tour_id: string;
+          station: 'start' | 'ziel' | 'rueckfuehrung';
+          name: string | null;
+          telefon: string | null;
+          email: string | null;
+          sortierung: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          tour_id: string;
+          station: 'start' | 'ziel' | 'rueckfuehrung';
+          name?: string | null;
+          telefon?: string | null;
+          email?: string | null;
+          sortierung?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          tour_id?: string;
+          station?: 'start' | 'ziel' | 'rueckfuehrung';
+          name?: string | null;
+          telefon?: string | null;
+          email?: string | null;
+          sortierung?: number;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'tour_ansprechpartner_tour_id_fkey';
+            columns: ['tour_id'];
+            referencedRelation: 'touren';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       tour_aenderungen: {
         Row: {
           id: string;
@@ -1442,6 +1503,13 @@ export type Database = {
           ist_e_fahrzeug: boolean;
           fin: string | null;
           fin_rueck: string | null;
+          fahrzeugmodell: string | null;
+          abholzeit: string | null;
+          abgabezeit: string | null;
+          rueckfuehrung_zeit: string | null;
+          zeit_hinweis_start: string | null;
+          zeit_hinweis_ziel: string | null;
+          zeit_hinweis_rueckfuehrung: string | null;
           abgelehnt: boolean;
           ablehnungsgrund: string | null;
           abgelehnt_am: string | null;
@@ -1482,6 +1550,10 @@ export type Database = {
       current_auftraggeber_id: {
         Args: Record<PropertyKey, never>;
         Returns: string | null;
+      };
+      ag_tour_ansprechpartner_setzen: {
+        Args: { p_tour_id: string; p_station: string; p_liste: Json };
+        Returns: Json;
       };
       ag_tour_aktualisieren: {
         Args: { p_tour_id: string; p_daten: Json };

@@ -194,6 +194,8 @@ export const RECHNUNG_PLATZHALTER = [
   'kundenname', 'fin', 'fin_rueck', 'tourenart',
   'km', 'km_gesamt', 'km_hin', 'km_rueck',
   'kategorie', 'sondervereinbarung', 'ansprechpartner',
+  // Migration 080 — optionale Fahrzeug-/Zeitangaben.
+  'fahrzeugmodell', 'abholzeit', 'abgabezeit', 'rueckfuehrung_zeit',
 ] as const;
 
 /** km-Wert für Platzhalter: ganzzahlig gerundet; leer (statt "0"/
@@ -391,6 +393,10 @@ export interface TourForRechnung {
   fin: string | null;
   fin_rueck: string | null;
   sondervereinbarung: string | null;
+  fahrzeugmodell?: string | null;
+  abholzeit?: string | null;
+  abgabezeit?: string | null;
+  rueckfuehrung_zeit?: string | null;
   verguetung: number | null;
   /** Freitext-Notiz aus der Tour. Wird im Rechnungs-Editor als Hinweis
    *  unter der Position angezeigt — nicht in die PDF gerendert. */
@@ -483,6 +489,13 @@ export function formatRechnungsDatum(
   return `${pad2(ref.d)}.${pad2(ref.m)}.${ref.y}`;
 }
 
+/** "08:00:00" → "08:00"; leer, wenn nichts gepflegt ist. */
+function kurzeZeit(v: string | null | undefined): string {
+  if (!v) return '';
+  const m = /^(\d{2}):(\d{2})/.exec(v);
+  return m ? `${m[1]}:${m[2]}` : '';
+}
+
 function placeholdersForTour(
   t: TourForRechnung, format: Rechnungsformat,
 ): Record<string, string> {
@@ -514,6 +527,10 @@ function placeholdersForTour(
     km_rueck: formatKmValue(t.km_rueck),
     tourenart: format.tourenart_anzeigen ? (t.tourenart ?? '') : '',
     sondervereinbarung: t.sondervereinbarung ?? 'SV',
+    fahrzeugmodell: t.fahrzeugmodell ?? '',
+    abholzeit: kurzeZeit(t.abholzeit),
+    abgabezeit: kurzeZeit(t.abgabezeit),
+    rueckfuehrung_zeit: kurzeZeit(t.rueckfuehrung_zeit),
   };
 }
 

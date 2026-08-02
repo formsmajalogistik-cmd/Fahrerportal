@@ -7,6 +7,11 @@ import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
 import { useTestGuard } from '../../auth/TestModeContext';
+import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
+import { SuggestCombobox } from '../../components/SuggestCombobox';
+import {
+  inputZuZeit, leereKontaktMap, speichereAlleAnsprechpartner, type KontaktMap,
+} from '../../lib/tourAnsprechpartner';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
 } from '../../types/db';
@@ -109,15 +114,15 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const [adresseStart, setAdresseStart] = useState('');
   const [adresseZiel, setAdresseZiel] = useState('');
   const [adresseRueckfuehrung, setAdresseRueckfuehrung] = useState('');
-  const [kontaktStartName, setKontaktStartName] = useState('');
-  const [kontaktStartTel, setKontaktStartTel] = useState('');
-  const [kontaktStartMail, setKontaktStartMail] = useState('');
-  const [kontaktZielName, setKontaktZielName] = useState('');
-  const [kontaktZielTel, setKontaktZielTel] = useState('');
-  const [kontaktZielMail, setKontaktZielMail] = useState('');
-  const [kontaktRueckName, setKontaktRueckName] = useState('');
-  const [kontaktRueckTel, setKontaktRueckTel] = useState('');
-  const [kontaktRueckMail, setKontaktRueckMail] = useState('');
+  const [stationsKontakte, setStationsKontakte] = useState<KontaktMap>(() => leereKontaktMap());
+  // Optionale Zusatzangaben (Migration 080).
+  const [fahrzeugmodell, setFahrzeugmodell] = useState('');
+  const [abholzeit, setAbholzeit] = useState('');
+  const [abgabezeit, setAbgabezeit] = useState('');
+  const [rueckZeit, setRueckZeit] = useState('');
+  const [zeitHinweisStart, setZeitHinweisStart] = useState('');
+  const [zeitHinweisZiel, setZeitHinweisZiel] = useState('');
+  const [zeitHinweisRueck, setZeitHinweisRueck] = useState('');
 
   // Routen-Dialog (km berechnen über Google Routes API). Identisches
   // Verhalten wie im Tour-Detail-Panel.
@@ -336,20 +341,26 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       adresse_start: adresseStart.trim() || null,
       adresse_ziel: adresseZiel.trim() || null,
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueckfuehrung.trim() || null) : null,
-      kontakt_start: kontaktStartName.trim() || kontaktStartTel.trim() || kontaktStartMail.trim()
-        ? { name: kontaktStartName.trim(), telefon: kontaktStartTel.trim(), email: kontaktStartMail.trim() }
-        : null,
-      kontakt_ziel: kontaktZielName.trim() || kontaktZielTel.trim() || kontaktZielMail.trim()
-        ? { name: kontaktZielName.trim(), telefon: kontaktZielTel.trim(), email: kontaktZielMail.trim() }
-        : null,
-      kontakt_rueckfuehrung: hatRueckfuehrung
-        && (kontaktRueckName.trim() || kontaktRueckTel.trim() || kontaktRueckMail.trim())
-        ? { name: kontaktRueckName.trim(), telefon: kontaktRueckTel.trim(), email: kontaktRueckMail.trim() }
-        : null,
+      // kontakt_* setzt der Spiegel-Trigger aus tour_ansprechpartner.
+      fahrzeugmodell: fahrzeugmodell.trim() || null,
+      abholzeit: inputZuZeit(abholzeit),
+      abgabezeit: inputZuZeit(abgabezeit),
+      rueckfuehrung_zeit: hatRueckfuehrung ? inputZuZeit(rueckZeit) : null,
+      zeit_hinweis_start: zeitHinweisStart.trim() || null,
+      zeit_hinweis_ziel: zeitHinweisZiel.trim() || null,
+      zeit_hinweis_rueckfuehrung: hatRueckfuehrung ? (zeitHinweisRueck.trim() || null) : null,
     };
 
-    const { error: err } = await supabase.from('touren').insert(payload);
+    const { data: neu, error: err } = await supabase
+      .from('touren').insert(payload).select('id').single();
     if (err) { setSaving(false); setError(err.message); return; }
+
+    // Ansprechpartner in die eigene Tabelle (Migration 080) — der
+    // Spiegel-Trigger füllt danach kontakt_* für die Alt-Anzeigen.
+    if (neu?.id) {
+      try { await speichereAlleAnsprechpartner(neu.id, stationsKontakte); }
+      catch (kErr) { console.warn('Ansprechpartner konnten nicht gespeichert werden', kErr); }
+    }
 
     // Greimel-Zugang automatisch dem Fahrer zuweisen
     if (greimelEffective && fahrerId) {
@@ -528,15 +539,41 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               <label htmlFor="t-start-dt" className="label">
                 Startdatum <span className="text-red-600">*</span>
               </label>
-              <input id="t-start-dt" type="date" className="input" required
-                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+              <div className="flex gap-2">
+                <input id="t-start-dt" type="date" className="input flex-1" required
+                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+                <input id="t-abholzeit" type="time" className="input w-28"
+                       aria-label="Abholzeit (optional)" title="Abholzeit (optional)"
+                       value={abholzeit} onChange={(e) => setAbholzeit(e.target.value)} />
+              </div>
+              <input className="input mt-1 text-xs" placeholder="z.B. vormittags (optional)"
+                     aria-label="Zeit-Hinweis Abholung"
+                     value={zeitHinweisStart} onChange={(e) => setZeitHinweisStart(e.target.value)} />
             </div>
             <div>
               <label htmlFor="t-end-dt" className="label">
                 Enddatum <span className="text-red-600">*</span>
               </label>
-              <input id="t-end-dt" type="date" className="input" required
-                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+              <div className="flex gap-2">
+                <input id="t-end-dt" type="date" className="input flex-1" required
+                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+                <input id="t-abgabezeit" type="time" className="input w-28"
+                       aria-label="Abgabezeit (optional)" title="Abgabezeit (optional)"
+                       value={abgabezeit} onChange={(e) => setAbgabezeit(e.target.value)} />
+              </div>
+              <input className="input mt-1 text-xs" placeholder="z.B. nach Absprache (optional)"
+                     aria-label="Zeit-Hinweis Abgabe"
+                     value={zeitHinweisZiel} onChange={(e) => setZeitHinweisZiel(e.target.value)} />
+              {hatRueckfuehrung && (
+                <div className="mt-1 flex gap-2">
+                  <input id="t-rueckzeit" type="time" className="input w-28"
+                         aria-label="Zeit Rückführung (optional)" title="Zeit Rückführung (optional)"
+                         value={rueckZeit} onChange={(e) => setRueckZeit(e.target.value)} />
+                  <input className="input flex-1 text-xs" placeholder="Hinweis Rückführung (optional)"
+                         aria-label="Zeit-Hinweis Rückführung"
+                         value={zeitHinweisRueck} onChange={(e) => setZeitHinweisRueck(e.target.value)} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -653,6 +690,17 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                        onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
               </div>
             )}
+            {/* Fahrzeugmodell — optional, deshalb unauffällig bei FIN. */}
+            <div>
+              <label htmlFor="t-modell" className="label">Fahrzeugmodell (optional)</label>
+              <SuggestCombobox
+                id="t-modell"
+                feldTyp="fahrzeugmodell"
+                value={fahrzeugmodell}
+                onChange={setFahrzeugmodell}
+                placeholder="z.B. VW Polo"
+              />
+            </div>
           </div>
 
           {/* Vergütung */}
@@ -746,27 +794,24 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                   />
                 </div>
               )}
-              <KontaktVorOrtBlock
-                label="Kontakt vor Ort — Start"
+              <AnsprechpartnerFeldsatz
+                titel="Kontakt vor Ort — Start"
                 idPrefix="ks"
-                name={kontaktStartName} setName={setKontaktStartName}
-                tel={kontaktStartTel}   setTel={setKontaktStartTel}
-                mail={kontaktStartMail} setMail={setKontaktStartMail}
+                liste={stationsKontakte.start}
+                onChange={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
               />
-              <KontaktVorOrtBlock
-                label="Kontakt vor Ort — Ziel"
+              <AnsprechpartnerFeldsatz
+                titel="Kontakt vor Ort — Ziel"
                 idPrefix="kz"
-                name={kontaktZielName} setName={setKontaktZielName}
-                tel={kontaktZielTel}   setTel={setKontaktZielTel}
-                mail={kontaktZielMail} setMail={setKontaktZielMail}
+                liste={stationsKontakte.ziel}
+                onChange={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
               />
               {hatRueckfuehrung && (
-                <KontaktVorOrtBlock
-                  label="Kontakt vor Ort — Rückführung"
+                <AnsprechpartnerFeldsatz
+                  titel="Kontakt vor Ort — Rückführung"
                   idPrefix="kr"
-                  name={kontaktRueckName} setName={setKontaktRueckName}
-                  tel={kontaktRueckTel}   setTel={setKontaktRueckTel}
-                  mail={kontaktRueckMail} setMail={setKontaktRueckMail}
+                  liste={stationsKontakte.rueckfuehrung}
+                  onChange={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
                 />
               )}
             </div>
@@ -881,35 +926,3 @@ function RouteSmallIcon({ className }: { className?: string }) {
   );
 }
 
-function KontaktVorOrtBlock({
-  label, idPrefix, name, setName, tel, setTel, mail, setMail,
-}: {
-  label: string;
-  idPrefix: string;
-  name: string; setName: (v: string) => void;
-  tel: string;  setTel:  (v: string) => void;
-  mail: string; setMail: (v: string) => void;
-}) {
-  return (
-    <fieldset className="rounded-md border border-maja-navy/10 p-3">
-      <legend className="px-1 text-xs font-medium text-maja-navy">{label}</legend>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div>
-          <label htmlFor={`${idPrefix}-name`} className="label">Name</label>
-          <input id={`${idPrefix}-name`} className="input"
-                 value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor={`${idPrefix}-tel`} className="label">Telefon</label>
-          <input id={`${idPrefix}-tel`} className="input" type="tel"
-                 value={tel} onChange={(e) => setTel(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor={`${idPrefix}-mail`} className="label">E-Mail</label>
-          <input id={`${idPrefix}-mail`} className="input" type="email"
-                 value={mail} onChange={(e) => setMail(e.target.value)} />
-        </div>
-      </div>
-    </fieldset>
-  );
-}

@@ -1,25 +1,19 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { speichereAgTour } from '../../lib/tourAenderungen';
 import { meldeTourAenderung } from '../../lib/onedrive';
-import type { KontaktVorOrt, TourKundensicht, TourenArt } from '../../types/db';
+import { SuggestCombobox } from '../../components/SuggestCombobox';
+import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
+import {
+  inputZuZeit, ladeAnsprechpartner, leereKontaktMap, speichereAgAnsprechpartner,
+  zeitZuInput, type KontaktMap,
+} from '../../lib/tourAnsprechpartner';
+import type { TourKundensicht, TourenArt } from '../../types/db';
 
 interface Props {
   tour: TourKundensicht;
   onClose: () => void;
   onSaved: (anzahlAenderungen: number) => void;
-}
-
-function asKontakt(v: unknown): KontaktVorOrt {
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return {
-      name: typeof o.name === 'string' ? o.name : '',
-      telefon: typeof o.telefon === 'string' ? o.telefon : '',
-      email: typeof o.email === 'string' ? o.email : '',
-    } as KontaktVorOrt;
-  }
-  return { name: '', telefon: '', email: '' } as KontaktVorOrt;
 }
 
 /**
@@ -36,9 +30,6 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
 
   const kzHinInit = tour.kennzeichen?.[0] ?? '';
   const kzRueckInit = tour.kennzeichen?.[1] ?? '';
-  const kStart = asKontakt(tour.kontakt_start);
-  const kZiel = asKontakt(tour.kontakt_ziel);
-  const kRueck = asKontakt(tour.kontakt_rueckfuehrung);
 
   const [tourenart, setTourenart] = useState<TourenArt | ''>((tour.tourenart as TourenArt) ?? '');
   const [startStadt, setStartStadt] = useState(tour.start_stadt ?? '');
@@ -55,16 +46,26 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   const [adresseStart, setAdresseStart] = useState(tour.adresse_start ?? '');
   const [adresseZiel, setAdresseZiel] = useState(tour.adresse_ziel ?? '');
   const [adresseRueck, setAdresseRueck] = useState(tour.adresse_rueckfuehrung ?? '');
-  const [ksName, setKsName] = useState(kStart.name ?? '');
-  const [ksTel, setKsTel] = useState(kStart.telefon ?? '');
-  const [ksMail, setKsMail] = useState(kStart.email ?? '');
-  const [kzName, setKzName] = useState(kZiel.name ?? '');
-  const [kzTel, setKzTel] = useState(kZiel.telefon ?? '');
-  const [kzMail, setKzMail] = useState(kZiel.email ?? '');
-  const [krName, setKrName] = useState(kRueck.name ?? '');
-  const [krTel, setKrTel] = useState(kRueck.telefon ?? '');
-  const [krMail, setKrMail] = useState(kRueck.email ?? '');
   const [info, setInfo] = useState(tour.info ?? '');
+  // Migration 080
+  const [fahrzeugmodell, setFahrzeugmodell] = useState(tour.fahrzeugmodell ?? '');
+  const [abholzeit, setAbholzeit] = useState(zeitZuInput(tour.abholzeit));
+  const [abgabezeit, setAbgabezeit] = useState(zeitZuInput(tour.abgabezeit));
+  const [rueckZeit, setRueckZeit] = useState(zeitZuInput(tour.rueckfuehrung_zeit));
+  const [zeitHinweisStart, setZeitHinweisStart] = useState(tour.zeit_hinweis_start ?? '');
+  const [zeitHinweisZiel, setZeitHinweisZiel] = useState(tour.zeit_hinweis_ziel ?? '');
+  const [zeitHinweisRueck, setZeitHinweisRueck] = useState(tour.zeit_hinweis_rueckfuehrung ?? '');
+  const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
+
+  // Ansprechpartner nachladen — sie liegen seit 080 in einer eigenen
+  // Tabelle, nicht mehr nur in den kontakt_*-Spalten der Tour.
+  const ladeKontakte = useCallback(async () => {
+    setKontakte(await ladeAnsprechpartner(tour.id));
+  }, [tour.id]);
+  useEffect(() => {
+    const t = window.setTimeout(() => { void ladeKontakte(); }, 0);
+    return () => window.clearTimeout(t);
+  }, [ladeKontakte]);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,20 +107,37 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
       adresse_start: adresseStart.trim() || null,
       adresse_ziel: adresseZiel.trim() || null,
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
-      kontakt_start: { name: ksName.trim(), telefon: ksTel.trim(), email: ksMail.trim() },
-      kontakt_ziel: { name: kzName.trim(), telefon: kzTel.trim(), email: kzMail.trim() },
-      kontakt_rueckfuehrung: hatRueckfuehrung
-        ? { name: krName.trim(), telefon: krTel.trim(), email: krMail.trim() }
-        : null,
       info: info.trim() || null,
+      fahrzeugmodell: fahrzeugmodell.trim() || null,
+      abholzeit: inputZuZeit(abholzeit),
+      abgabezeit: inputZuZeit(abgabezeit),
+      rueckfuehrung_zeit: hatRueckfuehrung ? inputZuZeit(rueckZeit) : null,
+      zeit_hinweis_start: zeitHinweisStart.trim() || null,
+      zeit_hinweis_ziel: zeitHinweisZiel.trim() || null,
+      zeit_hinweis_rueckfuehrung: hatRueckfuehrung ? (zeitHinweisRueck.trim() || null) : null,
     });
-    setSaving(false);
 
     if (!ergebnis.ok) {
+      setSaving(false);
       setError(ergebnis.fehler ?? 'Speichern fehlgeschlagen.');
       return;
     }
-    const anzahl = ergebnis.aenderungen?.length ?? 0;
+
+    // Ansprechpartner separat — eigene RPC mit denselben Prüfungen.
+    let kontaktAenderungen = 0;
+    for (const st of ['start', 'ziel', 'rueckfuehrung'] as const) {
+      if (st === 'rueckfuehrung' && !hatRueckfuehrung) continue;
+      const res = await speichereAgAnsprechpartner(tour.id, st, kontakte[st]);
+      if (!res.ok) {
+        setSaving(false);
+        setError(res.fehler ?? 'Ansprechpartner konnten nicht gespeichert werden.');
+        return;
+      }
+      if (res.geaendert) kontaktAenderungen += 1;
+    }
+    setSaving(false);
+
+    const anzahl = (ergebnis.aenderungen?.length ?? 0) + kontaktAenderungen;
     // Bei einer BEREITS BESTÄTIGTEN Tour zusätzlich den Admin per E-Mail
     // informieren — dort ist die Änderung am relevantesten. Betreff und
     // Inhalt baut der Server aus der DB; hier geht nur die Tour-ID raus.
@@ -163,13 +181,29 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             </div>
             <div>
               <label htmlFor="et-von" className="label">Startdatum *</label>
-              <input id="et-von" type="date" className="input"
-                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+              <div className="flex gap-2">
+                <input id="et-von" type="date" className="input flex-1"
+                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+                <input id="et-abholzeit" type="time" className="input w-28"
+                       aria-label="Abholzeit (optional)" title="Abholzeit (optional)"
+                       value={abholzeit} onChange={(e) => setAbholzeit(e.target.value)} />
+              </div>
+              <input className="input mt-1 text-xs" placeholder="z.B. vormittags (optional)"
+                     aria-label="Zeit-Hinweis Abholung"
+                     value={zeitHinweisStart} onChange={(e) => setZeitHinweisStart(e.target.value)} />
             </div>
             <div>
               <label htmlFor="et-bis" className="label">Enddatum *</label>
-              <input id="et-bis" type="date" className="input"
-                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+              <div className="flex gap-2">
+                <input id="et-bis" type="date" className="input flex-1"
+                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+                <input id="et-abgabezeit" type="time" className="input w-28"
+                       aria-label="Abgabezeit (optional)" title="Abgabezeit (optional)"
+                       value={abgabezeit} onChange={(e) => setAbgabezeit(e.target.value)} />
+              </div>
+              <input className="input mt-1 text-xs" placeholder="z.B. nach Absprache (optional)"
+                     aria-label="Zeit-Hinweis Abgabe"
+                     value={zeitHinweisZiel} onChange={(e) => setZeitHinweisZiel(e.target.value)} />
             </div>
           </div>
 
@@ -187,10 +221,22 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
           </div>
 
           {hatRueckfuehrung && (
-            <div>
-              <label htmlFor="et-rueck" className="label">Rückführung-Stadt</label>
-              <input id="et-rueck" className="input"
-                     value={rueckStadt} onChange={(e) => setRueckStadt(e.target.value)} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="et-rueck" className="label">Rückführung-Stadt</label>
+                <input id="et-rueck" className="input"
+                       value={rueckStadt} onChange={(e) => setRueckStadt(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="et-rueckzeit" className="label">Zeit Rückführung</label>
+                <div className="flex gap-2">
+                  <input id="et-rueckzeit" type="time" className="input w-28"
+                         value={rueckZeit} onChange={(e) => setRueckZeit(e.target.value)} />
+                  <input className="input flex-1 text-xs" placeholder="Hinweis (optional)"
+                         aria-label="Zeit-Hinweis Rückführung"
+                         value={zeitHinweisRueck} onChange={(e) => setZeitHinweisRueck(e.target.value)} />
+                </div>
+              </div>
             </div>
           )}
 
@@ -224,6 +270,16 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
               <input id="et-kunde" className="input"
                      value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
             </div>
+            <div>
+              <label htmlFor="et-modell" className="label">Fahrzeugmodell</label>
+              <SuggestCombobox
+                id="et-modell"
+                feldTyp="fahrzeugmodell"
+                value={fahrzeugmodell}
+                onChange={setFahrzeugmodell}
+                placeholder="z.B. VW Polo"
+              />
+            </div>
           </div>
 
           <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
@@ -252,27 +308,24 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             )}
           </div>
 
-          <KontaktFeldsatz
+          <AnsprechpartnerFeldsatz
             titel="Kontaktperson Start"
             idPrefix="et-ks"
-            name={ksName} setName={setKsName}
-            tel={ksTel} setTel={setKsTel}
-            mail={ksMail} setMail={setKsMail}
+            liste={kontakte.start}
+            onChange={(next) => setKontakte((m) => ({ ...m, start: next }))}
           />
-          <KontaktFeldsatz
+          <AnsprechpartnerFeldsatz
             titel="Kontaktperson Ziel"
             idPrefix="et-kz"
-            name={kzName} setName={setKzName}
-            tel={kzTel} setTel={setKzTel}
-            mail={kzMail} setMail={setKzMail}
+            liste={kontakte.ziel}
+            onChange={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
           />
           {hatRueckfuehrung && (
-            <KontaktFeldsatz
+            <AnsprechpartnerFeldsatz
               titel="Kontaktperson Rückführung"
               idPrefix="et-kr"
-              name={krName} setName={setKrName}
-              tel={krTel} setTel={setKrTel}
-              mail={krMail} setMail={setKrMail}
+              liste={kontakte.rueckfuehrung}
+              onChange={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
             />
           )}
 
@@ -299,31 +352,5 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
         </form>
       </div>
     </div>
-  );
-}
-
-function KontaktFeldsatz({
-  titel, idPrefix, name, setName, tel, setTel, mail, setMail,
-}: {
-  titel: string;
-  idPrefix: string;
-  name: string; setName: (v: string) => void;
-  tel: string; setTel: (v: string) => void;
-  mail: string; setMail: (v: string) => void;
-}) {
-  return (
-    <fieldset className="rounded-lg border border-maja-navy/15 p-3">
-      <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-maja-muted">
-        {titel}
-      </legend>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <input id={`${idPrefix}-name`} aria-label={`Name ${titel}`} className="input"
-               placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input id={`${idPrefix}-tel`} aria-label={`Telefon ${titel}`} className="input"
-               placeholder="Telefon" value={tel} onChange={(e) => setTel(e.target.value)} />
-        <input id={`${idPrefix}-mail`} aria-label={`E-Mail ${titel}`} className="input"
-               placeholder="E-Mail" value={mail} onChange={(e) => setMail(e.target.value)} />
-      </div>
-    </fieldset>
   );
 }

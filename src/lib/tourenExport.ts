@@ -50,6 +50,13 @@ interface ExportRow {
   fin: string | null;
   fin_rueck: string | null;
   kundenname: string | null;
+  fahrzeugmodell: string | null;
+  abholzeit: string | null;
+  abgabezeit: string | null;
+  rueckfuehrung_zeit: string | null;
+  zeit_hinweis_start: string | null;
+  zeit_hinweis_ziel: string | null;
+  zeit_hinweis_rueckfuehrung: string | null;
   km_hin: number | null;
   km_rueck: number | null;
   km_gesamt: number | null;
@@ -67,6 +74,17 @@ interface ExportRow {
     kategorie: string; anzahl: number; betrag: number;
     kennzeichen: string | null; notiz: string | null;
   }> | null;
+  ansprechpartner: Array<{
+    station: string; name: string | null; telefon: string | null;
+    email: string | null; sortierung: number;
+  }> | null;
+}
+
+/** "08:00:00" → "08:00"; leer, wenn nichts gepflegt ist. */
+function zeitStr(v: string | null): string {
+  if (!v) return '';
+  const m = /^(\d{2}):(\d{2})/.exec(v);
+  return m ? `${m[1]}:${m[2]}` : '';
 }
 
 function ymd(iso: string | null | undefined): string {
@@ -103,7 +121,8 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       *,
       auftraggeber:auftraggeber_id (name),
       fahrer:fahrer_id (vorname, nachname, user:user_id (email, vorname, nachname)),
-      zusaetze:tour_zusaetze (kategorie, anzahl, betrag, kennzeichen, notiz)
+      zusaetze:tour_zusaetze (kategorie, anzahl, betrag, kennzeichen, notiz),
+      ansprechpartner:tour_ansprechpartner (station, name, telefon, email, sortierung)
     `)
     .gte('enddatum', dateFrom)
     .lte('enddatum', dateTo)
@@ -130,6 +149,9 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     'Kontakt Rück Name', 'Kontakt Rück Tel', 'Kontakt Rück E-Mail',
     'Kennzeichen Rück', 'FIN', 'FIN Rück', 'Kundenname',
     'km Hin', 'km Rück', 'Info', 'created_at', 'Bestätigt',
+    // Migration 080 — optional, der Importer kommt auch ohne sie klar.
+    'Fahrzeugmodell', 'Abholzeit', 'Abgabezeit', 'Zeit Rückführung',
+    'Zeit-Hinweis Start', 'Zeit-Hinweis Ziel', 'Zeit-Hinweis Rückführung',
   ];
 
   const dataRows = rows.map((t) => {
@@ -169,6 +191,13 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       t.info ?? '',
       ymd(t.created_at),
       t.bestaetigt ? 'ja' : 'nein',
+      t.fahrzeugmodell ?? '',
+      zeitStr(t.abholzeit),
+      zeitStr(t.abgabezeit),
+      zeitStr(t.rueckfuehrung_zeit),
+      t.zeit_hinweis_start ?? '',
+      t.zeit_hinweis_ziel ?? '',
+      t.zeit_hinweis_rueckfuehrung ?? '',
     ];
   });
 
@@ -196,6 +225,34 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
   }
   const zusaetzeAoa = [['Zusätze'], zHeader, ...zRows];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(zusaetzeAoa), 'Zusätze');
+
+  // ---- Blatt „Ansprechpartner" (Migration 080) -------------------------
+  // Der ERSTE Ansprechpartner je Station steht zusätzlich weiterhin in
+  // den Kontakt-Spalten des Touren-Blatts — dieses Blatt ist die
+  // vollständige Liste inkl. weiterer Kontakte.
+  const aHeader = ['Tour-ID', 'Station', 'Name', 'Telefon', 'E-Mail', 'Reihenfolge'];
+  const stationLabel: Record<string, string> = {
+    start: 'Start', ziel: 'Ziel', rueckfuehrung: 'Rückführung',
+  };
+  const aRows: unknown[][] = [];
+  for (const t of rows) {
+    const liste = [...(t.ansprechpartner ?? [])]
+      .sort((x, y) => (x.station === y.station
+        ? x.sortierung - y.sortierung
+        : x.station.localeCompare(y.station)));
+    for (const a of liste) {
+      aRows.push([
+        t.tour_id ?? '',
+        stationLabel[a.station] ?? a.station,
+        a.name ?? '',
+        a.telefon ?? '',
+        a.email ?? '',
+        a.sortierung + 1,
+      ]);
+    }
+  }
+  const apAoa = [['Ansprechpartner'], aHeader, ...aRows];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(apAoa), 'Ansprechpartner');
 
   // ---- Download --------------------------------------------------------
   const ym = dateFrom.slice(0, 7); // YYYY-MM
