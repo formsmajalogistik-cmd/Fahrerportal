@@ -8,6 +8,7 @@ import { useFahrerContext } from '../../auth/FahrerContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { AuftragEmailDialog } from './AuftragEmailDialog';
 import { TourDokumenteSection } from '../../components/TourDokumenteSection';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import { CheckIcon, DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
@@ -18,7 +19,8 @@ function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user
 }
 import {
   abschnittLabels, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
-  formatAnzahl, formatDate, formatEuro, formatKm, hasTwoProtokollSlots, tourTitel,
+  formatAnzahl, formatDate, formatDateTime, formatEuro, formatKm,
+  hasTwoProtokollSlots, tourTitel,
   type TourPriceBreakdown,
 } from '../../lib/touren';
 import {
@@ -474,6 +476,7 @@ export function TourDetailDialog({
   // erhalten.
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   const [abcWarnung, setAbcWarnung] = useState(false);
+  const [auftragMailOpen, setAuftragMailOpen] = useState(false);
   const kontakteTourId = tour?.id ?? null;
   useEffect(() => {
     if (!kontakteTourId) return;
@@ -1324,13 +1327,29 @@ export function TourDetailDialog({
       {/* Footer */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 pt-4">
         {isAdmin && !editing && (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-          >
-            Löschen
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+            >
+              Löschen
+            </button>
+            {/* Auftrag an den Fahrer — bewusst unten links, gegenüber
+                dem Bearbeiten-Button. Nur für Admins. */}
+            <button
+              type="button"
+              onClick={() => { if (!guard()) setAuftragMailOpen(true); }}
+              className="btn-secondary"
+            >
+              Auftrag als E-Mail versenden
+            </button>
+            {tour.auftrag_versendet_am && (
+              <span className="text-xs text-maja-muted">
+                Auftrag versendet: {formatDateTime(tour.auftrag_versendet_am)}
+              </span>
+            )}
+          </div>
         )}
         <div className="ml-auto flex flex-wrap gap-2">
           {editing ? (
@@ -1409,6 +1428,45 @@ export function TourDetailDialog({
           busy={unlinkBusy}
           onConfirm={(reset) => void handleUnlinkProtokoll(reset)}
           onClose={() => setUnlinkOpen(null)}
+        />
+      )}
+
+      {auftragMailOpen && tour && (
+        <AuftragEmailDialog
+          tour={{
+            id: tour.id,
+            tour_id: tour.tour_id,
+            start_stadt: tour.start_stadt,
+            ziel_stadt: tour.ziel_stadt,
+            rueckfuehrung_stadt: tour.rueckfuehrung_stadt,
+            adresse_start: tour.adresse_start,
+            adresse_ziel: tour.adresse_ziel,
+            adresse_rueckfuehrung: tour.adresse_rueckfuehrung,
+            zeit_start: tour.zeit_start,
+            zeit_ziel: tour.zeit_ziel,
+            zeit_rueckfuehrung: tour.zeit_rueckfuehrung,
+            startdatum: tour.startdatum,
+            enddatum: tour.enddatum,
+            tourenart: tour.tourenart,
+            kennzeichen: tour.kennzeichen,
+            fin: tour.fin,
+            fin_rueck: tour.fin_rueck,
+            fahrzeugmodell: tour.fahrzeugmodell,
+            fahrzeugmodell_rueck: tour.fahrzeugmodell_rueck,
+            kundenname: tour.kundenname,
+            info: tour.info,
+            fahrer_honorar: tour.fahrer_honorar,
+          }}
+          fahrerEmail={tour.fahrer?.user?.email ?? null}
+          fahrerName={tour.fahrer ? fahrerNameOf(tour.fahrer) : null}
+          auftraggeberName={tour.auftraggeber?.name ?? null}
+          auftraggeberId={tour.auftraggeber_id}
+          onClose={() => setAuftragMailOpen(false)}
+          onSent={() => {
+            setAuftragMailOpen(false);
+            setStatusMsg({ kind: 'ok', text: 'Auftrag versendet.' });
+            void load();
+          }}
         />
       )}
 

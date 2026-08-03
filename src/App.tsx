@@ -25,6 +25,7 @@ import { PosteingangPage } from './pages/admin/PosteingangPage';
 import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
 import { FeldVorschlaegePage } from './pages/admin/FeldVorschlaegePage';
 import { GutschriftSettingsPage } from './pages/admin/GutschriftSettingsPage';
+import { AuftragsEmailSettingsPage } from './pages/admin/AuftragsEmailSettingsPage';
 import { GutschriftenListPage } from './pages/admin/gutschriften/GutschriftenListPage';
 import { GutschriftNewPage } from './pages/admin/gutschriften/GutschriftNewPage';
 import { GutschriftDetailPage } from './pages/admin/gutschriften/GutschriftDetailPage';
@@ -168,6 +169,7 @@ export default function App() {
             <Route path="postfaecher" element={<PostfaecherSettingsPage />} />
             <Route path="vorschlaege" element={<FeldVorschlaegePage />} />
             <Route path="gutschriften" element={<GutschriftSettingsPage />} />
+            <Route path="auftrags-email" element={<AuftragsEmailSettingsPage />} />
           </Route>
           {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
           <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />
