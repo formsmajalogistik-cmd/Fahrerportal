@@ -4,6 +4,10 @@ import { speichereAgTour } from '../../lib/tourAenderungen';
 import { meldeTourAenderung } from '../../lib/onedrive';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import {
+  ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
+} from '../../lib/tourenartAutomatik';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import {
   ladeAnsprechpartner, leereKontaktMap, speichereAgAnsprechpartner,
@@ -92,6 +96,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   const [adresseRueck, setAdresseRueck] = useState(tour.adresse_rueckfuehrung ?? '');
   const [info, setInfo] = useState(tour.info ?? '');
   const [fahrzeugmodell, setFahrzeugmodell] = useState(tour.fahrzeugmodell ?? '');
+  const [fahrzeugmodellRueck, setFahrzeugmodellRueck] = useState(tour.fahrzeugmodell_rueck ?? '');
+  // Bestandstouren nie automatisch umstellen.
+  const [tourenartManuell, setTourenartManuell] = useState(true);
+  const [abcWarnung, setAbcWarnung] = useState(false);
   // Zeiten je Station als Freitext (081).
   const [zeitStart, setZeitStart] = useState(tour.zeit_start ?? '');
   const [zeitZiel, setZeitZiel] = useState(tour.zeit_ziel ?? '');
@@ -123,8 +131,31 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
     return summe > 0 ? summe : null;
   })();
 
-  async function handleSubmit(e: FormEvent) {
+  // AB/ABC automatisch, solange die Tourenart nicht manuell gewählt wurde.
+  useEffect(() => {
+    const naechste = automatischeTourenart({
+      aktuell: tourenart,
+      rueckStadt: rueckStadt,
+      rueckAdresse: adresseRueck,
+      manuell: tourenartManuell,
+    });
+    if (naechste == null) return;
+    const t = window.setTimeout(() => setTourenart(naechste), 0);
+    return () => window.clearTimeout(t);
+  }, [tourenart, rueckStadt, adresseRueck, tourenartManuell]);
+
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    setError(null);
+    // Sicherheitsnetz: Rückführung befüllt, Tourenart aber AB.
+    if (brauchtAbcWarnung(tourenart, rueckStadt, adresseRueck)) {
+      setAbcWarnung(true);
+      return;
+    }
+    void speichern();
+  }
+
+  async function speichern() {
     setError(null);
 
     if (!startStadt.trim() || !zielStadt.trim()) {
@@ -160,6 +191,7 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
       info: info.trim() || null,
       fahrzeugmodell: fahrzeugmodell.trim() || null,
+      fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
       zeit_start: zeitStart.trim() || null,
       zeit_ziel: zeitZiel.trim() || null,
       zeit_rueckfuehrung: hatRueckfuehrung ? (zeitRueck.trim() || null) : null,
@@ -224,7 +256,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             <div className="min-w-0">
               <label htmlFor="et-art" className="label">Tourenart</label>
               <select id="et-art" className="input" value={tourenart}
-                      onChange={(e) => setTourenart(e.target.value as TourenArt | '')}>
+                      onChange={(e) => {
+                        setTourenart(e.target.value as TourenArt | '');
+                        setTourenartManuell(true);
+                      }}>
                 <option value="">— wählen —</option>
                 <option value="AB">AB (einfach)</option>
                 <option value="ABA">ABA (hin + zurück)</option>
@@ -267,11 +302,23 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                 />
               </div>
               {hatRueckfuehrung && (
-                <div className="min-w-0">
-                  <label htmlFor="et-kz2" className="label">Kennzeichen Rückführung</label>
-                  <input id="et-kz2" className="input"
-                         value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
-                </div>
+                <>
+                  <div className="min-w-0">
+                    <label htmlFor="et-kz2" className="label">Kennzeichen Rückführung</label>
+                    <input id="et-kz2" className="input"
+                           value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                  </div>
+                  <div className="min-w-0">
+                    <label htmlFor="et-modell2" className="label">Fahrzeugmodell Rück (optional)</label>
+                    <SuggestCombobox
+                      id="et-modell2"
+                      feldTyp="fahrzeugmodell"
+                      value={fahrzeugmodellRueck}
+                      onChange={setFahrzeugmodellRueck}
+                      placeholder="z.B. Audi A3"
+                    />
+                  </div>
+                </>
               )}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -374,6 +421,25 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             <textarea id="et-info" className="input min-h-[72px]"
                       value={info} onChange={(e) => setInfo(e.target.value)} />
           </div>
+
+          {abcWarnung && (
+            <ConfirmDialog
+              title="Tourenart prüfen"
+              message={ABC_WARNUNG_TEXT}
+              confirmLabel="Auf ABC ändern"
+              cancelLabel="AB beibehalten"
+              onConfirm={async () => {
+                setTourenart('ABC');
+                setTourenartManuell(true);
+                setAbcWarnung(false);
+                await speichern();
+              }}
+              onClose={() => {
+                setAbcWarnung(false);
+                void speichern();
+              }}
+            />
+          )}
 
           {error && (
             <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">

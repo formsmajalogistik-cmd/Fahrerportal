@@ -32,6 +32,7 @@ const FELD_LABEL: Record<string, string> = {
   info: 'Hinweise',
   // Migration 080
   fahrzeugmodell: 'Fahrzeugmodell',
+  fahrzeugmodell_rueck: 'Fahrzeugmodell Rück',
   zeit_start: 'Zeit Start (Abholung)',
   zeit_ziel: 'Zeit Ziel (Abgabe)',
   zeit_rueckfuehrung: 'Zeit Rückführung',

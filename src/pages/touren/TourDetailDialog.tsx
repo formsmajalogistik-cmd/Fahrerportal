@@ -78,6 +78,9 @@ import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsat
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
 import {
+  ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
+} from '../../lib/tourenartAutomatik';
+import {
   ladeAnsprechpartner, leereKontaktMap, speichereAlleAnsprechpartner,
   type KontaktEntwurf, type KontaktMap, type Station,
 } from '../../lib/tourAnsprechpartner';
@@ -218,7 +221,11 @@ interface EditDraft {
   appNotiz: string;
   // Fahrzeugmodell + Zeiten je Station (Migration 080). Die Kontakte
   // liegen NICHT mehr im Draft, sondern in tour_ansprechpartner.
+  /** True, sobald der Nutzer die Tourenart selbst gewählt hat — ab dann
+   *  greift die AB/ABC-Automatik nicht mehr. */
+  tourenartManuell: boolean;
   fahrzeugmodell: string;
+  fahrzeugmodellRueck: string;
   zeitStart: string;
   zeitZiel: string;
   zeitRueck: string;
@@ -236,6 +243,8 @@ function draftFromTour(t: FullTour): EditDraft {
     fahrerId: t.fahrer_id ?? '',
     auftraggeberId: t.auftraggeber_id ?? '',
     tourenart: t.tourenart ?? '',
+    // Bestandstouren werden NICHT nachträglich umgestellt.
+    tourenartManuell: true,
     startStadt: t.start_stadt,
     zielStadt: t.ziel_stadt,
     rueckfuehrungStadt: t.rueckfuehrung_stadt ?? '',
@@ -264,6 +273,7 @@ function draftFromTour(t: FullTour): EditDraft {
     kontaktId: t.kontakt_id ?? '',
     appNotiz: t.app_notiz ?? '',
     fahrzeugmodell: t.fahrzeugmodell ?? '',
+    fahrzeugmodellRueck: t.fahrzeugmodell_rueck ?? '',
     zeitStart: t.zeit_start ?? '',
     zeitZiel: t.zeit_ziel ?? '',
     zeitRueck: t.zeit_rueckfuehrung ?? '',
@@ -463,6 +473,7 @@ export function TourDetailDialog({
   // der React-Compiler kann die Memoisierung über `tour?.id` sonst nicht
   // erhalten.
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
+  const [abcWarnung, setAbcWarnung] = useState(false);
   const kontakteTourId = tour?.id ?? null;
   useEffect(() => {
     if (!kontakteTourId) return;
@@ -566,6 +577,38 @@ export function TourDetailDialog({
     })();
     return () => { cancelled = true; };
   }, [editing, draft?.auftraggeberId]);
+
+  // AB/ABC-Automatik, solange der Nutzer die Tourenart nicht selbst
+  // gewählt hat. Bestehende Touren starten mit tourenartManuell=true,
+  // werden also nie automatisch umgestellt.
+  const draftTourenart = draft?.tourenart ?? '';
+  const draftRueckStadt = draft?.rueckfuehrungStadt ?? '';
+  const draftRueckAdresse = draft?.adresseRueckfuehrung ?? '';
+  const draftTourenartManuell = draft?.tourenartManuell ?? true;
+  useEffect(() => {
+    const naechste = automatischeTourenart({
+      aktuell: draftTourenart,
+      rueckStadt: draftRueckStadt,
+      rueckAdresse: draftRueckAdresse,
+      manuell: draftTourenartManuell,
+    });
+    if (naechste == null) return;
+    const t = window.setTimeout(
+      () => setDraft((d) => (d ? { ...d, tourenart: naechste } : d)), 0,
+    );
+    return () => window.clearTimeout(t);
+  }, [draftTourenart, draftRueckStadt, draftRueckAdresse, draftTourenartManuell]);
+
+  /** Speichern mit vorgeschaltetem ABC-Sicherheitsnetz. */
+  function handleSaveMitPruefung() {
+    if (draft && brauchtAbcWarnung(
+      draft.tourenart, draft.rueckfuehrungStadt, draft.adresseRueckfuehrung,
+    )) {
+      setAbcWarnung(true);
+      return;
+    }
+    void handleSave();
+  }
 
   async function handleSave() {
     if (!draft || !tour) return;
@@ -692,6 +735,8 @@ export function TourDetailDialog({
         // partner liegen in tour_ansprechpartner, ein DB-Trigger spiegelt
         // den ersten je Station in die Alt-Spalten (Migration 080).
         fahrzeugmodell: draft.fahrzeugmodell.trim() || null,
+        fahrzeugmodell_rueck: draft.hatRueckfuehrung
+          ? (draft.fahrzeugmodellRueck.trim() || null) : null,
         zeit_start: draft.zeitStart.trim() || null,
         zeit_ziel: draft.zeitZiel.trim() || null,
         zeit_rueckfuehrung: draft.hatRueckfuehrung
@@ -1269,6 +1314,9 @@ export function TourDetailDialog({
             kontakte={kontakte}
             onKontakte={(station, next) =>
               setKontakte((m) => ({ ...m, [station]: next }))}
+            breakdown={breakdown}
+            pricing={pricing}
+            liveKmGesamt={liveKmGesamt}
           />
         )}
       </div>
@@ -1292,7 +1340,7 @@ export function TourDetailDialog({
               </button>
               <button
                 type="button"
-                onClick={() => void handleSave()}
+                onClick={handleSaveMitPruefung}
                 className="btn-primary"
                 disabled={saving}
               >
@@ -1361,6 +1409,25 @@ export function TourDetailDialog({
           busy={unlinkBusy}
           onConfirm={(reset) => void handleUnlinkProtokoll(reset)}
           onClose={() => setUnlinkOpen(null)}
+        />
+      )}
+
+      {abcWarnung && draft && (
+        <ConfirmDialog
+          title="Tourenart prüfen"
+          message={ABC_WARNUNG_TEXT}
+          confirmLabel="Auf ABC ändern"
+          cancelLabel="AB beibehalten"
+          onConfirm={async () => {
+            setDraft((d) => (d ? { ...d, tourenart: 'ABC', tourenartManuell: true } : d));
+            setAbcWarnung(false);
+            await handleSave();
+          }}
+          onClose={() => {
+            // "AB beibehalten" — bewusste Entscheidung, also speichern.
+            setAbcWarnung(false);
+            void handleSave();
+          }}
         />
       )}
 
@@ -1725,7 +1792,7 @@ function RouteIcon({ className }: { className?: string }) {
 }
 
 function EditMode(p: EditModeProps) {
-  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, breakdown, pricing, templates, zugaenge, kontakte } = p;
+  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, templates, zugaenge, kontakte } = p;
   const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
   // Live-Status aus dem Datum (analog zur Anzeige in der Liste).
   const computedStatus = computeTourStatus(draft.startdatum || null, draft.enddatum || null);
@@ -1759,7 +1826,10 @@ function EditMode(p: EditModeProps) {
         <div>
           <label className="label">Tourenart</label>
           <select className="input" value={draft.tourenart}
-                  onChange={(e) => patchDraft({ tourenart: e.target.value as TourenArt | '' })}>
+                  onChange={(e) => patchDraft({
+                    tourenart: e.target.value as TourenArt | '',
+                    tourenartManuell: true,
+                  })}>
             <option value="">—</option>
             <option value="AB">AB</option>
             <option value="ABC">ABC</option>
@@ -1922,59 +1992,12 @@ function EditMode(p: EditModeProps) {
         } : null}
       />
 
-      {/* Vergütung + Kundenname */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Vergütung (€)</label>
-          {draft.istSondervereinbarung ? (
-            <>
-              <input
-                className="input"
-                type="text"
-                inputMode="decimal"
-                value={draft.verguetung}
-                onChange={(e) => patchDraft({ verguetung: e.target.value })}
-              />
-              <p className="mt-1 text-xs text-maja-muted">
-                Manueller Preis (Sondervereinbarung aktiv).
-              </p>
-            </>
-          ) : (
-            <>
-              <input
-                className="input bg-maja-light"
-                type="text"
-                readOnly
-                value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
-              />
-              <p className="mt-1 text-xs text-maja-muted">
-                {draft.auftraggeberId && liveKmGesamt != null
-                  ? breakdown == null
-                    ? 'Auto (Preisliste): keine passende Stufe gefunden.'
-                    : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
-                      ? 'Auto (Preisliste)'
-                      : (
-                        <>
-                          {formatEuro(breakdown.base)}
-                          {breakdown.abaAufschlag > 0 && (
-                            <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
-                          )}
-                          {breakdown.eAufschlag > 0 && (
-                            <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
-                          )}
-                          <> = {formatEuro(breakdown.total)}</>
-                        </>
-                      )
-                  : 'Auto (Preisliste): Auftraggeber + km wählen.'}
-              </p>
-            </>
-          )}
-        </div>
-        <div>
-          <label className="label">Kundenname</label>
-          <input className="input" value={draft.kundenname}
-                 onChange={(e) => patchDraft({ kundenname: e.target.value })} />
-        </div>
+      {/* Kundenname — die Vergütung steht jetzt oben im Fahrzeug-Block,
+          direkt unter den beiden Checkboxen. */}
+      <div>
+        <label className="label">Kundenname</label>
+        <input className="input" value={draft.kundenname}
+               onChange={(e) => patchDraft({ kundenname: e.target.value })} />
       </div>
 
       <div>
@@ -2126,6 +2149,7 @@ function AddressBlockView({
 
 function VehicleAndAddressEdit({
   draft, patchDraft, onOpenRouteDialog, routeConfirm, kontakte, onKontakte,
+  breakdown, pricing, liveKmGesamt,
 }: {
   draft: EditDraft;
   patchDraft: (p: Partial<EditDraft>) => void;
@@ -2134,6 +2158,10 @@ function VehicleAndAddressEdit({
   /** Ansprechpartner je Station (Migration 080). */
   kontakte: KontaktMap;
   onKontakte: (station: Station, next: KontaktEntwurf[]) => void;
+  /** Preis-Vorschau — die Vergütung sitzt seit 082 in diesem Block. */
+  breakdown: TourPriceBreakdown | null;
+  pricing: boolean;
+  liveKmGesamt: number | null;
 }) {
   return (
     <>
@@ -2168,6 +2196,55 @@ function VehicleAndAddressEdit({
         </div>
       )}
 
+      {/* Vergütung direkt unter den Checkboxen. */}
+      <div className="min-w-0">
+          <label className="label">Vergütung (€)</label>
+          {draft.istSondervereinbarung ? (
+            <>
+              <input
+                className="input"
+                type="text"
+                inputMode="decimal"
+                value={draft.verguetung}
+                onChange={(e) => patchDraft({ verguetung: e.target.value })}
+              />
+              <p className="mt-1 text-xs text-maja-muted">
+                Manueller Preis (Sondervereinbarung aktiv).
+              </p>
+            </>
+          ) : (
+            <>
+              <input
+                className="input bg-maja-light"
+                type="text"
+                readOnly
+                value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
+              />
+              <p className="mt-1 text-xs text-maja-muted">
+                {draft.auftraggeberId && liveKmGesamt != null
+                  ? breakdown == null
+                    ? 'Auto (Preisliste): keine passende Stufe gefunden.'
+                    : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
+                      ? 'Auto (Preisliste)'
+                      : (
+                        <>
+                          {formatEuro(breakdown.base)}
+                          {breakdown.abaAufschlag > 0 && (
+                            <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
+                          )}
+                          {breakdown.eAufschlag > 0 && (
+                            <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
+                          )}
+                          <> = {formatEuro(breakdown.total)}</>
+                        </>
+                      )
+                  : 'Auto (Preisliste): Auftraggeber + km wählen.'}
+              </p>
+            </>
+          )}
+        </div>
+
+      {/* Hinfahrzeug: Kennzeichen + Modell, darunter FIN. */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="min-w-0">
           <label className="label">
@@ -2185,31 +2262,41 @@ function VehicleAndAddressEdit({
             placeholder="z.B. VW Polo"
           />
         </div>
-        {draft.hatRueckfuehrung && (
-          <div className="min-w-0">
-            <label className="label">Kennzeichen Rück</label>
-            <input className="input" value={draft.kennzeichenRueck}
-                   onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
-          </div>
-        )}
+      </div>
+      <div className="min-w-0">
+        <label className="label">{draft.hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
+        <input className="input"
+               value={draft.fin}
+               onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="min-w-0">
-          <label className="label">{draft.hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
-          <input className="input"
-                 value={draft.fin}
-                 onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
-        </div>
-        {draft.hatRueckfuehrung && (
+      {/* Rückfahrzeug — nur bei ABA/ABC. */}
+      {draft.hatRueckfuehrung && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
+              <label className="label">Kennzeichen Rück</label>
+              <input className="input" value={draft.kennzeichenRueck}
+                     onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
+            </div>
+            <div className="min-w-0">
+              <label className="label">Fahrzeugmodell Rück (optional)</label>
+              <SuggestCombobox
+                feldTyp="fahrzeugmodell"
+                value={draft.fahrzeugmodellRueck}
+                onChange={(v) => patchDraft({ fahrzeugmodellRueck: v })}
+                placeholder="z.B. Audi A3"
+              />
+            </div>
+          </div>
           <div className="min-w-0">
             <label className="label">FIN Rück</label>
             <input className="input"
                    value={draft.finRueck}
                    onChange={(e) => patchDraft({ finRueck: e.target.value.toUpperCase() })} />
           </div>
-        )}
-      </div>
+        </>
+      )}
 
       {/* Adresse + Kontakt pro Stadt */}
       <AddressBlockEdit

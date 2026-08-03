@@ -59,6 +59,7 @@ interface ParsedRow {
   created_at?: string | null;
   // Migration 080/081 — ebenfalls optional.
   fahrzeugmodell?: string | null;
+  fahrzeugmodell_rueck?: string | null;
   zeit_start?: string | null;
   zeit_ziel?: string | null;
   zeit_rueckfuehrung?: string | null;
@@ -114,6 +115,7 @@ const HEADER_KEYS = {
   kundenname:      ['kundenname', 'kunde'],
   status:          ['status'],
   fahrzeugmodell:  ['fahrzeugmodell', 'modell'],
+  fahrzeugmodell_rueck: ['fahrzeugmodell rück', 'fahrzeugmodell rueck'],
   zeit_start:      ['zeit start', 'abholzeit'],
   zeit_ziel:       ['zeit ziel', 'abgabezeit'],
   zeit_rueck:      ['zeit rückführung', 'zeit rueckfuehrung'],
@@ -395,6 +397,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       bestaetigt:      findColumnExact(cols, HEADER_KEYS.bestaetigt),
       created_at:      findColumnExact(cols, HEADER_KEYS.created_at),
       fahrzeugmodell:  findColumnExact(cols, HEADER_KEYS.fahrzeugmodell),
+      fahrzeugmodell_rueck: findColumnExact(cols, HEADER_KEYS.fahrzeugmodell_rueck),
       zeit_start:      findColumnExact(cols, HEADER_KEYS.zeit_start),
       zeit_ziel:       findColumnExact(cols, HEADER_KEYS.zeit_ziel),
       zeit_rueck:      findColumnExact(cols, HEADER_KEYS.zeit_rueck),
@@ -461,6 +464,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       const bestaetigt = oIdx.bestaetigt >= 0 ? parseBoolCell(at(r, oIdx.bestaetigt)) : undefined;
       const created_at = oIdx.created_at >= 0 ? excelDateToISO(at(r, oIdx.created_at)) : undefined;
       const fahrzeugmodell = oIdx.fahrzeugmodell >= 0 ? cellStr(at(r, oIdx.fahrzeugmodell)) : undefined;
+      const fahrzeugmodell_rueck = oIdx.fahrzeugmodell_rueck >= 0 ? cellStr(at(r, oIdx.fahrzeugmodell_rueck)) : undefined;
       const zeit_start = oIdx.zeit_start >= 0 ? parseZeitText(at(r, oIdx.zeit_start)) : undefined;
       const zeit_ziel = oIdx.zeit_ziel >= 0 ? parseZeitText(at(r, oIdx.zeit_ziel)) : undefined;
       const zeit_rueckfuehrung = oIdx.zeit_rueck >= 0 ? parseZeitText(at(r, oIdx.zeit_rueck)) : undefined;
@@ -506,6 +510,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         bestaetigt,
         created_at,
         fahrzeugmodell,
+        fahrzeugmodell_rueck,
         zeit_start,
         zeit_ziel,
         zeit_rueckfuehrung,
@@ -608,6 +613,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.bestaetigt != null) base.bestaetigt = r.bestaetigt;
         if (r.created_at != null) base.created_at = r.created_at;
         if (r.fahrzeugmodell !== undefined) base.fahrzeugmodell = r.fahrzeugmodell;
+        if (r.fahrzeugmodell_rueck !== undefined) base.fahrzeugmodell_rueck = r.fahrzeugmodell_rueck;
         if (r.zeit_start !== undefined) base.zeit_start = r.zeit_start;
         if (r.zeit_ziel !== undefined) base.zeit_ziel = r.zeit_ziel;
         if (r.zeit_rueckfuehrung !== undefined) base.zeit_rueckfuehrung = r.zeit_rueckfuehrung;

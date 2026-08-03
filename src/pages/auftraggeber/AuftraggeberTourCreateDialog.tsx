@@ -1,9 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import {
+  ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
+} from '../../lib/tourenartAutomatik';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import {
   leereKontaktMap, toPayload, type KontaktMap,
@@ -89,6 +93,10 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const [info, setInfo] = useState('');
   // Optionale Zusatzangaben. Zeiten sind Freitext je Station (081).
   const [fahrzeugmodell, setFahrzeugmodell] = useState('');
+  const [fahrzeugmodellRueck, setFahrzeugmodellRueck] = useState('');
+  // Merkt sich eine manuelle Tourenart-Wahl — ab dann keine Automatik.
+  const [tourenartManuell, setTourenartManuell] = useState(false);
+  const [abcWarnung, setAbcWarnung] = useState(false);
   const [zeitStart, setZeitStart] = useState('');
   const [zeitZiel, setZeitZiel] = useState('');
   const [zeitRueck, setZeitRueck] = useState('');
@@ -116,8 +124,31 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
     return missing.has(key) ? 'input border-red-500' : 'input';
   }
 
-  async function handleSubmit(e: FormEvent) {
+  // AB/ABC automatisch, solange die Tourenart nicht manuell gewählt wurde.
+  useEffect(() => {
+    const naechste = automatischeTourenart({
+      aktuell: tourenart,
+      rueckStadt: rueckStadt,
+      rueckAdresse: adresseRueck,
+      manuell: tourenartManuell,
+    });
+    if (naechste == null) return;
+    const t = window.setTimeout(() => setTourenart(naechste), 0);
+    return () => window.clearTimeout(t);
+  }, [tourenart, rueckStadt, adresseRueck, tourenartManuell]);
+
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    setError(null);
+    // Sicherheitsnetz: Rückführung befüllt, Tourenart aber AB.
+    if (brauchtAbcWarnung(tourenart, rueckStadt, adresseRueck)) {
+      setAbcWarnung(true);
+      return;
+    }
+    void speichern();
+  }
+
+  async function speichern() {
     setError(null);
 
     // Pflichtfelder prüfen — fehlende rot markieren.
@@ -174,6 +205,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       // unten in tour_ansprechpartner, der DB-Trigger spiegelt den
       // ersten Eintrag je Station in die Alt-Spalten.
       fahrzeugmodell: fahrzeugmodell.trim() || null,
+      fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
       zeit_start: zeitStart.trim() || null,
       zeit_ziel: zeitZiel.trim() || null,
       zeit_rueckfuehrung: hatRueckfuehrung ? (zeitRueck.trim() || null) : null,
@@ -226,7 +258,10 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
               <label htmlFor="at-art" className="label">Tourenart *</label>
               <select id="at-art" className={inputCls('tourenart')}
                       value={tourenart}
-                      onChange={(e) => setTourenart(e.target.value as TourenArt | '')}>
+                      onChange={(e) => {
+                        setTourenart(e.target.value as TourenArt | '');
+                        setTourenartManuell(true);
+                      }}>
                 <option value="">— wählen —</option>
                 <option value="AB">AB (einfach)</option>
                 <option value="ABA">ABA (hin + zurück)</option>
@@ -270,11 +305,23 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 />
               </div>
               {hatRueckfuehrung && (
-                <div className="min-w-0">
-                  <label htmlFor="at-kz2" className="label">Kennzeichen Rückführung</label>
-                  <input id="at-kz2" className="input"
-                         value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
-                </div>
+                <>
+                  <div className="min-w-0">
+                    <label htmlFor="at-kz2" className="label">Kennzeichen Rückführung</label>
+                    <input id="at-kz2" className="input"
+                           value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                  </div>
+                  <div className="min-w-0">
+                    <label htmlFor="at-modell2" className="label">Fahrzeugmodell Rück (optional)</label>
+                    <SuggestCombobox
+                      id="at-modell2"
+                      feldTyp="fahrzeugmodell"
+                      value={fahrzeugmodellRueck}
+                      onChange={setFahrzeugmodellRueck}
+                      placeholder="z.B. Audi A3"
+                    />
+                  </div>
+                </>
               )}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -377,6 +424,25 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 if (routeDialog === 'hin') setKmHin(String(km));
                 else setKmRueck(String(km));
                 setRouteDialog(null);
+              }}
+            />
+          )}
+
+          {abcWarnung && (
+            <ConfirmDialog
+              title="Tourenart prüfen"
+              message={ABC_WARNUNG_TEXT}
+              confirmLabel="Auf ABC ändern"
+              cancelLabel="AB beibehalten"
+              onConfirm={async () => {
+                setTourenart('ABC');
+                setTourenartManuell(true);
+                setAbcWarnung(false);
+                await speichern();
+              }}
+              onClose={() => {
+                setAbcWarnung(false);
+                void speichern();
               }}
             />
           )}

@@ -195,7 +195,8 @@ export const RECHNUNG_PLATZHALTER = [
   'km', 'km_gesamt', 'km_hin', 'km_rueck',
   'kategorie', 'sondervereinbarung', 'ansprechpartner',
   // Migration 080 — optionale Fahrzeug-/Zeitangaben.
-  'fahrzeugmodell', 'zeit_start', 'zeit_ziel', 'zeit_rueckfuehrung',
+  'fahrzeugmodell', 'fahrzeugmodell_rueck',
+  'zeit_start', 'zeit_ziel', 'zeit_rueckfuehrung',
 ] as const;
 
 /** km-Wert für Platzhalter: ganzzahlig gerundet; leer (statt "0"/
@@ -394,6 +395,7 @@ export interface TourForRechnung {
   fin_rueck: string | null;
   sondervereinbarung: string | null;
   fahrzeugmodell?: string | null;
+  fahrzeugmodell_rueck?: string | null;
   zeit_start?: string | null;
   zeit_ziel?: string | null;
   zeit_rueckfuehrung?: string | null;
@@ -521,6 +523,7 @@ function placeholdersForTour(
     tourenart: format.tourenart_anzeigen ? (t.tourenart ?? '') : '',
     sondervereinbarung: t.sondervereinbarung ?? 'SV',
     fahrzeugmodell: t.fahrzeugmodell ?? '',
+    fahrzeugmodell_rueck: t.fahrzeugmodell_rueck ?? '',
     zeit_start: t.zeit_start ?? '',
     zeit_ziel: t.zeit_ziel ?? '',
     zeit_rueckfuehrung: t.zeit_rueckfuehrung ?? '',

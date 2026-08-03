@@ -10,6 +10,10 @@ import { useTestGuard } from '../../auth/TestModeContext';
 import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import {
+  ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
+} from '../../lib/tourenartAutomatik';
 import {
   leereKontaktMap, speichereAlleAnsprechpartner, type KontaktMap,
 } from '../../lib/tourAnsprechpartner';
@@ -118,6 +122,11 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const [stationsKontakte, setStationsKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   // Optionale Zusatzangaben (Migration 080).
   const [fahrzeugmodell, setFahrzeugmodell] = useState('');
+  const [fahrzeugmodellRueck, setFahrzeugmodellRueck] = useState('');
+  // Merkt sich, ob der Nutzer die Tourenart selbst gewählt hat — ab dann
+  // greift die AB/ABC-Automatik nicht mehr (sonst wäre ABA nicht haltbar).
+  const [tourenartManuell, setTourenartManuell] = useState(false);
+  const [abcWarnung, setAbcWarnung] = useState(false);
   // Zeitangabe je Station als Freitext (081) — steht beim jeweiligen
   // Adressblock, nicht neben dem Datum.
   const [zeitStart, setZeitStart] = useState('');
@@ -236,8 +245,33 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   }
 
 
-  async function handleSubmit(e: FormEvent) {
+  // AB/ABC automatisch, solange der Nutzer die Tourenart nicht selbst
+  // gewählt hat. Deferred, damit kein synchrones setState im Effect steht.
+  useEffect(() => {
+    const naechste = automatischeTourenart({
+      aktuell: tourenart,
+      rueckStadt: rueckfuehrungStadt,
+      rueckAdresse: adresseRueckfuehrung,
+      manuell: tourenartManuell,
+    });
+    if (naechste == null) return;
+    const t = window.setTimeout(() => setTourenart(naechste), 0);
+    return () => window.clearTimeout(t);
+  }, [tourenart, rueckfuehrungStadt, adresseRueckfuehrung, tourenartManuell]);
+
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    setError(null);
+    // Sicherheitsnetz: Rückführung befüllt, aber Tourenart AB.
+    if (brauchtAbcWarnung(tourenart, rueckfuehrungStadt, adresseRueckfuehrung)) {
+      setAbcWarnung(true);
+      return;
+    }
+    void speichern();
+  }
+
+  /** Eigentliches Speichern — nach der ABC-Warnung ggf. erneut aufgerufen. */
+  async function speichern() {
     setError(null);
 
     const start = startStadt.trim();
@@ -343,6 +377,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueckfuehrung.trim() || null) : null,
       // kontakt_* setzt der Spiegel-Trigger aus tour_ansprechpartner.
       fahrzeugmodell: fahrzeugmodell.trim() || null,
+      fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
       zeit_start: zeitStart.trim() || null,
       zeit_ziel: zeitZiel.trim() || null,
       zeit_rueckfuehrung: hatRueckfuehrung ? (zeitRueck.trim() || null) : null,
@@ -525,7 +560,10 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               <label htmlFor="t-art" className="label">Tourenart</label>
               <select id="t-art" className="input"
                       value={tourenart}
-                      onChange={(e) => setTourenart(e.target.value as TourenArt | '')}>
+                      onChange={(e) => {
+                        setTourenart(e.target.value as TourenArt | '');
+                        setTourenartManuell(true);
+                      }}>
                 <option value="">—</option>
                 <option value="AB">AB</option>
                 <option value="ABC">ABC</option>
@@ -623,6 +661,57 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               </div>
             )}
 
+            {/* Vergütung */}
+            <div>
+              <label htmlFor="t-verg" className="label">Vergütung (€)</label>
+              {istSondervereinbarung ? (
+                <>
+                  <input
+                    id="t-verg"
+                    className="input"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="z.B. 1234,56"
+                    value={verguetungInput}
+                    onChange={(e) => setVerguetungInput(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-maja-muted">
+                    Manueller Preis (Sondervereinbarung aktiv).
+                  </p>
+                </>
+              ) : (
+                <>
+                  <input
+                    id="t-verg"
+                    className="input bg-maja-light"
+                    type="text"
+                    readOnly
+                    value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
+                  />
+                  <p className="mt-1 text-xs text-maja-muted">
+                    {auftraggeberId && kmGesamt != null
+                      ? breakdown == null
+                        ? 'Auto (Preisliste): keine passende Stufe gefunden.'
+                        : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
+                          ? 'Auto (Preisliste)'
+                          : (
+                            <>
+                              {formatEuro(breakdown.base)}
+                              {breakdown.abaAufschlag > 0 && (
+                                <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
+                              )}
+                              {breakdown.eAufschlag > 0 && (
+                                <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
+                              )}
+                              <> = {formatEuro(breakdown.total)}</>
+                            </>
+                          )
+                      : 'Auto (Preisliste): Auftraggeber + km wählen.'}
+                  </p>
+                </>
+              )}
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="min-w-0">
                 <label htmlFor="t-kz" className="label">
@@ -642,84 +731,45 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                   placeholder="z.B. VW Polo"
                 />
               </div>
-              {hatRueckfuehrung && (
-                <div className="min-w-0">
-                  <label htmlFor="t-kz-rueck" className="label">Kennzeichen Rück</label>
-                  <input id="t-kz-rueck" className="input"
-                         value={kennzeichenRueck}
-                         onChange={(e) => setKennzeichenRueck(e.target.value)} />
-                </div>
-              )}
+            </div>
+            <div className="min-w-0">
+              <label htmlFor="t-fin" className="label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
+              <input id="t-fin" className="input"
+                     value={fin}
+                     onChange={(e) => setFin(e.target.value.toUpperCase())} />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <label htmlFor="t-fin" className="label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
-                <input id="t-fin" className="input"
-                       value={fin}
-                       onChange={(e) => setFin(e.target.value.toUpperCase())} />
-              </div>
-              {hatRueckfuehrung && (
+            {/* Rückfahrzeug — nur bei ABA/ABC, gleiche Struktur wie oben. */}
+            {hatRueckfuehrung && (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <label htmlFor="t-kz-rueck" className="label">Kennzeichen Rück</label>
+                    <input id="t-kz-rueck" className="input"
+                           value={kennzeichenRueck}
+                           onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                  </div>
+                  <div className="min-w-0">
+                    <label htmlFor="t-modell-rueck" className="label">Fahrzeugmodell Rück (optional)</label>
+                    <SuggestCombobox
+                      id="t-modell-rueck"
+                      feldTyp="fahrzeugmodell"
+                      value={fahrzeugmodellRueck}
+                      onChange={setFahrzeugmodellRueck}
+                      placeholder="z.B. Audi A3"
+                    />
+                  </div>
+                </div>
                 <div className="min-w-0">
                   <label htmlFor="t-fin-rueck" className="label">FIN Rück</label>
                   <input id="t-fin-rueck" className="input"
                          value={finRueck}
                          onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Vergütung */}
-          <div>
-            <label htmlFor="t-verg" className="label">Vergütung (€)</label>
-            {istSondervereinbarung ? (
-              <>
-                <input
-                  id="t-verg"
-                  className="input"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="z.B. 1234,56"
-                  value={verguetungInput}
-                  onChange={(e) => setVerguetungInput(e.target.value)}
-                />
-                <p className="mt-1 text-xs text-maja-muted">
-                  Manueller Preis (Sondervereinbarung aktiv).
-                </p>
-              </>
-            ) : (
-              <>
-                <input
-                  id="t-verg"
-                  className="input bg-maja-light"
-                  type="text"
-                  readOnly
-                  value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
-                />
-                <p className="mt-1 text-xs text-maja-muted">
-                  {auftraggeberId && kmGesamt != null
-                    ? breakdown == null
-                      ? 'Auto (Preisliste): keine passende Stufe gefunden.'
-                      : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
-                        ? 'Auto (Preisliste)'
-                        : (
-                          <>
-                            {formatEuro(breakdown.base)}
-                            {breakdown.abaAufschlag > 0 && (
-                              <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
-                            )}
-                            {breakdown.eAufschlag > 0 && (
-                              <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
-                            )}
-                            <> = {formatEuro(breakdown.total)}</>
-                          </>
-                        )
-                    : 'Auto (Preisliste): Auftraggeber + km wählen.'}
-                </p>
               </>
             )}
           </div>
+
 
           {/* Adressen & Kontakte vor Ort — aufklappbar, weil oft leer */}
           <details className="rounded-lg border border-maja-navy/15 bg-white">
@@ -809,6 +859,26 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
           </div>
         </form>
       </div>
+
+      {abcWarnung && (
+        <ConfirmDialog
+          title="Tourenart prüfen"
+          message={ABC_WARNUNG_TEXT}
+          confirmLabel="Auf ABC ändern"
+          cancelLabel="AB beibehalten"
+          onConfirm={async () => {
+            setTourenart('ABC');
+            setTourenartManuell(true);
+            setAbcWarnung(false);
+            await speichern();
+          }}
+          onClose={() => {
+            // "AB beibehalten" — bewusste Entscheidung, also speichern.
+            setAbcWarnung(false);
+            void speichern();
+          }}
+        />
+      )}
 
       {routeDialog && (() => {
         const isHin = routeDialog === 'hin';

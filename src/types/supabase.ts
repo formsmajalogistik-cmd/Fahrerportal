@@ -291,6 +291,8 @@ export type Database = {
           updated_at: string;
           vorgefuellte_daten: Json | null;
           fahrzeugmodell: string | null;
+          fahrzeugmodell_rueck: string | null;
+          auftrag_versendet_am: string | null;
           zeit_start: string | null;
           zeit_ziel: string | null;
           zeit_rueckfuehrung: string | null;
@@ -352,6 +354,8 @@ export type Database = {
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
           fahrzeugmodell?: string | null;
+          fahrzeugmodell_rueck?: string | null;
+          auftrag_versendet_am?: string | null;
           zeit_start?: string | null;
           zeit_ziel?: string | null;
           zeit_rueckfuehrung?: string | null;
@@ -413,6 +417,8 @@ export type Database = {
           updated_at?: string;
           vorgefuellte_daten?: Json | null;
           fahrzeugmodell?: string | null;
+          fahrzeugmodell_rueck?: string | null;
+          auftrag_versendet_am?: string | null;
           zeit_start?: string | null;
           zeit_ziel?: string | null;
           zeit_rueckfuehrung?: string | null;
@@ -1495,6 +1501,8 @@ export type Database = {
           fin: string | null;
           fin_rueck: string | null;
           fahrzeugmodell: string | null;
+          fahrzeugmodell_rueck: string | null;
+          auftrag_versendet_am: string | null;
           zeit_start: string | null;
           zeit_ziel: string | null;
           zeit_rueckfuehrung: string | null;

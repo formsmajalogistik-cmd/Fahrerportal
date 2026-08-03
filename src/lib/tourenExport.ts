@@ -51,6 +51,7 @@ interface ExportRow {
   fin_rueck: string | null;
   kundenname: string | null;
   fahrzeugmodell: string | null;
+  fahrzeugmodell_rueck: string | null;
   zeit_start: string | null;
   zeit_ziel: string | null;
   zeit_rueckfuehrung: string | null;
@@ -140,7 +141,8 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     'Kennzeichen Rück', 'FIN', 'FIN Rück', 'Kundenname',
     'km Hin', 'km Rück', 'Info', 'created_at', 'Bestätigt',
     // Migration 080/081 — optional, der Importer kommt auch ohne sie klar.
-    'Fahrzeugmodell', 'Zeit Start', 'Zeit Ziel', 'Zeit Rückführung',
+    'Fahrzeugmodell', 'Fahrzeugmodell Rück',
+    'Zeit Start', 'Zeit Ziel', 'Zeit Rückführung',
   ];
 
   const dataRows = rows.map((t) => {
@@ -181,6 +183,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       ymd(t.created_at),
       t.bestaetigt ? 'ja' : 'nein',
       t.fahrzeugmodell ?? '',
+      t.fahrzeugmodell_rueck ?? '',
       t.zeit_start ?? '',
       t.zeit_ziel ?? '',
       t.zeit_rueckfuehrung ?? '',
