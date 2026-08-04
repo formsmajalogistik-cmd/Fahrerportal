@@ -67,6 +67,8 @@ export function EingaengePage() {
   const [regen, setRegen] = useState<string | null>(null);
   const [linking, setLinking] = useState<Row | null>(null);
   const [resending, setResending] = useState<Row | null>(null);
+  /** Welche Vorlage der Versand-Dialog nutzt (final vs. Zwischenprotokoll). */
+  const [resendModus, setResendModus] = useState<'final' | 'zwischenprotokoll'>('final');
   const [hideLinked, setHideLinked] = useState(true);
   const [linkToast, setLinkToast] = useState<string | null>(null);
   /** Status-Filter (Aufgabe 2B). Default "submitted" = wie bisher. */
@@ -109,6 +111,8 @@ export function EingaengePage() {
         id, fahrer_id, template_id, daten, status, created_at, gesehen_am,
         zwischenprotokoll_url, zwischenprotokoll_erstellt_am,
         pdf_paths, pdf_status, pdf_fehler, email_send_log, email_versendet_am,
+        zwischenprotokoll_status, zwischenprotokoll_fehler,
+        zwischenprotokoll_versendet_am,
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
         template:template_id (id, name, pdfs, schema, email_config, pdfs_zusammenfuehren)
       `)
@@ -471,7 +475,16 @@ export function EingaengePage() {
               onView={() => setViewing(r.id)}
               onRegenerate={() => { void handleSeen(r); void regeneratePdfs(r); }}
               onLink={() => { void handleSeen(r); setLinking(r); }}
-              onResendEmail={() => { void handleSeen(r); setResending(r); }}
+              onResendEmail={() => {
+                void handleSeen(r);
+                setResendModus('final');
+                setResending(r);
+              }}
+              onSendZwischen={() => {
+                void handleSeen(r);
+                setResendModus('zwischenprotokoll');
+                setResending(r);
+              }}
               onDelete={() => setBulkConfirm({ ids: [r.id], mode: 'selected' })}
               onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
             />
@@ -531,10 +544,13 @@ export function EingaengePage() {
           <EingangSendEmailDialog
             formular={resending}
             template={tpl}
+            modus={resendModus}
             onClose={() => setResending(null)}
             onSent={() => {
               setResending(null);
-              setLinkToast('E-Mail versendet.');
+              setLinkToast(resendModus === 'zwischenprotokoll'
+                ? 'Zwischenprotokoll versendet.'
+                : 'E-Mail versendet.');
               window.setTimeout(() => setLinkToast(null), 4000);
               // Liste neu laden, damit der Versand-Zeitpunkt erscheint.
               reload();
@@ -605,6 +621,8 @@ interface CardProps {
   onRegenerate: () => void;
   onLink: () => void;
   onResendEmail: () => void;
+  /** Zwischenprotokoll-Mail manuell nachholen. */
+  onSendZwischen: () => void;
   onDelete: () => void;
   onZwischenChanged: (patch: Partial<Row>) => void;
 }
@@ -612,7 +630,8 @@ interface CardProps {
 function EingangCard({
   row, isAdmin, regenBusy,
   selectable, selected, onToggleSelected,
-  onSeen, onView, onRegenerate, onLink, onResendEmail, onDelete, onZwischenChanged,
+  onSeen, onView, onRegenerate, onLink, onResendEmail, onSendZwischen,
+  onDelete, onZwischenChanged,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
@@ -669,6 +688,14 @@ function EingangCard({
             }>
               {row.status === 'submitted' ? 'eingereicht' : 'Entwurf'}
             </span>
+            {/* Entwürfe, die den Übernahme-Teil schon abgeschlossen haben,
+                sind klar als solche erkennbar — sie sind KEINE fertigen
+                Aufträge, aber bereits bedienbar. */}
+            {(row.zwischenprotokoll_erstellt_am || row.zwischenprotokoll_status) && (
+              <span className="inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                Zwischenprotokoll
+              </span>
+            )}
             {row.tour && (
               <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
                 Verknüpft{row.tour.tour_id ? ` · ${row.tour.tour_id}` : ''}
@@ -679,6 +706,16 @@ function EingangCard({
             {row.template?.name ?? '—'}
             {' · '}{formatGermanDate(summary.datum) || formatGermanDate(row.created_at)}
           </div>
+          {row.zwischenprotokoll_versendet_am && (
+            <div className="mt-1 text-xs font-medium text-amber-800">
+              Zwischenprotokoll versendet: {formatDateTime(row.zwischenprotokoll_versendet_am)}
+            </div>
+          )}
+          {row.zwischenprotokoll_status === 'fehler' && (
+            <div className="mt-1 rounded-md bg-red-50 px-2 py-1 text-xs text-red-700">
+              Zwischenprotokoll fehlgeschlagen: {row.zwischenprotokoll_fehler ?? 'unbekannter Fehler'}
+            </div>
+          )}
           {row.email_versendet_am && (
             <div className="mt-1 text-xs font-medium text-emerald-700">
               E-Mail versendet: {formatDateTime(row.email_versendet_am)}
@@ -750,13 +787,30 @@ function EingangCard({
               Mit Tour verknüpfen
             </button>
           )}
-          {isAdmin && row.status === 'draft' && tpl && (
+          {isAdmin && tpl
+            && (row.status === 'draft'
+                || row.zwischenprotokoll_url
+                || row.zwischenprotokoll_status === 'fehler') && (
             <ZwischenprotokollSection
               template={tpl}
               formular={row}
               onChanged={onZwischenChanged}
               onCreate={onSeen}
             />
+          )}
+          {/* Zwischenprotokoll-Mail manuell nachholen — für Entwürfe mit
+              abgeschlossenem Übernahme-Teil UND für bereits eingereichte
+              Aufträge, falls der automatische Versand fehlschlug. */}
+          {isAdmin && tpl?.email_config?.zwischenprotokoll?.enabled
+            && (row.zwischenprotokoll_erstellt_am || row.zwischenprotokoll_status) && (
+            <button
+              type="button"
+              onClick={onSendZwischen}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700"
+              title="Zwischenprotokoll mit der Zwischenprotokoll-Vorlage versenden"
+            >
+              <MailIcon className="h-3.5 w-3.5" /> Zwischenprotokoll senden
+            </button>
           )}
           {isAdmin && row.status === 'submitted' && tpl && (tpl.pdfs?.length ?? 0) > 0 && (
             <button
@@ -914,12 +968,32 @@ function ZwischenprotokollSection({
       );
       const { error: err } = await supabase
         .from('ausgefuellte_formulare')
-        .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
+        .update({
+          zwischenprotokoll_url: path,
+          zwischenprotokoll_erstellt_am: erstellt_am,
+          zwischenprotokoll_status: 'ok',
+          zwischenprotokoll_fehler: null,
+        })
         .eq('id', formular.id);
       if (err) throw err;
-      onChanged({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am });
+      onChanged({
+        zwischenprotokoll_url: path,
+        zwischenprotokoll_erstellt_am: erstellt_am,
+        zwischenprotokoll_status: 'ok',
+        zwischenprotokoll_fehler: null,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erzeugung fehlgeschlagen');
+      // Fehler nicht nur anzeigen, sondern festhalten — sonst ist er nach
+      // einem Reload wieder unsichtbar.
+      const msg = err instanceof Error ? err.message : 'Erzeugung fehlgeschlagen';
+      console.error('[ZP] manuelle Erzeugung fehlgeschlagen', err);
+      setError(msg);
+      await supabase
+        .from('ausgefuellte_formulare')
+        .update({ zwischenprotokoll_status: 'fehler', zwischenprotokoll_fehler: msg })
+        .eq('id', formular.id)
+        .then(undefined, () => { /* nicht kritisch */ });
+      onChanged({ zwischenprotokoll_status: 'fehler', zwischenprotokoll_fehler: msg });
     } finally {
       setBusy(null);
     }

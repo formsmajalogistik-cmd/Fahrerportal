@@ -24,7 +24,6 @@ import {
 } from '../lib/offlineDb';
 import { uploadToOneDrive } from '../lib/onedrive';
 import { supabase } from '../lib/supabase';
-import { deleteFormPdf } from '../lib/pdfGenerate';
 import { runSubmissionEmails } from '../lib/submissionEmails';
 import { merkeAusFormular } from '../lib/feldVorschlaege';
 import type {
@@ -241,19 +240,9 @@ async function processPendingSubmissions(): Promise<void> {
         daten: sub.data,
         created_at: tplLink.created_at,
       } as unknown as AusgefuelltesFormular;
-      // Zwischenprotokoll aufräumen (falls vorhanden) — gleiche Logik wie
-      // beim Online-Submit in FormularPage.
-      if (tplLink.zwischenprotokoll_url) {
-        try {
-          await deleteFormPdf(tplLink.zwischenprotokoll_url, sub.formularId);
-          await supabase.from('ausgefuellte_formulare').update({
-            zwischenprotokoll_url: null,
-            zwischenprotokoll_erstellt_am: null,
-          }).eq('id', sub.formularId);
-        } catch (cleanupErr) {
-          console.warn('Zwischenprotokoll-Aufräumen nach Offline-Submit fehlgeschlagen', cleanupErr);
-        }
-      }
+      // Zwischenprotokoll bleibt erhalten (wie beim Online-Submit) —
+      // sonst ist ein fehlgeschlagener Versand nicht mehr nachholbar.
+
       // Vorschlags-Pool füttern (Migration 077). Test-Profile filtert die
       // RPC serverseitig aus — hier läuft der Drainer ohne React-Context.
       void merkeAusFormular(template.schema, sub.data, false);

@@ -1123,6 +1123,12 @@ export async function generateAndUploadZwischenprotokoll(
     (p) => p.path && p.field_mapping && Object.keys(p.field_mapping).length > 0
       && (!filterSet || filterSet.has(p.id)),
   );
+  console.log('[ZP] gewählte PDF-Vorlagen', {
+    formularId: formular.id,
+    templateId: template.id,
+    auswahl: pdfIds ?? '(alle gemappten)',
+    vorlagen: allPdfs.map((p) => ({ id: p.id, name: p.name })),
+  });
   if (allPdfs.length === 0) {
     throw new Error(filterSet
       ? 'Keine der in der Zwischenprotokoll-Vorlage gewählten PDF-Vorlagen hat ein Field-Mapping.'
@@ -1142,31 +1148,48 @@ export async function generateAndUploadZwischenprotokoll(
     // Zwischenprotokoll-Zeitpunkt sind die Übergabe-Fotos naturgemäß noch
     // leer; solche Vorlagen würden nur leere Seiten beisteuern.
     if (isImageOnlyAndEmpty(tplPdf.field_mapping ?? {}, formular.daten)) {
-      console.info(`[Zwischenprotokoll] SKIP ${tplPdf.id} (reine Bild-Vorlage ohne Bilder)`);
+      console.log('[ZP] Generierung je Vorlage',
+        { vorlage: tplPdf.id, status: 'übersprungen', fehler: 'reine Bild-Vorlage ohne Bilder' });
       continue;
     }
     let tplBytes: ArrayBuffer | null = null;
     try { tplBytes = await fetchPdfBytes(tplPdf.path!); }
     catch (err) {
-      console.warn(`[Zwischenprotokoll] FETCH-FAIL ${tplPdf.id}`, err);
+      console.log('[ZP] Generierung je Vorlage',
+        { vorlage: tplPdf.id, status: 'fetch-fehler', fehler: String(err) });
       continue;
     }
-    if (!tplBytes) continue;
+    if (!tplBytes) {
+      console.log('[ZP] Generierung je Vorlage',
+        { vorlage: tplPdf.id, status: 'fetch-leer', fehler: 'PDF-Datei nicht ladbar' });
+      continue;
+    }
     let filled: Uint8Array;
     try {
       filled = await fillPdf(tplBytes, template.schema, tplPdf.field_mapping ?? {}, formular.daten, formular.id);
     } catch (err) {
-      console.warn(`[Zwischenprotokoll] FILL-FAIL ${tplPdf.id}`, err);
+      console.log('[ZP] Generierung je Vorlage',
+        { vorlage: tplPdf.id, status: 'fill-fehler', fehler: String(err) });
       continue;
     }
+    console.log('[ZP] Generierung je Vorlage',
+      { vorlage: tplPdf.id, status: 'ok', fehler: null });
     const part = await PDFDocument.load(filled as unknown as ArrayBuffer);
     const copied = await merged.copyPages(part, part.getPageIndices());
     for (const p of copied) merged.addPage(p);
     teile += 1;
   }
 
+  console.log('[ZP] Merge', {
+    anzahlDateien: teile,
+    seiten: merged.getPageCount(),
+    fehler: merged.getPageCount() === 0 ? 'keine Seiten' : null,
+  });
   if (merged.getPageCount() === 0) {
-    throw new Error('Keine Seiten erzeugbar — vermutlich konnten keine Vorlagen geladen werden.');
+    throw new Error(
+      'Keine Seiten erzeugbar — es konnte keine der gewählten Vorlagen '
+      + 'gefüllt werden (leere Foto-Vorlagen bzw. Vorlagen nicht ladbar).',
+    );
   }
 
   const erstelltAm = new Date();
@@ -1180,9 +1203,9 @@ export async function generateAndUploadZwischenprotokoll(
   const path = zwischenprotokollPath(formular);
   const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
   await uploadToOneDrive(path, blob);
-  console.info(
-    `[Zwischenprotokoll] ${teile} Vorlage(n) → 1 PDF (${merged.getPageCount()} Seiten, ${blob.size} bytes)`,
-  );
+  console.log('[ZP] Merge hochgeladen', {
+    anzahlDateien: teile, ergebnisGroesse: blob.size, pfad: path, fehler: null,
+  });
   return {
     path,
     erstellt_am: erstelltAm.toISOString(),

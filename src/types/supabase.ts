@@ -927,6 +927,9 @@ export type Database = {
           gesehen_am: string | null;
           zwischenprotokoll_url: string | null;
           zwischenprotokoll_erstellt_am: string | null;
+          zwischenprotokoll_status: string | null;
+          zwischenprotokoll_fehler: string | null;
+          zwischenprotokoll_versendet_am: string | null;
           pdf_paths: Json;
           pdf_status: string | null;
           pdf_fehler: string | null;
@@ -943,6 +946,9 @@ export type Database = {
           gesehen_am?: string | null;
           zwischenprotokoll_url?: string | null;
           zwischenprotokoll_erstellt_am?: string | null;
+          zwischenprotokoll_status?: string | null;
+          zwischenprotokoll_fehler?: string | null;
+          zwischenprotokoll_versendet_am?: string | null;
           pdf_paths?: Json;
           pdf_status?: string | null;
           pdf_fehler?: string | null;
@@ -959,6 +965,9 @@ export type Database = {
           gesehen_am?: string | null;
           zwischenprotokoll_url?: string | null;
           zwischenprotokoll_erstellt_am?: string | null;
+          zwischenprotokoll_status?: string | null;
+          zwischenprotokoll_fehler?: string | null;
+          zwischenprotokoll_versendet_am?: string | null;
           pdf_paths?: Json;
           pdf_status?: string | null;
           pdf_fehler?: string | null;

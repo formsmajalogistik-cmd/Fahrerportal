@@ -9,6 +9,7 @@ import { bodyWithSignatureHtml, signatureFromProfile } from '../../lib/emailSign
 import { XIcon } from '../../components/icons';
 import {
   asPdfPathList, expectedOneDrivePath, resolveFilename, resolvePattern,
+  zwischenprotokollFilename,
 } from '../../lib/pdfGenerate';
 import { loadMailboxes, type MailboxConfig } from '../../lib/mailboxSettings';
 import type {
@@ -18,6 +19,14 @@ import type {
 interface Props {
   formular: AusgefuelltesFormular;
   template: FormularTemplate;
+  /**
+   * 'final'            — Versand des fertigen Protokolls (Standard).
+   * 'zwischenprotokoll'— Versand des Zwischenprotokolls: Betreff/Body/
+   *                      Absender kommen aus der Zwischenprotokoll-
+   *                      Vorlage, Anhang ist die EINE zusammengeführte
+   *                      PDF, und der Zeitstempel wird getrennt gepflegt.
+   */
+  modus?: 'final' | 'zwischenprotokoll';
   onClose: () => void;
   onSent: () => void;
 }
@@ -119,7 +128,10 @@ function splitList(s: string): string[] {
  * - Anhänge: alle PDFs des Eingangs als vorausgefüllt angehakte
  *   Checkboxen.
  */
-export function EingangSendEmailDialog({ formular, template, onClose, onSent }: Props) {
+export function EingangSendEmailDialog({
+  formular, template, modus = 'final', onClose, onSent,
+}: Props) {
+  const istZwischen = modus === 'zwischenprotokoll';
   const guard = useTestGuard();
   const { profile } = useAuth();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
@@ -202,6 +214,28 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
   const initial = useMemo(() => {
     const cfg = template.email_config ?? null;
     const data = formular.daten as Record<string, unknown>;
+    if (istZwischen) {
+      // Zwischenprotokoll: Vorlage 4 liefert Betreff/Body; Anhang ist die
+      // EINE zusammengeführte PDF, die bereits erzeugt wurde (bzw. hier
+      // per Button neu erzeugt werden kann).
+      const zp = cfg?.zwischenprotokoll ?? null;
+      const zpUrl = (formular as unknown as { zwischenprotokoll_url?: string | null })
+        .zwischenprotokoll_url ?? null;
+      return {
+        subject: resolvePattern(zp?.subject ?? '', data)
+          || `Zwischenprotokoll — ${template.name}`,
+        body: resolvePattern(zp?.body ?? '', data),
+        attachments: zpUrl
+          ? [{
+              id: 'zwischenprotokoll',
+              name: 'Zwischenprotokoll',
+              filename: zwischenprotokollFilename(formular),
+              onedrive_path: zpUrl,
+              selected: true,
+            }]
+          : [],
+      };
+    }
     const subject = cfg?.subject_pattern
       ? resolvePattern(cfg.subject_pattern, data)
       : template.name;
@@ -225,7 +259,7 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
         }));
     return { subject, body, attachments };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [template.id, formular.id]);
+  }, [template.id, formular.id, istZwischen]);
 
   const [to, setTo] = useState<string[]>([]);
   const [cc, setCc] = useState<string[]>([]);
@@ -399,7 +433,9 @@ export function EingangSendEmailDialog({ formular, template, onClose, onSent }: 
       const versendetAm = new Date().toISOString();
       await supabase
         .from('ausgefuellte_formulare')
-        .update({ email_versendet_am: versendetAm })
+        .update(istZwischen
+          ? { zwischenprotokoll_versendet_am: versendetAm }
+          : { email_versendet_am: versendetAm })
         .eq('id', formular.id);
       if (result.missing.length > 0) {
         setError(

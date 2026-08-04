@@ -11,7 +11,7 @@ import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
 import { collectPageImageBlobs, countPageImages, sharePhotos } from '../lib/sharePagePhotos';
 import {
-  deleteFormPdf, generateAndUploadZwischenprotokoll, zwischenprotokollPdfIds,
+  generateAndUploadZwischenprotokoll, zwischenprotokollPdfIds,
 } from '../lib/pdfGenerate';
 import { buildFormularFolder } from '../lib/onedrivePaths';
 import {
@@ -371,57 +371,92 @@ export function FormularPage() {
     const snapshot = { ...formular, daten: data } as unknown as AusgefuelltesFormular;
     const tpl = template;
     void (async () => {
+      console.log('[ZP] gestartet', {
+        formularId: snapshot.id,
+        templateId: tpl.id,
+        konfig: tpl.email_config?.zwischenprotokoll ?? null,
+      });
+
+      // ---- Schritt 1: Dokument erzeugen -------------------------------
+      // WICHTIG: Ein Fehlschlag hier darf den Versand NICHT verhindern.
+      // Genau daran ist die Kette vorher gescheitert (früher `return`).
       let anhang: { path: string; filename: string } | null = null;
+      let erzeugungsFehler: string | null = null;
       try {
-        // Die Anhang-Auswahl der Zwischenprotokoll-Vorlage bestimmt, welche
-        // PDF-Teile ins Protokoll kommen — zusammengeführt zu EINER Datei.
         const { path, erstellt_am, filename } = await generateAndUploadZwischenprotokoll(
           tpl, snapshot, zwischenprotokollPdfIds(tpl),
         );
         anhang = { path, filename };
         await supabase
           .from('ausgefuellte_formulare')
-          .update({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am })
+          .update({
+            zwischenprotokoll_url: path,
+            zwischenprotokoll_erstellt_am: erstellt_am,
+            zwischenprotokoll_status: 'ok',
+            zwischenprotokoll_fehler: null,
+          })
           .eq('id', snapshot.id);
         setFormular((cur) => (cur && cur.id === snapshot.id
           ? ({ ...cur, ...({ zwischenprotokoll_url: path, zwischenprotokoll_erstellt_am: erstellt_am } as object) } as AusgefuelltesFormular)
           : cur));
-        setStatusMsg('Zwischenprotokoll erstellt.');
+        setStatusMsg('Zwischenprotokoll erstellt — E-Mail wird versendet …');
       } catch (err) {
-        // Echten Fehler sichtbar machen — "Failed to load" allein half
-        // niemandem weiter.
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[Zwischenprotokoll] Erzeugung fehlgeschlagen', err);
+        erzeugungsFehler = err instanceof Error ? err.message : String(err);
+        console.error('[ZP] Erzeugung fehlgeschlagen', err);
+        // Fehler festhalten, damit er in Eingänge sichtbar ist und der
+        // Vorgang dort wiederholt werden kann.
         await supabase
           .from('ausgefuellte_formulare')
-          .update({ pdf_status: 'fehler', pdf_fehler: `Zwischenprotokoll: ${msg}` })
+          .update({
+            zwischenprotokoll_status: 'fehler',
+            zwischenprotokoll_fehler: erzeugungsFehler,
+          })
           .eq('id', snapshot.id)
-          .then(undefined, () => { /* nicht kritisch */ });
-        setError(
-          `Zwischenprotokoll konnte nicht erstellt werden: ${msg} — `
-          + 'dein Formularstand ist gespeichert; das Protokoll kann in Eingänge erneut erzeugt werden.',
-        );
-        return;
+          .then(undefined, (e) => console.warn('[ZP] Status-Update fehlgeschlagen', e));
+        // KEIN return — die E-Mail geht trotzdem raus.
       }
-      // (4) Konfigurierte Zwischenprotokoll-E-Mail versenden.
+
+      // ---- Schritt 2: E-Mail — läuft IMMER ---------------------------
       try {
         const entry = await runZwischenprotokollEmail(tpl, snapshot, {
           submitterEmail,
           fahrerEmail: submitterEmail,
           fahrerName: profile ? displayName(profile) : null,
-          // Genau das eben erzeugte Dokument anhängen — kein zweiter Lauf.
+          // Genau das eben erzeugte Dokument anhängen. Ist die Erzeugung
+          // gescheitert, sagen wir das explizit — dann versucht der
+          // Versand es nicht noch einmal und sendet ohne Anhang.
           zwischenprotokoll: anhang,
+          anhangBereitsVersucht: true,
         });
         if (entry) {
           await appendEmailLog(snapshot.id, [entry]);
+          if (entry.success) {
+            await supabase
+              .from('ausgefuellte_formulare')
+              .update({ zwischenprotokoll_versendet_am: new Date().toISOString() })
+              .eq('id', snapshot.id)
+              .then(undefined, () => { /* nicht kritisch */ });
+          }
           if (!entry.success) {
             setError(
-              `Zwischenprotokoll erstellt, aber die E-Mail ging nicht raus: ${entry.error ?? 'unbekannter Fehler'} — `
+              `Die Zwischenprotokoll-E-Mail ging nicht raus: ${entry.error ?? 'unbekannter Fehler'} — `
               + 'in Eingänge erneut versendbar.',
+            );
+          } else if (erzeugungsFehler) {
+            setError(
+              `E-Mail versendet, aber OHNE Anhang: ${erzeugungsFehler} — `
+              + 'das Protokoll kann in Eingänge erneut erzeugt und versendet werden.',
             );
           } else {
             setStatusMsg('Zwischenprotokoll erstellt und versendet.');
           }
+        } else if (erzeugungsFehler) {
+          // Keine Vorlage aktiv → kein Versand vorgesehen; den
+          // Erzeugungsfehler trotzdem zeigen.
+          setError(
+            `Zwischenprotokoll konnte nicht erstellt werden: ${erzeugungsFehler} — `
+            + 'dein Formularstand ist gespeichert; in Eingänge erneut erzeugbar.',
+          );
         }
       } catch (mailErr) {
         console.warn('[Zwischenprotokoll] E-Mail-Versand fehlgeschlagen', mailErr);
@@ -510,21 +545,11 @@ export function FormularPage() {
     // kein Teil der Einreichung.
     void merkeAusFormular(template.schema, data, isTestUser);
 
-    // Eventuell hinterlegtes Zwischenprotokoll aufräumen — bei manueller
-    // PDF-Generierung in Eingänge werden neue PDFs erzeugt; der Entwurf
-    // hat ausgedient.
-    const formularAny = formular as unknown as { zwischenprotokoll_url?: string | null };
-    if (formularAny.zwischenprotokoll_url) {
-      try {
-        await deleteFormPdf(formularAny.zwischenprotokoll_url, formular.id);
-        await supabase.from('ausgefuellte_formulare').update({
-          zwischenprotokoll_url: null,
-          zwischenprotokoll_erstellt_am: null,
-        }).eq('id', formular.id);
-      } catch (cleanupErr) {
-        console.warn('[FormularPage] Zwischenprotokoll-Aufräumen fehlgeschlagen', cleanupErr);
-      }
-    }
+    // Das Zwischenprotokoll bleibt bewusst ERHALTEN. Früher wurde es
+    // beim Einreichen gelöscht; dann lässt sich aber ein fehlgeschlagener
+    // Zwischenprotokoll-Versand später nicht mehr aus Eingänge nachholen.
+    // Es ist ein eigenes Dokument mit eigenem Zeitstempel und stört die
+    // finalen PDFs nicht.
 
     // Automatische E-Mails (Bestätigung + Schieberegler) — Fehler hier
     // brechen den Submit NICHT ab, sondern landen im email_send_log.

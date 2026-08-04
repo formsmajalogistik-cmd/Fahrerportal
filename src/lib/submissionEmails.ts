@@ -78,6 +78,10 @@ interface RunOptions {
    *  als einziger Anhang verwendet wird. Fehlt es, erzeugt
    *  `runZwischenprotokollEmail` das Dokument selbst. */
   zwischenprotokoll?: { path: string; filename: string } | null;
+  /** True, wenn der Aufrufer die Erzeugung bereits versucht hat. Dann
+   *  wird sie hier NICHT wiederholt — bei einem Fehlschlag geht die Mail
+   *  einfach ohne Anhang raus, statt denselben teuren Lauf zu doppeln. */
+  anhangBereitsVersucht?: boolean;
 }
 
 /**
@@ -252,6 +256,10 @@ export async function runZwischenprotokollEmail(
   const recipients = dedupe(to);
   const now = () => new Date().toISOString();
   if (recipients.length === 0) {
+    console.warn('[ZP] Mailversand übersprungen — keine Empfänger auflösbar', {
+      recipient_self: cfg.recipient_self, recipient_fahrer: cfg.recipient_fahrer,
+      recipient_extra: cfg.recipient_extra,
+    });
     return {
       type: 'zwischenprotokoll', recipients: [], sent_at: now(),
       success: false, error: 'Keine Empfänger konfiguriert / auflösbar.',
@@ -265,16 +273,18 @@ export async function runZwischenprotokollEmail(
   // die nur das finale Protokoll betrifft.
   let attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
   let doc = options.zwischenprotokoll ?? null;
-  if (!doc) {
+  if (!doc && !options.anhangBereitsVersucht) {
     // Kein vorab erzeugtes Dokument (z.B. erneuter Versand aus Eingänge):
-    // hier erzeugen, damit die Mail nie ohne Anhang rausgeht.
+    // hier erzeugen. Scheitert das, geht die Mail trotzdem raus — der
+    // Versand darf NIE an der PDF-Erzeugung hängen.
     try {
       const res = await generateAndUploadZwischenprotokoll(
         template, formular, zwischenprotokollPdfIds(template),
       );
       doc = { path: res.path, filename: res.filename };
     } catch (err) {
-      console.warn('[Zwischenprotokoll] PDF-Erzeugung für den Anhang fehlgeschlagen', err);
+      console.warn('[ZP] PDF-Erzeugung für den Anhang fehlgeschlagen — '
+        + 'Mail geht ohne Anhang raus', err);
     }
   }
   if (doc) {
@@ -285,6 +295,9 @@ export async function runZwischenprotokollEmail(
 
   const subject = resolvePattern(cfg.subject ?? '', data) || `Zwischenprotokoll — ${template.name}`;
   const body = resolvePattern(cfg.body ?? '', data);
+  console.log('[ZP] Mailversand', {
+    empfaenger: recipients, anhang: !!doc, von: cfg.from || '(default)',
+  });
   try {
     const result = await sendEmail({
       to: recipients, subject, body,
@@ -292,12 +305,15 @@ export async function runZwischenprotokollEmail(
       attachments,
       formular_id: formular.id,
     });
-    console.log('[Zwischenprotokoll] Mail-Versand Response', {
-      empfaenger: recipients, attached: result.attached, missing: result.missing,
+    console.log('[ZP] Mailversand Response', {
+      empfaenger: recipients, anhang: !!doc, status: 'ok',
+      attached: result.attached, missing: result.missing, fehler: null,
     });
     return { type: 'zwischenprotokoll', recipients, sent_at: now(), success: true };
   } catch (err) {
-    console.warn('[Zwischenprotokoll] Mail-Versand fehlgeschlagen', err);
+    console.error('[ZP] Mailversand fehlgeschlagen', {
+      empfaenger: recipients, anhang: !!doc, status: 'fehler', fehler: String(err),
+    });
     return {
       type: 'zwischenprotokoll', recipients, sent_at: now(), success: false,
       error: err instanceof Error ? err.message : String(err),
