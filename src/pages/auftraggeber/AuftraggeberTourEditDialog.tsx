@@ -65,6 +65,24 @@ function KmZeile({
   );
 }
 
+/**
+ * Technische Meldungen (RLS, Constraints) sind für den Auftraggeber
+ * nutzlos — die eigenen, verständlichen Meldungen der RPC reichen wir
+ * durch, alles andere wird zu einem klaren Satz.
+ */
+function nutzerFehler(fehler: string | null | undefined): string {
+  const f = (fehler ?? '').trim();
+  if (!f) {
+    return 'Die Änderung konnte nicht gespeichert werden. Bitte prüfen Sie '
+      + 'Ihre Eingaben oder wenden Sie sich an Maja-Logistik.';
+  }
+  if (/row-level security|violates|constraint|permission denied/i.test(f)) {
+    return 'Die Änderung konnte nicht gespeichert werden. Bitte prüfen Sie '
+      + 'Ihre Eingaben oder wenden Sie sich an Maja-Logistik.';
+  }
+  return f;
+}
+
 /** km-Eingabe → Ganzzahl oder null. */
 function parseKm(v: string): number | null {
   const t = v.trim().replace(',', '.');
@@ -202,7 +220,9 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
 
     if (!ergebnis.ok) {
       setSaving(false);
-      setError(ergebnis.fehler ?? 'Speichern fehlgeschlagen.');
+      // Rohe RLS-/DB-Meldungen bleiben im Log; der Nutzer bekommt Klartext.
+      console.error('[AG Tour Update] fehlgeschlagen', ergebnis);
+      setError(nutzerFehler(ergebnis.fehler));
       return;
     }
 

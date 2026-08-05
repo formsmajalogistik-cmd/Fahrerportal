@@ -186,24 +186,23 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       kennzeichen.push(kennzeichenRueck.trim().toUpperCase());
     }
 
-    setSaving(true);
-    const { data: neu, error: err } = await supabase.from('touren').insert({
+    // Der Payload enthält AUSSCHLIESSLICH Felder, die der Auftraggeber
+    // setzen darf. Auftraggeber, Ersteller und Bestätigungs-Status setzt
+    // der Server — nicht der Client (siehe ag_tour_anlegen, 084).
+    const payload = {
       start_stadt: startStadt.trim(),
       ziel_stadt: zielStadt.trim(),
-      rueckfuehrung_stadt: hatRueckfuehrung ? rueckStadt.trim() : null,
+      rueckfuehrung_stadt: hatRueckfuehrung ? (rueckStadt.trim() || null) : null,
       startdatum,
       enddatum,
       tourenart: tourenart || null,
       kennzeichen,
-      fin: fin.trim(),
+      fin: fin.trim() || null,
       ist_e_fahrzeug: istEFahrzeug,
-      kundenname: kundenname.trim(),
-      adresse_start: adresseStart.trim(),
-      adresse_ziel: adresseZiel.trim(),
-      adresse_rueckfuehrung: hatRueckfuehrung ? adresseRueck.trim() : null,
-      // kontakt_* wird NICHT hier gesetzt — die Ansprechpartner landen
-      // unten in tour_ansprechpartner, der DB-Trigger spiegelt den
-      // ersten Eintrag je Station in die Alt-Spalten.
+      kundenname: kundenname.trim() || null,
+      adresse_start: adresseStart.trim() || null,
+      adresse_ziel: adresseZiel.trim() || null,
+      adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
       fahrzeugmodell: fahrzeugmodell.trim() || null,
       fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
       zeit_start: zeitStart.trim() || null,
@@ -213,12 +212,28 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       km_rueck: hatRueckfuehrung ? parseKm(kmRueck) : null,
       km_gesamt: kmGesamt,
       info: info.trim() || null,
-      auftraggeber_id: profile.auftraggeber_id,
-      bestaetigt: false,
-      erstellt_von: session.user.id,
-      erstellt_von_rolle: 'auftraggeber',
-    }).select('id').single();
-    if (err) { setSaving(false); setError(err.message); return; }
+    };
+    console.log('[AG Tour Insert]', payload);
+
+    setSaving(true);
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('ag_tour_anlegen', {
+      p_daten: payload as never,
+    });
+    const ergebnis = (rpcData as unknown as { ok?: boolean; id?: string; fehler?: string } | null);
+    if (rpcErr || !ergebnis?.ok) {
+      setSaving(false);
+      // Technische Meldung nur ins Log — der Nutzer bekommt Klartext.
+      console.error('[AG Tour Insert] fehlgeschlagen', rpcErr ?? ergebnis);
+      const roh = (ergebnis?.fehler ?? rpcErr?.message ?? '').trim();
+      const technisch = !roh
+        || /row-level security|violates|constraint|permission denied/i.test(roh);
+      setError(technisch
+        ? 'Die Tour konnte nicht eingereicht werden. Bitte prüfen Sie Ihre '
+          + 'Eingaben oder wenden Sie sich an Maja-Logistik.'
+        : roh);
+      return;
+    }
+    const neu = { id: ergebnis.id as string };
 
     // Ansprechpartner anlegen. Beim ANLEGEN einer eigenen Tour hat der
     // Auftraggeber Insert-Recht auf touren; für die Ansprechpartner-

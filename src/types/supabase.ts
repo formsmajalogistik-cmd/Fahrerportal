@@ -1559,6 +1559,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: string | null;
       };
+      ag_tour_anlegen: {
+        Args: { p_daten: Json };
+        Returns: Json;
+      };
       ag_tour_ansprechpartner_setzen: {
         Args: { p_tour_id: string; p_station: string; p_liste: Json };
         Returns: Json;
