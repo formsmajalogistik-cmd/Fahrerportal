@@ -8,9 +8,11 @@ import { useFahrerContext } from '../../auth/FahrerContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { TfBlock } from '../../components/TfBlock';
 import { AuftragEmailDialog } from './AuftragEmailDialog';
 import { TourDokumenteSection } from '../../components/TourDokumenteSection';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
+import { useScrollLock } from '../../lib/useScrollLock';
 import { CheckIcon, DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
 import { fahrerName } from '../../lib/names';
 
@@ -18,7 +20,7 @@ function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user
   return fahrerName(f, f.user);
 }
 import {
-  abschnittLabels, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
+  abrechnungsKm, abschnittLabels, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
   formatAnzahl, formatDate, formatDateTime, formatEuro, formatKm,
   hasTwoProtokollSlots, tourTitel,
   type TourPriceBreakdown,
@@ -200,7 +202,12 @@ interface EditDraft {
   hatRueckfuehrung: boolean;
   kmHin: string;
   kmRueck: string;
-  kmGesamtAba: string;
+  /**
+   * Nur ABA: Ausnahme-Kennzeichen für die Abrechnung. false (Standard)
+   * = Preis über km Hin, true = Preis über km Gesamt. Siehe
+   * abrechnungsKm() in lib/touren.ts.
+   */
+  abaGesamtKm: boolean;
   startdatum: string;
   enddatum: string;
   kennzeichenHin: string;
@@ -253,7 +260,7 @@ function draftFromTour(t: FullTour): EditDraft {
     hatRueckfuehrung: hat,
     kmHin: intToInput(t.km_hin),
     kmRueck: intToInput(t.km_rueck),
-    kmGesamtAba: isAba ? intToInput(t.km_hin ?? t.km_gesamt) : '',
+    abaGesamtKm: isAba && !!t.aba_gesamt_km_berechnen,
     startdatum: isoToLocalInput(t.startdatum),
     enddatum: isoToLocalInput(t.enddatum),
     kennzeichenHin: kz[0] ?? '',
@@ -513,13 +520,26 @@ export function TourDetailDialog({
 
   const liveKmGesamt = useMemo(() => {
     if (!draft) return null;
-    if (draftIsAba) return parseInteger(draft.kmGesamtAba);
     return computeKmGesamt({
       km_hin: parseInteger(draft.kmHin),
       km_rueck: parseInteger(draft.kmRueck),
       hatRueckfuehrung: draft.hatRueckfuehrung,
     });
-  }, [draft, draftIsAba]);
+  }, [draft]);
+
+  /**
+   * Kilometer für die Preisstufen-Suche. Bei ABA zählt ausschließlich
+   * die Hinfahrt — außer die Ausnahme-Checkbox ist gesetzt.
+   */
+  const livePreisKm = useMemo(() => {
+    if (!draft) return null;
+    return abrechnungsKm({
+      tourenart: draft.tourenart || 'AB',
+      km_hin: parseInteger(draft.kmHin),
+      km_gesamt: liveKmGesamt,
+      abaGesamtKmBerechnen: draft.abaGesamtKm,
+    });
+  }, [draft, liveKmGesamt]);
 
   const draftSelectedAg = useMemo(
     () => (draft ? (auftraggeber ?? []).find((a) => a.id === draft.auftraggeberId) ?? null : null),
@@ -533,12 +553,12 @@ export function TourDetailDialog({
   useEffect(() => {
     if (!editing || !draft) { setBreakdown(null); return; }
     if (draft.istSondervereinbarung) { setBreakdown(null); return; }
-    if (!draft.auftraggeberId || liveKmGesamt == null) { setBreakdown(null); return; }
+    if (!draft.auftraggeberId || livePreisKm == null) { setBreakdown(null); return; }
     let cancelled = false;
     setPricing(true);
     void fetchTourPriceBreakdown({
       auftraggeberId: draft.auftraggeberId,
-      km: liveKmGesamt,
+      km: livePreisKm,
       tourenart: (draft.tourenart || 'AB') as TourenArt,
       istEFahrzeug: draft.istEFahrzeug,
     }).then((b) => {
@@ -547,17 +567,23 @@ export function TourDetailDialog({
       setPricing(false);
     });
     return () => { cancelled = true; };
-  }, [editing, draft, liveKmGesamt]);
+  }, [editing, draft, livePreisKm]);
 
   // Breakdown für die View-Anzeige (Aufschlüsselung zum gespeicherten Preis).
   const [viewBreakdown, setViewBreakdown] = useState<TourPriceBreakdown | null>(null);
   useEffect(() => {
     if (!tour || tour.ist_sondervereinbarung) { setViewBreakdown(null); return; }
-    if (!tour.auftraggeber_id || tour.km_gesamt == null) { setViewBreakdown(null); return; }
+    const km = abrechnungsKm({
+      tourenart: tour.tourenart,
+      km_hin: tour.km_hin,
+      km_gesamt: tour.km_gesamt,
+      abaGesamtKmBerechnen: tour.aba_gesamt_km_berechnen,
+    });
+    if (!tour.auftraggeber_id || km == null) { setViewBreakdown(null); return; }
     let cancelled = false;
     void fetchTourPriceBreakdown({
       auftraggeberId: tour.auftraggeber_id,
-      km: tour.km_gesamt,
+      km,
       tourenart: (tour.tourenart || 'AB') as TourenArt,
       istEFahrzeug: !!tour.ist_e_fahrzeug,
     }).then((b) => { if (!cancelled) setViewBreakdown(b); });
@@ -642,15 +668,8 @@ export function TourDetailDialog({
       verguetung = breakdown?.total ?? null;
     }
 
-    let km_hin: number | null;
-    let km_rueck: number | null;
-    if (draftIsAba) {
-      km_hin = parseInteger(draft.kmGesamtAba);
-      km_rueck = null;
-    } else {
-      km_hin = parseInteger(draft.kmHin);
-      km_rueck = draft.hatRueckfuehrung ? parseInteger(draft.kmRueck) : null;
-    }
+    const km_hin = parseInteger(draft.kmHin);
+    const km_rueck = draft.hatRueckfuehrung ? parseInteger(draft.kmRueck) : null;
 
     const kennzeichen: string[] = [];
     if (draft.kennzeichenHin.trim()) kennzeichen.push(draft.kennzeichenHin.trim().toUpperCase());
@@ -709,6 +728,9 @@ export function TourDetailDialog({
         km_hin,
         km_rueck,
         km_gesamt: liveKmGesamt,
+        // Nur bei ABA relevant — sonst zurücksetzen, damit ein Wechsel
+        // der Tourenart keinen Altwert mitschleppt.
+        aba_gesamt_km_berechnen: draftIsAba ? draft.abaGesamtKm : false,
         startdatum: draftDateStart,
         enddatum: draftDateEnd,
         kennzeichen,
@@ -1062,6 +1084,7 @@ export function TourDetailDialog({
           patchDraft={patchDraft}
           toggleRueckfuehrung={toggleRueckfuehrung}
           liveKmGesamt={liveKmGesamt}
+          livePreisKm={livePreisKm}
           auftraggeber={auftraggeber}
           fahrer={fahrer}
           draftSelectedAg={draftSelectedAg}
@@ -1070,6 +1093,9 @@ export function TourDetailDialog({
           templates={templates}
           zugaenge={zugaenge}
           kontakte={editKontakte}
+          stationsKontakte={kontakte}
+          onStationsKontakte={(station, next) =>
+            setKontakte((m) => ({ ...m, [station]: next }))}
           onOpenRouteDialog={setRouteDialog}
           routeConfirm={routeConfirm}
           tourId={tour.id}
@@ -1297,32 +1323,21 @@ export function TourDetailDialog({
         </div>
       )}
 
-      {/* Bereich 6: Fahrzeug & Adressen */}
-      <div className="mt-6 space-y-4">
-        <h3 className="border-b border-maja-navy/10 pb-2 text-base font-semibold text-maja-navy">
-          Fahrzeug & Adressen
-        </h3>
-        {!editing || !draft ? (
+      {/* Bereich 6: Fahrzeug & Adressen — nur in der Ansicht. Im
+          Edit-Modus stehen diese Felder in den Blöcken oben
+          (Fahrzeug Hinfahrt / Abholort / Zielort / …). */}
+      {(!editing || !draft) && (
+        <div className="mt-6 space-y-4">
+          <h3 className="border-b border-maja-navy/10 pb-2 text-base font-semibold text-maja-navy">
+            Fahrzeug &amp; Adressen
+          </h3>
           <VehicleAndAddressView
             tour={tour}
             hatRueckfuehrung={hatRueckfuehrung}
             kontakte={kontakte}
           />
-        ) : (
-          <VehicleAndAddressEdit
-            draft={draft}
-            patchDraft={patchDraft}
-            onOpenRouteDialog={setRouteDialog}
-            routeConfirm={routeConfirm}
-            kontakte={kontakte}
-            onKontakte={(station, next) =>
-              setKontakte((m) => ({ ...m, [station]: next }))}
-            breakdown={breakdown}
-            pricing={pricing}
-            liveKmGesamt={liveKmGesamt}
-          />
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 pt-4">
@@ -1496,9 +1511,7 @@ export function TourDetailDialog({
         const isHin = routeDialog === 'hin';
         const origin = (isHin ? draft.adresseStart : draft.adresseZiel).trim();
         const destination = (isHin ? draft.adresseZiel : draft.adresseRueckfuehrung).trim();
-        const title = isHin
-          ? (draft.tourenart === 'ABA' ? 'Routen für ABA-Tour' : 'Routen für Hin-Strecke')
-          : 'Routen für Rück-Strecke';
+        const title = isHin ? 'Routen für Hin-Strecke' : 'Routen für Rück-Strecke';
         const closeAndAdvance = () => setRouteDialog(null);
         return (
           <RouteSelectorDialog
@@ -1508,8 +1521,7 @@ export function TourDetailDialog({
             onClose={closeAndAdvance}
             onApply={(km) => {
               if (isHin) {
-                if (draft.tourenart === 'ABA') patchDraft({ kmGesamtAba: String(km) });
-                else patchDraft({ kmHin: String(km) });
+                patchDraft({ kmHin: String(km) });
                 setRouteConfirm((c) => ({ ...c, hin: km }));
               } else {
                 patchDraft({ kmRueck: String(km) });
@@ -1601,6 +1613,10 @@ function UnlinkProtokollDialog({ fields, busy, onConfirm, onClose }: UnlinkProps
 function Shell({
   children, onClose, variant = 'modal',
 }: { children: ReactNode; onClose: () => void; variant?: 'modal' | 'embedded' }) {
+  // Punkt 3: Hintergrund darf nicht scrollen, solange das Overlay offen
+  // ist — greift auch bei ESC, Hintergrund-Klick und „Abbrechen", weil
+  // die Sperre am Unmount dieses Shells hängt.
+  useScrollLock(variant === 'modal');
   // ESC schließt nur im Modal — im embedded Side-by-Side soll Escape
   // den Eltern-Container nicht stören.
   useEffect(() => {
@@ -1617,7 +1633,7 @@ function Shell({
   }
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
-      <div className="card w-full max-w-3xl p-6">
+      <div className="card w-full max-w-5xl p-5">
         {children}
       </div>
     </div>
@@ -1820,6 +1836,8 @@ interface EditModeProps {
   patchDraft: (p: Partial<EditDraft>) => void;
   toggleRueckfuehrung: () => void;
   liveKmGesamt: number | null;
+  /** km, mit denen der Preis ermittelt wird (bei ABA = km Hin). */
+  livePreisKm: number | null;
   auftraggeber: Auftraggeber[];
   fahrer: FahrerWithUser[];
   draftSelectedAg: Auftraggeber | null;
@@ -1828,6 +1846,9 @@ interface EditModeProps {
   templates: Array<Pick<FormularTemplate, 'id' | 'name'>>;
   zugaenge: GreimelZugang[];
   kontakte: AuftraggeberKontakt[];
+  /** Ansprechpartner je Station (Migration 080). */
+  stationsKontakte: KontaktMap;
+  onStationsKontakte: (station: Station, next: KontaktEntwurf[]) => void;
   onOpenRouteDialog: (which: 'hin' | 'rueck') => void;
   /** km der jeweils zuletzt übernommenen Route — Bestätigung neben dem
    *  Berechnen-Button (Aufgabe 2). */
@@ -1850,226 +1871,471 @@ function RouteIcon({ className }: { className?: string }) {
 }
 
 function EditMode(p: EditModeProps) {
-  const { draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, auftraggeber, fahrer, draftSelectedAg, templates, zugaenge, kontakte } = p;
+  const {
+    draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, livePreisKm,
+    auftraggeber, fahrer, draftSelectedAg, templates, zugaenge, kontakte,
+    stationsKontakte, onStationsKontakte, routeConfirm, onOpenRouteDialog,
+    breakdown, pricing,
+  } = p;
   const isGreimel = isGreimelAuftraggeber(draftSelectedAg);
+  const isAba = draft.tourenart === 'ABA';
   // Live-Status aus dem Datum (analog zur Anzeige in der Liste).
   const computedStatus = computeTourStatus(draft.startdatum || null, draft.enddatum || null);
   return (
-    <div className="space-y-5">
-      <div className="rounded-md bg-maja-light/60 p-3 text-xs text-maja-muted">
+    <div className="space-y-3">
+      <div className="rounded-md bg-maja-light/60 px-3 py-2 text-xs text-maja-muted">
         Status wird automatisch aus dem Startdatum berechnet:{' '}
         <span className={`ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_BADGE[computedStatus]}`}>
           {STATUS_LABEL[computedStatus]}
         </span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Fahrer</label>
-          <FahrerSelect
-            value={draft.fahrerId}
-            onChange={(id) => patchDraft({ fahrerId: id })}
-            fahrer={fahrer as FahrerOptionRaw[]}
-          />
-        </div>
-        <div>
-          <label className="label">Auftraggeber</label>
-          <select className="input" value={draft.auftraggeberId}
-                  onChange={(e) => patchDraft({ auftraggeberId: e.target.value, kontaktId: '' })}>
-            <option value="">— kein Auftraggeber —</option>
-            {(auftraggeber ?? []).map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label">Tourenart</label>
-          <select className="input" value={draft.tourenart}
-                  onChange={(e) => patchDraft({
-                    tourenart: e.target.value as TourenArt | '',
-                    tourenartManuell: true,
-                  })}>
-            <option value="">—</option>
-            <option value="AB">AB</option>
-            <option value="ABC">ABC</option>
-            <option value="ABA">ABA</option>
-          </select>
-        </div>
-        {draft.auftraggeberId && kontakte.length > 0 && (
-          <div className="sm:col-span-2">
-            <label className="label">Rechnungsempfänger</label>
-            <select className="input" value={draft.kontaktId}
-                    onChange={(e) => patchDraft({ kontaktId: e.target.value })}>
-              <option value="">— kein Rechnungsempfänger —</option>
-              {kontakte.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.name}{k.position ? ` · ${k.position}` : ''}
-                </option>
+
+      {/* -----------------------------------------------------------
+          1 — Auftragsdaten
+          ----------------------------------------------------------- */}
+      <TfBlock titel="Auftragsdaten">
+        <div className="tf-grid">
+          <div className="sm:col-span-3 lg:col-span-4">
+            <label className="tf-label">Auftraggeber</label>
+            <select className="tf-input" value={draft.auftraggeberId}
+                    onChange={(e) => patchDraft({ auftraggeberId: e.target.value, kontaktId: '' })}>
+              <option value="">— kein Auftraggeber —</option>
+              {(auftraggeber ?? []).map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           </div>
-        )}
-        <div>
-          <label className="label">Start-Stadt *</label>
-          <input className="input" value={draft.startStadt}
-                 onChange={(e) => patchDraft({ startStadt: e.target.value })} />
-        </div>
-        <div>
-          <label className="label">Ziel-Stadt *</label>
-          <input className="input" value={draft.zielStadt}
-                 onChange={(e) => patchDraft({ zielStadt: e.target.value })} />
-        </div>
-      </div>
+          <div className="sm:col-span-3 lg:col-span-4">
+            <label className="tf-label">Fahrer</label>
+            <FahrerSelect
+              className="tf-input"
+              value={draft.fahrerId}
+              onChange={(id) => patchDraft({ fahrerId: id })}
+              fahrer={fahrer as FahrerOptionRaw[]}
+            />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-2">
+            <label className="tf-label">Tourenart</label>
+            <select className="tf-input" value={draft.tourenart}
+                    onChange={(e) => {
+                      const art = e.target.value as TourenArt | '';
+                      // ABA/ABC haben immer eine Rückführung — die
+                      // zugehörigen Blöcke direkt einblenden. Einmalig
+                      // beim Umschalten, damit "Rückführung entfernen"
+                      // danach trotzdem greift.
+                      patchDraft({
+                        tourenart: art,
+                        tourenartManuell: true,
+                        ...(art === 'ABA' || art === 'ABC' ? { hatRueckfuehrung: true } : {}),
+                      });
+                    }}>
+              <option value="">—</option>
+              <option value="AB">AB</option>
+              <option value="ABC">ABC</option>
+              <option value="ABA">ABA</option>
+            </select>
+          </div>
+          <div className="sm:col-span-4 lg:col-span-2">
+            <label className="tf-label">Kundenname</label>
+            <input className="tf-input" value={draft.kundenname}
+                   onChange={(e) => patchDraft({ kundenname: e.target.value })} />
+          </div>
 
-      {/* Rückführung */}
-      {!draft.hatRueckfuehrung ? (
+          {draft.auftraggeberId && kontakte.length > 0 && (
+            <div className="sm:col-span-6 lg:col-span-4">
+              <label className="tf-label">Rechnungsempfänger</label>
+              <select className="tf-input" value={draft.kontaktId}
+                      onChange={(e) => patchDraft({ kontaktId: e.target.value })}>
+                <option value="">— kein Rechnungsempfänger —</option>
+                {kontakte.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.name}{k.position ? ` · ${k.position}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="sm:col-span-4 lg:col-span-5">
+            <label className="tf-check">
+              <input
+                type="checkbox"
+                checked={draft.rechnungsdatumAbweichend}
+                onChange={(e) => patchDraft({
+                  rechnungsdatumAbweichend: e.target.checked,
+                  rechnungsdatum: e.target.checked ? draft.rechnungsdatum : '',
+                })}
+              />
+              Rechnungsdatum abweichend
+            </label>
+          </div>
+          {draft.rechnungsdatumAbweichend && (
+            <div className="sm:col-span-2 lg:col-span-3">
+              <label className="tf-label">Rechnungsdatum</label>
+              <input type="date" className="tf-input" value={draft.rechnungsdatum}
+                     onChange={(e) => patchDraft({ rechnungsdatum: e.target.value })} />
+            </div>
+          )}
+
+          <div className="sm:col-span-3 lg:col-span-3">
+            <label className="tf-check">
+              <input
+                type="checkbox"
+                checked={draft.istSondervereinbarung}
+                onChange={(e) => patchDraft({ istSondervereinbarung: e.target.checked })}
+              />
+              Sondervereinbarung
+            </label>
+          </div>
+          <div className="sm:col-span-3 lg:col-span-2">
+            <label className="tf-check">
+              <input
+                type="checkbox"
+                checked={draft.istEFahrzeug}
+                onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
+              />
+              E-Fahrzeug
+            </label>
+          </div>
+          {draft.istSondervereinbarung && (
+            <div className="sm:col-span-6 lg:col-span-7">
+              <label className="tf-label">Anmerkung zur Sondervereinbarung</label>
+              <input className="tf-input" value={draft.sondervereinbarung}
+                     onChange={(e) => patchDraft({ sondervereinbarung: e.target.value })} />
+            </div>
+          )}
+
+          <div className="sm:col-span-3 lg:col-span-3">
+            <label className="tf-label">Vergütung (€)</label>
+            {draft.istSondervereinbarung ? (
+              <>
+                <input
+                  className="tf-input"
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.verguetung}
+                  onChange={(e) => patchDraft({ verguetung: e.target.value })}
+                />
+                <p className="tf-hint">Manueller Preis (Sondervereinbarung aktiv).</p>
+              </>
+            ) : (
+              <>
+                <input
+                  className="tf-input bg-maja-light"
+                  type="text"
+                  readOnly
+                  value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
+                />
+                <p className="tf-hint">
+                  {draft.auftraggeberId && livePreisKm != null
+                    ? breakdown == null
+                      ? 'Auto (Preisliste): keine passende Stufe gefunden.'
+                      : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
+                        ? `Auto (Preisliste), ${formatKm(livePreisKm)}`
+                        : (
+                          <>
+                            {formatEuro(breakdown.base)}
+                            {breakdown.abaAufschlag > 0 && (
+                              <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
+                            )}
+                            {breakdown.eAufschlag > 0 && (
+                              <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
+                            )}
+                            <> = {formatEuro(breakdown.total)}</>
+                          </>
+                        )
+                    : 'Auto (Preisliste): Auftraggeber + km wählen.'}
+                </p>
+              </>
+            )}
+          </div>
+
+          <div className="sm:col-span-6 lg:col-span-12">
+            <label className="tf-label">Info</label>
+            <textarea className="tf-input min-h-[3.5rem]" rows={2} value={draft.info}
+                      onChange={(e) => patchDraft({ info: e.target.value })} />
+          </div>
+        </div>
+      </TfBlock>
+
+      {/* -----------------------------------------------------------
+          2 — Fahrzeug Hinfahrt
+          ----------------------------------------------------------- */}
+      <TfBlock titel="Fahrzeug Hinfahrt" akzent="hin">
+        <div className="tf-grid">
+          <div className="sm:col-span-2 lg:col-span-3">
+            <label className="tf-label">
+              {draft.hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}
+            </label>
+            <input className="tf-input" value={draft.kennzeichenHin}
+                   onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-4">
+            <label className="tf-label">Fahrzeugmodell</label>
+            <SuggestCombobox
+              className="tf-input"
+              feldTyp="fahrzeugmodell"
+              value={draft.fahrzeugmodell}
+              onChange={(v) => patchDraft({ fahrzeugmodell: v })}
+              placeholder="z.B. VW Polo"
+            />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-5">
+            <label className="tf-label">{draft.hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
+            <input className="tf-input"
+                   value={draft.fin}
+                   onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
+          </div>
+        </div>
+      </TfBlock>
+
+      {/* -----------------------------------------------------------
+          3 — Abholort
+          ----------------------------------------------------------- */}
+      <StationBlockEdit
+        titel="Abholort"
+        idPrefix="td-ks"
+        stadtLabel="Stadt *"
+        stadt={draft.startStadt}
+        onStadt={(v) => patchDraft({ startStadt: v })}
+        adresse={draft.adresseStart}
+        onAdresse={(v) => patchDraft({ adresseStart: v })}
+        zeit={draft.zeitStart}
+        onZeit={(v) => patchDraft({ zeitStart: v })}
+        kontakte={stationsKontakte.start}
+        onKontakte={(next) => onStationsKontakte('start', next)}
+      />
+
+      {/* -----------------------------------------------------------
+          4 — Zielort
+          ----------------------------------------------------------- */}
+      <StationBlockEdit
+        titel="Zielort"
+        idPrefix="td-kz"
+        stadtLabel="Stadt *"
+        stadt={draft.zielStadt}
+        onStadt={(v) => patchDraft({ zielStadt: v })}
+        adresse={draft.adresseZiel}
+        onAdresse={(v) => patchDraft({ adresseZiel: v })}
+        zeit={draft.zeitZiel}
+        onZeit={(v) => patchDraft({ zeitZiel: v })}
+        kontakte={stationsKontakte.ziel}
+        onKontakte={(next) => onStationsKontakte('ziel', next)}
+      />
+
+      {!draft.hatRueckfuehrung && (
         <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={toggleRueckfuehrung}>
           + Rückführung
         </button>
-      ) : (
-        <div>
-          <div className="mb-1 flex items-center justify-between">
-            <label className="label mb-0">Rückführung-Stadt</label>
-            <button
-              type="button"
-              onClick={toggleRueckfuehrung}
-              className="text-xs font-medium text-red-600 hover:underline"
-            >
-              Rückführung entfernen
-            </button>
-          </div>
-          <input className="input" value={draft.rueckfuehrungStadt}
-                 onChange={(e) => patchDraft({ rueckfuehrungStadt: e.target.value })} />
-        </div>
       )}
 
-      {/* km */}
-      {(() => {
-        // Vor jeder km-Zeile prüfen, welche Adressen für die
-        // automatische Routenberechnung schon vorhanden sind. Wenn
-        // beide Endpunkte ausgefüllt sind, wird der "Berechnen"-
-        // Button aktiv — sonst disabled mit Hint im title-Attribut.
-        // Berechnen-Buttons sitzen UNTER den Adressen (siehe weiter
-        // unten), damit der Workflow ohne Hochscrollen läuft (Aufgabe 2).
-        return draft.tourenart === 'ABA' ? (
-          <div>
-            <label className="label">Kilometer gesamt</label>
-            <input
-              className="input"
-              type="number"
-              min={0}
-              step={1}
-              value={draft.kmGesamtAba}
-              onChange={(e) => patchDraft({ kmGesamtAba: e.target.value })}
+      {draft.hatRueckfuehrung && (
+        <>
+          {/* -------------------------------------------------------
+              5 — Fahrzeug Rückfahrt (nur ABA/ABC)
+              ------------------------------------------------------- */}
+          <TfBlock titel="Fahrzeug Rückfahrt" akzent="rueck">
+            <div className="tf-grid">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="tf-label">Kennzeichen Rück</label>
+                <input className="tf-input" value={draft.kennzeichenRueck}
+                       onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label className="tf-label">Fahrzeugmodell Rück</label>
+                <SuggestCombobox
+                  className="tf-input"
+                  feldTyp="fahrzeugmodell"
+                  value={draft.fahrzeugmodellRueck}
+                  onChange={(v) => patchDraft({ fahrzeugmodellRueck: v })}
+                  placeholder="z.B. Audi A3"
+                />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-5">
+                <label className="tf-label">FIN Rück</label>
+                <input className="tf-input"
+                       value={draft.finRueck}
+                       onChange={(e) => patchDraft({ finRueck: e.target.value.toUpperCase() })} />
+              </div>
+            </div>
+          </TfBlock>
+
+          {/* -------------------------------------------------------
+              6 — Rückführungsort (nur ABA/ABC)
+              ------------------------------------------------------- */}
+          <StationBlockEdit
+            titel="Rückführungsort"
+            idPrefix="td-kr"
+            akzent="rueck"
+            stadtLabel="Stadt"
+            stadt={draft.rueckfuehrungStadt}
+            onStadt={(v) => patchDraft({ rueckfuehrungStadt: v })}
+            adresse={draft.adresseRueckfuehrung}
+            onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
+            zeit={draft.zeitRueck}
+            onZeit={(v) => patchDraft({ zeitRueck: v })}
+            kontakte={stationsKontakte.rueckfuehrung}
+            onKontakte={(next) => onStationsKontakte('rueckfuehrung', next)}
+            aktion={(
+              <button
+                type="button"
+                onClick={toggleRueckfuehrung}
+                className="text-[11px] font-medium normal-case text-red-600 hover:underline"
+              >
+                Rückführung entfernen
+              </button>
+            )}
+          />
+        </>
+      )}
+
+      {/* -----------------------------------------------------------
+          7 — Kilometer & Termine
+          ----------------------------------------------------------- */}
+      <TfBlock titel="Kilometer & Termine">
+        <div className="tf-grid">
+          <div className="sm:col-span-3 lg:col-span-2">
+            <label className="tf-label">Startdatum <span className="text-red-600">*</span></label>
+            <input type="date" className="tf-input" required value={draft.startdatum}
+                   onChange={(e) => patchDraft({ startdatum: e.target.value })} />
+          </div>
+          <div className="sm:col-span-3 lg:col-span-2">
+            <label className="tf-label">Enddatum <span className="text-red-600">*</span></label>
+            <input type="date" className="tf-input" required value={draft.enddatum}
+                   onChange={(e) => patchDraft({ enddatum: e.target.value })} />
+          </div>
+          <div className="sm:col-span-3 lg:col-span-3">
+            <label className="tf-label">km Hin (Start → Ziel)</label>
+            <input className="tf-input" type="number" min={0} step={1}
+                   value={draft.kmHin}
+                   onChange={(e) => patchDraft({ kmHin: e.target.value })} />
+            <RouteCalcRow
+              disabled={!draft.adresseStart.trim() || !draft.adresseZiel.trim()}
+              label="Entfernung berechnen"
+              confirmKm={routeConfirm.hin}
+              onClick={() => onOpenRouteDialog('hin')}
             />
           </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <label className="label">km Hin</label>
-              <input className="input" type="number" min={0} step={1}
-                     value={draft.kmHin}
-                     onChange={(e) => patchDraft({ kmHin: e.target.value })} />
-            </div>
-            {draft.hatRueckfuehrung && (
-              <div>
-                <label className="label">km Rück</label>
-                <input className="input" type="number" min={0} step={1}
-                       value={draft.kmRueck}
-                       onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
-              </div>
-            )}
-            <div>
-              <label className="label">km Gesamt</label>
-              <input
-                className="input bg-maja-light"
-                value={liveKmGesamt == null ? '' : String(liveKmGesamt)}
-                readOnly
+          {draft.hatRueckfuehrung && (
+            <div className="sm:col-span-3 lg:col-span-3">
+              <label className="tf-label">km Rück (Ziel → Rückführung)</label>
+              <input className="tf-input" type="number" min={0} step={1}
+                     value={draft.kmRueck}
+                     onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
+              <RouteCalcRow
+                disabled={!draft.adresseZiel.trim() || !draft.adresseRueckfuehrung.trim()}
+                label="Entfernung berechnen"
+                confirmKm={routeConfirm.rueck}
+                onClick={() => onOpenRouteDialog('rueck')}
               />
             </div>
+          )}
+          <div className="sm:col-span-6 lg:col-span-2">
+            <span className="tf-label">km Gesamt</span>
+            <div className="rounded-md bg-maja-light px-2 py-1.5 text-sm font-semibold text-maja-navy">
+              {formatKm(liveKmGesamt)}
+            </div>
           </div>
-        );
-      })()}
 
-      {/* Datum */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Startdatum <span className="text-red-600">*</span></label>
-          <input type="date" className="input" required value={draft.startdatum}
-                 onChange={(e) => patchDraft({ startdatum: e.target.value })} />
+          {/* Abrechnungs-Ausnahme — nur bei ABA. */}
+          {isAba && (
+            <div className="sm:col-span-6 lg:col-span-12">
+              <label className="tf-check">
+                <input
+                  type="checkbox"
+                  checked={draft.abaGesamtKm}
+                  onChange={(e) => patchDraft({ abaGesamtKm: e.target.checked })}
+                />
+                Gesamt-km für Rechnung verwenden
+              </label>
+              <p className="tf-hint">
+                Standard bei ABA ist die Berechnung nach Hinfahrt. Aktivieren,
+                wenn dieser Auftraggeber die Gesamtstrecke abrechnet.
+              </p>
+            </div>
+          )}
         </div>
-        <div>
-          <label className="label">Enddatum <span className="text-red-600">*</span></label>
-          <input type="date" className="input" required value={draft.enddatum}
-                 onChange={(e) => patchDraft({ enddatum: e.target.value })} />
-        </div>
-      </div>
-
-      {/* Rechnungsdatum (optional, abweichend vom Tourendatum) — Admin-only */}
-      <div className="space-y-2">
-        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-            checked={draft.rechnungsdatumAbweichend}
-            onChange={(e) => patchDraft({
-              rechnungsdatumAbweichend: e.target.checked,
-              rechnungsdatum: e.target.checked ? draft.rechnungsdatum : '',
-            })}
-          />
-          Rechnungsdatum abweichend vom Tourendatum
-        </label>
-        {draft.rechnungsdatumAbweichend && (
-          <div>
-            <label className="label">Rechnungsdatum</label>
-            <input type="date" className="input" value={draft.rechnungsdatum}
-                   onChange={(e) => patchDraft({ rechnungsdatum: e.target.value })} />
-          </div>
-        )}
-      </div>
+      </TfBlock>
 
       {/* Protokoll */}
-      <ProtokollSection
-        tourId={p.tourId ?? null}
-        protokollArt={draft.protokollArt}
-        greimelZugangId={draft.greimelZugangId}
-        appNotiz={draft.appNotiz}
-        onChange={(p) => {
-          const patch: Partial<EditDraft> = {};
-          if ('protokoll_art' in p) patch.protokollArt = p.protokoll_art ?? null;
-          if ('greimel_zugang_id' in p) patch.greimelZugangId = p.greimel_zugang_id ?? null;
-          if ('app_notiz' in p) patch.appNotiz = p.app_notiz ?? '';
-          patchDraft(patch);
-        }}
-        isGreimel={isGreimel}
-        fahrerId={draft.fahrerId || null}
-        templates={templates}
-        zugaenge={zugaenge}
-        externeApp={draftSelectedAg ? {
-          name: draftSelectedAg.externe_app_name,
-          url:  draftSelectedAg.externe_app_url,
-        } : null}
-      />
-
-      {/* Kundenname — die Vergütung steht jetzt oben im Fahrzeug-Block,
-          direkt unter den beiden Checkboxen. */}
-      <div>
-        <label className="label">Kundenname</label>
-        <input className="input" value={draft.kundenname}
-               onChange={(e) => patchDraft({ kundenname: e.target.value })} />
-      </div>
-
-      <div>
-        <label className="label">Info</label>
-        <textarea className="input min-h-[5rem]" value={draft.info}
-                  onChange={(e) => patchDraft({ info: e.target.value })} />
-      </div>
-
-      {/* Bereich 6 (Fahrzeug & Adressen) wird vom Eltern-Component nach
-          Sektion 4 + 5 inline gerendert — siehe TourDetailDialog. */}
+      <TfBlock titel="Protokoll">
+        <ProtokollSection
+          tourId={p.tourId ?? null}
+          protokollArt={draft.protokollArt}
+          greimelZugangId={draft.greimelZugangId}
+          appNotiz={draft.appNotiz}
+          onChange={(pp) => {
+            const patch: Partial<EditDraft> = {};
+            if ('protokoll_art' in pp) patch.protokollArt = pp.protokoll_art ?? null;
+            if ('greimel_zugang_id' in pp) patch.greimelZugangId = pp.greimel_zugang_id ?? null;
+            if ('app_notiz' in pp) patch.appNotiz = pp.app_notiz ?? '';
+            patchDraft(patch);
+          }}
+          isGreimel={isGreimel}
+          fahrerId={draft.fahrerId || null}
+          templates={templates}
+          zugaenge={zugaenge}
+          externeApp={draftSelectedAg ? {
+            name: draftSelectedAg.externe_app_name,
+            url:  draftSelectedAg.externe_app_url,
+          } : null}
+        />
+      </TfBlock>
     </div>
   );
 }
 
+
+/** Ort-Block im Edit-Modus: Stadt, Adresse, Zeit, Ansprechpartner. */
+function StationBlockEdit({
+  titel, idPrefix, akzent, aktion, stadtLabel, stadt, onStadt,
+  adresse, onAdresse, zeit, onZeit, kontakte, onKontakte,
+}: {
+  titel: string;
+  idPrefix: string;
+  akzent?: 'hin' | 'rueck';
+  aktion?: ReactNode;
+  stadtLabel: string;
+  stadt: string;
+  onStadt: (v: string) => void;
+  adresse: string;
+  onAdresse: (v: string) => void;
+  zeit: string;
+  onZeit: (v: string) => void;
+  kontakte: KontaktEntwurf[];
+  onKontakte: (next: KontaktEntwurf[]) => void;
+}) {
+  return (
+    <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
+      <div className="tf-grid">
+        <div className="sm:col-span-2 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-stadt`} className="tf-label">{stadtLabel}</label>
+          <input id={`${idPrefix}-stadt`} className="tf-input"
+                 value={stadt} onChange={(e) => onStadt(e.target.value)} />
+        </div>
+        <div className="sm:col-span-3 lg:col-span-6">
+          <label htmlFor={`${idPrefix}-adr`} className="tf-label">Adresse (Straße, Nr., PLZ)</label>
+          <input id={`${idPrefix}-adr`} className="tf-input"
+                 value={adresse} onChange={(e) => onAdresse(e.target.value)} />
+        </div>
+        <div className="sm:col-span-1 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">Zeit</label>
+          <input id={`${idPrefix}-zeit`} className="tf-input"
+                 placeholder={ZEIT_PLATZHALTER}
+                 value={zeit} onChange={(e) => onZeit(e.target.value)} />
+        </div>
+      </div>
+      <div className="mt-2">
+        <AnsprechpartnerFeldsatz
+          titel="Ansprechpartner"
+          idPrefix={`${idPrefix}-k`}
+          liste={kontakte}
+          onChange={onKontakte}
+        />
+      </div>
+    </TfBlock>
+  );
+}
 // ---------- Finance-Field ----------
 
 interface FinanceFieldProps {
@@ -2205,210 +2471,6 @@ function AddressBlockView({
   );
 }
 
-function VehicleAndAddressEdit({
-  draft, patchDraft, onOpenRouteDialog, routeConfirm, kontakte, onKontakte,
-  breakdown, pricing, liveKmGesamt,
-}: {
-  draft: EditDraft;
-  patchDraft: (p: Partial<EditDraft>) => void;
-  onOpenRouteDialog: (which: 'hin' | 'rueck') => void;
-  routeConfirm: { hin?: number; rueck?: number };
-  /** Ansprechpartner je Station (Migration 080). */
-  kontakte: KontaktMap;
-  onKontakte: (station: Station, next: KontaktEntwurf[]) => void;
-  /** Preis-Vorschau — die Vergütung sitzt seit 082 in diesem Block. */
-  breakdown: TourPriceBreakdown | null;
-  pricing: boolean;
-  liveKmGesamt: number | null;
-}) {
-  return (
-    <>
-      {/* Reihenfolge laut Vorgabe: Sondervereinbarung + E-Fahrzeug
-          nebeneinander, darunter Kennzeichen + Fahrzeugmodell, darunter
-          FIN. Bricht auf schmalen Breiten sauber untereinander um. */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-            checked={draft.istSondervereinbarung}
-            onChange={(e) => patchDraft({ istSondervereinbarung: e.target.checked })}
-          />
-          Sondervereinbarung
-        </label>
-        <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-            checked={draft.istEFahrzeug}
-            onChange={(e) => patchDraft({ istEFahrzeug: e.target.checked })}
-          />
-          E-Fahrzeug
-        </label>
-      </div>
-      {draft.istSondervereinbarung && (
-        <div className="min-w-0">
-          <label className="label">Anmerkung zur Sondervereinbarung</label>
-          <input className="input" value={draft.sondervereinbarung}
-                 onChange={(e) => patchDraft({ sondervereinbarung: e.target.value })} />
-        </div>
-      )}
-
-      {/* Vergütung direkt unter den Checkboxen. */}
-      <div className="min-w-0">
-          <label className="label">Vergütung (€)</label>
-          {draft.istSondervereinbarung ? (
-            <>
-              <input
-                className="input"
-                type="text"
-                inputMode="decimal"
-                value={draft.verguetung}
-                onChange={(e) => patchDraft({ verguetung: e.target.value })}
-              />
-              <p className="mt-1 text-xs text-maja-muted">
-                Manueller Preis (Sondervereinbarung aktiv).
-              </p>
-            </>
-          ) : (
-            <>
-              <input
-                className="input bg-maja-light"
-                type="text"
-                readOnly
-                value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
-              />
-              <p className="mt-1 text-xs text-maja-muted">
-                {draft.auftraggeberId && liveKmGesamt != null
-                  ? breakdown == null
-                    ? 'Auto (Preisliste): keine passende Stufe gefunden.'
-                    : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
-                      ? 'Auto (Preisliste)'
-                      : (
-                        <>
-                          {formatEuro(breakdown.base)}
-                          {breakdown.abaAufschlag > 0 && (
-                            <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
-                          )}
-                          {breakdown.eAufschlag > 0 && (
-                            <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
-                          )}
-                          <> = {formatEuro(breakdown.total)}</>
-                        </>
-                      )
-                  : 'Auto (Preisliste): Auftraggeber + km wählen.'}
-              </p>
-            </>
-          )}
-        </div>
-
-      {/* Hinfahrzeug: Kennzeichen + Modell, darunter FIN. */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="min-w-0">
-          <label className="label">
-            {draft.hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}
-          </label>
-          <input className="input" value={draft.kennzeichenHin}
-                 onChange={(e) => patchDraft({ kennzeichenHin: e.target.value })} />
-        </div>
-        <div className="min-w-0">
-          <label className="label">Fahrzeugmodell (optional)</label>
-          <SuggestCombobox
-            feldTyp="fahrzeugmodell"
-            value={draft.fahrzeugmodell}
-            onChange={(v) => patchDraft({ fahrzeugmodell: v })}
-            placeholder="z.B. VW Polo"
-          />
-        </div>
-      </div>
-      <div className="min-w-0">
-        <label className="label">{draft.hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
-        <input className="input"
-               value={draft.fin}
-               onChange={(e) => patchDraft({ fin: e.target.value.toUpperCase() })} />
-      </div>
-
-      {/* Rückfahrzeug — nur bei ABA/ABC. */}
-      {draft.hatRueckfuehrung && (
-        <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="min-w-0">
-              <label className="label">Kennzeichen Rück</label>
-              <input className="input" value={draft.kennzeichenRueck}
-                     onChange={(e) => patchDraft({ kennzeichenRueck: e.target.value })} />
-            </div>
-            <div className="min-w-0">
-              <label className="label">Fahrzeugmodell Rück (optional)</label>
-              <SuggestCombobox
-                feldTyp="fahrzeugmodell"
-                value={draft.fahrzeugmodellRueck}
-                onChange={(v) => patchDraft({ fahrzeugmodellRueck: v })}
-                placeholder="z.B. Audi A3"
-              />
-            </div>
-          </div>
-          <div className="min-w-0">
-            <label className="label">FIN Rück</label>
-            <input className="input"
-                   value={draft.finRueck}
-                   onChange={(e) => patchDraft({ finRueck: e.target.value.toUpperCase() })} />
-          </div>
-        </>
-      )}
-
-      {/* Adresse + Kontakt pro Stadt */}
-      <AddressBlockEdit
-        stadt={draft.startStadt}
-        adresseValue={draft.adresseStart}
-        onAdresse={(v) => patchDraft({ adresseStart: v })}
-        zeit={draft.zeitStart}
-        onZeit={(v) => patchDraft({ zeitStart: v })}
-        idPrefix="td-ks"
-        kontakte={kontakte.start}
-        onKontakte={(next) => onKontakte('start', next)}
-      />
-      <AddressBlockEdit
-        stadt={draft.zielStadt}
-        adresseValue={draft.adresseZiel}
-        onAdresse={(v) => patchDraft({ adresseZiel: v })}
-        zeit={draft.zeitZiel}
-        onZeit={(v) => patchDraft({ zeitZiel: v })}
-        idPrefix="td-kz"
-        kontakte={kontakte.ziel}
-        onKontakte={(next) => onKontakte('ziel', next)}
-      />
-      {/* Aufgabe 2: Berechnen-Buttons sitzen direkt unter den
-          Adressen — kein Hochscrollen zur km-Sektion mehr nötig. */}
-      <RouteCalcRow
-        disabled={!draft.adresseStart.trim() || !draft.adresseZiel.trim()}
-        label="Entfernung berechnen"
-        confirmKm={routeConfirm.hin}
-        onClick={() => onOpenRouteDialog('hin')}
-      />
-      {draft.hatRueckfuehrung && (
-        <>
-          <AddressBlockEdit
-            stadt={draft.rueckfuehrungStadt}
-            adresseValue={draft.adresseRueckfuehrung}
-            onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
-            zeit={draft.zeitRueck}
-            onZeit={(v) => patchDraft({ zeitRueck: v })}
-            idPrefix="td-kr"
-            kontakte={kontakte.rueckfuehrung}
-            onKontakte={(next) => onKontakte('rueckfuehrung', next)}
-          />
-          <RouteCalcRow
-            disabled={!draft.adresseZiel.trim() || !draft.adresseRueckfuehrung.trim()}
-            label="Entfernung Rückweg berechnen"
-            confirmKm={routeConfirm.rueck}
-            onClick={() => onOpenRouteDialog('rueck')}
-          />
-        </>
-      )}
-    </>
-  );
-}
-
 function RouteCalcRow({
   disabled, label, confirmKm, onClick,
 }: {
@@ -2434,48 +2496,6 @@ function RouteCalcRow({
           <CheckIcon className="h-3.5 w-3.5" /> {confirmKm} km übernommen
         </span>
       )}
-    </div>
-  );
-}
-
-interface AddressBlockEditProps {
-  stadt: string;
-  adresseValue: string;
-  onAdresse: (v: string) => void;
-  /** Freitext-Zeitangabe der Station (Migration 081). */
-  zeit: string;
-  onZeit: (v: string) => void;
-  /** Ansprechpartner der Station — der erste wird in kontakt_* gespiegelt. */
-  idPrefix: string;
-  kontakte: KontaktEntwurf[];
-  onKontakte: (next: KontaktEntwurf[]) => void;
-}
-
-function AddressBlockEdit(p: AddressBlockEditProps) {
-  return (
-    <div className="rounded-lg border border-maja-navy/10 p-3">
-      <div className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
-        {p.stadt || '—'}
-      </div>
-      <textarea
-        className="input mt-1 min-h-[4rem]"
-        placeholder="Adresse"
-        value={p.adresseValue}
-        onChange={(e) => p.onAdresse(e.target.value)}
-      />
-      <div className="mt-3 min-w-0">
-        <label className="label">Zeit (optional)</label>
-        <input className="input" placeholder={ZEIT_PLATZHALTER}
-               value={p.zeit} onChange={(e) => p.onZeit(e.target.value)} />
-      </div>
-      <div className="mt-3 border-t border-maja-navy/10 pt-3">
-        <AnsprechpartnerFeldsatz
-          titel="Kontakt vor Ort"
-          idPrefix={p.idPrefix}
-          liste={p.kontakte}
-          onChange={p.onKontakte}
-        />
-      </div>
     </div>
   );
 }

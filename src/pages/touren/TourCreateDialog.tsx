@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { CheckIcon, XIcon } from '../../components/icons';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
-import { computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown, formatEuro, formatKm, type TourPriceBreakdown } from '../../lib/touren';
+import {
+  abrechnungsKm, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
+  formatEuro, formatKm, type TourPriceBreakdown,
+} from '../../lib/touren';
+import { useScrollLock } from '../../lib/useScrollLock';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
@@ -11,6 +15,7 @@ import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsat
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { TfBlock } from '../../components/TfBlock';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
 } from '../../lib/tourenartAutomatik';
@@ -65,6 +70,9 @@ function parseDecimal(input: string): number | null {
 
 export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initial }: Props) {
   const guard = useTestGuard();
+  // Punkt 3: Hintergrund darf nicht scrollen, solange das Modal offen
+  // ist. Im "embedded"-Modus gibt es kein Overlay — dort keine Sperre.
+  useScrollLock(variant === 'modal');
   // Pflichtfelder
   const [startStadt, setStartStadt] = useState(initial?.startStadt ?? '');
   const [zielStadt, setZielStadt]   = useState(initial?.zielStadt ?? '');
@@ -76,7 +84,11 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   // km
   const [kmHin, setKmHin]     = useState('');
   const [kmRueck, setKmRueck] = useState('');
-  const [kmGesamtAba, setKmGesamtAba] = useState(''); // bei Tourenart=ABA
+  /**
+   * Nur ABA: Ausnahme für Auftraggeber, die die Gesamtstrecke abrechnen.
+   * Standard (false) = Preis über km Hin. Siehe abrechnungsKm().
+   */
+  const [abaGesamtKm, setAbaGesamtKm] = useState(false);
 
   // Auftraggeber/Fahrer
   const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
@@ -188,24 +200,32 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
 
   const isAba = tourenart === 'ABA';
 
-  const kmGesamt = useMemo(() => {
-    if (isAba) return parseInteger(kmGesamtAba);
-    return computeKmGesamt({
-      km_hin: parseInteger(kmHin),
-      km_rueck: parseInteger(kmRueck),
-      hatRueckfuehrung,
-    });
-  }, [isAba, kmGesamtAba, kmHin, kmRueck, hatRueckfuehrung]);
+  const kmGesamt = useMemo(() => computeKmGesamt({
+    km_hin: parseInteger(kmHin),
+    km_rueck: parseInteger(kmRueck),
+    hatRueckfuehrung,
+  }), [kmHin, kmRueck, hatRueckfuehrung]);
+
+  /**
+   * Kilometer für die Preisstufen-Suche. Bei ABA ist das die Hinfahrt,
+   * nicht die Summe — außer die Ausnahme-Checkbox ist gesetzt.
+   */
+  const preisKm = useMemo(() => abrechnungsKm({
+    tourenart: tourenart || 'AB',
+    km_hin: parseInteger(kmHin),
+    km_gesamt: kmGesamt,
+    abaGesamtKmBerechnen: abaGesamtKm,
+  }), [tourenart, kmHin, kmGesamt, abaGesamtKm]);
 
   // Auto-Preis berechnen, sobald Auftraggeber + km + tourenart + ist_e_fahrzeug sich ändern
   useEffect(() => {
     if (istSondervereinbarung) { setBreakdown(null); return; }
-    if (!auftraggeberId || kmGesamt == null) { setBreakdown(null); return; }
+    if (!auftraggeberId || preisKm == null) { setBreakdown(null); return; }
     let cancelled = false;
     setPricing(true);
     void fetchTourPriceBreakdown({
       auftraggeberId,
-      km: kmGesamt,
+      km: preisKm,
       tourenart: (tourenart || 'AB') as TourenArt,
       istEFahrzeug,
     }).then((b) => {
@@ -214,7 +234,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       setPricing(false);
     });
     return () => { cancelled = true; };
-  }, [auftraggeberId, kmGesamt, tourenart, istSondervereinbarung, istEFahrzeug]);
+  }, [auftraggeberId, preisKm, tourenart, istSondervereinbarung, istEFahrzeug]);
 
   // Kontakte des ausgewählten Auftraggebers laden
   useEffect(() => {
@@ -290,15 +310,8 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       return;
     }
 
-    let km_hin: number | null;
-    let km_rueck: number | null;
-    if (isAba) {
-      km_hin = parseInteger(kmGesamtAba);
-      km_rueck = null;
-    } else {
-      km_hin = parseInteger(kmHin);
-      km_rueck = hatRueckfuehrung ? parseInteger(kmRueck) : null;
-    }
+    const km_hin = parseInteger(kmHin);
+    const km_rueck = hatRueckfuehrung ? parseInteger(kmRueck) : null;
 
     const kennzeichen: string[] = [];
     const kzHin = kennzeichenHin.trim().toUpperCase();
@@ -346,6 +359,9 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       km_hin,
       km_rueck,
       km_gesamt: kmGesamt,
+      // Nur bei ABA relevant — sonst immer false, damit ein späterer
+      // Wechsel der Tourenart keinen Altwert mitschleppt.
+      aba_gesamt_km_berechnen: isAba ? abaGesamtKm : false,
       auftraggeber_id: auftraggeberId || null,
       fahrer_id: fahrerId || null,
       kontakt_id: kontaktId || null,
@@ -411,18 +427,19 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const outerCls = variant === 'embedded'
     ? ''
     : 'fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8';
+  // Der Container darf breiter werden — das mehrspaltige Raster braucht
+  // Platz, spart dafür aber deutlich Scrollen.
   const innerCls = variant === 'embedded'
-    ? 'card w-full p-5'
-    : 'card w-full max-w-2xl p-6';
+    ? 'card w-full p-4'
+    : 'card w-full max-w-5xl p-5';
   return (
     <div className={outerCls}>
       <div className={innerCls}>
-        <div className="mb-4 flex items-start justify-between">
+        <div className="mb-3 flex items-start justify-between">
           <div>
             <h2 className="text-lg font-semibold text-maja-navy">Neue Tour anlegen</h2>
             <p className="text-xs text-maja-muted">
-              Start- und Ziel-Stadt sowie Start- und Enddatum sind Pflicht. Alle
-              anderen Felder sind optional.
+              Mit <span className="text-red-600">*</span> markierte Felder sind Pflicht.
             </p>
           </div>
           {variant === 'modal' && (
@@ -437,23 +454,252 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-          {/* Start / Ziel */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="t-start" className="label">Start-Stadt *</label>
-              <input id="t-start" className="input" required
-                     value={startStadt} onChange={(e) => setStartStadt(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="t-ziel" className="label">Ziel-Stadt *</label>
-              <input id="t-ziel" className="input" required
-                     value={zielStadt} onChange={(e) => setZielStadt(e.target.value)} />
-            </div>
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+          {/* ---------------------------------------------------------
+              1 — Auftragsdaten
+              --------------------------------------------------------- */}
+          <TfBlock titel="Auftragsdaten">
+            <div className="tf-grid">
+              <div className="sm:col-span-3 lg:col-span-4">
+                <label htmlFor="t-ag" className="tf-label">Auftraggeber</label>
+                <select id="t-ag" className="tf-input"
+                        value={auftraggeberId}
+                        onChange={(e) => setAuftraggeberId(e.target.value)}>
+                  <option value="">— kein Auftraggeber —</option>
+                  {(auftraggeber ?? []).map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-3 lg:col-span-4">
+                <label htmlFor="t-fa" className="tf-label">Fahrer</label>
+                <FahrerSelect
+                  id="t-fa"
+                  className="tf-input"
+                  value={fahrerId}
+                  onChange={setFahrerId}
+                  fahrer={fahrer as FahrerOptionRaw[]}
+                />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-2">
+                <label htmlFor="t-art" className="tf-label">Tourenart</label>
+                <select id="t-art" className="tf-input"
+                        value={tourenart}
+                        onChange={(e) => {
+                          const art = e.target.value as TourenArt | '';
+                          setTourenart(art);
+                          setTourenartManuell(true);
+                          // ABA/ABC haben immer eine Rückführung — die
+                          // zugehörigen Blöcke (Fahrzeug Rückfahrt,
+                          // Rückführungsort, km Rück) direkt einblenden.
+                          // Einmalig beim Umschalten, damit "Rückführung
+                          // entfernen" danach trotzdem greift.
+                          if (art === 'ABA' || art === 'ABC') setHatRueckfuehrung(true);
+                        }}>
+                  <option value="">—</option>
+                  <option value="AB">AB</option>
+                  <option value="ABC">ABC</option>
+                  <option value="ABA">ABA</option>
+                </select>
+              </div>
+              <div className="sm:col-span-4 lg:col-span-2">
+                <label htmlFor="t-kn" className="tf-label">Kundenname</label>
+                <input id="t-kn" className="tf-input"
+                       value={kundenname}
+                       onChange={(e) => setKundenname(e.target.value)} />
+              </div>
 
-          {/* Rückführung */}
-          {!hatRueckfuehrung ? (
+              {auftraggeberId && kontakte.length > 0 && (
+                <div className="sm:col-span-6 lg:col-span-4">
+                  <label htmlFor="t-kontakt" className="tf-label">Rechnungsempfänger</label>
+                  <select id="t-kontakt" className="tf-input"
+                          value={kontaktId}
+                          onChange={(e) => setKontaktId(e.target.value)}>
+                    <option value="">— kein Rechnungsempfänger —</option>
+                    {kontakte.map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {k.name}{k.position ? ` · ${k.position}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Rechnungsdatum abweichend */}
+              <div className="sm:col-span-4 lg:col-span-5">
+                <label className="tf-check">
+                  <input
+                    type="checkbox"
+                    checked={rechnungsdatumAbweichend}
+                    onChange={(e) => setRechnungsdatumAbweichend(e.target.checked)}
+                  />
+                  Rechnungsdatum abweichend
+                </label>
+              </div>
+              {rechnungsdatumAbweichend && (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <label htmlFor="t-rechn-dt" className="tf-label">Rechnungsdatum</label>
+                  <input id="t-rechn-dt" type="date" className="tf-input"
+                         value={rechnungsdatum}
+                         onChange={(e) => setRechnungsdatum(e.target.value)} />
+                </div>
+              )}
+
+              {/* Sondervereinbarung + E-Fahrzeug */}
+              <div className="sm:col-span-3 lg:col-span-3">
+                <label className="tf-check">
+                  <input
+                    type="checkbox"
+                    checked={istSondervereinbarung}
+                    onChange={(e) => setIstSondervereinbarung(e.target.checked)}
+                  />
+                  Sondervereinbarung
+                </label>
+              </div>
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label className="tf-check">
+                  <input
+                    type="checkbox"
+                    checked={istEFahrzeug}
+                    onChange={(e) => setIstEFahrzeug(e.target.checked)}
+                  />
+                  E-Fahrzeug
+                </label>
+              </div>
+              {istSondervereinbarung && (
+                <div className="sm:col-span-6 lg:col-span-7">
+                  <label htmlFor="t-sv-note" className="tf-label">Anmerkung zur Sondervereinbarung</label>
+                  <input id="t-sv-note" className="tf-input"
+                         value={sondervereinbarung}
+                         onChange={(e) => setSondervereinbarung(e.target.value)} />
+                </div>
+              )}
+
+              {/* Vergütung */}
+              <div className="sm:col-span-3 lg:col-span-3">
+                <label htmlFor="t-verg" className="tf-label">Vergütung (€)</label>
+                {istSondervereinbarung ? (
+                  <>
+                    <input
+                      id="t-verg"
+                      className="tf-input"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="z.B. 1234,56"
+                      value={verguetungInput}
+                      onChange={(e) => setVerguetungInput(e.target.value)}
+                    />
+                    <p className="tf-hint">Manueller Preis (Sondervereinbarung aktiv).</p>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      id="t-verg"
+                      className="tf-input bg-maja-light"
+                      type="text"
+                      readOnly
+                      value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
+                    />
+                    <p className="tf-hint">
+                      {auftraggeberId && preisKm != null
+                        ? breakdown == null
+                          ? 'Auto (Preisliste): keine passende Stufe gefunden.'
+                          : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
+                            ? `Auto (Preisliste), ${formatKm(preisKm)}`
+                            : (
+                              <>
+                                {formatEuro(breakdown.base)}
+                                {breakdown.abaAufschlag > 0 && (
+                                  <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
+                                )}
+                                {breakdown.eAufschlag > 0 && (
+                                  <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
+                                )}
+                                <> = {formatEuro(breakdown.total)}</>
+                              </>
+                            )
+                        : 'Auto (Preisliste): Auftraggeber + km wählen.'}
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="sm:col-span-6 lg:col-span-12">
+                <label htmlFor="t-info" className="tf-label">Info</label>
+                <textarea id="t-info" className="tf-input min-h-[3.5rem]"
+                          rows={2}
+                          value={info} onChange={(e) => setInfo(e.target.value)} />
+              </div>
+            </div>
+          </TfBlock>
+
+          {/* ---------------------------------------------------------
+              2 — Fahrzeug Hinfahrt
+              --------------------------------------------------------- */}
+          <TfBlock titel="Fahrzeug Hinfahrt" akzent="hin">
+            <div className="tf-grid">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="t-kz" className="tf-label">
+                  {hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}
+                </label>
+                <input id="t-kz" className="tf-input" placeholder="z.B. M-XY 1234"
+                       value={kennzeichenHin}
+                       onChange={(e) => setKennzeichenHin(e.target.value)} />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label htmlFor="t-modell" className="tf-label">Fahrzeugmodell</label>
+                <SuggestCombobox
+                  id="t-modell"
+                  className="tf-input"
+                  feldTyp="fahrzeugmodell"
+                  value={fahrzeugmodell}
+                  onChange={setFahrzeugmodell}
+                  placeholder="z.B. VW Polo"
+                />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-5">
+                <label htmlFor="t-fin" className="tf-label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
+                <input id="t-fin" className="tf-input"
+                       value={fin}
+                       onChange={(e) => setFin(e.target.value.toUpperCase())} />
+              </div>
+            </div>
+          </TfBlock>
+
+          {/* ---------------------------------------------------------
+              3 — Abholort
+              --------------------------------------------------------- */}
+          <StationBlock
+            titel="Abholort"
+            idPrefix="t-st1"
+            stadtLabel="Stadt *"
+            stadt={startStadt} onStadt={setStartStadt}
+            stadtRequired
+            adresseLabel="Adresse (Straße, Nr., PLZ)"
+            adresse={adresseStart} onAdresse={setAdresseStart}
+            zeit={zeitStart} onZeit={setZeitStart}
+            kontakte={stationsKontakte.start}
+            onKontakte={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
+          />
+
+          {/* ---------------------------------------------------------
+              4 — Zielort
+              --------------------------------------------------------- */}
+          <StationBlock
+            titel="Zielort"
+            idPrefix="t-st2"
+            stadtLabel="Stadt *"
+            stadt={zielStadt} onStadt={setZielStadt}
+            stadtRequired
+            adresseLabel="Adresse (Straße, Nr., PLZ)"
+            adresse={adresseZiel} onAdresse={setAdresseZiel}
+            zeit={zeitZiel} onZeit={setZeitZiel}
+            kontakte={stationsKontakte.ziel}
+            onKontakte={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
+          />
+
+          {/* Rückführung an-/abschalten. Blöcke 5+6 hängen daran. */}
+          {!hatRueckfuehrung && (
             <button
               type="button"
               className="btn-secondary px-3 py-1.5 text-sm"
@@ -461,383 +707,160 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             >
               + Rückführung
             </button>
-          ) : (
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <label htmlFor="t-rueck" className="label mb-0">Rückführung-Stadt</label>
-                <button
-                  type="button"
-                  onClick={toggleRueckfuehrung}
-                  className="text-xs font-medium text-red-600 hover:underline"
-                >
-                  Rückführung entfernen
-                </button>
-              </div>
-              <input
-                id="t-rueck"
-                className="input"
-                value={rueckfuehrungStadt}
-                onChange={(e) => setRueckfuehrungStadt(e.target.value)}
-              />
-            </div>
           )}
 
-          {/* km Felder — Berechnen-Buttons sitzen UNTER den Adressen
-              (Aufgabe 2), damit der Workflow von oben nach unten ohne
-              Hochscrollen funktioniert. */}
-          {isAba ? (
-            <div>
-              <label htmlFor="t-km-aba" className="label">Kilometer gesamt</label>
-              <input id="t-km-aba" className="input" type="number" min={0} step={1}
-                     value={kmGesamtAba} onChange={(e) => setKmGesamtAba(e.target.value)} />
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="t-km-hin" className="label">km Hin (Start → Ziel)</label>
-                <input id="t-km-hin" className="input" type="number" min={0} step={1}
-                       value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
-              </div>
-              {hatRueckfuehrung && (
-                <div>
-                  <label htmlFor="t-km-rueck" className="label">km Rück (Ziel → Rückführung)</label>
-                  <input id="t-km-rueck" className="input" type="number" min={0} step={1}
-                         value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="rounded-lg bg-maja-light px-3 py-2 text-sm">
-            <span className="text-maja-muted">Gesamtstrecke (live): </span>
-            <span className="font-semibold text-maja-navy">{formatKm(kmGesamt)}</span>
-          </div>
-
-          {/* Auftraggeber + Fahrer */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="t-ag" className="label">Auftraggeber</label>
-              <select id="t-ag" className="input"
-                      value={auftraggeberId}
-                      onChange={(e) => setAuftraggeberId(e.target.value)}>
-                <option value="">— kein Auftraggeber —</option>
-                {(auftraggeber ?? []).map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="t-fa" className="label">Fahrer</label>
-              <FahrerSelect
-                id="t-fa"
-                value={fahrerId}
-                onChange={setFahrerId}
-                fahrer={fahrer as FahrerOptionRaw[]}
-              />
-            </div>
-          </div>
-
-          {/* Kontakt-Dropdown (nur wenn Auftraggeber + Kontakte vorhanden) */}
-          {auftraggeberId && kontakte.length > 0 && (
-            <div>
-              <label htmlFor="t-kontakt" className="label">Rechnungsempfänger</label>
-              <select id="t-kontakt" className="input"
-                      value={kontaktId}
-                      onChange={(e) => setKontaktId(e.target.value)}>
-                <option value="">— kein Rechnungsempfänger —</option>
-                {kontakte.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {k.name}{k.position ? ` · ${k.position}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Tourenart + Daten */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <label htmlFor="t-art" className="label">Tourenart</label>
-              <select id="t-art" className="input"
-                      value={tourenart}
-                      onChange={(e) => {
-                        setTourenart(e.target.value as TourenArt | '');
-                        setTourenartManuell(true);
-                      }}>
-                <option value="">—</option>
-                <option value="AB">AB</option>
-                <option value="ABC">ABC</option>
-                <option value="ABA">ABA</option>
-              </select>
-            </div>
-            <div className="min-w-0">
-              <label htmlFor="t-start-dt" className="label">
-                Startdatum <span className="text-red-600">*</span>
-              </label>
-              <input id="t-start-dt" type="date" className="input" required
-                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
-            </div>
-            <div className="min-w-0">
-              <label htmlFor="t-end-dt" className="label">
-                Enddatum <span className="text-red-600">*</span>
-              </label>
-              <input id="t-end-dt" type="date" className="input" required
-                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
-            </div>
-          </div>
-
-          {/* Rechnungsdatum (optional, abweichend vom Tourendatum) */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-                checked={rechnungsdatumAbweichend}
-                onChange={(e) => setRechnungsdatumAbweichend(e.target.checked)}
-              />
-              Rechnungsdatum abweichend vom Tourendatum
-            </label>
-            {rechnungsdatumAbweichend && (
-              <div>
-                <label htmlFor="t-rechn-dt" className="label">Rechnungsdatum</label>
-                <input id="t-rechn-dt" type="date" className="input"
-                       value={rechnungsdatum}
-                       onChange={(e) => setRechnungsdatum(e.target.value)} />
-              </div>
-            )}
-          </div>
-
-          {/* Protokoll — Zuweisungen erst nach Save möglich (Tour-ID nötig). */}
-          <ProtokollSection
-            tourId={null}
-            protokollArt={protokollArt}
-            greimelZugangId={greimelZugangId}
-            appNotiz={appNotiz}
-            onChange={(p) => {
-              if ('protokoll_art' in p) setProtokollArt(p.protokoll_art ?? null);
-              if ('greimel_zugang_id' in p) setGreimelZugangId(p.greimel_zugang_id ?? null);
-              if ('app_notiz' in p) setAppNotiz(p.app_notiz ?? '');
-            }}
-            isGreimel={isGreimelAuftraggeber(selectedAg)}
-            fahrerId={fahrerId || null}
-            templates={templates}
-            zugaenge={zugaenge}
-            externeApp={selectedAg ? {
-              name: selectedAg.externe_app_name,
-              url:  selectedAg.externe_app_url,
-            } : null}
-          />
-
-          {/* Reihenfolge laut Vorgabe: Sondervereinbarung + E-Fahrzeug
-              nebeneinander, darunter Kennzeichen + Fahrzeugmodell,
-              darunter FIN. Auf Mobile bricht das sauber untereinander. */}
-          <div className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-                  checked={istSondervereinbarung}
-                  onChange={(e) => setIstSondervereinbarung(e.target.checked)}
-                />
-                Sondervereinbarung
-              </label>
-              <label className="flex items-center gap-2 text-sm font-medium text-maja-ink">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent"
-                  checked={istEFahrzeug}
-                  onChange={(e) => setIstEFahrzeug(e.target.checked)}
-                />
-                E-Fahrzeug
-              </label>
-            </div>
-            {istSondervereinbarung && (
-              <div className="min-w-0">
-                <label htmlFor="t-sv-note" className="label">Anmerkung zur Sondervereinbarung</label>
-                <input id="t-sv-note" className="input"
-                       value={sondervereinbarung}
-                       onChange={(e) => setSondervereinbarung(e.target.value)} />
-              </div>
-            )}
-
-            {/* Vergütung */}
-            <div>
-              <label htmlFor="t-verg" className="label">Vergütung (€)</label>
-              {istSondervereinbarung ? (
-                <>
-                  <input
-                    id="t-verg"
-                    className="input"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="z.B. 1234,56"
-                    value={verguetungInput}
-                    onChange={(e) => setVerguetungInput(e.target.value)}
-                  />
-                  <p className="mt-1 text-xs text-maja-muted">
-                    Manueller Preis (Sondervereinbarung aktiv).
-                  </p>
-                </>
-              ) : (
-                <>
-                  <input
-                    id="t-verg"
-                    className="input bg-maja-light"
-                    type="text"
-                    readOnly
-                    value={pricing ? '…' : (breakdown?.total == null ? '' : Number(breakdown.total).toFixed(2).replace('.', ','))}
-                  />
-                  <p className="mt-1 text-xs text-maja-muted">
-                    {auftraggeberId && kmGesamt != null
-                      ? breakdown == null
-                        ? 'Auto (Preisliste): keine passende Stufe gefunden.'
-                        : breakdown.abaAufschlag === 0 && breakdown.eAufschlag === 0
-                          ? 'Auto (Preisliste)'
-                          : (
-                            <>
-                              {formatEuro(breakdown.base)}
-                              {breakdown.abaAufschlag > 0 && (
-                                <> + {formatEuro(breakdown.abaAufschlag)} ABA</>
-                              )}
-                              {breakdown.eAufschlag > 0 && (
-                                <> + {formatEuro(breakdown.eAufschlag)} E-Aufschlag</>
-                              )}
-                              <> = {formatEuro(breakdown.total)}</>
-                            </>
-                          )
-                      : 'Auto (Preisliste): Auftraggeber + km wählen.'}
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <label htmlFor="t-kz" className="label">
-                  {hatRueckfuehrung ? 'Kennzeichen Hin' : 'Kennzeichen'}
-                </label>
-                <input id="t-kz" className="input" placeholder="z.B. M-XY 1234"
-                       value={kennzeichenHin}
-                       onChange={(e) => setKennzeichenHin(e.target.value)} />
-              </div>
-              <div className="min-w-0">
-                <label htmlFor="t-modell" className="label">Fahrzeugmodell (optional)</label>
-                <SuggestCombobox
-                  id="t-modell"
-                  feldTyp="fahrzeugmodell"
-                  value={fahrzeugmodell}
-                  onChange={setFahrzeugmodell}
-                  placeholder="z.B. VW Polo"
-                />
-              </div>
-            </div>
-            <div className="min-w-0">
-              <label htmlFor="t-fin" className="label">{hatRueckfuehrung ? 'FIN Hin' : 'FIN'}</label>
-              <input id="t-fin" className="input"
-                     value={fin}
-                     onChange={(e) => setFin(e.target.value.toUpperCase())} />
-            </div>
-
-            {/* Rückfahrzeug — nur bei ABA/ABC, gleiche Struktur wie oben. */}
-            {hatRueckfuehrung && (
-              <>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <label htmlFor="t-kz-rueck" className="label">Kennzeichen Rück</label>
-                    <input id="t-kz-rueck" className="input"
+          {hatRueckfuehrung && (
+            <>
+              {/* -----------------------------------------------------
+                  5 — Fahrzeug Rückfahrt (nur ABA/ABC)
+                  ----------------------------------------------------- */}
+              <TfBlock titel="Fahrzeug Rückfahrt" akzent="rueck">
+                <div className="tf-grid">
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <label htmlFor="t-kz-rueck" className="tf-label">Kennzeichen Rück</label>
+                    <input id="t-kz-rueck" className="tf-input"
                            value={kennzeichenRueck}
                            onChange={(e) => setKennzeichenRueck(e.target.value)} />
                   </div>
-                  <div className="min-w-0">
-                    <label htmlFor="t-modell-rueck" className="label">Fahrzeugmodell Rück (optional)</label>
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <label htmlFor="t-modell-rueck" className="tf-label">Fahrzeugmodell Rück</label>
                     <SuggestCombobox
                       id="t-modell-rueck"
+                      className="tf-input"
                       feldTyp="fahrzeugmodell"
                       value={fahrzeugmodellRueck}
                       onChange={setFahrzeugmodellRueck}
                       placeholder="z.B. Audi A3"
                     />
                   </div>
+                  <div className="sm:col-span-2 lg:col-span-5">
+                    <label htmlFor="t-fin-rueck" className="tf-label">FIN Rück</label>
+                    <input id="t-fin-rueck" className="tf-input"
+                           value={finRueck}
+                           onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <label htmlFor="t-fin-rueck" className="label">FIN Rück</label>
-                  <input id="t-fin-rueck" className="input"
-                         value={finRueck}
-                         onChange={(e) => setFinRueck(e.target.value.toUpperCase())} />
-                </div>
-              </>
-            )}
-          </div>
+              </TfBlock>
 
-
-          {/* Adressen & Kontakte vor Ort — aufklappbar, weil oft leer */}
-          <details className="rounded-lg border border-maja-navy/15 bg-white">
-            <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-maja-navy">
-              Adressen &amp; Kontakte vor Ort
-            </summary>
-            <div className="space-y-4 border-t border-maja-navy/10 p-3">
-              {/* Je Station ein Block: Adresse, Zeit (Freitext) und die
-                  Ansprechpartner gehören zusammen. */}
+              {/* -----------------------------------------------------
+                  6 — Rückführungsort (nur ABA/ABC)
+                  ----------------------------------------------------- */}
               <StationBlock
-                titel="Start (Abholung)"
-                idPrefix="t-st1"
-                adresseLabel="Adresse Start"
-                adresse={adresseStart} onAdresse={setAdresseStart}
-                zeit={zeitStart} onZeit={setZeitStart}
-                kontakte={stationsKontakte.start}
-                onKontakte={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
+                titel="Rückführungsort"
+                idPrefix="t-st3"
+                akzent="rueck"
+                stadtLabel="Stadt"
+                stadt={rueckfuehrungStadt} onStadt={setRueckfuehrungStadt}
+                adresseLabel="Adresse (Straße, Nr., PLZ)"
+                adresse={adresseRueckfuehrung} onAdresse={setAdresseRueckfuehrung}
+                zeit={zeitRueck} onZeit={setZeitRueck}
+                kontakte={stationsKontakte.rueckfuehrung}
+                onKontakte={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
+                aktion={(
+                  <button
+                    type="button"
+                    onClick={toggleRueckfuehrung}
+                    className="text-[11px] font-medium normal-case text-red-600 hover:underline"
+                  >
+                    Rückführung entfernen
+                  </button>
+                )}
               />
-              <StationBlock
-                titel="Ziel (Abgabe)"
-                idPrefix="t-st2"
-                adresseLabel="Adresse Ziel"
-                adresse={adresseZiel} onAdresse={setAdresseZiel}
-                zeit={zeitZiel} onZeit={setZeitZiel}
-                kontakte={stationsKontakte.ziel}
-                onKontakte={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
-              >
+            </>
+          )}
+
+          {/* ---------------------------------------------------------
+              7 — Kilometer & Termine
+              --------------------------------------------------------- */}
+          <TfBlock titel="Kilometer & Termine">
+            <div className="tf-grid">
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label htmlFor="t-start-dt" className="tf-label">
+                  Startdatum <span className="text-red-600">*</span>
+                </label>
+                <input id="t-start-dt" type="date" className="tf-input" required
+                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label htmlFor="t-end-dt" className="tf-label">
+                  Enddatum <span className="text-red-600">*</span>
+                </label>
+                <input id="t-end-dt" type="date" className="tf-input" required
+                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3 lg:col-span-3">
+                <label htmlFor="t-km-hin" className="tf-label">km Hin (Start → Ziel)</label>
+                <input id="t-km-hin" className="tf-input" type="number" min={0} step={1}
+                       value={kmHin} onChange={(e) => setKmHin(e.target.value)} />
                 <RouteCalcRow
                   disabled={!adresseStart.trim() || !adresseZiel.trim()}
                   label="Entfernung berechnen"
                   confirmKm={routeConfirm.hin}
                   onClick={() => setRouteDialog('hin')}
                 />
-              </StationBlock>
+              </div>
               {hatRueckfuehrung && (
-                <StationBlock
-                  titel="Rückführung"
-                  idPrefix="t-st3"
-                  adresseLabel="Adresse Rückführung"
-                  adresse={adresseRueckfuehrung} onAdresse={setAdresseRueckfuehrung}
-                  zeit={zeitRueck} onZeit={setZeitRueck}
-                  kontakte={stationsKontakte.rueckfuehrung}
-                  onKontakte={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
-                >
+                <div className="sm:col-span-3 lg:col-span-3">
+                  <label htmlFor="t-km-rueck" className="tf-label">km Rück (Ziel → Rückführung)</label>
+                  <input id="t-km-rueck" className="tf-input" type="number" min={0} step={1}
+                         value={kmRueck} onChange={(e) => setKmRueck(e.target.value)} />
                   <RouteCalcRow
                     disabled={!adresseZiel.trim() || !adresseRueckfuehrung.trim()}
-                    label="Entfernung Rückweg berechnen"
+                    label="Entfernung berechnen"
                     confirmKm={routeConfirm.rueck}
                     onClick={() => setRouteDialog('rueck')}
                   />
-                </StationBlock>
+                </div>
+              )}
+              <div className="sm:col-span-6 lg:col-span-2">
+                <span className="tf-label">Gesamtstrecke</span>
+                <div className="rounded-md bg-maja-light px-2 py-1.5 text-sm font-semibold text-maja-navy">
+                  {formatKm(kmGesamt)}
+                </div>
+              </div>
+
+              {/* Abrechnungs-Ausnahme — nur bei ABA. */}
+              {isAba && (
+                <div className="sm:col-span-6 lg:col-span-12">
+                  <label className="tf-check">
+                    <input
+                      type="checkbox"
+                      checked={abaGesamtKm}
+                      onChange={(e) => setAbaGesamtKm(e.target.checked)}
+                    />
+                    Gesamt-km für Rechnung verwenden
+                  </label>
+                  <p className="tf-hint">
+                    Standard bei ABA ist die Berechnung nach Hinfahrt. Aktivieren,
+                    wenn dieser Auftraggeber die Gesamtstrecke abrechnet.
+                  </p>
+                </div>
               )}
             </div>
-          </details>
+          </TfBlock>
 
-          {/* Sonstiges: Kundenname + Info */}
-          <div>
-            <label htmlFor="t-kn" className="label">Kundenname</label>
-            <input id="t-kn" className="input"
-                   value={kundenname}
-                   onChange={(e) => setKundenname(e.target.value)} />
-          </div>
-
-          <div>
-            <label htmlFor="t-info" className="label">Info</label>
-            <textarea id="t-info" className="input min-h-[5rem]"
-                      value={info} onChange={(e) => setInfo(e.target.value)} />
-          </div>
+          {/* Protokoll — Zuweisungen erst nach Save möglich (Tour-ID nötig). */}
+          <TfBlock titel="Protokoll">
+            <ProtokollSection
+              tourId={null}
+              protokollArt={protokollArt}
+              greimelZugangId={greimelZugangId}
+              appNotiz={appNotiz}
+              onChange={(p) => {
+                if ('protokoll_art' in p) setProtokollArt(p.protokoll_art ?? null);
+                if ('greimel_zugang_id' in p) setGreimelZugangId(p.greimel_zugang_id ?? null);
+                if ('app_notiz' in p) setAppNotiz(p.app_notiz ?? '');
+              }}
+              isGreimel={isGreimelAuftraggeber(selectedAg)}
+              fahrerId={fahrerId || null}
+              templates={templates}
+              zugaenge={zugaenge}
+              externeApp={selectedAg ? {
+                name: selectedAg.externe_app_name,
+                url:  selectedAg.externe_app_url,
+              } : null}
+            />
+          </TfBlock>
 
           {error && (
             <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -884,9 +907,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
         const isHin = routeDialog === 'hin';
         const origin = isHin ? adresseStart.trim() : adresseZiel.trim();
         const destination = isHin ? adresseZiel.trim() : adresseRueckfuehrung.trim();
-        const title = isHin
-          ? (isAba ? 'Routen für ABA-Tour' : 'Routen für Hin-Strecke')
-          : 'Routen für Rück-Strecke';
+        const title = isHin ? 'Routen für Hin-Strecke' : 'Routen für Rück-Strecke';
         return (
           <RouteSelectorDialog
             title={title}
@@ -895,8 +916,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             onClose={() => setRouteDialog(null)}
             onApply={(km) => {
               if (isHin) {
-                if (isAba) setKmGesamtAba(String(km));
-                else setKmHin(String(km));
+                setKmHin(String(km));
                 setRouteConfirm((c) => ({ ...c, hin: km }));
               } else {
                 setKmRueck(String(km));
@@ -922,20 +942,20 @@ function RouteCalcRow({
   onClick: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
       <button
         type="button"
         onClick={onClick}
         disabled={disabled}
         title={disabled ? 'Adressen ausfüllen, dann verfügbar' : label}
-        className="inline-flex items-center gap-1.5 rounded-md border border-maja-navy/20 bg-white px-3 py-1.5 text-xs font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md border border-maja-navy/20 bg-white px-2 py-1 text-[11px] font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <RouteSmallIcon className="h-4 w-4" />
+        <RouteSmallIcon className="h-3.5 w-3.5" />
         {label}
       </button>
       {confirmKm != null && confirmKm > 0 && (
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
-          <CheckIcon className="h-3.5 w-3.5" /> {confirmKm} km übernommen
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+          <CheckIcon className="h-3 w-3" /> {confirmKm} km
         </span>
       )}
     </div>
@@ -954,16 +974,23 @@ function RouteSmallIcon({ className }: { className?: string }) {
   );
 }
 
+
 /**
- * Adress-/Zeit-/Kontakt-Block einer Station. Bewusst einspaltig, damit
- * auf schmalen Breiten nichts aus dem Container läuft.
+ * Ort-Block: Stadt, Adresse, Zeit und die Ansprechpartner einer Station
+ * gehören zusammen — in einer Zeile, damit das Formular kurz bleibt.
  */
 function StationBlock({
-  titel, idPrefix, adresseLabel, adresse, onAdresse, zeit, onZeit,
-  kontakte, onKontakte, children,
+  titel, idPrefix, akzent, aktion, stadtLabel, stadt, onStadt, stadtRequired,
+  adresseLabel, adresse, onAdresse, zeit, onZeit, kontakte, onKontakte,
 }: {
   titel: string;
   idPrefix: string;
+  akzent?: 'hin' | 'rueck';
+  aktion?: React.ReactNode;
+  stadtLabel: string;
+  stadt: string;
+  onStadt: (v: string) => void;
+  stadtRequired?: boolean;
   adresseLabel: string;
   adresse: string;
   onAdresse: (v: string) => void;
@@ -971,33 +998,35 @@ function StationBlock({
   onZeit: (v: string) => void;
   kontakte: KontaktMap[keyof KontaktMap];
   onKontakte: (next: KontaktMap[keyof KontaktMap]) => void;
-  children?: React.ReactNode;
 }) {
   return (
-    <section className="space-y-3 rounded-lg border border-maja-navy/15 p-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-maja-muted">
-        {titel}
-      </h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="min-w-0">
-          <label htmlFor={`${idPrefix}-adr`} className="label">{adresseLabel}</label>
-          <input id={`${idPrefix}-adr`} className="input"
+    <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
+      <div className="tf-grid">
+        <div className="sm:col-span-2 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-stadt`} className="tf-label">{stadtLabel}</label>
+          <input id={`${idPrefix}-stadt`} className="tf-input" required={stadtRequired}
+                 value={stadt} onChange={(e) => onStadt(e.target.value)} />
+        </div>
+        <div className="sm:col-span-3 lg:col-span-6">
+          <label htmlFor={`${idPrefix}-adr`} className="tf-label">{adresseLabel}</label>
+          <input id={`${idPrefix}-adr`} className="tf-input"
                  value={adresse} onChange={(e) => onAdresse(e.target.value)} />
         </div>
-        <div className="min-w-0">
-          <label htmlFor={`${idPrefix}-zeit`} className="label">Zeit (optional)</label>
-          <input id={`${idPrefix}-zeit`} className="input"
+        <div className="sm:col-span-1 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">Zeit</label>
+          <input id={`${idPrefix}-zeit`} className="tf-input"
                  placeholder={ZEIT_PLATZHALTER}
                  value={zeit} onChange={(e) => onZeit(e.target.value)} />
         </div>
       </div>
-      {children}
-      <AnsprechpartnerFeldsatz
-        titel="Ansprechpartner"
-        idPrefix={`${idPrefix}-k`}
-        liste={kontakte}
-        onChange={onKontakte}
-      />
-    </section>
+      <div className="mt-2">
+        <AnsprechpartnerFeldsatz
+          titel="Ansprechpartner"
+          idPrefix={`${idPrefix}-k`}
+          liste={kontakte}
+          onChange={onKontakte}
+        />
+      </div>
+    </TfBlock>
   );
 }

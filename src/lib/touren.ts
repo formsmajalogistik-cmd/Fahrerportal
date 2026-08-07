@@ -74,6 +74,34 @@ export function computeKmGesamt(args: {
 }
 
 /**
+ * Liefert die Kilometer, mit denen der Preis ermittelt wird — das ist
+ * NICHT zwingend `km_gesamt`.
+ *
+ *   AB / ABC  → km_gesamt (unveränderte Regel)
+ *   ABA       → km_hin. Bei einer ABA-Tour wird ausschließlich die
+ *               Hinfahrt abgerechnet; km_rueck ist reine Dokumentation
+ *               und geht NICHT in die Preisstufen-Suche ein.
+ *   ABA mit `aba_gesamt_km_berechnen = true` → km_gesamt (Hin + Rück).
+ *               Ausnahme pro Tour für Auftraggeber, die die
+ *               Gesamtstrecke abrechnen.
+ *
+ * `km_gesamt` bleibt in allen Fällen die Summe und wird weiterhin für
+ * Anzeige und Rechnungs-Platzhalter ({km}, {km_gesamt}) verwendet.
+ */
+export function abrechnungsKm(args: {
+  tourenart: TourenArt | string | null | undefined;
+  km_hin: number | null | undefined;
+  km_gesamt: number | null | undefined;
+  abaGesamtKmBerechnen?: boolean | null;
+}): number | null {
+  const { tourenart, km_hin, km_gesamt, abaGesamtKmBerechnen } = args;
+  if (tourenart === 'ABA' && !abaGesamtKmBerechnen) {
+    return km_hin ?? null;
+  }
+  return km_gesamt ?? null;
+}
+
+/**
  * Schlägt den Tour-Preis aus der Preisliste nach. Nutzt die Supabase-RPC
  * `calculate_tour_price`. Gibt `null` zurück wenn keine passende Preisstufe
  * gefunden wurde, Pflicht-Parameter fehlen oder ein Fehler auftritt.

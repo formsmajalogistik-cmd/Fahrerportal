@@ -292,6 +292,7 @@ export type Database = {
           vorgefuellte_daten: Json | null;
           fahrzeugmodell: string | null;
           fahrzeugmodell_rueck: string | null;
+          aba_gesamt_km_berechnen: boolean;
           auftrag_versendet_am: string | null;
           zeit_start: string | null;
           zeit_ziel: string | null;
@@ -355,6 +356,7 @@ export type Database = {
           vorgefuellte_daten?: Json | null;
           fahrzeugmodell?: string | null;
           fahrzeugmodell_rueck?: string | null;
+          aba_gesamt_km_berechnen?: boolean;
           auftrag_versendet_am?: string | null;
           zeit_start?: string | null;
           zeit_ziel?: string | null;
@@ -418,6 +420,7 @@ export type Database = {
           vorgefuellte_daten?: Json | null;
           fahrzeugmodell?: string | null;
           fahrzeugmodell_rueck?: string | null;
+          aba_gesamt_km_berechnen?: boolean;
           auftrag_versendet_am?: string | null;
           zeit_start?: string | null;
           zeit_ziel?: string | null;

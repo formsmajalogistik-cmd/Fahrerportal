@@ -58,6 +58,7 @@ interface ExportRow {
   km_hin: number | null;
   km_rueck: number | null;
   km_gesamt: number | null;
+  aba_gesamt_km_berechnen: boolean | null;
   verguetung: number | null;
   sondervereinbarung: string | null;
   ist_sondervereinbarung: boolean;
@@ -143,6 +144,8 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     // Migration 080/081 — optional, der Importer kommt auch ohne sie klar.
     'Fahrzeugmodell', 'Fahrzeugmodell Rück',
     'Zeit Start', 'Zeit Ziel', 'Zeit Rückführung',
+    // Migration 085 — nur bei ABA relevant.
+    'ABA Gesamt-km berechnen',
   ];
 
   const dataRows = rows.map((t) => {
@@ -187,6 +190,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       t.zeit_start ?? '',
       t.zeit_ziel ?? '',
       t.zeit_rueckfuehrung ?? '',
+      t.aba_gesamt_km_berechnen ? 'ja' : 'nein',
     ];
   });
 

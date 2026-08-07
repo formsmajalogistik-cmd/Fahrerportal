@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { XIcon } from './icons';
 import { Spinner } from './Spinner';
+import { useScrollLock } from '../lib/useScrollLock';
 import {
   calculateRoute, formatDuration, RouteCalcError, type RouteSuggestion,
 } from '../lib/routes';
@@ -25,6 +26,8 @@ interface Props {
 export function RouteSelectorDialog({
   title, origin, destination, onClose, onApply,
 }: Props) {
+  // Punkt 3: Hintergrund bleibt gesperrt, solange dieses Overlay offen ist.
+  useScrollLock();
   const [routes, setRoutes] = useState<RouteSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

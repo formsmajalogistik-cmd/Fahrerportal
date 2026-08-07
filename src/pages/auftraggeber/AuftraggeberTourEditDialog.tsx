@@ -4,6 +4,8 @@ import { speichereAgTour } from '../../lib/tourAenderungen';
 import { meldeTourAenderung } from '../../lib/onedrive';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { TfBlock } from '../../components/TfBlock';
+import { useScrollLock } from '../../lib/useScrollLock';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
@@ -46,15 +48,13 @@ function KmZeile({
 }) {
   const id = `etkm-${kmLabel.replace(/[^a-zA-Z]+/g, '-').toLowerCase()}`;
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="min-w-0 flex-1">
-        <label htmlFor={id} className="label">{kmLabel} (optional)</label>
-        <input id={id} className="input" inputMode="numeric" placeholder="z.B. 120"
-               value={km} onChange={(e) => onKm(e.target.value)} />
-      </div>
+    <div className="min-w-0">
+      <label htmlFor={id} className="tf-label">{kmLabel}</label>
+      <input id={id} className="tf-input" inputMode="numeric" placeholder="z.B. 120"
+             value={km} onChange={(e) => onKm(e.target.value)} />
       <button
         type="button"
-        className="btn-secondary shrink-0 text-xs"
+        className="mt-1 inline-flex items-center rounded-md border border-maja-navy/20 bg-white px-2 py-1 text-[11px] font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
         disabled={disabled}
         title={disabled ? 'Beide Adressen ausfüllen, dann ist die Berechnung möglich' : label}
         onClick={onBerechnen}
@@ -93,6 +93,8 @@ function parseKm(v: string): number | null {
 
 export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   const guard = useTestGuard();
+  // Punkt 3: Hintergrund darf nicht scrollen, solange das Modal offen ist.
+  useScrollLock();
 
   const kzHinInit = tour.kennzeichen?.[0] ?? '';
   const kzRueckInit = tour.kennzeichen?.[1] ?? '';
@@ -252,7 +254,7 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
 
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
-      <div className="card w-full max-w-2xl p-6">
+      <div className="card w-full max-w-5xl p-5">
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-maja-navy">Tour bearbeiten</h2>
           <p className="text-xs text-maja-muted">
@@ -270,103 +272,76 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-          {/* Kopf: Tourenart + Datumsfelder, ohne Zeit-Zusatz. */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="min-w-0">
-              <label htmlFor="et-art" className="label">Tourenart</label>
-              <select id="et-art" className="input" value={tourenart}
-                      onChange={(e) => {
-                        setTourenart(e.target.value as TourenArt | '');
-                        setTourenartManuell(true);
-                      }}>
-                <option value="">— wählen —</option>
-                <option value="AB">AB (einfach)</option>
-                <option value="ABA">ABA (hin + zurück)</option>
-                <option value="ABC">ABC (Dreieck)</option>
-              </select>
+        <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+          {/* 1 — Auftragsdaten. Ohne Vergütung und Fahrer — diese Felder
+              sind für Auftraggeber weder sichtbar noch änderbar. */}
+          <TfBlock titel="Auftragsdaten">
+            <div className="tf-grid">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="et-art" className="tf-label">Tourenart</label>
+                <select id="et-art" className="tf-input" value={tourenart}
+                        onChange={(e) => {
+                          setTourenart(e.target.value as TourenArt | '');
+                          setTourenartManuell(true);
+                        }}>
+                  <option value="">— wählen —</option>
+                  <option value="AB">AB (einfach)</option>
+                  <option value="ABA">ABA (hin + zurück)</option>
+                  <option value="ABC">ABC (Dreieck)</option>
+                </select>
+              </div>
+              <div className="sm:col-span-4 lg:col-span-4">
+                <label htmlFor="et-kunde" className="tf-label">Kundenname</label>
+                <input id="et-kunde" className="tf-input"
+                       value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
+              </div>
+              <div className="sm:col-span-6 lg:col-span-12">
+                <label htmlFor="et-info" className="tf-label">Hinweise</label>
+                <textarea id="et-info" className="tf-input min-h-[3.5rem]" rows={2}
+                          value={info} onChange={(e) => setInfo(e.target.value)} />
+              </div>
             </div>
-            <div className="min-w-0">
-              <label htmlFor="et-von" className="label">Startdatum *</label>
-              <input id="et-von" type="date" className="input"
-                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
-            </div>
-            <div className="min-w-0">
-              <label htmlFor="et-bis" className="label">Enddatum *</label>
-              <input id="et-bis" type="date" className="input"
-                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
-            </div>
-          </div>
+          </TfBlock>
 
-          {/* Fahrzeugdaten: E-Fahrzeug — Kennzeichen + Modell — FIN. */}
-          <div className="space-y-3">
-            <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
-              <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-                     checked={istEFahrzeug} onChange={(e) => setIstEFahrzeug(e.target.checked)} />
-              E-Fahrzeug
-            </label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <label htmlFor="et-kz" className="label">Kennzeichen</label>
-                <input id="et-kz" className="input"
+          {/* 2 — Fahrzeug Hinfahrt */}
+          <TfBlock titel="Fahrzeug Hinfahrt" akzent="hin">
+            <div className="tf-grid">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="et-kz" className="tf-label">Kennzeichen</label>
+                <input id="et-kz" className="tf-input"
                        value={kennzeichenHin} onChange={(e) => setKennzeichenHin(e.target.value)} />
               </div>
-              <div className="min-w-0">
-                <label htmlFor="et-modell" className="label">Fahrzeugmodell</label>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="et-modell" className="tf-label">Fahrzeugmodell</label>
                 <SuggestCombobox
                   id="et-modell"
+                  className="tf-input"
                   feldTyp="fahrzeugmodell"
                   value={fahrzeugmodell}
                   onChange={setFahrzeugmodell}
                   placeholder="z.B. VW Polo"
                 />
               </div>
-              {hatRueckfuehrung && (
-                <>
-                  <div className="min-w-0">
-                    <label htmlFor="et-kz2" className="label">Kennzeichen Rückführung</label>
-                    <input id="et-kz2" className="input"
-                           value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
-                  </div>
-                  <div className="min-w-0">
-                    <label htmlFor="et-modell2" className="label">Fahrzeugmodell Rück (optional)</label>
-                    <SuggestCombobox
-                      id="et-modell2"
-                      feldTyp="fahrzeugmodell"
-                      value={fahrzeugmodellRueck}
-                      onChange={setFahrzeugmodellRueck}
-                      placeholder="z.B. Audi A3"
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <label htmlFor="et-fin" className="label">FIN</label>
-                <input id="et-fin" className="input"
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label htmlFor="et-fin" className="tf-label">FIN</label>
+                <input id="et-fin" className="tf-input"
                        value={fin} onChange={(e) => setFin(e.target.value)} />
               </div>
-              {hatRueckfuehrung && (
-                <div className="min-w-0">
-                  <label htmlFor="et-fin2" className="label">FIN Rückführung</label>
-                  <input id="et-fin2" className="input"
-                         value={finRueck} onChange={(e) => setFinRueck(e.target.value)} />
-                </div>
-              )}
-              <div className="min-w-0">
-                <label htmlFor="et-kunde" className="label">Kundenname</label>
-                <input id="et-kunde" className="input"
-                       value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
+              <div className="sm:col-span-6 lg:col-span-2">
+                <label className="tf-check">
+                  <input type="checkbox"
+                         checked={istEFahrzeug} onChange={(e) => setIstEFahrzeug(e.target.checked)} />
+                  E-Fahrzeug
+                </label>
               </div>
             </div>
-          </div>
+          </TfBlock>
 
-          {/* Stationen inkl. Zeitangabe und Ansprechpartnern. */}
+          {/* 3 — Abholort */}
           <StationFeldsatz
-            titel="Start (Abholung)"
+            titel="Abholort"
             idPrefix="et-st1"
-            stadtLabel="Start-Stadt"
+            stadtLabel="Stadt"
             stadt={startStadt} onStadt={setStartStadt} stadtPflicht
             adresse={adresseStart} onAdresse={setAdresseStart}
             zeit={zeitStart} onZeit={setZeitStart}
@@ -374,53 +349,105 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             onKontakte={(next) => setKontakte((m) => ({ ...m, start: next }))}
           />
 
+          {/* 4 — Zielort */}
           <StationFeldsatz
-            titel="Ziel (Abgabe)"
+            titel="Zielort"
             idPrefix="et-st2"
-            stadtLabel="Ziel-Stadt"
+            stadtLabel="Stadt"
             stadt={zielStadt} onStadt={setZielStadt} stadtPflicht
             adresse={adresseZiel} onAdresse={setAdresseZiel}
             zeit={zeitZiel} onZeit={setZeitZiel}
             kontakte={kontakte.ziel}
             onKontakte={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
-          >
-            <KmZeile
-              label="Entfernung berechnen"
-              kmLabel="km Hin"
-              km={kmHin}
-              onKm={setKmHin}
-              disabled={!adresseStart.trim() || !adresseZiel.trim()}
-              onBerechnen={() => setRouteDialog('hin')}
-            />
-          </StationFeldsatz>
+          />
 
           {hatRueckfuehrung && (
-            <StationFeldsatz
-              titel="Rückführung"
-              idPrefix="et-st3"
-              stadtLabel="Rückführung-Stadt"
-              stadt={rueckStadt} onStadt={setRueckStadt}
-              adresse={adresseRueck} onAdresse={setAdresseRueck}
-              zeit={zeitRueck} onZeit={setZeitRueck}
-              kontakte={kontakte.rueckfuehrung}
-              onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
-            >
-              <KmZeile
-                label="Entfernung Rückweg berechnen"
-                kmLabel="km Rück"
-                km={kmRueck}
-                onKm={setKmRueck}
-                disabled={!adresseZiel.trim() || !adresseRueck.trim()}
-                onBerechnen={() => setRouteDialog('rueck')}
+            <>
+              {/* 5 — Fahrzeug Rückfahrt (nur ABA/ABC) */}
+              <TfBlock titel="Fahrzeug Rückfahrt" akzent="rueck">
+                <div className="tf-grid">
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <label htmlFor="et-kz2" className="tf-label">Kennzeichen Rückführung</label>
+                    <input id="et-kz2" className="tf-input"
+                           value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <label htmlFor="et-modell2" className="tf-label">Fahrzeugmodell Rück</label>
+                    <SuggestCombobox
+                      id="et-modell2"
+                      className="tf-input"
+                      feldTyp="fahrzeugmodell"
+                      value={fahrzeugmodellRueck}
+                      onChange={setFahrzeugmodellRueck}
+                      placeholder="z.B. Audi A3"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <label htmlFor="et-fin2" className="tf-label">FIN Rückführung</label>
+                    <input id="et-fin2" className="tf-input"
+                           value={finRueck} onChange={(e) => setFinRueck(e.target.value)} />
+                  </div>
+                </div>
+              </TfBlock>
+
+              {/* 6 — Rückführungsort (nur ABA/ABC) */}
+              <StationFeldsatz
+                titel="Rückführungsort"
+                idPrefix="et-st3"
+                akzent="rueck"
+                stadtLabel="Stadt"
+                stadt={rueckStadt} onStadt={setRueckStadt}
+                adresse={adresseRueck} onAdresse={setAdresseRueck}
+                zeit={zeitRueck} onZeit={setZeitRueck}
+                kontakte={kontakte.rueckfuehrung}
+                onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
               />
-            </StationFeldsatz>
+            </>
           )}
 
-          {kmGesamt != null && (
-            <p className="text-xs text-maja-muted">
-              km gesamt: <strong className="text-maja-ink">{kmGesamt}</strong>
-            </p>
-          )}
+          {/* 7 — Kilometer & Termine */}
+          <TfBlock titel="Kilometer & Termine">
+            <div className="tf-grid">
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label htmlFor="et-von" className="tf-label">Startdatum *</label>
+                <input id="et-von" type="date" className="tf-input"
+                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label htmlFor="et-bis" className="tf-label">Enddatum *</label>
+                <input id="et-bis" type="date" className="tf-input"
+                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3 lg:col-span-3">
+                <KmZeile
+                  label="Entfernung berechnen"
+                  kmLabel="km Hin"
+                  km={kmHin}
+                  onKm={setKmHin}
+                  disabled={!adresseStart.trim() || !adresseZiel.trim()}
+                  onBerechnen={() => setRouteDialog('hin')}
+                />
+              </div>
+              {hatRueckfuehrung && (
+                <div className="sm:col-span-3 lg:col-span-3">
+                  <KmZeile
+                    label="Entfernung berechnen"
+                    kmLabel="km Rück"
+                    km={kmRueck}
+                    onKm={setKmRueck}
+                    disabled={!adresseZiel.trim() || !adresseRueck.trim()}
+                    onBerechnen={() => setRouteDialog('rueck')}
+                  />
+                </div>
+              )}
+              <div className="sm:col-span-6 lg:col-span-2">
+                <span className="tf-label">km gesamt</span>
+                <div className="rounded-md bg-maja-light px-2 py-1.5 text-sm font-semibold text-maja-navy">
+                  {kmGesamt == null ? '—' : `${kmGesamt} km`}
+                </div>
+              </div>
+            </div>
+          </TfBlock>
 
           {routeDialog && (
             <RouteSelectorDialog
@@ -435,12 +462,6 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
               }}
             />
           )}
-
-          <div>
-            <label htmlFor="et-info" className="label">Hinweise</label>
-            <textarea id="et-info" className="input min-h-[72px]"
-                      value={info} onChange={(e) => setInfo(e.target.value)} />
-          </div>
 
           {abcWarnung && (
             <ConfirmDialog

@@ -4,6 +4,8 @@ import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { TfBlock } from '../../components/TfBlock';
+import { useScrollLock } from '../../lib/useScrollLock';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
@@ -44,15 +46,13 @@ function KmZeile({
 }) {
   const id = `km-${kmLabel.replace(/[^a-zA-Z]+/g, '-').toLowerCase()}`;
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="min-w-0 flex-1">
-        <label htmlFor={id} className="label">{kmLabel} (optional)</label>
-        <input id={id} className="input" inputMode="numeric" placeholder="z.B. 120"
-               value={km} onChange={(e) => onKm(e.target.value)} />
-      </div>
+    <div className="min-w-0">
+      <label htmlFor={id} className="tf-label">{kmLabel}</label>
+      <input id={id} className="tf-input" inputMode="numeric" placeholder="z.B. 120"
+             value={km} onChange={(e) => onKm(e.target.value)} />
       <button
         type="button"
-        className="btn-secondary shrink-0 text-xs"
+        className="mt-1 inline-flex items-center rounded-md border border-maja-navy/20 bg-white px-2 py-1 text-[11px] font-medium text-maja-navy transition hover:bg-maja-light disabled:cursor-not-allowed disabled:opacity-50"
         disabled={disabled}
         title={disabled ? 'Beide Adressen ausfüllen, dann ist die Berechnung möglich' : label}
         onClick={onBerechnen}
@@ -74,6 +74,8 @@ function parseKm(v: string): number | null {
 export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const { profile, session } = useAuth();
   const guard = useTestGuard();
+  // Punkt 3: Hintergrund darf nicht scrollen, solange das Modal offen ist.
+  useScrollLock();
 
   const [tourenart, setTourenart] = useState<TourenArt | ''>('');
   const [startStadt, setStartStadt] = useState('');
@@ -121,7 +123,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   })();
 
   function inputCls(key: string): string {
-    return missing.has(key) ? 'input border-red-500' : 'input';
+    return missing.has(key) ? 'tf-input border-red-500' : 'tf-input';
   }
 
   // AB/ABC automatisch, solange die Tourenart nicht manuell gewählt wurde.
@@ -256,8 +258,8 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
 
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
-      <div className="card w-full max-w-2xl p-6">
-        <div className="mb-4">
+      <div className="card w-full max-w-5xl p-5">
+        <div className="mb-3">
           <h2 className="text-lg font-semibold text-maja-navy">Neue Tour anlegen</h2>
           <p className="text-xs text-maja-muted">
             Die Tour wird nach dem Speichern von Maja-Logistik geprüft und
@@ -265,101 +267,78 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-          {/* Kopf: Tourenart + Datumsfelder. Die Datumsfelder bleiben
-              bewusst ohne Zeit-Zusatz — die Zeit steht bei der Station. */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="min-w-0">
-              <label htmlFor="at-art" className="label">Tourenart *</label>
-              <select id="at-art" className={inputCls('tourenart')}
-                      value={tourenart}
-                      onChange={(e) => {
-                        setTourenart(e.target.value as TourenArt | '');
-                        setTourenartManuell(true);
-                      }}>
-                <option value="">— wählen —</option>
-                <option value="AB">AB (einfach)</option>
-                <option value="ABA">ABA (hin + zurück)</option>
-                <option value="ABC">ABC (Dreieck)</option>
-              </select>
+        <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+          {/* 1 — Auftragsdaten. Ohne Vergütung und Fahrer: beides ist
+              rein intern und für Auftraggeber weder sichtbar noch
+              änderbar (siehe ag_tour_felder() in Migration 084). */}
+          <TfBlock titel="Auftragsdaten">
+            <div className="tf-grid">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="at-art" className="tf-label">Tourenart *</label>
+                <select id="at-art" className={inputCls('tourenart')}
+                        value={tourenart}
+                        onChange={(e) => {
+                          setTourenart(e.target.value as TourenArt | '');
+                          setTourenartManuell(true);
+                        }}>
+                  <option value="">— wählen —</option>
+                  <option value="AB">AB (einfach)</option>
+                  <option value="ABA">ABA (hin + zurück)</option>
+                  <option value="ABC">ABC (Dreieck)</option>
+                </select>
+              </div>
+              <div className="sm:col-span-4 lg:col-span-4">
+                <label htmlFor="at-kunde" className="tf-label">Kundenname *</label>
+                <input id="at-kunde" className={inputCls('kundenname')}
+                       value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
+              </div>
+              <div className="sm:col-span-6 lg:col-span-12">
+                <label htmlFor="at-info" className="tf-label">Hinweise (optional)</label>
+                <textarea id="at-info" className="tf-input min-h-[3.5rem]" rows={2}
+                          value={info} onChange={(e) => setInfo(e.target.value)} />
+              </div>
             </div>
-            <div className="min-w-0">
-              <label htmlFor="at-von" className="label">Startdatum *</label>
-              <input id="at-von" type="date" className={inputCls('startdatum')}
-                     value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
-            </div>
-            <div className="min-w-0">
-              <label htmlFor="at-bis" className="label">Enddatum *</label>
-              <input id="at-bis" type="date" className={inputCls('enddatum')}
-                     value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
-            </div>
-          </div>
+          </TfBlock>
 
-          {/* Fahrzeugdaten in der vorgegebenen Reihenfolge:
-              E-Fahrzeug — Kennzeichen + Modell — FIN. */}
-          <div className="space-y-3">
-            <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
-              <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-                     checked={istEFahrzeug} onChange={(e) => setIstEFahrzeug(e.target.checked)} />
-              E-Fahrzeug
-            </label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <label htmlFor="at-kz" className="label">Kennzeichen *</label>
+          {/* 2 — Fahrzeug Hinfahrt */}
+          <TfBlock titel="Fahrzeug Hinfahrt" akzent="hin">
+            <div className="tf-grid">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="at-kz" className="tf-label">Kennzeichen *</label>
                 <input id="at-kz" className={inputCls('kennzeichen')}
                        value={kennzeichenHin} onChange={(e) => setKennzeichenHin(e.target.value)} />
               </div>
-              <div className="min-w-0">
-                <label htmlFor="at-modell" className="label">Fahrzeugmodell (optional)</label>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label htmlFor="at-modell" className="tf-label">Fahrzeugmodell</label>
                 <SuggestCombobox
                   id="at-modell"
+                  className="tf-input"
                   feldTyp="fahrzeugmodell"
                   value={fahrzeugmodell}
                   onChange={setFahrzeugmodell}
                   placeholder="z.B. VW Polo"
                 />
               </div>
-              {hatRueckfuehrung && (
-                <>
-                  <div className="min-w-0">
-                    <label htmlFor="at-kz2" className="label">Kennzeichen Rückführung</label>
-                    <input id="at-kz2" className="input"
-                           value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
-                  </div>
-                  <div className="min-w-0">
-                    <label htmlFor="at-modell2" className="label">Fahrzeugmodell Rück (optional)</label>
-                    <SuggestCombobox
-                      id="at-modell2"
-                      feldTyp="fahrzeugmodell"
-                      value={fahrzeugmodellRueck}
-                      onChange={setFahrzeugmodellRueck}
-                      placeholder="z.B. Audi A3"
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0">
-                <label htmlFor="at-fin" className="label">FIN *</label>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label htmlFor="at-fin" className="tf-label">FIN *</label>
                 <input id="at-fin" className={inputCls('fin')}
                        value={fin} onChange={(e) => setFin(e.target.value)} />
               </div>
-              <div className="min-w-0">
-                <label htmlFor="at-kunde" className="label">Kundenname *</label>
-                <input id="at-kunde" className={inputCls('kundenname')}
-                       value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
+              <div className="sm:col-span-6 lg:col-span-2">
+                <label className="tf-check">
+                  <input type="checkbox"
+                         checked={istEFahrzeug} onChange={(e) => setIstEFahrzeug(e.target.checked)} />
+                  E-Fahrzeug
+                </label>
               </div>
             </div>
-          </div>
+          </TfBlock>
 
-          {/* Stationen: Stadt, Zeit, Adresse und Ansprechpartner
-              gehören zusammen — damit ist auch klar, dass es pro Ort
-              eine Zeitangabe gibt. */}
+          {/* 3 — Abholort */}
           <StationFeldsatz
-            titel="Start (Abholung)"
+            titel="Abholort"
             idPrefix="at-st1"
-            stadtLabel="Start-Stadt"
+            stadtLabel="Stadt"
             stadt={startStadt} onStadt={setStartStadt}
             stadtPflicht stadtFehler={missing.has('startStadt')}
             adresse={adresseStart} onAdresse={setAdresseStart}
@@ -370,10 +349,11 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             kontaktPflicht kontaktFehler={missing.has('kontaktStart')}
           />
 
+          {/* 4 — Zielort */}
           <StationFeldsatz
-            titel="Ziel (Abgabe)"
+            titel="Zielort"
             idPrefix="at-st2"
-            stadtLabel="Ziel-Stadt"
+            stadtLabel="Stadt"
             stadt={zielStadt} onStadt={setZielStadt}
             stadtPflicht stadtFehler={missing.has('zielStadt')}
             adresse={adresseZiel} onAdresse={setAdresseZiel}
@@ -382,52 +362,92 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             kontakte={kontakte.ziel}
             onKontakte={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
             kontaktPflicht kontaktFehler={missing.has('kontaktZiel')}
-          >
-            <KmZeile
-              label="Entfernung berechnen"
-              kmLabel="km Hin"
-              km={kmHin}
-              onKm={setKmHin}
-              disabled={!adresseStart.trim() || !adresseZiel.trim()}
-              onBerechnen={() => setRouteDialog('hin')}
-            />
-          </StationFeldsatz>
+          />
 
           {hatRueckfuehrung && (
-            <StationFeldsatz
-              titel="Rückführung"
-              idPrefix="at-st3"
-              stadtLabel="Rückführung-Stadt"
-              stadt={rueckStadt} onStadt={setRueckStadt}
-              stadtPflicht stadtFehler={missing.has('rueckStadt')}
-              adresse={adresseRueck} onAdresse={setAdresseRueck}
-              adressePflicht adresseFehler={missing.has('adresseRueck')}
-              zeit={zeitRueck} onZeit={setZeitRueck}
-              kontakte={kontakte.rueckfuehrung}
-              onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
-            >
-              <KmZeile
-                label="Entfernung Rückweg berechnen"
-                kmLabel="km Rück"
-                km={kmRueck}
-                onKm={setKmRueck}
-                disabled={!adresseZiel.trim() || !adresseRueck.trim()}
-                onBerechnen={() => setRouteDialog('rueck')}
+            <>
+              {/* 5 — Fahrzeug Rückfahrt (nur ABA/ABC) */}
+              <TfBlock titel="Fahrzeug Rückfahrt" akzent="rueck">
+                <div className="tf-grid">
+                  <div className="sm:col-span-3 lg:col-span-3">
+                    <label htmlFor="at-kz2" className="tf-label">Kennzeichen Rückführung</label>
+                    <input id="at-kz2" className="tf-input"
+                           value={kennzeichenRueck} onChange={(e) => setKennzeichenRueck(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-3 lg:col-span-4">
+                    <label htmlFor="at-modell2" className="tf-label">Fahrzeugmodell Rück</label>
+                    <SuggestCombobox
+                      id="at-modell2"
+                      className="tf-input"
+                      feldTyp="fahrzeugmodell"
+                      value={fahrzeugmodellRueck}
+                      onChange={setFahrzeugmodellRueck}
+                      placeholder="z.B. Audi A3"
+                    />
+                  </div>
+                </div>
+              </TfBlock>
+
+              {/* 6 — Rückführungsort (nur ABA/ABC) */}
+              <StationFeldsatz
+                titel="Rückführungsort"
+                idPrefix="at-st3"
+                akzent="rueck"
+                stadtLabel="Stadt"
+                stadt={rueckStadt} onStadt={setRueckStadt}
+                stadtPflicht stadtFehler={missing.has('rueckStadt')}
+                adresse={adresseRueck} onAdresse={setAdresseRueck}
+                adressePflicht adresseFehler={missing.has('adresseRueck')}
+                zeit={zeitRueck} onZeit={setZeitRueck}
+                kontakte={kontakte.rueckfuehrung}
+                onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
               />
-            </StationFeldsatz>
+            </>
           )}
 
-          {kmGesamt != null && (
-            <p className="text-xs text-maja-muted">
-              km gesamt: <strong className="text-maja-ink">{kmGesamt}</strong>
-            </p>
-          )}
-
-          <div>
-            <label htmlFor="at-info" className="label">Hinweise (optional)</label>
-            <textarea id="at-info" className="input min-h-[72px]"
-                      value={info} onChange={(e) => setInfo(e.target.value)} />
-          </div>
+          {/* 7 — Kilometer & Termine */}
+          <TfBlock titel="Kilometer & Termine">
+            <div className="tf-grid">
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label htmlFor="at-von" className="tf-label">Startdatum *</label>
+                <input id="at-von" type="date" className={inputCls('startdatum')}
+                       value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3 lg:col-span-2">
+                <label htmlFor="at-bis" className="tf-label">Enddatum *</label>
+                <input id="at-bis" type="date" className={inputCls('enddatum')}
+                       value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3 lg:col-span-3">
+                <KmZeile
+                  label="Entfernung berechnen"
+                  kmLabel="km Hin"
+                  km={kmHin}
+                  onKm={setKmHin}
+                  disabled={!adresseStart.trim() || !adresseZiel.trim()}
+                  onBerechnen={() => setRouteDialog('hin')}
+                />
+              </div>
+              {hatRueckfuehrung && (
+                <div className="sm:col-span-3 lg:col-span-3">
+                  <KmZeile
+                    label="Entfernung berechnen"
+                    kmLabel="km Rück"
+                    km={kmRueck}
+                    onKm={setKmRueck}
+                    disabled={!adresseZiel.trim() || !adresseRueck.trim()}
+                    onBerechnen={() => setRouteDialog('rueck')}
+                  />
+                </div>
+              )}
+              <div className="sm:col-span-6 lg:col-span-2">
+                <span className="tf-label">km gesamt</span>
+                <div className="rounded-md bg-maja-light px-2 py-1.5 text-sm font-semibold text-maja-navy">
+                  {kmGesamt == null ? '—' : `${kmGesamt} km`}
+                </div>
+              </div>
+            </div>
+          </TfBlock>
 
           {routeDialog && (
             <RouteSelectorDialog

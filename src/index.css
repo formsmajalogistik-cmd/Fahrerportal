@@ -49,6 +49,51 @@ body { margin: 0; }
   .card {
     @apply rounded-xl bg-white shadow-card dark:bg-surface-800 dark:shadow-card-dark;
   }
+
+  /*
+   * Kompaktes Tour-Formular (tf = tour form).
+   *
+   * Bewusst eigene Klassen statt einer Änderung an .input/.label — alle
+   * übrigen Masken der App behalten ihre gewohnte Größe. Mobile-first:
+   * volle Touch-Höhe und 16px Schrift (verhindert den iOS-Auto-Zoom),
+   * ab `sm` schaltet das Formular auf die dichte Desktop-Variante um.
+   */
+  .tf-input {
+    @apply block w-full min-w-0 rounded-md border border-maja-navy/20 bg-white
+           px-2.5 py-2.5 text-base leading-tight text-maja-ink
+           placeholder-maja-muted/70 shadow-sm transition
+           focus:border-maja-accent focus:outline-none focus:ring-2 focus:ring-maja-accent/30
+           sm:px-2 sm:py-1.5 sm:text-sm
+           dark:border-surface-700 dark:bg-surface-700 dark:text-slate-100
+           dark:placeholder-slate-400;
+  }
+  .tf-label {
+    @apply mb-0.5 block truncate text-xs font-medium leading-tight
+           text-maja-ink dark:text-slate-200;
+  }
+  /* 12 Spalten auf Desktop, 6 auf Tablet, 1 auf Mobile. */
+  .tf-grid {
+    @apply grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-6 lg:grid-cols-12;
+  }
+  .tf-block {
+    @apply rounded-lg border border-maja-navy/15 px-3 py-2.5;
+  }
+  .tf-block-title {
+    @apply mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold
+           uppercase tracking-wide text-maja-muted;
+  }
+  /* Hin- und Rückfahrzeug visuell eindeutig unterscheidbar. */
+  .tf-hin { @apply border-l-4 border-l-maja-accent; }
+  .tf-rueck { @apply border-l-4 border-l-amber-500; }
+  .tf-check {
+    @apply flex min-h-[2.25rem] items-center gap-2 text-sm text-maja-ink dark:text-slate-200;
+  }
+  .tf-check input[type="checkbox"] {
+    @apply h-4 w-4 shrink-0 rounded border-maja-navy/30 text-maja-navy focus:ring-maja-accent;
+  }
+  .tf-hint {
+    @apply mt-0.5 text-[11px] leading-snug text-maja-muted;
+  }
 }
 
 /*

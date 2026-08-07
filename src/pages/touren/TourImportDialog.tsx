@@ -63,6 +63,8 @@ interface ParsedRow {
   zeit_start?: string | null;
   zeit_ziel?: string | null;
   zeit_rueckfuehrung?: string | null;
+  /** Migration 085 — nur bei ABA relevant. */
+  aba_gesamt_km_berechnen?: boolean | null;
 }
 
 /**
@@ -119,6 +121,7 @@ const HEADER_KEYS = {
   zeit_start:      ['zeit start', 'abholzeit'],
   zeit_ziel:       ['zeit ziel', 'abgabezeit'],
   zeit_rueck:      ['zeit rückführung', 'zeit rueckfuehrung'],
+  aba_gesamt_km:   ['aba gesamt-km berechnen', 'aba gesamt km berechnen'],
   bestaetigt:      ['bestätigt', 'bestaetigt'],
   created_at:      ['created_at', 'erstellt am'],
 };
@@ -401,6 +404,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       zeit_start:      findColumnExact(cols, HEADER_KEYS.zeit_start),
       zeit_ziel:       findColumnExact(cols, HEADER_KEYS.zeit_ziel),
       zeit_rueck:      findColumnExact(cols, HEADER_KEYS.zeit_rueck),
+      aba_gesamt_km:   findColumnExact(cols, HEADER_KEYS.aba_gesamt_km),
     };
     const at = (r: unknown[], idx: number): unknown => (idx >= 0 ? r[idx] : null);
 
@@ -468,6 +472,11 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       const zeit_start = oIdx.zeit_start >= 0 ? parseZeitText(at(r, oIdx.zeit_start)) : undefined;
       const zeit_ziel = oIdx.zeit_ziel >= 0 ? parseZeitText(at(r, oIdx.zeit_ziel)) : undefined;
       const zeit_rueckfuehrung = oIdx.zeit_rueck >= 0 ? parseZeitText(at(r, oIdx.zeit_rueck)) : undefined;
+      // Fehlt die Spalte (ältere Datei), bleibt der DB-Default false —
+      // der Import ist damit rückwärtskompatibel.
+      const aba_gesamt_km_berechnen = oIdx.aba_gesamt_km >= 0
+        ? parseBoolCell(at(r, oIdx.aba_gesamt_km))
+        : undefined;
 
       const errors: string[] = [];
       if (!start_stadt || !ziel_stadt) errors.push('Route konnte nicht geparst werden.');
@@ -514,6 +523,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         zeit_start,
         zeit_ziel,
         zeit_rueckfuehrung,
+        aba_gesamt_km_berechnen,
         // dupKey ist nur intern; wir berechnen ihn erst im Preview neu.
         ...{ _dup_partial: dupKey } as Partial<ParsedRow>,
       });
@@ -617,6 +627,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.zeit_start !== undefined) base.zeit_start = r.zeit_start;
         if (r.zeit_ziel !== undefined) base.zeit_ziel = r.zeit_ziel;
         if (r.zeit_rueckfuehrung !== undefined) base.zeit_rueckfuehrung = r.zeit_rueckfuehrung;
+        if (r.aba_gesamt_km_berechnen != null) base.aba_gesamt_km_berechnen = r.aba_gesamt_km_berechnen;
         return base;
       });
       const { error: err } = await supabase.from('touren').insert(payload);
