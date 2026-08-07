@@ -2102,6 +2102,7 @@ function EditMode(p: EditModeProps) {
         onAdresse={(v) => patchDraft({ adresseStart: v })}
         zeit={draft.zeitStart}
         onZeit={(v) => patchDraft({ zeitStart: v })}
+        zeitLabel="Zeit Abholung"
         kontakte={stationsKontakte.start}
         onKontakte={(next) => onStationsKontakte('start', next)}
       />
@@ -2119,6 +2120,7 @@ function EditMode(p: EditModeProps) {
         onAdresse={(v) => patchDraft({ adresseZiel: v })}
         zeit={draft.zeitZiel}
         onZeit={(v) => patchDraft({ zeitZiel: v })}
+        zeitLabel="Zeit Anlieferung"
         kontakte={stationsKontakte.ziel}
         onKontakte={(next) => onStationsKontakte('ziel', next)}
       />
@@ -2174,6 +2176,7 @@ function EditMode(p: EditModeProps) {
             onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
             zeit={draft.zeitRueck}
             onZeit={(v) => patchDraft({ zeitRueck: v })}
+            zeitLabel="Zeit Rückführung"
             kontakte={stationsKontakte.rueckfuehrung}
             onKontakte={(next) => onStationsKontakte('rueckfuehrung', next)}
             aktion={(
@@ -2286,10 +2289,14 @@ function EditMode(p: EditModeProps) {
 }
 
 
-/** Ort-Block im Edit-Modus: Stadt, Adresse, Zeit, Ansprechpartner. */
+/**
+ * Ort-Block im Edit-Modus: Stadt, Adresse, Zeit, Ansprechpartner.
+ * Die Zeit ist bewusst ein reines Textfeld — „08:00", „vormittags" und
+ * „nach Absprache" sind gleichermaßen möglich (Migration 081).
+ */
 function StationBlockEdit({
   titel, idPrefix, akzent, aktion, stadtLabel, stadt, onStadt,
-  adresse, onAdresse, zeit, onZeit, kontakte, onKontakte,
+  adresse, onAdresse, zeit, onZeit, zeitLabel, kontakte, onKontakte,
 }: {
   titel: string;
   idPrefix: string;
@@ -2302,13 +2309,15 @@ function StationBlockEdit({
   onAdresse: (v: string) => void;
   zeit: string;
   onZeit: (v: string) => void;
+  /** Beschriftung des Zeitfelds, z.B. "Zeit Abholung". */
+  zeitLabel: string;
   kontakte: KontaktEntwurf[];
   onKontakte: (next: KontaktEntwurf[]) => void;
 }) {
   return (
     <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
       <div className="tf-grid">
-        <div className="sm:col-span-2 lg:col-span-3">
+        <div className="sm:col-span-3 lg:col-span-3">
           <label htmlFor={`${idPrefix}-stadt`} className="tf-label">{stadtLabel}</label>
           <input id={`${idPrefix}-stadt`} className="tf-input"
                  value={stadt} onChange={(e) => onStadt(e.target.value)} />
@@ -2318,8 +2327,8 @@ function StationBlockEdit({
           <input id={`${idPrefix}-adr`} className="tf-input"
                  value={adresse} onChange={(e) => onAdresse(e.target.value)} />
         </div>
-        <div className="sm:col-span-1 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">Zeit</label>
+        <div className="sm:col-span-3 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">{zeitLabel}</label>
           <input id={`${idPrefix}-zeit`} className="tf-input"
                  placeholder={ZEIT_PLATZHALTER}
                  value={zeit} onChange={(e) => onZeit(e.target.value)} />

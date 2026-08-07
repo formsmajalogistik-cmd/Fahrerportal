@@ -343,7 +343,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             stadtPflicht stadtFehler={missing.has('startStadt')}
             adresse={adresseStart} onAdresse={setAdresseStart}
             adressePflicht adresseFehler={missing.has('adresseStart')}
-            zeit={zeitStart} onZeit={setZeitStart}
+            zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={kontakte.start}
             onKontakte={(next) => setKontakte((m) => ({ ...m, start: next }))}
             kontaktPflicht kontaktFehler={missing.has('kontaktStart')}
@@ -358,7 +358,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             stadtPflicht stadtFehler={missing.has('zielStadt')}
             adresse={adresseZiel} onAdresse={setAdresseZiel}
             adressePflicht adresseFehler={missing.has('adresseZiel')}
-            zeit={zeitZiel} onZeit={setZeitZiel}
+            zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={kontakte.ziel}
             onKontakte={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
             kontaktPflicht kontaktFehler={missing.has('kontaktZiel')}
@@ -398,7 +398,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 stadtPflicht stadtFehler={missing.has('rueckStadt')}
                 adresse={adresseRueck} onAdresse={setAdresseRueck}
                 adressePflicht adresseFehler={missing.has('adresseRueck')}
-                zeit={zeitRueck} onZeit={setZeitRueck}
+                zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={kontakte.rueckfuehrung}
                 onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
               />

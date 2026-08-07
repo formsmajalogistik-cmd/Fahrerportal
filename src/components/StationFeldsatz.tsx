@@ -8,9 +8,11 @@
 // frühere <input type="time"> neben dem Datum ist damit weg — es hat
 // auf schmalen Breiten das Layout gesprengt.
 //
-// Layout: Stadt schmal, Adresse breit, Zeit schmal — auf Desktop in
-// einer Zeile, auf Tablet zweispaltig, auf Mobile einspaltig mit vollen
-// Touch-Höhen. Kein Feld läuft dabei aus dem Container.
+// Layout: Stadt schmal, Adresse breit, Zeit schmal — auf Desktop alle
+// drei in einer Zeile (3/6/3 von 12). Auf Tablet je die halbe Breite
+// (3/6), die Zeit rutscht in die zweite Zeile; auf Mobile einspaltig mit
+// vollen Touch-Höhen. Das Zeitfeld bekommt bewusst NIE weniger als eine
+// halbe Zeile — bei einem Sechstel war es faktisch nicht mehr benutzbar.
 
 import { AnsprechpartnerFeldsatz } from './AnsprechpartnerFeldsatz';
 import { TfBlock } from './TfBlock';
@@ -34,6 +36,8 @@ interface Props {
   /** Freitext-Zeitangabe der Station. */
   zeit: string;
   onZeit: (v: string) => void;
+  /** Beschriftung des Zeitfelds, z.B. "Zeit Abholung". */
+  zeitLabel: string;
   kontakte: KontaktEntwurf[];
   onKontakte: (next: KontaktEntwurf[]) => void;
   kontaktPflicht?: boolean;
@@ -47,14 +51,14 @@ interface Props {
 export function StationFeldsatz({
   titel, idPrefix, stadtLabel, stadt, onStadt, stadtPflicht, stadtFehler,
   adresse, onAdresse, adressePflicht, adresseFehler,
-  zeit, onZeit, kontakte, onKontakte, kontaktPflicht, kontaktFehler,
+  zeit, onZeit, zeitLabel, kontakte, onKontakte, kontaktPflicht, kontaktFehler,
   children, akzent,
 }: Props) {
   const cls = (fehler?: boolean) => (fehler ? 'tf-input border-red-500' : 'tf-input');
   return (
     <TfBlock titel={titel} akzent={akzent}>
       <div className="tf-grid">
-        <div className="sm:col-span-2 lg:col-span-3">
+        <div className="sm:col-span-3 lg:col-span-3">
           <label htmlFor={`${idPrefix}-stadt`} className="tf-label">
             {stadtLabel}{stadtPflicht ? ' *' : ''}
           </label>
@@ -69,8 +73,8 @@ export function StationFeldsatz({
                  placeholder="Straße Nr, PLZ Stadt"
                  value={adresse} onChange={(e) => onAdresse(e.target.value)} />
         </div>
-        <div className="sm:col-span-1 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">Zeit</label>
+        <div className="sm:col-span-3 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">{zeitLabel}</label>
           <input id={`${idPrefix}-zeit`} className="tf-input"
                  placeholder={ZEIT_PLATZHALTER}
                  value={zeit} onChange={(e) => onZeit(e.target.value)} />

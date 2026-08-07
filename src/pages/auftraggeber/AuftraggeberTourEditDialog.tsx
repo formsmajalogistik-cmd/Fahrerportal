@@ -344,7 +344,7 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             stadtLabel="Stadt"
             stadt={startStadt} onStadt={setStartStadt} stadtPflicht
             adresse={adresseStart} onAdresse={setAdresseStart}
-            zeit={zeitStart} onZeit={setZeitStart}
+            zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={kontakte.start}
             onKontakte={(next) => setKontakte((m) => ({ ...m, start: next }))}
           />
@@ -356,7 +356,7 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             stadtLabel="Stadt"
             stadt={zielStadt} onStadt={setZielStadt} stadtPflicht
             adresse={adresseZiel} onAdresse={setAdresseZiel}
-            zeit={zeitZiel} onZeit={setZeitZiel}
+            zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={kontakte.ziel}
             onKontakte={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
           />
@@ -398,7 +398,7 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                 stadtLabel="Stadt"
                 stadt={rueckStadt} onStadt={setRueckStadt}
                 adresse={adresseRueck} onAdresse={setAdresseRueck}
-                zeit={zeitRueck} onZeit={setZeitRueck}
+                zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={kontakte.rueckfuehrung}
                 onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
               />

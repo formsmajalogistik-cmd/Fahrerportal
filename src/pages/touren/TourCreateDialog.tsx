@@ -677,7 +677,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             stadtRequired
             adresseLabel="Adresse (Straße, Nr., PLZ)"
             adresse={adresseStart} onAdresse={setAdresseStart}
-            zeit={zeitStart} onZeit={setZeitStart}
+            zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={stationsKontakte.start}
             onKontakte={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
           />
@@ -693,7 +693,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             stadtRequired
             adresseLabel="Adresse (Straße, Nr., PLZ)"
             adresse={adresseZiel} onAdresse={setAdresseZiel}
-            zeit={zeitZiel} onZeit={setZeitZiel}
+            zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={stationsKontakte.ziel}
             onKontakte={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
           />
@@ -753,7 +753,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                 stadt={rueckfuehrungStadt} onStadt={setRueckfuehrungStadt}
                 adresseLabel="Adresse (Straße, Nr., PLZ)"
                 adresse={adresseRueckfuehrung} onAdresse={setAdresseRueckfuehrung}
-                zeit={zeitRueck} onZeit={setZeitRueck}
+                zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={stationsKontakte.rueckfuehrung}
                 onKontakte={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
                 aktion={(
@@ -977,11 +977,13 @@ function RouteSmallIcon({ className }: { className?: string }) {
 
 /**
  * Ort-Block: Stadt, Adresse, Zeit und die Ansprechpartner einer Station
- * gehören zusammen — in einer Zeile, damit das Formular kurz bleibt.
+ * gehören zusammen — auf Desktop in einer Zeile (3/6/3 von 12), damit
+ * das Formular kurz bleibt. Auf Tablet bekommt jedes Feld mindestens
+ * eine halbe Zeile, die Zeit rutscht dabei nach unten.
  */
 function StationBlock({
   titel, idPrefix, akzent, aktion, stadtLabel, stadt, onStadt, stadtRequired,
-  adresseLabel, adresse, onAdresse, zeit, onZeit, kontakte, onKontakte,
+  adresseLabel, adresse, onAdresse, zeit, onZeit, zeitLabel, kontakte, onKontakte,
 }: {
   titel: string;
   idPrefix: string;
@@ -996,13 +998,15 @@ function StationBlock({
   onAdresse: (v: string) => void;
   zeit: string;
   onZeit: (v: string) => void;
+  /** Beschriftung des Zeitfelds, z.B. "Zeit Abholung". */
+  zeitLabel: string;
   kontakte: KontaktMap[keyof KontaktMap];
   onKontakte: (next: KontaktMap[keyof KontaktMap]) => void;
 }) {
   return (
     <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
       <div className="tf-grid">
-        <div className="sm:col-span-2 lg:col-span-3">
+        <div className="sm:col-span-3 lg:col-span-3">
           <label htmlFor={`${idPrefix}-stadt`} className="tf-label">{stadtLabel}</label>
           <input id={`${idPrefix}-stadt`} className="tf-input" required={stadtRequired}
                  value={stadt} onChange={(e) => onStadt(e.target.value)} />
@@ -1012,8 +1016,8 @@ function StationBlock({
           <input id={`${idPrefix}-adr`} className="tf-input"
                  value={adresse} onChange={(e) => onAdresse(e.target.value)} />
         </div>
-        <div className="sm:col-span-1 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">Zeit</label>
+        <div className="sm:col-span-3 lg:col-span-3">
+          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">{zeitLabel}</label>
           <input id={`${idPrefix}-zeit`} className="tf-input"
                  placeholder={ZEIT_PLATZHALTER}
                  value={zeit} onChange={(e) => onZeit(e.target.value)} />
