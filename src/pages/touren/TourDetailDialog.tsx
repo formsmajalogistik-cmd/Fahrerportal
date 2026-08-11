@@ -12,6 +12,9 @@ import { TfBlock } from '../../components/TfBlock';
 import { AuftragEmailDialog } from './AuftragEmailDialog';
 import { TourDokumenteSection } from '../../components/TourDokumenteSection';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
+import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { RouteFeldsatz } from '../../components/RouteFeldsatz';
+import { composeAdresse, effektiveAdresse } from '../../lib/adresse';
 import { useScrollLock } from '../../lib/useScrollLock';
 import { CheckIcon, DownloadIcon, EyeIcon, XIcon } from '../../components/icons';
 import { fahrerName } from '../../lib/names';
@@ -78,9 +81,7 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 };
 
 import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
-import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
-import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
 } from '../../lib/tourenartAutomatik';
@@ -217,9 +218,24 @@ interface EditDraft {
   kundenname: string;
   verguetung: string;
   info: string;
-  adresseStart: string;
-  adresseZiel: string;
-  adresseRueckfuehrung: string;
+  // Adresse strukturiert (Migration 086). Die Stadt steckt in
+  // startStadt / zielStadt / rueckfuehrungStadt — kein zweites Feld.
+  strasseStart: string;
+  hausnummerStart: string;
+  plzStart: string;
+  strasseZiel: string;
+  hausnummerZiel: string;
+  plzZiel: string;
+  strasseRueck: string;
+  hausnummerRueck: string;
+  plzRueck: string;
+  /** Bestands-Freitext, nur zur Anzeige — wird nicht zerlegt. */
+  freitextStart: string;
+  freitextZiel: string;
+  freitextRueck: string;
+  /** Auf Eis: Tour steht fest, Termin noch offen (Migration 086). */
+  aufEis: boolean;
+  aufEisNotiz: string;
   protokollArt: ProtokollArt | null;
   schriftlichesProtokollId: string | null;
   greimelZugangId: string | null;
@@ -270,9 +286,20 @@ function draftFromTour(t: FullTour): EditDraft {
     kundenname: t.kundenname ?? '',
     verguetung: decimalToInput(t.verguetung),
     info: t.info ?? '',
-    adresseStart: t.adresse_start ?? '',
-    adresseZiel: t.adresse_ziel ?? '',
-    adresseRueckfuehrung: t.adresse_rueckfuehrung ?? '',
+    strasseStart: t.strasse_start ?? '',
+    hausnummerStart: t.hausnummer_start ?? '',
+    plzStart: t.plz_start ?? '',
+    strasseZiel: t.strasse_ziel ?? '',
+    hausnummerZiel: t.hausnummer_ziel ?? '',
+    plzZiel: t.plz_ziel ?? '',
+    strasseRueck: t.strasse_rueckfuehrung ?? '',
+    hausnummerRueck: t.hausnummer_rueckfuehrung ?? '',
+    plzRueck: t.plz_rueckfuehrung ?? '',
+    freitextStart: t.adresse_start ?? '',
+    freitextZiel: t.adresse_ziel ?? '',
+    freitextRueck: t.adresse_rueckfuehrung ?? '',
+    aufEis: !!t.auf_eis,
+    aufEisNotiz: t.auf_eis_notiz ?? '',
     protokollArt: t.protokoll_art ?? null,
     schriftlichesProtokollId: t.schriftliches_protokoll_id ?? null,
     greimelZugangId: t.greimel_zugang_id ?? null,
@@ -509,7 +536,7 @@ export function TourDetailDialog({
         kmRueck: '',
         kennzeichenRueck: '',
         finRueck: '',
-        adresseRueckfuehrung: '',
+        strasseRueck: '', hausnummerRueck: '', plzRueck: '',
       });
     } else {
       patchDraft({ hatRueckfuehrung: true });
@@ -612,7 +639,23 @@ export function TourDetailDialog({
   // werden also nie automatisch umgestellt.
   const draftTourenart = draft?.tourenart ?? '';
   const draftRueckStadt = draft?.rueckfuehrungStadt ?? '';
-  const draftRueckAdresse = draft?.adresseRueckfuehrung ?? '';
+  // Adressen aus den Einzelteilen; Bestandstouren fallen auf ihren
+  // Freitext zurück. Daran hängen Routenberechnung und Anzeige.
+  const draftAdresseStart = draft ? effektiveAdresse(
+    { strasse: draft.strasseStart, hausnummer: draft.hausnummerStart,
+      plz: draft.plzStart, stadt: draft.startStadt },
+    draft.freitextStart,
+  ) : '';
+  const draftAdresseZiel = draft ? effektiveAdresse(
+    { strasse: draft.strasseZiel, hausnummer: draft.hausnummerZiel,
+      plz: draft.plzZiel, stadt: draft.zielStadt },
+    draft.freitextZiel,
+  ) : '';
+  const draftRueckAdresse = draft ? effektiveAdresse(
+    { strasse: draft.strasseRueck, hausnummer: draft.hausnummerRueck,
+      plz: draft.plzRueck, stadt: draft.rueckfuehrungStadt },
+    draft.freitextRueck,
+  ) : '';
   const draftTourenartManuell = draft?.tourenartManuell ?? true;
   useEffect(() => {
     const naechste = automatischeTourenart({
@@ -631,7 +674,7 @@ export function TourDetailDialog({
   /** Speichern mit vorgeschaltetem ABC-Sicherheitsnetz. */
   function handleSaveMitPruefung() {
     if (draft && brauchtAbcWarnung(
-      draft.tourenart, draft.rueckfuehrungStadt, draft.adresseRueckfuehrung,
+      draft.tourenart, draft.rueckfuehrungStadt, draftRueckAdresse,
     )) {
       setAbcWarnung(true);
       return;
@@ -688,10 +731,21 @@ export function TourDetailDialog({
     // erwartet genau das, keine Timezone-Umrechnung nötig.
     // startdatum/enddatum sind seit Migration 028 NOT NULL — wir leeren
     // sie auch im UI nicht.
-    const draftDateStart = (draft.startdatum || tour.startdatum) as string;
-    const draftDateEnd   = (draft.enddatum   || tour.enddatum)   as string;
-    if (!draft.startdatum || !draft.enddatum) {
-      setStatusMsg({ kind: 'err', text: 'Start- und Enddatum sind Pflichtfelder.' });
+    // Bei einer Tour auf Eis darf das Datum leer sein — dann wird auch
+    // wirklich null geschrieben statt auf den Altwert zurückzufallen.
+    const draftDateStart = draft.aufEis
+      ? (draft.startdatum || null)
+      : ((draft.startdatum || tour.startdatum) as string);
+    const draftDateEnd = draft.aufEis
+      ? (draft.enddatum || null)
+      : ((draft.enddatum || tour.enddatum) as string);
+    // Touren auf Eis dürfen ohne Datum gespeichert werden — sie sind
+    // bewusst noch nicht terminiert.
+    if (!draft.aufEis && (!draft.startdatum || !draft.enddatum)) {
+      setStatusMsg({
+        kind: 'err',
+        text: 'Start- und Enddatum sind Pflichtfelder. Ohne festen Termin die Tour auf Eis legen.',
+      });
       setSaving(false);
       return;
     }
@@ -741,10 +795,37 @@ export function TourDetailDialog({
         kundenname: draft.kundenname.trim() || null,
         verguetung,
         info: draft.info.trim() || null,
-        adresse_start: draft.adresseStart.trim() || null,
-        adresse_ziel: draft.adresseZiel.trim() || null,
+        // Freitext-Spalte weiter befüllen — daran hängen Auftrags-
+        // E-Mail, Excel-Export und Routenberechnung. Bei einer
+        // Bestandstour ohne Einzelteile bleibt der alte Wert stehen.
+        adresse_start: composeAdresse({
+          strasse: draft.strasseStart, hausnummer: draft.hausnummerStart,
+          plz: draft.plzStart, stadt: draft.startStadt,
+        }) ?? (draft.freitextStart.trim() || null),
+        adresse_ziel: composeAdresse({
+          strasse: draft.strasseZiel, hausnummer: draft.hausnummerZiel,
+          plz: draft.plzZiel, stadt: draft.zielStadt,
+        }) ?? (draft.freitextZiel.trim() || null),
+        strasse_start: draft.strasseStart.trim() || null,
+        hausnummer_start: draft.hausnummerStart.trim() || null,
+        plz_start: draft.plzStart.trim() || null,
+        strasse_ziel: draft.strasseZiel.trim() || null,
+        hausnummer_ziel: draft.hausnummerZiel.trim() || null,
+        plz_ziel: draft.plzZiel.trim() || null,
+        strasse_rueckfuehrung: draft.hatRueckfuehrung ? (draft.strasseRueck.trim() || null) : null,
+        hausnummer_rueckfuehrung: draft.hatRueckfuehrung ? (draft.hausnummerRueck.trim() || null) : null,
+        plz_rueckfuehrung: draft.hatRueckfuehrung ? (draft.plzRueck.trim() || null) : null,
+        auf_eis: draft.aufEis,
+        auf_eis_notiz: draft.aufEis ? (draft.aufEisNotiz.trim() || null) : null,
+        // Zeitstempel nur beim Wechsel setzen bzw. beim Aufheben leeren.
+        auf_eis_seit: draft.aufEis
+          ? (tour.auf_eis ? tour.auf_eis_seit : new Date().toISOString())
+          : null,
         adresse_rueckfuehrung: draft.hatRueckfuehrung
-          ? (draft.adresseRueckfuehrung.trim() || null)
+          ? (composeAdresse({
+              strasse: draft.strasseRueck, hausnummer: draft.hausnummerRueck,
+              plz: draft.plzRueck, stadt: draft.rueckfuehrungStadt,
+            }) ?? (draft.freitextRueck.trim() || null))
           : null,
         ist_e_fahrzeug: draft.istEFahrzeug,
         fin: draft.fin.trim() || null,
@@ -1085,6 +1166,9 @@ export function TourDetailDialog({
           toggleRueckfuehrung={toggleRueckfuehrung}
           liveKmGesamt={liveKmGesamt}
           livePreisKm={livePreisKm}
+          adressen={{
+            start: draftAdresseStart, ziel: draftAdresseZiel, rueck: draftRueckAdresse,
+          }}
           auftraggeber={auftraggeber}
           fahrer={fahrer}
           draftSelectedAg={draftSelectedAg}
@@ -1457,6 +1541,15 @@ export function TourDetailDialog({
             adresse_start: tour.adresse_start,
             adresse_ziel: tour.adresse_ziel,
             adresse_rueckfuehrung: tour.adresse_rueckfuehrung,
+            strasse_start: tour.strasse_start,
+            hausnummer_start: tour.hausnummer_start,
+            plz_start: tour.plz_start,
+            strasse_ziel: tour.strasse_ziel,
+            hausnummer_ziel: tour.hausnummer_ziel,
+            plz_ziel: tour.plz_ziel,
+            strasse_rueckfuehrung: tour.strasse_rueckfuehrung,
+            hausnummer_rueckfuehrung: tour.hausnummer_rueckfuehrung,
+            plz_rueckfuehrung: tour.plz_rueckfuehrung,
             zeit_start: tour.zeit_start,
             zeit_ziel: tour.zeit_ziel,
             zeit_rueckfuehrung: tour.zeit_rueckfuehrung,
@@ -1509,8 +1602,11 @@ export function TourDetailDialog({
         // füllt km_hin (oder km_gesamt_aba bei ABA). "rueck": Ziel →
         // Rückführung, füllt km_rueck.
         const isHin = routeDialog === 'hin';
-        const origin = (isHin ? draft.adresseStart : draft.adresseZiel).trim();
-        const destination = (isHin ? draft.adresseZiel : draft.adresseRueckfuehrung).trim();
+        // Routenberechnung auf der zusammengesetzten Adresse
+        // ("Straße Nr., PLZ Stadt") — bei Bestandstouren weiterhin auf
+        // dem alten Freitext.
+        const origin = (isHin ? draftAdresseStart : draftAdresseZiel).trim();
+        const destination = (isHin ? draftAdresseZiel : draftRueckAdresse).trim();
         const title = isHin ? 'Routen für Hin-Strecke' : 'Routen für Rück-Strecke';
         const closeAndAdvance = () => setRouteDialog(null);
         return (
@@ -1838,6 +1934,8 @@ interface EditModeProps {
   liveKmGesamt: number | null;
   /** km, mit denen der Preis ermittelt wird (bei ABA = km Hin). */
   livePreisKm: number | null;
+  /** Zusammengesetzte Adressen je Station — steuern die Berechnen-Buttons. */
+  adressen: { start: string; ziel: string; rueck: string };
   auftraggeber: Auftraggeber[];
   fahrer: FahrerWithUser[];
   draftSelectedAg: Auftraggeber | null;
@@ -1872,7 +1970,7 @@ function RouteIcon({ className }: { className?: string }) {
 
 function EditMode(p: EditModeProps) {
   const {
-    draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, livePreisKm,
+    draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, livePreisKm, adressen,
     auftraggeber, fahrer, draftSelectedAg, templates, zugaenge, kontakte,
     stationsKontakte, onStationsKontakte, routeConfirm, onOpenRouteDialog,
     breakdown, pricing,
@@ -2058,6 +2156,19 @@ function EditMode(p: EditModeProps) {
         </div>
       </TfBlock>
 
+      {/* Route — dieselben Städte wie in den Ort-Blöcken, hier an der
+          Stelle bearbeitbar, an der sie in der Tourenliste erscheinen. */}
+      <RouteFeldsatz
+        idPrefix="td"
+        pflicht
+        startStadt={draft.startStadt} onStartStadt={(v) => patchDraft({ startStadt: v })}
+        zielStadt={draft.zielStadt} onZielStadt={(v) => patchDraft({ zielStadt: v })}
+        rueckStadt={draft.hatRueckfuehrung ? draft.rueckfuehrungStadt : undefined}
+        onRueckStadt={draft.hatRueckfuehrung
+          ? ((v: string) => patchDraft({ rueckfuehrungStadt: v }))
+          : undefined}
+      />
+
       {/* -----------------------------------------------------------
           2 — Fahrzeug Hinfahrt
           ----------------------------------------------------------- */}
@@ -2092,14 +2203,16 @@ function EditMode(p: EditModeProps) {
       {/* -----------------------------------------------------------
           3 — Abholort
           ----------------------------------------------------------- */}
-      <StationBlockEdit
+      <StationFeldsatz
         titel="Abholort"
         idPrefix="td-ks"
-        stadtLabel="Stadt *"
+        stadtLabel="Stadt" stadtPflicht
         stadt={draft.startStadt}
         onStadt={(v) => patchDraft({ startStadt: v })}
-        adresse={draft.adresseStart}
-        onAdresse={(v) => patchDraft({ adresseStart: v })}
+        strasse={draft.strasseStart} onStrasse={(v) => patchDraft({ strasseStart: v })}
+        hausnummer={draft.hausnummerStart} onHausnummer={(v) => patchDraft({ hausnummerStart: v })}
+        plz={draft.plzStart} onPlz={(v) => patchDraft({ plzStart: v })}
+        adresseFreitext={draft.freitextStart}
         zeit={draft.zeitStart}
         onZeit={(v) => patchDraft({ zeitStart: v })}
         zeitLabel="Zeit Abholung"
@@ -2110,14 +2223,16 @@ function EditMode(p: EditModeProps) {
       {/* -----------------------------------------------------------
           4 — Zielort
           ----------------------------------------------------------- */}
-      <StationBlockEdit
+      <StationFeldsatz
         titel="Zielort"
         idPrefix="td-kz"
-        stadtLabel="Stadt *"
+        stadtLabel="Stadt" stadtPflicht
         stadt={draft.zielStadt}
         onStadt={(v) => patchDraft({ zielStadt: v })}
-        adresse={draft.adresseZiel}
-        onAdresse={(v) => patchDraft({ adresseZiel: v })}
+        strasse={draft.strasseZiel} onStrasse={(v) => patchDraft({ strasseZiel: v })}
+        hausnummer={draft.hausnummerZiel} onHausnummer={(v) => patchDraft({ hausnummerZiel: v })}
+        plz={draft.plzZiel} onPlz={(v) => patchDraft({ plzZiel: v })}
+        adresseFreitext={draft.freitextZiel}
         zeit={draft.zeitZiel}
         onZeit={(v) => patchDraft({ zeitZiel: v })}
         zeitLabel="Zeit Anlieferung"
@@ -2165,15 +2280,17 @@ function EditMode(p: EditModeProps) {
           {/* -------------------------------------------------------
               6 — Rückführungsort (nur ABA/ABC)
               ------------------------------------------------------- */}
-          <StationBlockEdit
+          <StationFeldsatz
             titel="Rückführungsort"
             idPrefix="td-kr"
             akzent="rueck"
             stadtLabel="Stadt"
             stadt={draft.rueckfuehrungStadt}
             onStadt={(v) => patchDraft({ rueckfuehrungStadt: v })}
-            adresse={draft.adresseRueckfuehrung}
-            onAdresse={(v) => patchDraft({ adresseRueckfuehrung: v })}
+            strasse={draft.strasseRueck} onStrasse={(v) => patchDraft({ strasseRueck: v })}
+            hausnummer={draft.hausnummerRueck} onHausnummer={(v) => patchDraft({ hausnummerRueck: v })}
+            plz={draft.plzRueck} onPlz={(v) => patchDraft({ plzRueck: v })}
+            adresseFreitext={draft.freitextRueck}
             zeit={draft.zeitRueck}
             onZeit={(v) => patchDraft({ zeitRueck: v })}
             zeitLabel="Zeit Rückführung"
@@ -2198,13 +2315,17 @@ function EditMode(p: EditModeProps) {
       <TfBlock titel="Kilometer & Termine">
         <div className="tf-grid">
           <div className="sm:col-span-3 lg:col-span-2">
-            <label className="tf-label">Startdatum <span className="text-red-600">*</span></label>
-            <input type="date" className="tf-input" required value={draft.startdatum}
+            <label className="tf-label">
+              Startdatum {!draft.aufEis && <span className="text-red-600">*</span>}
+            </label>
+            <input type="date" className="tf-input" required={!draft.aufEis} value={draft.startdatum}
                    onChange={(e) => patchDraft({ startdatum: e.target.value })} />
           </div>
           <div className="sm:col-span-3 lg:col-span-2">
-            <label className="tf-label">Enddatum <span className="text-red-600">*</span></label>
-            <input type="date" className="tf-input" required value={draft.enddatum}
+            <label className="tf-label">
+              Enddatum {!draft.aufEis && <span className="text-red-600">*</span>}
+            </label>
+            <input type="date" className="tf-input" required={!draft.aufEis} value={draft.enddatum}
                    onChange={(e) => patchDraft({ enddatum: e.target.value })} />
           </div>
           <div className="sm:col-span-3 lg:col-span-3">
@@ -2213,7 +2334,7 @@ function EditMode(p: EditModeProps) {
                    value={draft.kmHin}
                    onChange={(e) => patchDraft({ kmHin: e.target.value })} />
             <RouteCalcRow
-              disabled={!draft.adresseStart.trim() || !draft.adresseZiel.trim()}
+              disabled={!adressen.start.trim() || !adressen.ziel.trim()}
               label="Entfernung berechnen"
               confirmKm={routeConfirm.hin}
               onClick={() => onOpenRouteDialog('hin')}
@@ -2226,7 +2347,7 @@ function EditMode(p: EditModeProps) {
                      value={draft.kmRueck}
                      onChange={(e) => patchDraft({ kmRueck: e.target.value })} />
               <RouteCalcRow
-                disabled={!draft.adresseZiel.trim() || !draft.adresseRueckfuehrung.trim()}
+                disabled={!adressen.ziel.trim() || !adressen.rueck.trim()}
                 label="Entfernung berechnen"
                 confirmKm={routeConfirm.rueck}
                 onClick={() => onOpenRouteDialog('rueck')}
@@ -2239,6 +2360,33 @@ function EditMode(p: EditModeProps) {
               {formatKm(liveKmGesamt)}
             </div>
           </div>
+
+          {/* Auf Eis: Termin bewusst offen. Ein bereits eingetragenes
+              Datum bleibt stehen und gilt als unverbindlich. */}
+          <div className="sm:col-span-6 lg:col-span-12">
+            <label className="tf-check">
+              <input
+                type="checkbox"
+                checked={draft.aufEis}
+                onChange={(e) => patchDraft({ aufEis: e.target.checked })}
+              />
+              Auf Eis legen — Termin noch offen
+            </label>
+            <p className="tf-hint">
+              {draft.aufEis
+                ? 'Die Tour findet statt, ist aber noch nicht terminiert. Datum darf leer bleiben; ein eingetragenes Datum ist unverbindlich. Die Tour bleibt über den Bereich „Auf Eis" in der Tourenliste auffindbar.'
+                : 'Für Touren, die sicher stattfinden, aber noch kein festes Datum haben.'}
+            </p>
+          </div>
+          {draft.aufEis && (
+            <div className="sm:col-span-6 lg:col-span-12">
+              <label className="tf-label">Notiz zur offenen Terminierung</label>
+              <input className="tf-input"
+                     placeholder="z.B. Kunde meldet sich Ende KW 34"
+                     value={draft.aufEisNotiz}
+                     onChange={(e) => patchDraft({ aufEisNotiz: e.target.value })} />
+            </div>
+          )}
 
           {/* Abrechnungs-Ausnahme — nur bei ABA. */}
           {isAba && (
@@ -2289,62 +2437,6 @@ function EditMode(p: EditModeProps) {
 }
 
 
-/**
- * Ort-Block im Edit-Modus: Stadt, Adresse, Zeit, Ansprechpartner.
- * Die Zeit ist bewusst ein reines Textfeld — „08:00", „vormittags" und
- * „nach Absprache" sind gleichermaßen möglich (Migration 081).
- */
-function StationBlockEdit({
-  titel, idPrefix, akzent, aktion, stadtLabel, stadt, onStadt,
-  adresse, onAdresse, zeit, onZeit, zeitLabel, kontakte, onKontakte,
-}: {
-  titel: string;
-  idPrefix: string;
-  akzent?: 'hin' | 'rueck';
-  aktion?: ReactNode;
-  stadtLabel: string;
-  stadt: string;
-  onStadt: (v: string) => void;
-  adresse: string;
-  onAdresse: (v: string) => void;
-  zeit: string;
-  onZeit: (v: string) => void;
-  /** Beschriftung des Zeitfelds, z.B. "Zeit Abholung". */
-  zeitLabel: string;
-  kontakte: KontaktEntwurf[];
-  onKontakte: (next: KontaktEntwurf[]) => void;
-}) {
-  return (
-    <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
-      <div className="tf-grid">
-        <div className="sm:col-span-3 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-stadt`} className="tf-label">{stadtLabel}</label>
-          <input id={`${idPrefix}-stadt`} className="tf-input"
-                 value={stadt} onChange={(e) => onStadt(e.target.value)} />
-        </div>
-        <div className="sm:col-span-3 lg:col-span-6">
-          <label htmlFor={`${idPrefix}-adr`} className="tf-label">Adresse (Straße, Nr., PLZ)</label>
-          <input id={`${idPrefix}-adr`} className="tf-input"
-                 value={adresse} onChange={(e) => onAdresse(e.target.value)} />
-        </div>
-        <div className="sm:col-span-3 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">{zeitLabel}</label>
-          <input id={`${idPrefix}-zeit`} className="tf-input"
-                 placeholder={ZEIT_PLATZHALTER}
-                 value={zeit} onChange={(e) => onZeit(e.target.value)} />
-        </div>
-      </div>
-      <div className="mt-2">
-        <AnsprechpartnerFeldsatz
-          titel="Ansprechpartner"
-          idPrefix={`${idPrefix}-k`}
-          liste={kontakte}
-          onChange={onKontakte}
-        />
-      </div>
-    </TfBlock>
-  );
-}
 // ---------- Finance-Field ----------
 
 interface FinanceFieldProps {
@@ -2404,20 +2496,32 @@ function VehicleAndAddressView({
       <div className="grid gap-3 sm:grid-cols-2">
         <AddressBlockView
           stadt={tour.start_stadt}
-          adresse={tour.adresse_start}
+          adresse={effektiveAdresse(
+            { strasse: tour.strasse_start, hausnummer: tour.hausnummer_start,
+              plz: tour.plz_start, stadt: tour.start_stadt },
+            tour.adresse_start,
+          )}
           kontakte={kontakte.start}
           zeit={tour.zeit_start}
         />
         <AddressBlockView
           stadt={tour.ziel_stadt}
-          adresse={tour.adresse_ziel}
+          adresse={effektiveAdresse(
+            { strasse: tour.strasse_ziel, hausnummer: tour.hausnummer_ziel,
+              plz: tour.plz_ziel, stadt: tour.ziel_stadt },
+            tour.adresse_ziel,
+          )}
           kontakte={kontakte.ziel}
           zeit={tour.zeit_ziel}
         />
         {hatRueckfuehrung && tour.rueckfuehrung_stadt && (
           <AddressBlockView
             stadt={tour.rueckfuehrung_stadt}
-            adresse={tour.adresse_rueckfuehrung}
+            adresse={effektiveAdresse(
+              { strasse: tour.strasse_rueckfuehrung, hausnummer: tour.hausnummer_rueckfuehrung,
+                plz: tour.plz_rueckfuehrung, stadt: tour.rueckfuehrung_stadt },
+              tour.adresse_rueckfuehrung,
+            )}
             kontakte={kontakte.rueckfuehrung}
           zeit={tour.zeit_rueckfuehrung}
           />

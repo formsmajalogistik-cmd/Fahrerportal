@@ -4,6 +4,8 @@ import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { RouteFeldsatz } from '../../components/RouteFeldsatz';
+import { composeAdresse } from '../../lib/adresse';
 import { TfBlock } from '../../components/TfBlock';
 import { useScrollLock } from '../../lib/useScrollLock';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -83,14 +85,35 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   const [rueckStadt, setRueckStadt] = useState('');
   const [startdatum, setStartdatum] = useState('');
   const [enddatum, setEnddatum] = useState('');
+  // Auf Eis (Migration 086): Tour findet statt, Termin noch offen.
+  const [aufEis, setAufEis] = useState(false);
+  const [aufEisNotiz, setAufEisNotiz] = useState('');
   const [kennzeichenHin, setKennzeichenHin] = useState('');
   const [kennzeichenRueck, setKennzeichenRueck] = useState('');
   const [fin, setFin] = useState('');
   const [istEFahrzeug, setIstEFahrzeug] = useState(false);
   const [kundenname, setKundenname] = useState('');
-  const [adresseStart, setAdresseStart] = useState('');
-  const [adresseZiel, setAdresseZiel] = useState('');
-  const [adresseRueck, setAdresseRueck] = useState('');
+  // Adresse strukturiert (Migration 086). Die Stadt ist die Tour-Stadt
+  // — kein separates Adress-Stadt-Feld.
+  const [strasseStart, setStrasseStart] = useState('');
+  const [hausnummerStart, setHausnummerStart] = useState('');
+  const [plzStart, setPlzStart] = useState('');
+  const [strasseZiel, setStrasseZiel] = useState('');
+  const [hausnummerZiel, setHausnummerZiel] = useState('');
+  const [plzZiel, setPlzZiel] = useState('');
+  const [strasseRueck, setStrasseRueck] = useState('');
+  const [hausnummerRueck, setHausnummerRueck] = useState('');
+  const [plzRueck, setPlzRueck] = useState('');
+  // Zusammengesetzt — daran hängen Routenberechnung und Pflichtprüfung.
+  const adresseStart = composeAdresse({
+    strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: startStadt,
+  }) ?? '';
+  const adresseZiel = composeAdresse({
+    strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: zielStadt,
+  }) ?? '';
+  const adresseRueck = composeAdresse({
+    strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck, stadt: rueckStadt,
+  }) ?? '';
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   const [info, setInfo] = useState('');
   // Optionale Zusatzangaben. Zeiten sind Freitext je Station (081).
@@ -158,8 +181,10 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
     if (!tourenart) miss.add('tourenart');
     if (!startStadt.trim()) miss.add('startStadt');
     if (!zielStadt.trim()) miss.add('zielStadt');
-    if (!startdatum) miss.add('startdatum');
-    if (!enddatum) miss.add('enddatum');
+    // Ohne festen Termin darf das Datum leer bleiben — dann muss die
+    // Tour aber ausdrücklich auf Eis liegen.
+    if (!aufEis && !startdatum) miss.add('startdatum');
+    if (!aufEis && !enddatum) miss.add('enddatum');
     if (!kennzeichenHin.trim()) miss.add('kennzeichen');
     if (!fin.trim()) miss.add('fin');
     if (!kundenname.trim()) miss.add('kundenname');
@@ -195,8 +220,10 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       start_stadt: startStadt.trim(),
       ziel_stadt: zielStadt.trim(),
       rueckfuehrung_stadt: hatRueckfuehrung ? (rueckStadt.trim() || null) : null,
-      startdatum,
-      enddatum,
+      startdatum: startdatum || null,
+      enddatum: enddatum || null,
+      auf_eis: aufEis,
+      auf_eis_notiz: aufEis ? (aufEisNotiz.trim() || null) : null,
       tourenart: tourenart || null,
       kennzeichen,
       fin: fin.trim() || null,
@@ -205,6 +232,15 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       adresse_start: adresseStart.trim() || null,
       adresse_ziel: adresseZiel.trim() || null,
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
+      strasse_start: strasseStart.trim() || null,
+      hausnummer_start: hausnummerStart.trim() || null,
+      plz_start: plzStart.trim() || null,
+      strasse_ziel: strasseZiel.trim() || null,
+      hausnummer_ziel: hausnummerZiel.trim() || null,
+      plz_ziel: plzZiel.trim() || null,
+      strasse_rueckfuehrung: hatRueckfuehrung ? (strasseRueck.trim() || null) : null,
+      hausnummer_rueckfuehrung: hatRueckfuehrung ? (hausnummerRueck.trim() || null) : null,
+      plz_rueckfuehrung: hatRueckfuehrung ? (plzRueck.trim() || null) : null,
       fahrzeugmodell: fahrzeugmodell.trim() || null,
       fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
       zeit_start: zeitStart.trim() || null,
@@ -334,6 +370,20 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             </div>
           </TfBlock>
 
+          {/* Route — dieselben Städte wie in den Ort-Blöcken, hier an
+              der Stelle bearbeitbar, an der die Tour als Route erscheint. */}
+          <RouteFeldsatz
+            idPrefix="at"
+            pflicht
+            startStadt={startStadt} onStartStadt={setStartStadt}
+            zielStadt={zielStadt} onZielStadt={setZielStadt}
+            rueckStadt={hatRueckfuehrung ? rueckStadt : undefined}
+            onRueckStadt={hatRueckfuehrung ? setRueckStadt : undefined}
+            startFehler={missing.has('startStadt')}
+            zielFehler={missing.has('zielStadt')}
+            rueckFehler={missing.has('rueckStadt')}
+          />
+
           {/* 3 — Abholort */}
           <StationFeldsatz
             titel="Abholort"
@@ -341,7 +391,9 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             stadtLabel="Stadt"
             stadt={startStadt} onStadt={setStartStadt}
             stadtPflicht stadtFehler={missing.has('startStadt')}
-            adresse={adresseStart} onAdresse={setAdresseStart}
+            strasse={strasseStart} onStrasse={setStrasseStart}
+            hausnummer={hausnummerStart} onHausnummer={setHausnummerStart}
+            plz={plzStart} onPlz={setPlzStart}
             adressePflicht adresseFehler={missing.has('adresseStart')}
             zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={kontakte.start}
@@ -356,7 +408,9 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             stadtLabel="Stadt"
             stadt={zielStadt} onStadt={setZielStadt}
             stadtPflicht stadtFehler={missing.has('zielStadt')}
-            adresse={adresseZiel} onAdresse={setAdresseZiel}
+            strasse={strasseZiel} onStrasse={setStrasseZiel}
+            hausnummer={hausnummerZiel} onHausnummer={setHausnummerZiel}
+            plz={plzZiel} onPlz={setPlzZiel}
             adressePflicht adresseFehler={missing.has('adresseZiel')}
             zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={kontakte.ziel}
@@ -396,7 +450,9 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 stadtLabel="Stadt"
                 stadt={rueckStadt} onStadt={setRueckStadt}
                 stadtPflicht stadtFehler={missing.has('rueckStadt')}
-                adresse={adresseRueck} onAdresse={setAdresseRueck}
+                strasse={strasseRueck} onStrasse={setStrasseRueck}
+              hausnummer={hausnummerRueck} onHausnummer={setHausnummerRueck}
+              plz={plzRueck} onPlz={setPlzRueck}
                 adressePflicht adresseFehler={missing.has('adresseRueck')}
                 zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={kontakte.rueckfuehrung}
@@ -409,12 +465,16 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
           <TfBlock titel="Kilometer & Termine">
             <div className="tf-grid">
               <div className="sm:col-span-3 lg:col-span-2">
-                <label htmlFor="at-von" className="tf-label">Startdatum *</label>
+                <label htmlFor="at-von" className="tf-label">
+                  Startdatum{aufEis ? '' : ' *'}
+                </label>
                 <input id="at-von" type="date" className={inputCls('startdatum')}
                        value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
               </div>
               <div className="sm:col-span-3 lg:col-span-2">
-                <label htmlFor="at-bis" className="tf-label">Enddatum *</label>
+                <label htmlFor="at-bis" className="tf-label">
+                  Enddatum{aufEis ? '' : ' *'}
+                </label>
                 <input id="at-bis" type="date" className={inputCls('enddatum')}
                        value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
               </div>
@@ -440,6 +500,30 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                   />
                 </div>
               )}
+              {/* Auf Eis — Termin bewusst offen. */}
+              <div className="sm:col-span-6 lg:col-span-12">
+                <label className="tf-check">
+                  <input type="checkbox"
+                         checked={aufEis} onChange={(e) => setAufEis(e.target.checked)} />
+                  Auf Eis legen — Termin steht noch nicht fest
+                </label>
+                <p className="tf-hint">
+                  {aufEis
+                    ? 'Die Tour wird ohne Datum eingereicht und bleibt über den Filter „Auf Eis" auffindbar.'
+                    : 'Für Touren, die sicher stattfinden, aber noch kein festes Datum haben.'}
+                </p>
+              </div>
+              {aufEis && (
+                <div className="sm:col-span-6 lg:col-span-12">
+                  <label htmlFor="at-eis-notiz" className="tf-label">
+                    Notiz zur offenen Terminierung
+                  </label>
+                  <input id="at-eis-notiz" className="tf-input"
+                         placeholder="z.B. Kunde meldet sich Ende KW 34"
+                         value={aufEisNotiz} onChange={(e) => setAufEisNotiz(e.target.value)} />
+                </div>
+              )}
+
               <div className="sm:col-span-6 lg:col-span-2">
                 <span className="tf-label">km gesamt</span>
                 <div className="rounded-md bg-maja-light px-2 py-1.5 text-sm font-semibold text-maja-navy">

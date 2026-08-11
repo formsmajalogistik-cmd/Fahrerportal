@@ -11,9 +11,10 @@ import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
 import { useTestGuard } from '../../auth/TestModeContext';
-import { AnsprechpartnerFeldsatz } from '../../components/AnsprechpartnerFeldsatz';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
-import { ZEIT_PLATZHALTER } from '../../components/StationFeldsatz';
+import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { RouteFeldsatz } from '../../components/RouteFeldsatz';
+import { composeAdresse, effektiveAdresse } from '../../lib/adresse';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { TfBlock } from '../../components/TfBlock';
 import {
@@ -100,6 +101,9 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const [tourenart, setTourenart]   = useState<TourenArt | ''>('');
   const [startdatum, setStartdatum] = useState('');
   const [enddatum, setEnddatum]     = useState('');
+  // Auf Eis (Migration 086): Tour findet statt, Termin noch offen.
+  const [aufEis, setAufEis] = useState(false);
+  const [aufEisNotiz, setAufEisNotiz] = useState('');
 
   // Rechnungsdatum (optional, abweichend vom Tourendatum)
   const [rechnungsdatumAbweichend, setRechnungsdatumAbweichend] = useState(false);
@@ -128,9 +132,18 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   // bisher nur im Tour-Detail-Panel im Edit-Modus angeboten — für den
   // Side-by-Side aus dem Posteingang stehen sie ebenfalls hier zur
   // Verfügung.
-  const [adresseStart, setAdresseStart] = useState('');
-  const [adresseZiel, setAdresseZiel] = useState('');
-  const [adresseRueckfuehrung, setAdresseRueckfuehrung] = useState('');
+  // Adresse strukturiert (Migration 086): Straße / Nr. / PLZ je
+  // Station. Die Stadt ist die Tour-Stadt (startStadt/zielStadt/
+  // rueckfuehrungStadt) — kein zweites Feld.
+  const [strasseStart, setStrasseStart] = useState('');
+  const [hausnummerStart, setHausnummerStart] = useState('');
+  const [plzStart, setPlzStart] = useState('');
+  const [strasseZiel, setStrasseZiel] = useState('');
+  const [hausnummerZiel, setHausnummerZiel] = useState('');
+  const [plzZiel, setPlzZiel] = useState('');
+  const [strasseRueck, setStrasseRueck] = useState('');
+  const [hausnummerRueck, setHausnummerRueck] = useState('');
+  const [plzRueck, setPlzRueck] = useState('');
   const [stationsKontakte, setStationsKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   // Optionale Zusatzangaben (Migration 080).
   const [fahrzeugmodell, setFahrzeugmodell] = useState('');
@@ -200,6 +213,18 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
 
   const isAba = tourenart === 'ABA';
 
+  // Zusammengesetzte Adressen — daran hängen Auftrags-E-Mail,
+  // Excel-Export und die Routenberechnung.
+  const adresseStart = useMemo(() => effektiveAdresse(
+    { strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: startStadt }, null,
+  ), [strasseStart, hausnummerStart, plzStart, startStadt]);
+  const adresseZiel = useMemo(() => effektiveAdresse(
+    { strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: zielStadt }, null,
+  ), [strasseZiel, hausnummerZiel, plzZiel, zielStadt]);
+  const adresseRueckfuehrung = useMemo(() => effektiveAdresse(
+    { strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck, stadt: rueckfuehrungStadt }, null,
+  ), [strasseRueck, hausnummerRueck, plzRueck, rueckfuehrungStadt]);
+
   const kmGesamt = useMemo(() => computeKmGesamt({
     km_hin: parseInteger(kmHin),
     km_rueck: parseInteger(kmRueck),
@@ -256,6 +281,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     if (hatRueckfuehrung) {
       setHatRueckfuehrung(false);
       setRueckfuehrungStadt('');
+      setStrasseRueck(''); setHausnummerRueck(''); setPlzRueck('');
       setKmRueck('');
       setKennzeichenRueck('');
       setFinRueck('');
@@ -300,8 +326,10 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       setError('Start-Stadt und Ziel-Stadt sind Pflichtfelder.');
       return;
     }
-    if (!startdatum || !enddatum) {
-      setError('Start- und Enddatum sind Pflichtfelder.');
+    // Touren auf Eis dürfen ohne Datum angelegt werden.
+    if (!aufEis && (!startdatum || !enddatum)) {
+      setError('Start- und Enddatum sind Pflichtfelder. '
+        + 'Ohne festen Termin die Tour auf Eis legen.');
       return;
     }
 
@@ -344,8 +372,8 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     // <input type="date"> liefert direkt "YYYY-MM-DD" — exakt das Format,
     // das eine Postgres-date-Spalte erwartet. Keine Timezone-Umrechnung.
     // startdatum/enddatum sind seit Migration 028 NOT NULL.
-    const dateStart = startdatum;
-    const dateEnd   = enddatum;
+    const dateStart = startdatum || null;
+    const dateEnd   = enddatum || null;
     const willBeCompleted = computeTourStatus(dateStart, dateEnd) === 'abgeschlossen';
     const greimelEffective = isGreimelAuftraggeber(ag) && protokollArt === 'app' && !willBeCompleted
       ? greimelZugangId
@@ -368,6 +396,9 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       tourenart: tourenart || null,
       startdatum: dateStart,
       enddatum: dateEnd,
+      auf_eis: aufEis,
+      auf_eis_notiz: aufEis ? (aufEisNotiz.trim() || null) : null,
+      auf_eis_seit: aufEis ? new Date().toISOString() : null,
       ist_sondervereinbarung: istSondervereinbarung,
       sondervereinbarung: istSondervereinbarung
         ? (sondervereinbarung.trim() || null)
@@ -388,9 +419,25 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       // Rechnungsdatum und würde nie in eine Rechnung gezogen.
       rechnungsdatum_abweichend: rechnungsdatumAbweichend && !!rechnungsdatum,
       rechnungsdatum: rechnungsdatumAbweichend && rechnungsdatum ? rechnungsdatum : null,
-      adresse_start: adresseStart.trim() || null,
-      adresse_ziel: adresseZiel.trim() || null,
-      adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueckfuehrung.trim() || null) : null,
+      adresse_start: composeAdresse({
+        strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: start,
+      }),
+      adresse_ziel: composeAdresse({
+        strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: ziel,
+      }),
+      adresse_rueckfuehrung: hatRueckfuehrung ? composeAdresse({
+        strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck,
+        stadt: rueckfuehrungStadt.trim(),
+      }) : null,
+      strasse_start: strasseStart.trim() || null,
+      hausnummer_start: hausnummerStart.trim() || null,
+      plz_start: plzStart.trim() || null,
+      strasse_ziel: strasseZiel.trim() || null,
+      hausnummer_ziel: hausnummerZiel.trim() || null,
+      plz_ziel: plzZiel.trim() || null,
+      strasse_rueckfuehrung: hatRueckfuehrung ? (strasseRueck.trim() || null) : null,
+      hausnummer_rueckfuehrung: hatRueckfuehrung ? (hausnummerRueck.trim() || null) : null,
+      plz_rueckfuehrung: hatRueckfuehrung ? (plzRueck.trim() || null) : null,
       // kontakt_* setzt der Spiegel-Trigger aus tour_ansprechpartner.
       fahrzeugmodell: fahrzeugmodell.trim() || null,
       fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
@@ -633,6 +680,18 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             </div>
           </TfBlock>
 
+          {/* Route — dieselben Städte wie in den Ort-Blöcken, hier an
+              der Stelle bearbeitbar, an der sie in der Tourenliste
+              erscheinen. Gleicher State, also immer identisch. */}
+          <RouteFeldsatz
+            idPrefix="t"
+            pflicht
+            startStadt={startStadt} onStartStadt={setStartStadt}
+            zielStadt={zielStadt} onZielStadt={setZielStadt}
+            rueckStadt={hatRueckfuehrung ? rueckfuehrungStadt : undefined}
+            onRueckStadt={hatRueckfuehrung ? setRueckfuehrungStadt : undefined}
+          />
+
           {/* ---------------------------------------------------------
               2 — Fahrzeug Hinfahrt
               --------------------------------------------------------- */}
@@ -669,14 +728,14 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
           {/* ---------------------------------------------------------
               3 — Abholort
               --------------------------------------------------------- */}
-          <StationBlock
+          <StationFeldsatz
             titel="Abholort"
             idPrefix="t-st1"
-            stadtLabel="Stadt *"
+            stadtLabel="Stadt" stadtPflicht
             stadt={startStadt} onStadt={setStartStadt}
-            stadtRequired
-            adresseLabel="Adresse (Straße, Nr., PLZ)"
-            adresse={adresseStart} onAdresse={setAdresseStart}
+            strasse={strasseStart} onStrasse={setStrasseStart}
+            hausnummer={hausnummerStart} onHausnummer={setHausnummerStart}
+            plz={plzStart} onPlz={setPlzStart}
             zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={stationsKontakte.start}
             onKontakte={(next) => setStationsKontakte((m) => ({ ...m, start: next }))}
@@ -685,14 +744,14 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
           {/* ---------------------------------------------------------
               4 — Zielort
               --------------------------------------------------------- */}
-          <StationBlock
+          <StationFeldsatz
             titel="Zielort"
             idPrefix="t-st2"
-            stadtLabel="Stadt *"
+            stadtLabel="Stadt" stadtPflicht
             stadt={zielStadt} onStadt={setZielStadt}
-            stadtRequired
-            adresseLabel="Adresse (Straße, Nr., PLZ)"
-            adresse={adresseZiel} onAdresse={setAdresseZiel}
+            strasse={strasseZiel} onStrasse={setStrasseZiel}
+            hausnummer={hausnummerZiel} onHausnummer={setHausnummerZiel}
+            plz={plzZiel} onPlz={setPlzZiel}
             zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={stationsKontakte.ziel}
             onKontakte={(next) => setStationsKontakte((m) => ({ ...m, ziel: next }))}
@@ -745,14 +804,15 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               {/* -----------------------------------------------------
                   6 — Rückführungsort (nur ABA/ABC)
                   ----------------------------------------------------- */}
-              <StationBlock
+              <StationFeldsatz
                 titel="Rückführungsort"
                 idPrefix="t-st3"
                 akzent="rueck"
                 stadtLabel="Stadt"
                 stadt={rueckfuehrungStadt} onStadt={setRueckfuehrungStadt}
-                adresseLabel="Adresse (Straße, Nr., PLZ)"
-                adresse={adresseRueckfuehrung} onAdresse={setAdresseRueckfuehrung}
+                strasse={strasseRueck} onStrasse={setStrasseRueck}
+                hausnummer={hausnummerRueck} onHausnummer={setHausnummerRueck}
+                plz={plzRueck} onPlz={setPlzRueck}
                 zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={stationsKontakte.rueckfuehrung}
                 onKontakte={(next) => setStationsKontakte((m) => ({ ...m, rueckfuehrung: next }))}
@@ -776,16 +836,16 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             <div className="tf-grid">
               <div className="sm:col-span-3 lg:col-span-2">
                 <label htmlFor="t-start-dt" className="tf-label">
-                  Startdatum <span className="text-red-600">*</span>
+                  Startdatum {!aufEis && <span className="text-red-600">*</span>}
                 </label>
-                <input id="t-start-dt" type="date" className="tf-input" required
+                <input id="t-start-dt" type="date" className="tf-input" required={!aufEis}
                        value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
               </div>
               <div className="sm:col-span-3 lg:col-span-2">
                 <label htmlFor="t-end-dt" className="tf-label">
-                  Enddatum <span className="text-red-600">*</span>
+                  Enddatum {!aufEis && <span className="text-red-600">*</span>}
                 </label>
-                <input id="t-end-dt" type="date" className="tf-input" required
+                <input id="t-end-dt" type="date" className="tf-input" required={!aufEis}
                        value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
               </div>
               <div className="sm:col-span-3 lg:col-span-3">
@@ -818,6 +878,30 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                   {formatKm(kmGesamt)}
                 </div>
               </div>
+
+              {/* Auf Eis — Termin bewusst offen. */}
+              <div className="sm:col-span-6 lg:col-span-12">
+                <label className="tf-check">
+                  <input type="checkbox"
+                         checked={aufEis} onChange={(e) => setAufEis(e.target.checked)} />
+                  Auf Eis legen — Termin steht noch nicht fest
+                </label>
+                <p className="tf-hint">
+                  {aufEis
+                    ? 'Die Tour wird ohne Datum angelegt und bleibt über den Bereich „Auf Eis" in der Tourenliste auffindbar.'
+                    : 'Für Touren, die sicher stattfinden, aber noch kein festes Datum haben.'}
+                </p>
+              </div>
+              {aufEis && (
+                <div className="sm:col-span-6 lg:col-span-12">
+                  <label htmlFor="t-eis-notiz" className="tf-label">
+                    Notiz zur offenen Terminierung
+                  </label>
+                  <input id="t-eis-notiz" className="tf-input"
+                         placeholder="z.B. Kunde meldet sich Ende KW 34"
+                         value={aufEisNotiz} onChange={(e) => setAufEisNotiz(e.target.value)} />
+                </div>
+              )}
 
               {/* Abrechnungs-Ausnahme — nur bei ABA. */}
               {isAba && (
@@ -875,7 +959,8 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             <button
               type="submit"
               className="btn-primary"
-              disabled={saving || !startStadt.trim() || !zielStadt.trim() || !startdatum || !enddatum}
+              disabled={saving || !startStadt.trim() || !zielStadt.trim()
+                || (!aufEis && (!startdatum || !enddatum))}
             >
               {saving ? 'Anlegen …' : 'Tour anlegen'}
             </button>
@@ -971,66 +1056,5 @@ function RouteSmallIcon({ className }: { className?: string }) {
       <circle cx="18" cy="5" r="2" />
       <path d="M8 19h6a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8h6" />
     </svg>
-  );
-}
-
-
-/**
- * Ort-Block: Stadt, Adresse, Zeit und die Ansprechpartner einer Station
- * gehören zusammen — auf Desktop in einer Zeile (3/6/3 von 12), damit
- * das Formular kurz bleibt. Auf Tablet bekommt jedes Feld mindestens
- * eine halbe Zeile, die Zeit rutscht dabei nach unten.
- */
-function StationBlock({
-  titel, idPrefix, akzent, aktion, stadtLabel, stadt, onStadt, stadtRequired,
-  adresseLabel, adresse, onAdresse, zeit, onZeit, zeitLabel, kontakte, onKontakte,
-}: {
-  titel: string;
-  idPrefix: string;
-  akzent?: 'hin' | 'rueck';
-  aktion?: React.ReactNode;
-  stadtLabel: string;
-  stadt: string;
-  onStadt: (v: string) => void;
-  stadtRequired?: boolean;
-  adresseLabel: string;
-  adresse: string;
-  onAdresse: (v: string) => void;
-  zeit: string;
-  onZeit: (v: string) => void;
-  /** Beschriftung des Zeitfelds, z.B. "Zeit Abholung". */
-  zeitLabel: string;
-  kontakte: KontaktMap[keyof KontaktMap];
-  onKontakte: (next: KontaktMap[keyof KontaktMap]) => void;
-}) {
-  return (
-    <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
-      <div className="tf-grid">
-        <div className="sm:col-span-3 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-stadt`} className="tf-label">{stadtLabel}</label>
-          <input id={`${idPrefix}-stadt`} className="tf-input" required={stadtRequired}
-                 value={stadt} onChange={(e) => onStadt(e.target.value)} />
-        </div>
-        <div className="sm:col-span-3 lg:col-span-6">
-          <label htmlFor={`${idPrefix}-adr`} className="tf-label">{adresseLabel}</label>
-          <input id={`${idPrefix}-adr`} className="tf-input"
-                 value={adresse} onChange={(e) => onAdresse(e.target.value)} />
-        </div>
-        <div className="sm:col-span-3 lg:col-span-3">
-          <label htmlFor={`${idPrefix}-zeit`} className="tf-label">{zeitLabel}</label>
-          <input id={`${idPrefix}-zeit`} className="tf-input"
-                 placeholder={ZEIT_PLATZHALTER}
-                 value={zeit} onChange={(e) => onZeit(e.target.value)} />
-        </div>
-      </div>
-      <div className="mt-2">
-        <AnsprechpartnerFeldsatz
-          titel="Ansprechpartner"
-          idPrefix={`${idPrefix}-k`}
-          liste={kontakte}
-          onChange={onKontakte}
-        />
-      </div>
-    </TfBlock>
   );
 }

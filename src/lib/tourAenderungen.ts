@@ -39,6 +39,18 @@ const FELD_LABEL: Record<string, string> = {
   km_hin: 'km Hin',
   km_rueck: 'km Rück',
   km_gesamt: 'km gesamt',
+  // Migration 086
+  strasse_start: 'Straße Start',
+  hausnummer_start: 'Hausnummer Start',
+  plz_start: 'PLZ Start',
+  strasse_ziel: 'Straße Ziel',
+  hausnummer_ziel: 'Hausnummer Ziel',
+  plz_ziel: 'PLZ Ziel',
+  strasse_rueckfuehrung: 'Straße Rückführung',
+  hausnummer_rueckfuehrung: 'Hausnummer Rückführung',
+  plz_rueckfuehrung: 'PLZ Rückführung',
+  auf_eis: 'Terminierung',
+  auf_eis_notiz: 'Notiz zur Terminierung',
   ansprechpartner_start: 'Ansprechpartner Start',
   ansprechpartner_ziel: 'Ansprechpartner Ziel',
   ansprechpartner_rueckfuehrung: 'Ansprechpartner Rückführung',
@@ -48,9 +60,22 @@ export function feldLabel(feld: string): string {
   return FELD_LABEL[feld] ?? feld;
 }
 
+/**
+ * Ganze Änderungszeile in Klartext, wo "nein → ja" nichts sagt.
+ * Gibt null zurück, wenn die normale Feld/Alt/Neu-Darstellung reicht.
+ */
+export function aenderungSatz(feld: string, wertNeu: string | null): string | null {
+  if (feld !== 'auf_eis') return null;
+  return wertNeu === 'ja'
+    ? 'Tour auf Eis gelegt (Termin offen)'
+    : 'Terminierung aufgehoben';
+}
+
 /** Datumsfelder im Protokoll als deutsches Datum ausgeben. */
 export function wertLabel(feld: string, wert: string | null): string {
   if (wert == null || wert === '') return '—';
+  // "ja/nein" bei der Terminierung ist für sich genommen nichtssagend.
+  if (feld === 'auf_eis') return wert === 'ja' ? 'auf Eis' : 'terminiert';
   if (feld === 'startdatum' || feld === 'enddatum') {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(wert);
     if (m) return `${m[3]}.${m[2]}.${m[1]}`;

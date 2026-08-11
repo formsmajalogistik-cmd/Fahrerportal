@@ -83,6 +83,17 @@ export const AUFTRAGS_PLATZHALTER: Array<{ token: string; label: string }> = [
   { token: '{adresse_start}', label: 'Adresse Start' },
   { token: '{adresse_ziel}', label: 'Adresse Ziel' },
   { token: '{adresse_rueckfuehrung}', label: 'Adresse Rückführung' },
+  // Migration 086 — Adressteile zusätzlich einzeln mappbar. Die
+  // zusammengesetzten {adresse_*} bleiben unverändert erhalten.
+  { token: '{strasse_start}', label: 'Straße Start' },
+  { token: '{hausnummer_start}', label: 'Hausnummer Start' },
+  { token: '{plz_start}', label: 'PLZ Start' },
+  { token: '{strasse_ziel}', label: 'Straße Ziel' },
+  { token: '{hausnummer_ziel}', label: 'Hausnummer Ziel' },
+  { token: '{plz_ziel}', label: 'PLZ Ziel' },
+  { token: '{strasse_rueckfuehrung}', label: 'Straße Rückführung' },
+  { token: '{hausnummer_rueckfuehrung}', label: 'Hausnummer Rückführung' },
+  { token: '{plz_rueckfuehrung}', label: 'PLZ Rückführung' },
   { token: '{kontakt_start}', label: 'Ansprechpartner Start' },
   { token: '{kontakt_ziel}', label: 'Ansprechpartner Ziel' },
   { token: '{kontakt_rueckfuehrung}', label: 'Ansprechpartner Rückführung' },
@@ -135,6 +146,15 @@ export interface AuftragsTour {
   ziel_stadt: string;
   rueckfuehrung_stadt: string | null;
   adresse_start: string | null;
+  strasse_start?: string | null;
+  hausnummer_start?: string | null;
+  plz_start?: string | null;
+  strasse_ziel?: string | null;
+  hausnummer_ziel?: string | null;
+  plz_ziel?: string | null;
+  strasse_rueckfuehrung?: string | null;
+  hausnummer_rueckfuehrung?: string | null;
+  plz_rueckfuehrung?: string | null;
   adresse_ziel: string | null;
   adresse_rueckfuehrung: string | null;
   zeit_start: string | null;
@@ -195,6 +215,15 @@ export async function buildPlatzhalter(
     zeit_ziel: tour.zeit_ziel ?? '',
     zeit_rueckfuehrung: tour.zeit_rueckfuehrung ?? '',
     adresse_start: tour.adresse_start ?? '',
+    strasse_start: tour.strasse_start ?? '',
+    hausnummer_start: tour.hausnummer_start ?? '',
+    plz_start: tour.plz_start ?? '',
+    strasse_ziel: tour.strasse_ziel ?? '',
+    hausnummer_ziel: tour.hausnummer_ziel ?? '',
+    plz_ziel: tour.plz_ziel ?? '',
+    strasse_rueckfuehrung: tour.strasse_rueckfuehrung ?? '',
+    hausnummer_rueckfuehrung: tour.hausnummer_rueckfuehrung ?? '',
+    plz_rueckfuehrung: tour.plz_rueckfuehrung ?? '',
     adresse_ziel: tour.adresse_ziel ?? '',
     adresse_rueckfuehrung: tour.adresse_rueckfuehrung ?? '',
     kontakt_start: kText.start,

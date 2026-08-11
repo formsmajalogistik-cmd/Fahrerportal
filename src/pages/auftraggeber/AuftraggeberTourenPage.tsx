@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
+import { effektiveAdresse } from '../../lib/adresse';
 import { asPdfPathList, downloadFormPdf, previewFormPdf } from '../../lib/pdfGenerate';
 import { DownloadIcon, EyeIcon } from '../../components/icons';
 import { AuftraggeberTourCreateDialog } from './AuftraggeberTourCreateDialog';
@@ -43,7 +44,7 @@ const STATUS_BADGE: Record<TourStatus, string> = {
   abgeschlossen: 'bg-gray-100 text-gray-600',
 };
 
-type StatusFilter = 'alle' | TourStatus | 'pruefung';
+type StatusFilter = 'alle' | TourStatus | 'pruefung' | 'auf_eis';
 
 export function AuftraggeberTourenPage() {
   // Test-User wählen den simulierten Auftraggeber im Banner. Für echte
@@ -101,8 +102,12 @@ export function AuftraggeberTourenPage() {
           kundenname, auftraggeber_id, startdatum, enddatum, tourenart,
           kennzeichen, ist_e_fahrzeug, fin,
           adresse_start, adresse_ziel, adresse_rueckfuehrung,
+          strasse_start, hausnummer_start, plz_start,
+          strasse_ziel, hausnummer_ziel, plz_ziel,
+          strasse_rueckfuehrung, hausnummer_rueckfuehrung, plz_rueckfuehrung,
           kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
           protokoll_art, info, bestaetigt, erstellt_von, created_at,
+          auf_eis, auf_eis_notiz,
           abgelehnt, ablehnungsgrund, abgelehnt_am, ablehnung_bestaetigt_am,
           eingang_id, eingang_id_bc
         `)
@@ -172,7 +177,13 @@ export function AuftraggeberTourenPage() {
     return rows.filter((t) => {
       if (statusFilter === 'pruefung') {
         if (t.bestaetigt) return false;
+      } else if (statusFilter === 'auf_eis') {
+        if (!t.auf_eis) return false;
       } else if (statusFilter !== 'alle') {
+        // Touren auf Eis haben oft gar kein Datum — sie würden aus
+        // jedem datumsbasierten Status fallen und wären dann nicht mehr
+        // auffindbar. Deshalb bleiben sie überall sichtbar.
+        if (t.auf_eis) return true;
         if (!t.bestaetigt) return false;
         if (computeTourStatus(t.startdatum, t.enddatum) !== statusFilter) return false;
       }
@@ -225,9 +236,17 @@ export function AuftraggeberTourenPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <div className="flex flex-wrap gap-1">
-          {(['alle', 'aktiv', 'geplant', 'abgeschlossen', 'pruefung'] as const).map((s) => {
+          {(['alle', 'aktiv', 'geplant', 'abgeschlossen', 'pruefung', 'auf_eis'] as const).map((s) => {
             const active = statusFilter === s;
-            const label = s === 'alle' ? 'Alle' : s === 'pruefung' ? 'In Prüfung' : STATUS_LABEL[s];
+            const anzahlEis = rows.filter((t) => t.auf_eis).length;
+            const label = s === 'alle'
+              ? 'Alle'
+              : s === 'pruefung'
+                ? 'In Prüfung'
+                : s === 'auf_eis'
+                  ? `Auf Eis (${anzahlEis})`
+                  : STATUS_LABEL[s];
+            if (s === 'auf_eis' && anzahlEis === 0 && statusFilter !== 'auf_eis') return null;
             return (
               <button
                 key={s}
@@ -357,6 +376,16 @@ function KundenTourCard({
               <h3 className="text-base font-semibold text-maja-navy break-words">
                 {tourTitel(tour)}
               </h3>
+              {tour.auf_eis && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-800 dark:!bg-cyan-900 dark:!text-cyan-100"
+                  title={tour.auf_eis_notiz
+                    ? `Termin noch offen — ${tour.auf_eis_notiz}`
+                    : 'Termin noch offen. Ein eingetragenes Datum ist unverbindlich.'}
+                >
+                  <span aria-hidden="true">❄</span> Auf Eis
+                </span>
+              )}
               {hatNotiz && (
                 <span
                   className="inline-flex items-center gap-1 rounded-full bg-maja-navy/10 px-2 py-0.5 text-[10px] font-semibold text-maja-navy"
@@ -367,7 +396,12 @@ function KundenTourCard({
               )}
             </div>
             <div className="mt-2 grid gap-1.5 text-sm text-maja-ink sm:grid-cols-2">
-              <div>{dateRange}</div>
+              <div>
+                {tour.startdatum || tour.enddatum ? dateRange : 'Termin offen'}
+                {tour.auf_eis && (tour.startdatum || tour.enddatum) && (
+                  <span className="ml-1 text-xs text-maja-muted">(unverbindlich)</span>
+                )}
+              </div>
               {tour.tourenart && <div>Tourenart: {tour.tourenart}</div>}
               {(tour.kennzeichen ?? []).length > 0 && (
                 <div>
@@ -465,25 +499,33 @@ function KundenTourCard({
 
         {expanded && (
           <div className="mt-4 grid gap-3 border-t border-maja-navy/10 pt-4 sm:grid-cols-2">
+            {/* Adressen aus den Einzelteilen (Migration 086);
+                Bestandstouren zeigen weiter ihren Freitext. */}
             <div className="space-y-2">
-              {tour.adresse_start && (
-                <div>
-                  <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">Adresse Start</span>
-                  <div className="text-sm text-maja-ink">{tour.adresse_start}</div>
-                </div>
-              )}
-              {tour.adresse_ziel && (
-                <div>
-                  <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">Adresse Ziel</span>
-                  <div className="text-sm text-maja-ink">{tour.adresse_ziel}</div>
-                </div>
-              )}
-              {tour.adresse_rueckfuehrung && (
-                <div>
-                  <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">Adresse Rückführung</span>
-                  <div className="text-sm text-maja-ink">{tour.adresse_rueckfuehrung}</div>
-                </div>
-              )}
+              <AdresseZeile
+                label="Adresse Start"
+                wert={effektiveAdresse(
+                  { strasse: tour.strasse_start, hausnummer: tour.hausnummer_start,
+                    plz: tour.plz_start, stadt: tour.start_stadt },
+                  tour.adresse_start,
+                )}
+              />
+              <AdresseZeile
+                label="Adresse Ziel"
+                wert={effektiveAdresse(
+                  { strasse: tour.strasse_ziel, hausnummer: tour.hausnummer_ziel,
+                    plz: tour.plz_ziel, stadt: tour.ziel_stadt },
+                  tour.adresse_ziel,
+                )}
+              />
+              <AdresseZeile
+                label="Adresse Rückführung"
+                wert={effektiveAdresse(
+                  { strasse: tour.strasse_rueckfuehrung, hausnummer: tour.hausnummer_rueckfuehrung,
+                    plz: tour.plz_rueckfuehrung, stadt: tour.rueckfuehrung_stadt },
+                  tour.adresse_rueckfuehrung,
+                )}
+              />
             </div>
             <div className="space-y-2">
               <KontaktZeile label="Kontakt Start" kontakt={asKontakt(tour.kontakt_start)} />
@@ -654,5 +696,16 @@ function KundenPdfButton({
         {label}
       </button>
     </span>
+  );
+}
+
+/** Eine Adresszeile im aufgeklappten Bereich — leere Werte bleiben weg. */
+function AdresseZeile({ label, wert }: { label: string; wert: string }) {
+  if (!wert.trim()) return null;
+  return (
+    <div>
+      <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">{label}</span>
+      <div className="text-sm text-maja-ink">{wert}</div>
+    </div>
   );
 }

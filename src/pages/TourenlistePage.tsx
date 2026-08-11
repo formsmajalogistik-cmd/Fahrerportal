@@ -23,7 +23,7 @@ import {
   asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../lib/pdfGenerate';
 import {
-  feldLabel, ladeOffeneAenderungen, quittiereAenderungen, wertLabel,
+  aenderungSatz, feldLabel, ladeOffeneAenderungen, quittiereAenderungen, wertLabel,
   type AenderungsGruppe,
 } from '../lib/tourAenderungen';
 import {
@@ -238,7 +238,8 @@ export function TourenlistePage() {
       eingang_id, eingang_id_bc, km_gesamt,
       bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
       abgelehnt, zurueckgestellt,
-      zeit_start, zeit_ziel
+      zeit_start, zeit_ziel,
+      auf_eis, auf_eis_notiz
     `;
     const adminCols = `${baseCols},
       verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
@@ -399,6 +400,9 @@ export function TourenlistePage() {
     const ohneRechnung = new Set<string>();
     if (!isAdmin) return { keinPreis, ohneRechnung };
     for (const t of rows) {
+      // Touren auf Eis sind bewusst offen — kein Preis und keine
+      // Rechnung sind dort der Normalfall, also keine Warnung.
+      if (t.auf_eis) continue;
       if (!t.enddatum || t.enddatum < hinweisCutoffYmd) continue;
       const s = computeTourStatus(t.startdatum, t.enddatum);
       if ((s === 'aktiv' || s === 'abgeschlossen') && !(Number(t.verguetung) > 0)) {
@@ -506,6 +510,15 @@ export function TourenlistePage() {
     [offeneEinreichungen],
   );
 
+  // ---- Touren auf Eis (Migration 086) ----
+  // Eigener, jederzeit erreichbarer Bereich: diese Touren haben oft gar
+  // kein Datum und würden sonst durch jeden Datumsfilter fallen.
+  const aufEisRows = useMemo(
+    () => sortiereNachStart((rows ?? []).filter((t) => t.auf_eis && t.bestaetigt !== false)),
+    [rows],
+  );
+  const [aufEisOffen, setAufEisOffen] = useState(false);
+
   const [zurueckOffen, setZurueckOffen] = useState(false);
   /** Auswahl für die Sammelaktion "Ausgewählte zurückstellen". */
   const [selectedEinreichungen, setSelectedEinreichungen] = useState<Set<string>>(new Set());
@@ -557,6 +570,9 @@ export function TourenlistePage() {
     return (rows ?? []).filter((t) => {
       // Unbestätigte Touren laufen über den eigenen Bereich oben.
       if (t.bestaetigt === false) return false;
+      // Touren auf Eis laufen über den eigenen Bereich — sie haben oft
+      // gar kein Datum und dürfen nicht aus der Ansicht fallen.
+      if (t.auf_eis) return false;
       const ref = t?.enddatum ?? t?.startdatum;
       if (!ref) return false;
       const d = new Date(ref);
@@ -941,14 +957,25 @@ export function TourenlistePage() {
                   </div>
                 </div>
                 <ul className="mt-2 space-y-1">
-                  {g.eintraege.map((e) => (
-                    <li key={e.id} className="text-sm text-maja-ink">
-                      <span className="font-medium">{feldLabel(e.feld)}:</span>{' '}
-                      <span className="text-maja-muted">{wertLabel(e.feld, e.wert_alt)}</span>
-                      {' → '}
-                      <span className="font-medium">{wertLabel(e.feld, e.wert_neu)}</span>
-                    </li>
-                  ))}
+                  {g.eintraege.map((e) => {
+                    // Manche Änderungen liest man als Satz besser als
+                    // im Schema "Feld: alt → neu" (z.B. auf Eis).
+                    const satz = aenderungSatz(e.feld, e.wert_neu);
+                    return (
+                      <li key={e.id} className="text-sm text-maja-ink">
+                        {satz ? (
+                          <span className="font-medium">{satz}</span>
+                        ) : (
+                          <>
+                            <span className="font-medium">{feldLabel(e.feld)}:</span>{' '}
+                            <span className="text-maja-muted">{wertLabel(e.feld, e.wert_alt)}</span>
+                            {' → '}
+                            <span className="font-medium">{wertLabel(e.feld, e.wert_neu)}</span>
+                          </>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </li>
             ))}
@@ -984,6 +1011,53 @@ export function TourenlistePage() {
                     onBestaetigen={() => void handleBestaetigen(t)}
                     onAblehnen={() => setRejecting(t)}
                     onReaktivieren={() => void setZurueckgestellt([t.id], false)}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Touren auf Eis — bewusst VOR dem Datums-Filter und komplett
+          unabhängig davon: diese Touren haben oft gar kein Datum und
+          würden sonst je nach gewähltem Zeitraum verschwinden. */}
+      {aufEisRows.length > 0 && (
+        <section className="rounded-xl border border-sky-300 bg-white dark:border-sky-400/30">
+          <button
+            type="button"
+            onClick={() => setAufEisOffen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+            aria-expanded={aufEisOffen}
+          >
+            <span className="text-sm font-semibold text-maja-navy">
+              <span aria-hidden="true">❄</span> Auf Eis ({aufEisRows.length})
+            </span>
+            <span className="text-xs text-maja-muted">
+              {aufEisOffen ? 'Einklappen' : 'Ausklappen'}
+            </span>
+          </button>
+          {aufEisOffen && (
+            <div className="border-t border-maja-navy/10 px-4 py-3">
+              <p className="mb-2 text-xs text-maja-muted">
+                Touren, die sicher stattfinden, aber noch keinen festen Termin
+                haben. Unabhängig vom Datumsfilter immer hier zu finden.
+              </p>
+              <ul className="space-y-3">
+                {aufEisRows.map((t) => (
+                  <TourCard
+                    key={t.id}
+                    tour={t}
+                    onOpen={() => setOpenTourId(t.id)}
+                    onOpenProtokoll={(templateId) => void openSchriftlichesProtokoll(t, templateId)}
+                    opening={openingProtokoll}
+                    isAdmin={isAdmin}
+                    todayYmd={todayYmd}
+                    onToggleBearbeitet={() => void toggleBearbeitet(t.id, t.bearbeitet_markiert_am ?? null)}
+                    rechnungsnummern={rechnungByTour[t.id]}
+                    hinweisKeinPreis={false}
+                    hinweisOhneRechnung={false}
+                    geaendert={geaenderteTourIds.has(t.id)}
                   />
                 ))}
               </ul>
@@ -1551,7 +1625,18 @@ function TourCard({
             <div className="mt-3 grid gap-2 text-sm text-maja-ink sm:grid-cols-2">
               <Meta icon={<IconUser />}>{fahrerName}</Meta>
               {isAdmin && <Meta icon={<IconPin />}>{formatKm(tour.km_gesamt)}</Meta>}
-              {dateRange && <Meta icon={<IconCalendar />}>{dateRange}</Meta>}
+              {/* Ohne Datum (Tour auf Eis) statt Leerstelle ein klarer
+                  Hinweis — sonst wirkt die Karte unvollständig. */}
+              {dateRange
+                ? (
+                  <Meta icon={<IconCalendar />}>
+                    {dateRange}
+                    {tour.auf_eis && (
+                      <span className="ml-1 text-xs text-maja-muted">(unverbindlich)</span>
+                    )}
+                  </Meta>
+                )
+                : tour.auf_eis && <Meta icon={<IconCalendar />}>Termin offen</Meta>}
               {((tour.kennzeichen ?? []).length > 0) && (
                 <Meta icon={<IconCar />}>
                   {(tour.kennzeichen ?? []).join(', ')}
@@ -1697,6 +1782,18 @@ function TourCard({
                 title="Abweichendes Rechnungsdatum — die Tour wird zu diesem Datum abgerechnet, nicht zum Enddatum."
               >
                 Rechnungsdatum {formatDate(tour.rechnungsdatum)}
+              </span>
+            )}
+            {/* Auf Eis — eigene Farbe (Eisblau), klar unterscheidbar von
+                „Unbestätigt" (amber), „Geändert" (sky) und „Abgelehnt". */}
+            {tour.auf_eis && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-800 dark:!bg-cyan-900 dark:!text-cyan-100"
+                title={tour.auf_eis_notiz
+                  ? `Termin noch offen — ${tour.auf_eis_notiz}`
+                  : 'Termin noch offen. Ein eingetragenes Datum ist unverbindlich.'}
+              >
+                <span aria-hidden="true">❄</span> Auf Eis
               </span>
             )}
             {/* Auftraggeber hat die Tour geändert und es ist noch nicht

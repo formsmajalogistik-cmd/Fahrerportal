@@ -41,6 +41,17 @@ interface ExportRow {
   ziel_stadt: string;
   rueckfuehrung_stadt: string | null;
   adresse_start: string | null;
+  strasse_start: string | null;
+  hausnummer_start: string | null;
+  plz_start: string | null;
+  strasse_ziel: string | null;
+  hausnummer_ziel: string | null;
+  plz_ziel: string | null;
+  strasse_rueckfuehrung: string | null;
+  hausnummer_rueckfuehrung: string | null;
+  plz_rueckfuehrung: string | null;
+  auf_eis: boolean | null;
+  auf_eis_notiz: string | null;
   adresse_ziel: string | null;
   adresse_rueckfuehrung: string | null;
   kontakt_start: KontaktJson | null;
@@ -146,6 +157,11 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     'Zeit Start', 'Zeit Ziel', 'Zeit Rückführung',
     // Migration 085 — nur bei ABA relevant.
     'ABA Gesamt-km berechnen',
+    // Migration 086 — Adressteile + Terminierung.
+    'Straße Start', 'Hausnummer Start', 'PLZ Start',
+    'Straße Ziel', 'Hausnummer Ziel', 'PLZ Ziel',
+    'Straße Rückführung', 'Hausnummer Rückführung', 'PLZ Rückführung',
+    'Auf Eis', 'Auf-Eis-Notiz',
   ];
 
   const dataRows = rows.map((t) => {
@@ -191,6 +207,17 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       t.zeit_ziel ?? '',
       t.zeit_rueckfuehrung ?? '',
       t.aba_gesamt_km_berechnen ? 'ja' : 'nein',
+      t.strasse_start ?? '',
+      t.hausnummer_start ?? '',
+      t.plz_start ?? '',
+      t.strasse_ziel ?? '',
+      t.hausnummer_ziel ?? '',
+      t.plz_ziel ?? '',
+      t.strasse_rueckfuehrung ?? '',
+      t.hausnummer_rueckfuehrung ?? '',
+      t.plz_rueckfuehrung ?? '',
+      t.auf_eis ? 'ja' : 'nein',
+      t.auf_eis_notiz ?? '',
     ];
   });
 

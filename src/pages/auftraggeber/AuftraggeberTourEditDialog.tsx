@@ -4,6 +4,8 @@ import { speichereAgTour } from '../../lib/tourAenderungen';
 import { meldeTourAenderung } from '../../lib/onedrive';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
+import { RouteFeldsatz } from '../../components/RouteFeldsatz';
+import { effektiveAdresse } from '../../lib/adresse';
 import { TfBlock } from '../../components/TfBlock';
 import { useScrollLock } from '../../lib/useScrollLock';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -105,15 +107,30 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   const [rueckStadt, setRueckStadt] = useState(tour.rueckfuehrung_stadt ?? '');
   const [startdatum, setStartdatum] = useState(tour.startdatum ?? '');
   const [enddatum, setEnddatum] = useState(tour.enddatum ?? '');
+  // Auf Eis (Migration 086): Tour findet statt, Termin noch offen.
+  const [aufEis, setAufEis] = useState(!!tour.auf_eis);
+  const [aufEisNotiz, setAufEisNotiz] = useState(tour.auf_eis_notiz ?? '');
   const [kennzeichenHin, setKennzeichenHin] = useState(kzHinInit);
   const [kennzeichenRueck, setKennzeichenRueck] = useState(kzRueckInit);
   const [fin, setFin] = useState(tour.fin ?? '');
   const [finRueck, setFinRueck] = useState(tour.fin_rueck ?? '');
   const [istEFahrzeug, setIstEFahrzeug] = useState(!!tour.ist_e_fahrzeug);
   const [kundenname, setKundenname] = useState(tour.kundenname ?? '');
-  const [adresseStart, setAdresseStart] = useState(tour.adresse_start ?? '');
-  const [adresseZiel, setAdresseZiel] = useState(tour.adresse_ziel ?? '');
-  const [adresseRueck, setAdresseRueck] = useState(tour.adresse_rueckfuehrung ?? '');
+  // Adresse strukturiert (Migration 086). Die Stadt ist die Tour-Stadt.
+  // Bestandstouren haben nur den Freitext — der wird angezeigt, aber
+  // bewusst NICHT automatisch zerlegt.
+  const [strasseStart, setStrasseStart] = useState(tour.strasse_start ?? '');
+  const [hausnummerStart, setHausnummerStart] = useState(tour.hausnummer_start ?? '');
+  const [plzStart, setPlzStart] = useState(tour.plz_start ?? '');
+  const [strasseZiel, setStrasseZiel] = useState(tour.strasse_ziel ?? '');
+  const [hausnummerZiel, setHausnummerZiel] = useState(tour.hausnummer_ziel ?? '');
+  const [plzZiel, setPlzZiel] = useState(tour.plz_ziel ?? '');
+  const [strasseRueck, setStrasseRueck] = useState(tour.strasse_rueckfuehrung ?? '');
+  const [hausnummerRueck, setHausnummerRueck] = useState(tour.hausnummer_rueckfuehrung ?? '');
+  const [plzRueck, setPlzRueck] = useState(tour.plz_rueckfuehrung ?? '');
+  const freitextStart = tour.adresse_start ?? '';
+  const freitextZiel = tour.adresse_ziel ?? '';
+  const freitextRueck = tour.adresse_rueckfuehrung ?? '';
   const [info, setInfo] = useState(tour.info ?? '');
   const [fahrzeugmodell, setFahrzeugmodell] = useState(tour.fahrzeugmodell ?? '');
   const [fahrzeugmodellRueck, setFahrzeugmodellRueck] = useState(tour.fahrzeugmodell_rueck ?? '');
@@ -128,6 +145,21 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   const [kmHin, setKmHin] = useState(tour.km_hin != null ? String(tour.km_hin) : '');
   const [kmRueck, setKmRueck] = useState(tour.km_rueck != null ? String(tour.km_rueck) : '');
   const [routeDialog, setRouteDialog] = useState<null | 'hin' | 'rueck'>(null);
+
+  // Adresse für Anzeige, Routenberechnung und die gespeicherte
+  // Freitext-Spalte: Einzelteile gewinnen, sonst der Bestands-Freitext.
+  const adresseStart = effektiveAdresse(
+    { strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: startStadt },
+    freitextStart,
+  );
+  const adresseZiel = effektiveAdresse(
+    { strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: zielStadt },
+    freitextZiel,
+  );
+  const adresseRueck = effektiveAdresse(
+    { strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck, stadt: rueckStadt },
+    freitextRueck,
+  );
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
 
   // Ansprechpartner nachladen — sie liegen seit 080 in einer eigenen
@@ -182,8 +214,11 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
       setError('Start- und Ziel-Stadt sind Pflichtfelder.');
       return;
     }
-    if (!startdatum || !enddatum) {
-      setError('Start- und Enddatum sind Pflichtfelder.');
+    // Ohne festen Termin darf das Datum leer bleiben — dafür muss die
+    // Tour aber ausdrücklich auf Eis liegen.
+    if (!aufEis && (!startdatum || !enddatum)) {
+      setError('Start- und Enddatum sind Pflichtfelder. '
+        + 'Ohne festen Termin bitte „Auf Eis legen" aktivieren.');
       return;
     }
     if (guard()) { onClose(); return; }
@@ -199,8 +234,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
       start_stadt: startStadt.trim(),
       ziel_stadt: zielStadt.trim(),
       rueckfuehrung_stadt: hatRueckfuehrung ? (rueckStadt.trim() || null) : null,
-      startdatum,
-      enddatum,
+      startdatum: startdatum || null,
+      enddatum: enddatum || null,
+      auf_eis: aufEis,
+      auf_eis_notiz: aufEis ? (aufEisNotiz.trim() || null) : null,
       kennzeichen,
       fin: fin.trim() || null,
       fin_rueck: hatRueckfuehrung ? (finRueck.trim() || null) : null,
@@ -209,6 +246,15 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
       adresse_start: adresseStart.trim() || null,
       adresse_ziel: adresseZiel.trim() || null,
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
+      strasse_start: strasseStart.trim() || null,
+      hausnummer_start: hausnummerStart.trim() || null,
+      plz_start: plzStart.trim() || null,
+      strasse_ziel: strasseZiel.trim() || null,
+      hausnummer_ziel: hausnummerZiel.trim() || null,
+      plz_ziel: plzZiel.trim() || null,
+      strasse_rueckfuehrung: hatRueckfuehrung ? (strasseRueck.trim() || null) : null,
+      hausnummer_rueckfuehrung: hatRueckfuehrung ? (hausnummerRueck.trim() || null) : null,
+      plz_rueckfuehrung: hatRueckfuehrung ? (plzRueck.trim() || null) : null,
       info: info.trim() || null,
       fahrzeugmodell: fahrzeugmodell.trim() || null,
       fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
@@ -337,13 +383,26 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             </div>
           </TfBlock>
 
+          {/* Route — dieselben Städte wie in den Ort-Blöcken. */}
+          <RouteFeldsatz
+            idPrefix="et"
+            pflicht
+            startStadt={startStadt} onStartStadt={setStartStadt}
+            zielStadt={zielStadt} onZielStadt={setZielStadt}
+            rueckStadt={hatRueckfuehrung ? rueckStadt : undefined}
+            onRueckStadt={hatRueckfuehrung ? setRueckStadt : undefined}
+          />
+
           {/* 3 — Abholort */}
           <StationFeldsatz
             titel="Abholort"
             idPrefix="et-st1"
             stadtLabel="Stadt"
             stadt={startStadt} onStadt={setStartStadt} stadtPflicht
-            adresse={adresseStart} onAdresse={setAdresseStart}
+            strasse={strasseStart} onStrasse={setStrasseStart}
+            hausnummer={hausnummerStart} onHausnummer={setHausnummerStart}
+            plz={plzStart} onPlz={setPlzStart}
+            adresseFreitext={freitextStart}
             zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={kontakte.start}
             onKontakte={(next) => setKontakte((m) => ({ ...m, start: next }))}
@@ -355,7 +414,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             idPrefix="et-st2"
             stadtLabel="Stadt"
             stadt={zielStadt} onStadt={setZielStadt} stadtPflicht
-            adresse={adresseZiel} onAdresse={setAdresseZiel}
+            strasse={strasseZiel} onStrasse={setStrasseZiel}
+            hausnummer={hausnummerZiel} onHausnummer={setHausnummerZiel}
+            plz={plzZiel} onPlz={setPlzZiel}
+            adresseFreitext={freitextZiel}
             zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={kontakte.ziel}
             onKontakte={(next) => setKontakte((m) => ({ ...m, ziel: next }))}
@@ -397,7 +459,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                 akzent="rueck"
                 stadtLabel="Stadt"
                 stadt={rueckStadt} onStadt={setRueckStadt}
-                adresse={adresseRueck} onAdresse={setAdresseRueck}
+                strasse={strasseRueck} onStrasse={setStrasseRueck}
+              hausnummer={hausnummerRueck} onHausnummer={setHausnummerRueck}
+              plz={plzRueck} onPlz={setPlzRueck}
+              adresseFreitext={freitextRueck}
                 zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={kontakte.rueckfuehrung}
                 onKontakte={(next) => setKontakte((m) => ({ ...m, rueckfuehrung: next }))}
@@ -409,12 +474,16 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
           <TfBlock titel="Kilometer & Termine">
             <div className="tf-grid">
               <div className="sm:col-span-3 lg:col-span-2">
-                <label htmlFor="et-von" className="tf-label">Startdatum *</label>
+                <label htmlFor="et-von" className="tf-label">
+                  Startdatum{aufEis ? '' : ' *'}
+                </label>
                 <input id="et-von" type="date" className="tf-input"
                        value={startdatum} onChange={(e) => setStartdatum(e.target.value)} />
               </div>
               <div className="sm:col-span-3 lg:col-span-2">
-                <label htmlFor="et-bis" className="tf-label">Enddatum *</label>
+                <label htmlFor="et-bis" className="tf-label">
+                  Enddatum{aufEis ? '' : ' *'}
+                </label>
                 <input id="et-bis" type="date" className="tf-input"
                        value={enddatum} onChange={(e) => setEnddatum(e.target.value)} />
               </div>
@@ -440,6 +509,31 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                   />
                 </div>
               )}
+              {/* Auf Eis — Termin bewusst offen. Ein eingetragenes Datum
+                  bleibt erhalten und gilt als unverbindlich. */}
+              <div className="sm:col-span-6 lg:col-span-12">
+                <label className="tf-check">
+                  <input type="checkbox"
+                         checked={aufEis} onChange={(e) => setAufEis(e.target.checked)} />
+                  Auf Eis legen — Termin steht noch nicht fest
+                </label>
+                <p className="tf-hint">
+                  {aufEis
+                    ? 'Die Tour findet statt, ist aber noch nicht terminiert. Das Datum darf leer bleiben. Zum Aktivieren den Haken entfernen und ein Datum eintragen.'
+                    : 'Für Touren, die sicher stattfinden, aber noch kein festes Datum haben.'}
+                </p>
+              </div>
+              {aufEis && (
+                <div className="sm:col-span-6 lg:col-span-12">
+                  <label htmlFor="et-eis-notiz" className="tf-label">
+                    Notiz zur offenen Terminierung
+                  </label>
+                  <input id="et-eis-notiz" className="tf-input"
+                         placeholder="z.B. Kunde meldet sich Ende KW 34"
+                         value={aufEisNotiz} onChange={(e) => setAufEisNotiz(e.target.value)} />
+                </div>
+              )}
+
               <div className="sm:col-span-6 lg:col-span-2">
                 <span className="tf-label">km gesamt</span>
                 <div className="rounded-md bg-maja-light px-2 py-1.5 text-sm font-semibold text-maja-navy">

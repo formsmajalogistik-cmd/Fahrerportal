@@ -924,33 +924,50 @@ export function FormularPage() {
             >
               PDF-Vorschau
             </button>
-            {showZwischenButton && (
-              <button
-                type="button"
-                onClick={() => void handleZwischenprotokoll()}
-                className="btn-secondary"
-                disabled={saving !== 'idle' || zwischenBusy}
-                title="Übernahme-Teil als Zwischenprotokoll sichern — Formular bleibt weiter bearbeitbar"
-              >
-                {zwischenBusy ? 'Sichert …' : 'Zwischenprotokoll abschließen'}
-              </button>
-            )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          {/* Reihenfolge: erst die beiden Zwischenschritte (sekundär),
+              ganz rechts die Hauptaktion. Solange der Übernahme-Teil
+              offen ist, ist das der Zwischenprotokoll-Button in
+              Akzentfarbe — „Endgültig abschließen" bleibt daneben
+              sichtbar, aber dezent, damit beide nicht verwechselt
+              werden. */}
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
             <button
               onClick={() => void saveDraft().catch(() => {})}
-              className={isLastPage ? 'btn-secondary' : 'btn-primary'}
+              className={isLastPage || showZwischenButton ? 'btn-secondary' : 'btn-primary'}
               disabled={saving !== 'idle'}
             >
               {saving === 'draft' ? 'Speichern …' : 'Speichern und später fortfahren'}
             </button>
             <button
               onClick={submit}
-              className={isLastPage ? 'btn-primary' : 'btn-secondary'}
+              className={isLastPage && !showZwischenButton ? 'btn-primary' : 'btn-secondary'}
               disabled={saving !== 'idle'}
             >
               {saving === 'submit' ? 'Wird abgeschlossen …' : 'Endgültig abschließen'}
             </button>
+            {showZwischenButton && (
+              <button
+                type="button"
+                onClick={() => void handleZwischenprotokoll()}
+                className="btn-accent w-full whitespace-normal leading-tight sm:w-auto"
+                disabled={saving !== 'idle' || zwischenBusy}
+                title="Übernahme-Teil als Zwischenprotokoll sichern und versenden — das Formular bleibt weiter bearbeitbar"
+              >
+                {zwischenBusy ? (
+                  'Sichert …'
+                ) : (
+                  <>
+                    {/* Auf schmalen Breiten die kurze Variante — bewusst
+                        NICHT auf „Zwischenprotokoll" verkürzt. */}
+                    <span className="sm:hidden">Übernahme abschließen &amp; versenden</span>
+                    <span className="hidden sm:inline">
+                      Übernahme abschließen und Zwischenprotokoll versenden
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       )}
