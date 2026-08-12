@@ -41,13 +41,10 @@ const FELD_LABEL: Record<string, string> = {
   km_gesamt: 'km gesamt',
   // Migration 086
   strasse_start: 'Straße Start',
-  hausnummer_start: 'Hausnummer Start',
   plz_start: 'PLZ Start',
   strasse_ziel: 'Straße Ziel',
-  hausnummer_ziel: 'Hausnummer Ziel',
   plz_ziel: 'PLZ Ziel',
   strasse_rueckfuehrung: 'Straße Rückführung',
-  hausnummer_rueckfuehrung: 'Hausnummer Rückführung',
   plz_rueckfuehrung: 'PLZ Rückführung',
   auf_eis: 'Terminierung',
   auf_eis_notiz: 'Notiz zur Terminierung',

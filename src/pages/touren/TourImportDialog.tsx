@@ -66,13 +66,10 @@ interface ParsedRow {
   /** Migration 085 — nur bei ABA relevant. */
   aba_gesamt_km_berechnen?: boolean | null;
   strasse_start?: string | null;
-  hausnummer_start?: string | null;
   plz_start?: string | null;
   strasse_ziel?: string | null;
-  hausnummer_ziel?: string | null;
   plz_ziel?: string | null;
   strasse_rueckfuehrung?: string | null;
-  hausnummer_rueckfuehrung?: string | null;
   plz_rueckfuehrung?: string | null;
   auf_eis?: boolean | null;
   auf_eis_notiz?: string | null;
@@ -134,13 +131,10 @@ const HEADER_KEYS = {
   zeit_rueck:      ['zeit rückführung', 'zeit rueckfuehrung'],
   aba_gesamt_km:   ['aba gesamt-km berechnen', 'aba gesamt km berechnen'],
   strasse_start: ['strasse start', 'strasse start'],
-  hausnummer_start: ['hausnummer start', 'hausnummer start'],
   plz_start: ['plz start', 'plz start'],
   strasse_ziel: ['strasse ziel', 'strasse ziel'],
-  hausnummer_ziel: ['hausnummer ziel', 'hausnummer ziel'],
   plz_ziel: ['plz ziel', 'plz ziel'],
   strasse_rueckfuehrung: ['strasse rückführung', 'strasse rueckfuehrung'],
-  hausnummer_rueckfuehrung: ['hausnummer rückführung', 'hausnummer rueckfuehrung'],
   plz_rueckfuehrung: ['plz rückführung', 'plz rueckfuehrung'],
   auf_eis:         ['auf eis'],
   auf_eis_notiz:   ['auf-eis-notiz', 'auf eis notiz'],
@@ -428,13 +422,10 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       zeit_rueck:      findColumnExact(cols, HEADER_KEYS.zeit_rueck),
       aba_gesamt_km:   findColumnExact(cols, HEADER_KEYS.aba_gesamt_km),
       strasse_start: findColumnExact(cols, HEADER_KEYS.strasse_start),
-      hausnummer_start: findColumnExact(cols, HEADER_KEYS.hausnummer_start),
       plz_start: findColumnExact(cols, HEADER_KEYS.plz_start),
       strasse_ziel: findColumnExact(cols, HEADER_KEYS.strasse_ziel),
-      hausnummer_ziel: findColumnExact(cols, HEADER_KEYS.hausnummer_ziel),
       plz_ziel: findColumnExact(cols, HEADER_KEYS.plz_ziel),
       strasse_rueckfuehrung: findColumnExact(cols, HEADER_KEYS.strasse_rueckfuehrung),
-      hausnummer_rueckfuehrung: findColumnExact(cols, HEADER_KEYS.hausnummer_rueckfuehrung),
       plz_rueckfuehrung: findColumnExact(cols, HEADER_KEYS.plz_rueckfuehrung),
       auf_eis:         findColumnExact(cols, HEADER_KEYS.auf_eis),
       auf_eis_notiz:   findColumnExact(cols, HEADER_KEYS.auf_eis_notiz),
@@ -511,13 +502,10 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         ? parseBoolCell(at(r, oIdx.aba_gesamt_km))
         : undefined;
       const strasse_start = oIdx.strasse_start >= 0 ? cellStr(at(r, oIdx.strasse_start)) : undefined;
-      const hausnummer_start = oIdx.hausnummer_start >= 0 ? cellStr(at(r, oIdx.hausnummer_start)) : undefined;
       const plz_start = oIdx.plz_start >= 0 ? cellStr(at(r, oIdx.plz_start)) : undefined;
       const strasse_ziel = oIdx.strasse_ziel >= 0 ? cellStr(at(r, oIdx.strasse_ziel)) : undefined;
-      const hausnummer_ziel = oIdx.hausnummer_ziel >= 0 ? cellStr(at(r, oIdx.hausnummer_ziel)) : undefined;
       const plz_ziel = oIdx.plz_ziel >= 0 ? cellStr(at(r, oIdx.plz_ziel)) : undefined;
       const strasse_rueckfuehrung = oIdx.strasse_rueckfuehrung >= 0 ? cellStr(at(r, oIdx.strasse_rueckfuehrung)) : undefined;
-      const hausnummer_rueckfuehrung = oIdx.hausnummer_rueckfuehrung >= 0 ? cellStr(at(r, oIdx.hausnummer_rueckfuehrung)) : undefined;
       const plz_rueckfuehrung = oIdx.plz_rueckfuehrung >= 0 ? cellStr(at(r, oIdx.plz_rueckfuehrung)) : undefined;
       const auf_eis = oIdx.auf_eis >= 0 ? parseBoolCell(at(r, oIdx.auf_eis)) : undefined;
       const auf_eis_notiz = oIdx.auf_eis_notiz >= 0
@@ -570,13 +558,10 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         zeit_rueckfuehrung,
         aba_gesamt_km_berechnen,
         strasse_start,
-        hausnummer_start,
         plz_start,
         strasse_ziel,
-        hausnummer_ziel,
         plz_ziel,
         strasse_rueckfuehrung,
-        hausnummer_rueckfuehrung,
         plz_rueckfuehrung,
         auf_eis,
         auf_eis_notiz,
@@ -685,13 +670,10 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.zeit_rueckfuehrung !== undefined) base.zeit_rueckfuehrung = r.zeit_rueckfuehrung;
         if (r.aba_gesamt_km_berechnen != null) base.aba_gesamt_km_berechnen = r.aba_gesamt_km_berechnen;
         if (r.strasse_start !== undefined) base.strasse_start = r.strasse_start;
-        if (r.hausnummer_start !== undefined) base.hausnummer_start = r.hausnummer_start;
         if (r.plz_start !== undefined) base.plz_start = r.plz_start;
         if (r.strasse_ziel !== undefined) base.strasse_ziel = r.strasse_ziel;
-        if (r.hausnummer_ziel !== undefined) base.hausnummer_ziel = r.hausnummer_ziel;
         if (r.plz_ziel !== undefined) base.plz_ziel = r.plz_ziel;
         if (r.strasse_rueckfuehrung !== undefined) base.strasse_rueckfuehrung = r.strasse_rueckfuehrung;
-        if (r.hausnummer_rueckfuehrung !== undefined) base.hausnummer_rueckfuehrung = r.hausnummer_rueckfuehrung;
         if (r.plz_rueckfuehrung !== undefined) base.plz_rueckfuehrung = r.plz_rueckfuehrung;
         if (r.auf_eis != null) base.auf_eis = r.auf_eis;
         if (r.auf_eis_notiz !== undefined) base.auf_eis_notiz = r.auf_eis_notiz;

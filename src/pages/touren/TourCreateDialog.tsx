@@ -136,13 +136,10 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   // Station. Die Stadt ist die Tour-Stadt (startStadt/zielStadt/
   // rueckfuehrungStadt) — kein zweites Feld.
   const [strasseStart, setStrasseStart] = useState('');
-  const [hausnummerStart, setHausnummerStart] = useState('');
   const [plzStart, setPlzStart] = useState('');
   const [strasseZiel, setStrasseZiel] = useState('');
-  const [hausnummerZiel, setHausnummerZiel] = useState('');
   const [plzZiel, setPlzZiel] = useState('');
   const [strasseRueck, setStrasseRueck] = useState('');
-  const [hausnummerRueck, setHausnummerRueck] = useState('');
   const [plzRueck, setPlzRueck] = useState('');
   const [stationsKontakte, setStationsKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   // Optionale Zusatzangaben (Migration 080).
@@ -216,14 +213,14 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   // Zusammengesetzte Adressen — daran hängen Auftrags-E-Mail,
   // Excel-Export und die Routenberechnung.
   const adresseStart = useMemo(() => effektiveAdresse(
-    { strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: startStadt }, null,
-  ), [strasseStart, hausnummerStart, plzStart, startStadt]);
+    { strasse: strasseStart, plz: plzStart, stadt: startStadt }, null,
+  ), [strasseStart, plzStart, startStadt]);
   const adresseZiel = useMemo(() => effektiveAdresse(
-    { strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: zielStadt }, null,
-  ), [strasseZiel, hausnummerZiel, plzZiel, zielStadt]);
+    { strasse: strasseZiel, plz: plzZiel, stadt: zielStadt }, null,
+  ), [strasseZiel, plzZiel, zielStadt]);
   const adresseRueckfuehrung = useMemo(() => effektiveAdresse(
-    { strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck, stadt: rueckfuehrungStadt }, null,
-  ), [strasseRueck, hausnummerRueck, plzRueck, rueckfuehrungStadt]);
+    { strasse: strasseRueck, plz: plzRueck, stadt: rueckfuehrungStadt }, null,
+  ), [strasseRueck, plzRueck, rueckfuehrungStadt]);
 
   const kmGesamt = useMemo(() => computeKmGesamt({
     km_hin: parseInteger(kmHin),
@@ -281,7 +278,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     if (hatRueckfuehrung) {
       setHatRueckfuehrung(false);
       setRueckfuehrungStadt('');
-      setStrasseRueck(''); setHausnummerRueck(''); setPlzRueck('');
+      setStrasseRueck(''); setPlzRueck('');
       setKmRueck('');
       setKennzeichenRueck('');
       setFinRueck('');
@@ -420,23 +417,20 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       rechnungsdatum_abweichend: rechnungsdatumAbweichend && !!rechnungsdatum,
       rechnungsdatum: rechnungsdatumAbweichend && rechnungsdatum ? rechnungsdatum : null,
       adresse_start: composeAdresse({
-        strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: start,
+        strasse: strasseStart, plz: plzStart, stadt: start,
       }),
       adresse_ziel: composeAdresse({
-        strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: ziel,
+        strasse: strasseZiel, plz: plzZiel, stadt: ziel,
       }),
       adresse_rueckfuehrung: hatRueckfuehrung ? composeAdresse({
-        strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck,
+        strasse: strasseRueck, plz: plzRueck,
         stadt: rueckfuehrungStadt.trim(),
       }) : null,
       strasse_start: strasseStart.trim() || null,
-      hausnummer_start: hausnummerStart.trim() || null,
       plz_start: plzStart.trim() || null,
       strasse_ziel: strasseZiel.trim() || null,
-      hausnummer_ziel: hausnummerZiel.trim() || null,
       plz_ziel: plzZiel.trim() || null,
       strasse_rueckfuehrung: hatRueckfuehrung ? (strasseRueck.trim() || null) : null,
-      hausnummer_rueckfuehrung: hatRueckfuehrung ? (hausnummerRueck.trim() || null) : null,
       plz_rueckfuehrung: hatRueckfuehrung ? (plzRueck.trim() || null) : null,
       // kontakt_* setzt der Spiegel-Trigger aus tour_ansprechpartner.
       fahrzeugmodell: fahrzeugmodell.trim() || null,
@@ -734,7 +728,6 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             stadtLabel="Stadt" stadtPflicht
             stadt={startStadt} onStadt={setStartStadt}
             strasse={strasseStart} onStrasse={setStrasseStart}
-            hausnummer={hausnummerStart} onHausnummer={setHausnummerStart}
             plz={plzStart} onPlz={setPlzStart}
             zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
             kontakte={stationsKontakte.start}
@@ -750,7 +743,6 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             stadtLabel="Stadt" stadtPflicht
             stadt={zielStadt} onStadt={setZielStadt}
             strasse={strasseZiel} onStrasse={setStrasseZiel}
-            hausnummer={hausnummerZiel} onHausnummer={setHausnummerZiel}
             plz={plzZiel} onPlz={setPlzZiel}
             zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
             kontakte={stationsKontakte.ziel}
@@ -811,7 +803,6 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                 stadtLabel="Stadt"
                 stadt={rueckfuehrungStadt} onStadt={setRueckfuehrungStadt}
                 strasse={strasseRueck} onStrasse={setStrasseRueck}
-                hausnummer={hausnummerRueck} onHausnummer={setHausnummerRueck}
                 plz={plzRueck} onPlz={setPlzRueck}
                 zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
                 kontakte={stationsKontakte.rueckfuehrung}

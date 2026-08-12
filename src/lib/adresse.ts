@@ -1,7 +1,8 @@
 // Strukturierte Stationsadresse (Migration 086).
 //
-// Die Adresse einer Station besteht seit 086 aus Straße, Hausnummer,
-// PLZ — und der STADT, die identisch mit der Tour-Stadt ist
+// Die Adresse einer Station besteht aus der Straße (inkl. Hausnummer,
+// wie in den Formularen), der PLZ — und der STADT, die identisch mit
+// der Tour-Stadt ist
 // (start_stadt / ziel_stadt / rueckfuehrung_stadt). Es gibt bewusst
 // kein zweites Stadt-Feld: derselbe Wert erscheint in der Tourenliste
 // als Route und im Adressblock, egal an welcher Stelle er bearbeitet
@@ -14,8 +15,12 @@
 // zerlegt wurde.
 
 export interface AdressTeile {
+  /**
+   * Straße MIT Hausnummer, genau wie in den Formularen
+   * ("Heiligenroder Strasse 38e"). Migration 087 hat das frühere
+   * separate Hausnummer-Feld wieder eingeschmolzen.
+   */
   strasse: string | null;
-  hausnummer: string | null;
   plz: string | null;
   /** Stadt der Station = Tour-Stadt. Nicht separat gespeichert. */
   stadt: string | null;
@@ -24,18 +29,16 @@ export interface AdressTeile {
 const leer = (v: string | null | undefined): string => (v ?? '').trim();
 
 /**
- * Setzt "Straße Nr., PLZ Stadt" zusammen. Leere Teile fallen sauber
+ * Setzt "{strasse}, {plz} {stadt}" zusammen. Leere Teile fallen sauber
  * weg — es entstehen keine hängenden Kommas und kein "undefined".
  * Gibt null zurück, wenn nichts übrig bleibt.
  */
 export function composeAdresse(teile: Partial<AdressTeile>): string | null {
   const strasse = leer(teile.strasse);
-  const hausnummer = leer(teile.hausnummer);
   const plz = leer(teile.plz);
   const stadt = leer(teile.stadt);
-  const zeile1 = [strasse, hausnummer].filter(Boolean).join(' ');
-  const zeile2 = [plz, stadt].filter(Boolean).join(' ');
-  const ganz = [zeile1, zeile2].filter(Boolean).join(', ');
+  const ortszeile = [plz, stadt].filter(Boolean).join(' ');
+  const ganz = [strasse, ortszeile].filter(Boolean).join(', ');
   return ganz || null;
 }
 
@@ -61,7 +64,7 @@ export function effektiveAdresse(
  * Freitext einer Bestandstour zusätzlich als Hinweis angezeigt wird.
  */
 export function hatAdressTeile(teile: Partial<AdressTeile>): boolean {
-  return !!(leer(teile.strasse) || leer(teile.hausnummer) || leer(teile.plz));
+  return !!(leer(teile.strasse) || leer(teile.plz));
 }
 
 /**

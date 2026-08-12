@@ -6,6 +6,7 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { CheckIcon } from '../components/icons';
 import { FormRenderer } from '../components/forms/FormRenderer';
 import { PdfPreviewModal } from '../components/forms/PdfPreviewModal';
+import { FormularAktionsleiste } from '../components/FormularAktionsleiste';
 import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { pageCompletion, validateForm } from '../lib/validateForm';
 import { effectivePages, sectionsForPage } from '../lib/formPages';
@@ -666,14 +667,25 @@ export function FormularPage() {
       setSharingPhotos(false);
     }
   }
-  // Auf dem letzten (Abschluss-)Tab wird "Endgültig abschließen" primär
-  // hervorgehoben, sonst "Speichern und später fortfahren". Greift
-  // automatisch für jedes Template — der letzte Tab ist immer der Abschluss.
+  // ------------------------------------------------------------------
+  // Sichtbarkeitsregeln der Aktionsleiste — bewusst hier zentral, damit
+  // sie an genau EINER Stelle stehen:
+  //
+  //   "Speichern und später fortfahren"  auf JEDER Seite, immer genau
+  //                                      einmal, immer sekundär.
+  //   "Endgültig abschließen"            NUR auf der letzten Seite.
+  //   Zwischenprotokoll-Button           NUR am Ende des Übernahme-Teils
+  //                                      und nur wenn im Template
+  //                                      aktiviert — nicht auf den
+  //                                      Übergabe-Seiten.
+  // ------------------------------------------------------------------
+
+  /** Letzter (Abschluss-)Tab; einseitige Formulare sind immer "letzte Seite". */
   const isLastPage = pages.length === 0 || currentPageIdx >= pages.length - 1;
 
-  // Zwischenprotokoll-Button: erscheint am Ende des Übernahme-Teils —
-  // d.h. auf der Seite, die die im Template konfigurierte Sektion enthält
-  // (schema.zwischenprotokoll_nach_section). Bei einseitigen Formularen
+  // Die Seite, die die im Template konfigurierte Sektion enthält
+  // (schema.zwischenprotokoll_nach_section). Ohne Konfiguration im
+  // Template erscheint der Button nirgends. Bei einseitigen Formularen
   // reicht das Vorhandensein der konfigurierten Sektion.
   const zwischenSectionId = template?.schema?.zwischenprotokoll_nach_section ?? null;
   const showZwischenButton = !readonly && !!zwischenSectionId && (
@@ -780,7 +792,12 @@ export function FormularPage() {
                 <button
                   key={p.id}
                   type="button"
-                  onClick={() => setCurrentPageId(p.id)}
+                  onClick={() => {
+                    setCurrentPageId(p.id);
+                    // Wie beim Vor/Zurück-Pager: nach oben scrollen,
+                    // sonst wirken Inhalt und Aktionsleiste verschoben.
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
                   className={
                     'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition '
                     + (active
@@ -912,64 +929,22 @@ export function FormularPage() {
         </div>
       )}
 
+      {/* Aktionsleiste — GENAU EINMAL, hier auf Seitenebene. Bewusst
+          NICHT innerhalb der Seiten-/Abschnitts-Darstellung, sonst
+          entstünde sie pro Seite neu. Beim Seitenwechsel bleibt die
+          Komponente montiert, nur ihre Props ändern sich; es kann also
+          keine alte Instanz stehen bleiben. */}
       {!readonly && !submittedSummary && (
-        <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 bg-white/90 px-4 py-3 backdrop-blur">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setPreviewOpen(true)}
-              className="btn-secondary"
-              disabled={saving !== 'idle'}
-              title="Vorschau der gefüllten PDF anzeigen"
-            >
-              PDF-Vorschau
-            </button>
-          </div>
-          {/* Reihenfolge: erst die beiden Zwischenschritte (sekundär),
-              ganz rechts die Hauptaktion. Solange der Übernahme-Teil
-              offen ist, ist das der Zwischenprotokoll-Button in
-              Akzentfarbe — „Endgültig abschließen" bleibt daneben
-              sichtbar, aber dezent, damit beide nicht verwechselt
-              werden. */}
-          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-            <button
-              onClick={() => void saveDraft().catch(() => {})}
-              className={isLastPage || showZwischenButton ? 'btn-secondary' : 'btn-primary'}
-              disabled={saving !== 'idle'}
-            >
-              {saving === 'draft' ? 'Speichern …' : 'Speichern und später fortfahren'}
-            </button>
-            <button
-              onClick={submit}
-              className={isLastPage && !showZwischenButton ? 'btn-primary' : 'btn-secondary'}
-              disabled={saving !== 'idle'}
-            >
-              {saving === 'submit' ? 'Wird abgeschlossen …' : 'Endgültig abschließen'}
-            </button>
-            {showZwischenButton && (
-              <button
-                type="button"
-                onClick={() => void handleZwischenprotokoll()}
-                className="btn-accent w-full whitespace-normal leading-tight sm:w-auto"
-                disabled={saving !== 'idle' || zwischenBusy}
-                title="Übernahme-Teil als Zwischenprotokoll sichern und versenden — das Formular bleibt weiter bearbeitbar"
-              >
-                {zwischenBusy ? (
-                  'Sichert …'
-                ) : (
-                  <>
-                    {/* Auf schmalen Breiten die kurze Variante — bewusst
-                        NICHT auf „Zwischenprotokoll" verkürzt. */}
-                    <span className="sm:hidden">Übernahme abschließen &amp; versenden</span>
-                    <span className="hidden sm:inline">
-                      Übernahme abschließen und Zwischenprotokoll versenden
-                    </span>
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        </div>
+        <FormularAktionsleiste
+          saving={saving}
+          zwischenBusy={zwischenBusy}
+          zeigeZwischenprotokoll={showZwischenButton}
+          istLetzteSeite={isLastPage}
+          onVorschau={() => setPreviewOpen(true)}
+          onEntwurfSpeichern={() => void saveDraft().catch(() => {})}
+          onZwischenprotokoll={() => void handleZwischenprotokoll()}
+          onAbschliessen={submit}
+        />
       )}
 
       {pendingExit !== null && (

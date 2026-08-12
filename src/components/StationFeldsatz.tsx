@@ -2,7 +2,8 @@
 // Ansprechpartner gehören fachlich zusammen und stehen deshalb auch
 // zusammen in einem Rahmen.
 //
-// Adresse (Migration 086): strukturiert in Straße, Hausnummer und PLZ.
+// Adresse (086/087): EIN Feld "Straße" inklusive Hausnummer — genau wie
+// in den Formularen ("Heiligenroder Strasse 38e") — dazu PLZ.
 // Die STADT ist kein eigenes Adressfeld — es ist dieselbe Tour-Stadt,
 // die in der Tourenliste als Route erscheint. Sie wird hier und im
 // Route-Block auf denselben State gebunden, ist also an beiden Stellen
@@ -12,10 +13,10 @@
 // sind "08:00", "vormittags" und "nach Absprache" gleichermaßen
 // möglich, und es braucht kein zweites Hinweis-Feld daneben.
 //
-// Layout: Straße breit, Nr./PLZ schmal, Stadt und Zeit mittel — auf
-// Desktop stehen die Adressfelder in einer Zeile (5/2/2/3 von 12), die
-// Zeit darunter. Auf Tablet bekommt jedes Feld mindestens eine halbe
-// Zeile, auf Mobile ist alles einspaltig mit vollen Touch-Höhen.
+// Layout: Straße breit, PLZ schmal, Stadt und Zeit mittel — auf Desktop
+// stehen Straße/PLZ/Stadt/Zeit in einer Zeile (5/2/2/3 von 12). Auf
+// Tablet bekommt jedes Feld mindestens eine halbe Zeile, auf Mobile ist
+// alles einspaltig mit vollen Touch-Höhen.
 
 import { AnsprechpartnerFeldsatz } from './AnsprechpartnerFeldsatz';
 import { TfBlock } from './TfBlock';
@@ -38,10 +39,9 @@ interface Props {
   onStadt: (v: string) => void;
   stadtPflicht?: boolean;
   stadtFehler?: boolean;
+  /** Straße INKLUSIVE Hausnummer. */
   strasse: string;
   onStrasse: (v: string) => void;
-  hausnummer: string;
-  onHausnummer: (v: string) => void;
   plz: string;
   onPlz: (v: string) => void;
   adressePflicht?: boolean;
@@ -71,28 +71,23 @@ interface Props {
 
 export function StationFeldsatz({
   titel, idPrefix, stadtLabel, stadt, onStadt, stadtPflicht, stadtFehler,
-  strasse, onStrasse, hausnummer, onHausnummer, plz, onPlz,
+  strasse, onStrasse, plz, onPlz,
   adressePflicht, adresseFehler, adresseFreitext,
   zeit, onZeit, zeitLabel, kontakte, onKontakte, kontaktPflicht, kontaktFehler,
   children, akzent, aktion,
 }: Props) {
   const cls = (fehler?: boolean) => (fehler ? 'tf-input border-red-500' : 'tf-input');
-  const altAdresse = altAdresseHinweis({ strasse, hausnummer, plz }, adresseFreitext);
+  const altAdresse = altAdresseHinweis({ strasse, plz }, adresseFreitext);
   return (
     <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
       <div className="tf-grid">
-        <div className="sm:col-span-4 lg:col-span-5">
+        <div className="sm:col-span-6 lg:col-span-5">
           <label htmlFor={`${idPrefix}-strasse`} className="tf-label">
             Straße{adressePflicht ? ' *' : ''}
           </label>
           <input id={`${idPrefix}-strasse`} className={cls(adresseFehler)}
-                 placeholder="z.B. Musterstraße"
+                 placeholder="z.B. Heiligenroder Strasse 38e"
                  value={strasse} onChange={(e) => onStrasse(e.target.value)} />
-        </div>
-        <div className="sm:col-span-2 lg:col-span-2">
-          <label htmlFor={`${idPrefix}-nr`} className="tf-label">Straße Nr.</label>
-          <input id={`${idPrefix}-nr`} className="tf-input" placeholder="1a"
-                 value={hausnummer} onChange={(e) => onHausnummer(e.target.value)} />
         </div>
         <div className="sm:col-span-2 lg:col-span-2">
           <label htmlFor={`${idPrefix}-plz`} className="tf-label">PLZ</label>
@@ -118,7 +113,7 @@ export function StationFeldsatz({
       {altAdresse && (
         <p className="tf-hint">
           Bisher erfasst: <span className="font-medium text-maja-ink">{altAdresse}</span>
-          {' '}— bitte bei Gelegenheit in Straße / Nr. / PLZ übertragen.
+          {' '}— bitte bei Gelegenheit in Straße / PLZ übertragen.
         </p>
       )}
       {children}

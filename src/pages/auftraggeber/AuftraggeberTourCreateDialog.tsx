@@ -96,23 +96,20 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   // Adresse strukturiert (Migration 086). Die Stadt ist die Tour-Stadt
   // — kein separates Adress-Stadt-Feld.
   const [strasseStart, setStrasseStart] = useState('');
-  const [hausnummerStart, setHausnummerStart] = useState('');
   const [plzStart, setPlzStart] = useState('');
   const [strasseZiel, setStrasseZiel] = useState('');
-  const [hausnummerZiel, setHausnummerZiel] = useState('');
   const [plzZiel, setPlzZiel] = useState('');
   const [strasseRueck, setStrasseRueck] = useState('');
-  const [hausnummerRueck, setHausnummerRueck] = useState('');
   const [plzRueck, setPlzRueck] = useState('');
   // Zusammengesetzt — daran hängen Routenberechnung und Pflichtprüfung.
   const adresseStart = composeAdresse({
-    strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: startStadt,
+    strasse: strasseStart, plz: plzStart, stadt: startStadt,
   }) ?? '';
   const adresseZiel = composeAdresse({
-    strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: zielStadt,
+    strasse: strasseZiel, plz: plzZiel, stadt: zielStadt,
   }) ?? '';
   const adresseRueck = composeAdresse({
-    strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck, stadt: rueckStadt,
+    strasse: strasseRueck, plz: plzRueck, stadt: rueckStadt,
   }) ?? '';
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
   const [info, setInfo] = useState('');
@@ -233,13 +230,10 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       adresse_ziel: adresseZiel.trim() || null,
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
       strasse_start: strasseStart.trim() || null,
-      hausnummer_start: hausnummerStart.trim() || null,
       plz_start: plzStart.trim() || null,
       strasse_ziel: strasseZiel.trim() || null,
-      hausnummer_ziel: hausnummerZiel.trim() || null,
       plz_ziel: plzZiel.trim() || null,
       strasse_rueckfuehrung: hatRueckfuehrung ? (strasseRueck.trim() || null) : null,
-      hausnummer_rueckfuehrung: hatRueckfuehrung ? (hausnummerRueck.trim() || null) : null,
       plz_rueckfuehrung: hatRueckfuehrung ? (plzRueck.trim() || null) : null,
       fahrzeugmodell: fahrzeugmodell.trim() || null,
       fahrzeugmodell_rueck: hatRueckfuehrung ? (fahrzeugmodellRueck.trim() || null) : null,
@@ -392,7 +386,6 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             stadt={startStadt} onStadt={setStartStadt}
             stadtPflicht stadtFehler={missing.has('startStadt')}
             strasse={strasseStart} onStrasse={setStrasseStart}
-            hausnummer={hausnummerStart} onHausnummer={setHausnummerStart}
             plz={plzStart} onPlz={setPlzStart}
             adressePflicht adresseFehler={missing.has('adresseStart')}
             zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
@@ -409,7 +402,6 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
             stadt={zielStadt} onStadt={setZielStadt}
             stadtPflicht stadtFehler={missing.has('zielStadt')}
             strasse={strasseZiel} onStrasse={setStrasseZiel}
-            hausnummer={hausnummerZiel} onHausnummer={setHausnummerZiel}
             plz={plzZiel} onPlz={setPlzZiel}
             adressePflicht adresseFehler={missing.has('adresseZiel')}
             zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
@@ -451,7 +443,6 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 stadt={rueckStadt} onStadt={setRueckStadt}
                 stadtPflicht stadtFehler={missing.has('rueckStadt')}
                 strasse={strasseRueck} onStrasse={setStrasseRueck}
-              hausnummer={hausnummerRueck} onHausnummer={setHausnummerRueck}
               plz={plzRueck} onPlz={setPlzRueck}
                 adressePflicht adresseFehler={missing.has('adresseRueck')}
                 zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"

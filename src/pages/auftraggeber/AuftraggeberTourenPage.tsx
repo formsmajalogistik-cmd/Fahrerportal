@@ -102,9 +102,9 @@ export function AuftraggeberTourenPage() {
           kundenname, auftraggeber_id, startdatum, enddatum, tourenart,
           kennzeichen, ist_e_fahrzeug, fin,
           adresse_start, adresse_ziel, adresse_rueckfuehrung,
-          strasse_start, hausnummer_start, plz_start,
-          strasse_ziel, hausnummer_ziel, plz_ziel,
-          strasse_rueckfuehrung, hausnummer_rueckfuehrung, plz_rueckfuehrung,
+          strasse_start, plz_start,
+          strasse_ziel, plz_ziel,
+          strasse_rueckfuehrung, plz_rueckfuehrung,
           kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
           protokoll_art, info, bestaetigt, erstellt_von, created_at,
           auf_eis, auf_eis_notiz,
@@ -505,7 +505,7 @@ function KundenTourCard({
               <AdresseZeile
                 label="Adresse Start"
                 wert={effektiveAdresse(
-                  { strasse: tour.strasse_start, hausnummer: tour.hausnummer_start,
+                  { strasse: tour.strasse_start,
                     plz: tour.plz_start, stadt: tour.start_stadt },
                   tour.adresse_start,
                 )}
@@ -513,7 +513,7 @@ function KundenTourCard({
               <AdresseZeile
                 label="Adresse Ziel"
                 wert={effektiveAdresse(
-                  { strasse: tour.strasse_ziel, hausnummer: tour.hausnummer_ziel,
+                  { strasse: tour.strasse_ziel,
                     plz: tour.plz_ziel, stadt: tour.ziel_stadt },
                   tour.adresse_ziel,
                 )}
@@ -521,7 +521,7 @@ function KundenTourCard({
               <AdresseZeile
                 label="Adresse Rückführung"
                 wert={effektiveAdresse(
-                  { strasse: tour.strasse_rueckfuehrung, hausnummer: tour.hausnummer_rueckfuehrung,
+                  { strasse: tour.strasse_rueckfuehrung,
                     plz: tour.plz_rueckfuehrung, stadt: tour.rueckfuehrung_stadt },
                   tour.adresse_rueckfuehrung,
                 )}

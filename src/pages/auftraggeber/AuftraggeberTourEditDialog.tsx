@@ -120,13 +120,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   // Bestandstouren haben nur den Freitext — der wird angezeigt, aber
   // bewusst NICHT automatisch zerlegt.
   const [strasseStart, setStrasseStart] = useState(tour.strasse_start ?? '');
-  const [hausnummerStart, setHausnummerStart] = useState(tour.hausnummer_start ?? '');
   const [plzStart, setPlzStart] = useState(tour.plz_start ?? '');
   const [strasseZiel, setStrasseZiel] = useState(tour.strasse_ziel ?? '');
-  const [hausnummerZiel, setHausnummerZiel] = useState(tour.hausnummer_ziel ?? '');
   const [plzZiel, setPlzZiel] = useState(tour.plz_ziel ?? '');
   const [strasseRueck, setStrasseRueck] = useState(tour.strasse_rueckfuehrung ?? '');
-  const [hausnummerRueck, setHausnummerRueck] = useState(tour.hausnummer_rueckfuehrung ?? '');
   const [plzRueck, setPlzRueck] = useState(tour.plz_rueckfuehrung ?? '');
   const freitextStart = tour.adresse_start ?? '';
   const freitextZiel = tour.adresse_ziel ?? '';
@@ -149,15 +146,15 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   // Adresse für Anzeige, Routenberechnung und die gespeicherte
   // Freitext-Spalte: Einzelteile gewinnen, sonst der Bestands-Freitext.
   const adresseStart = effektiveAdresse(
-    { strasse: strasseStart, hausnummer: hausnummerStart, plz: plzStart, stadt: startStadt },
+    { strasse: strasseStart, plz: plzStart, stadt: startStadt },
     freitextStart,
   );
   const adresseZiel = effektiveAdresse(
-    { strasse: strasseZiel, hausnummer: hausnummerZiel, plz: plzZiel, stadt: zielStadt },
+    { strasse: strasseZiel, plz: plzZiel, stadt: zielStadt },
     freitextZiel,
   );
   const adresseRueck = effektiveAdresse(
-    { strasse: strasseRueck, hausnummer: hausnummerRueck, plz: plzRueck, stadt: rueckStadt },
+    { strasse: strasseRueck, plz: plzRueck, stadt: rueckStadt },
     freitextRueck,
   );
   const [kontakte, setKontakte] = useState<KontaktMap>(() => leereKontaktMap());
@@ -247,13 +244,10 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
       adresse_ziel: adresseZiel.trim() || null,
       adresse_rueckfuehrung: hatRueckfuehrung ? (adresseRueck.trim() || null) : null,
       strasse_start: strasseStart.trim() || null,
-      hausnummer_start: hausnummerStart.trim() || null,
       plz_start: plzStart.trim() || null,
       strasse_ziel: strasseZiel.trim() || null,
-      hausnummer_ziel: hausnummerZiel.trim() || null,
       plz_ziel: plzZiel.trim() || null,
       strasse_rueckfuehrung: hatRueckfuehrung ? (strasseRueck.trim() || null) : null,
-      hausnummer_rueckfuehrung: hatRueckfuehrung ? (hausnummerRueck.trim() || null) : null,
       plz_rueckfuehrung: hatRueckfuehrung ? (plzRueck.trim() || null) : null,
       info: info.trim() || null,
       fahrzeugmodell: fahrzeugmodell.trim() || null,
@@ -400,7 +394,6 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             stadtLabel="Stadt"
             stadt={startStadt} onStadt={setStartStadt} stadtPflicht
             strasse={strasseStart} onStrasse={setStrasseStart}
-            hausnummer={hausnummerStart} onHausnummer={setHausnummerStart}
             plz={plzStart} onPlz={setPlzStart}
             adresseFreitext={freitextStart}
             zeit={zeitStart} onZeit={setZeitStart} zeitLabel="Zeit Abholung"
@@ -415,7 +408,6 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
             stadtLabel="Stadt"
             stadt={zielStadt} onStadt={setZielStadt} stadtPflicht
             strasse={strasseZiel} onStrasse={setStrasseZiel}
-            hausnummer={hausnummerZiel} onHausnummer={setHausnummerZiel}
             plz={plzZiel} onPlz={setPlzZiel}
             adresseFreitext={freitextZiel}
             zeit={zeitZiel} onZeit={setZeitZiel} zeitLabel="Zeit Anlieferung"
@@ -460,7 +452,6 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                 stadtLabel="Stadt"
                 stadt={rueckStadt} onStadt={setRueckStadt}
                 strasse={strasseRueck} onStrasse={setStrasseRueck}
-              hausnummer={hausnummerRueck} onHausnummer={setHausnummerRueck}
               plz={plzRueck} onPlz={setPlzRueck}
               adresseFreitext={freitextRueck}
                 zeit={zeitRueck} onZeit={setZeitRueck} zeitLabel="Zeit Rückführung"
