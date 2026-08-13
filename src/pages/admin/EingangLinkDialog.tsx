@@ -8,7 +8,10 @@ import {
   tourTitel,
   type ProtokollAbschnitt,
 } from '../../lib/touren';
-import { summarizeEingang, type EingangSummary } from '../../lib/eingangData';
+import {
+  summarizeEingang, type AdresseTeile, type EingangSummary,
+} from '../../lib/eingangData';
+import { adressPatchFuerStation, composeAdresse } from '../../lib/adresse';
 import type {
   AppUser, Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../../types/db';
@@ -107,6 +110,8 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen, kundenname, fin,
           adresse_start, adresse_ziel, adresse_rueckfuehrung,
+          strasse_start, plz_start, strasse_ziel, plz_ziel,
+          strasse_rueckfuehrung, plz_rueckfuehrung,
           kontakt_start, kontakt_ziel, kontakt_rueckfuehrung,
           protokoll_daten_felder, protokoll_daten_felder_bc,
           km_gesamt, eingang_id, eingang_id_bc, auftraggeber_id, fahrer_id,
@@ -166,14 +171,23 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
       : { eingang_id: formular.id };
     const filled: string[] = [];
     const fieldKeys: string[] = [];
-    function maybe(key: keyof TourUpdate, label: string, current: unknown, next: unknown) {
+    /**
+     * @param track false = Spalte NICHT in protokoll_daten_felder
+     *   aufnehmen. Nötig für die Stadt-Spalten: sie sind NOT NULL
+     *   (Migration 012), und "Verknüpfung lösen + zurücksetzen" schreibt
+     *   in jede getrackte Spalte null — das würde fehlschlagen.
+     */
+    function maybe(
+      key: keyof TourUpdate, label: string, current: unknown, next: unknown,
+      track = true,
+    ) {
       const isEmpty = current == null
         || (typeof current === 'string' && current.trim() === '')
         || (Array.isArray(current) && current.length === 0);
       if (isEmpty && next != null && next !== '' && !(Array.isArray(next) && next.length === 0)) {
         (patch as Record<string, unknown>)[key as string] = next;
         filled.push(label);
-        fieldKeys.push(key as string);
+        if (track) fieldKeys.push(key as string);
       }
     }
     // Feld-übergreifende Daten (FIN, Kennzeichen, Kundenname, km) gelten
@@ -188,21 +202,78 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
       email: summary.kontaktEmail ?? '',
     } : null;
 
+    /**
+     * Adresse einer Station übernehmen. Die eigentliche Regel steckt in
+     * adressPatchFuerStation() (lib/adresse.ts) — dort auch getestet.
+     *
+     * Vor diesem Fix wurde ausschließlich das Freitextfeld `adresse_*`
+     * beschrieben. Seit Migration 086/087 ist die Tour-Maske aber an die
+     * strukturierten Spalten gebunden; die Adressfelder blieben nach
+     * einer Verknüpfung deshalb leer.
+     */
+    function adresseUebernehmen(
+      station: 'start' | 'ziel' | 'rueckfuehrung',
+      label: string,
+      teile: AdresseTeile,
+    ) {
+      const stadtSpalte = station === 'rueckfuehrung'
+        ? 'rueckfuehrung_stadt' : `${station}_stadt`;
+      const r = adressPatchFuerStation({
+        station,
+        neu: teile,
+        alt: {
+          strasse: (tour[`strasse_${station}` as keyof TourRow] as string | null) ?? null,
+          plz: (tour[`plz_${station}` as keyof TourRow] as string | null) ?? null,
+          stadt: (tour[stadtSpalte as keyof TourRow] as string | null) ?? null,
+          adresse: (tour[`adresse_${station}` as keyof TourRow] as string | null) ?? null,
+        },
+      });
+      Object.assign(patch as Record<string, unknown>, r.patch);
+      for (const l of r.labels) filled.push(`${l} ${label}`);
+      fieldKeys.push(...r.trackKeys);
+    }
+
     if (abschnitt === 'bc') {
       // Rück/Teil 2: Übernahme = Übergabe-Adresse des AB-Teils (bleibt
       // wie sie ist), Übergabe-Adresse dieses Abschnitts = Rückführung.
-      maybe('adresse_rueckfuehrung', 'Adresse Rückführung', tour.adresse_rueckfuehrung, summary.adresseUebergabe);
+      adresseUebernehmen('rueckfuehrung', 'Rückführung', summary.adresseUebergabeTeile);
       if (kontaktPayload) {
         maybe('kontakt_rueckfuehrung', 'Kontakt Rückführung', tour.kontakt_rueckfuehrung, kontaktPayload);
       }
     } else {
-      maybe('adresse_start', 'Adresse Übernahme', tour.adresse_start, summary.adresseUebernahme);
-      maybe('adresse_ziel', 'Adresse Übergabe', tour.adresse_ziel, summary.adresseUebergabe);
+      adresseUebernehmen('start', 'Übernahme', summary.adresseUebernahmeTeile);
+      adresseUebernehmen('ziel', 'Übergabe', summary.adresseUebergabeTeile);
       if (kontaktPayload) {
         maybe('kontakt_start', 'Kontakt Übernahme', tour.kontakt_start, kontaktPayload);
         maybe('kontakt_ziel',  'Kontakt Übergabe',  tour.kontakt_ziel,  kontaktPayload);
       }
     }
+
+    // Diagnose: was kam aus dem Protokoll, was steht vorher/nachher auf
+    // der Tour? Bleibt bewusst drin — die Feld-IDs der Templates sind
+    // uneinheitlich, und ohne diese Zeilen ist eine fehlgeschlagene
+    // Übernahme von außen nicht nachvollziehbar.
+    console.log('[Verknüpfung] Quelle (Protokoll):', {
+      uebernahme: summary.adresseUebernahmeTeile,
+      uebergabe: summary.adresseUebergabeTeile,
+      zusammengesetzt: {
+        uebernahme: summary.adresseUebernahme,
+        uebergabe: summary.adresseUebergabe,
+      },
+    });
+    console.log('[Verknüpfung] Ziel (Tour) vorher/nachher:', {
+      vorher: {
+        strasse_start: tour.strasse_start, plz_start: tour.plz_start,
+        start_stadt: tour.start_stadt, adresse_start: tour.adresse_start,
+        strasse_ziel: tour.strasse_ziel, plz_ziel: tour.plz_ziel,
+        ziel_stadt: tour.ziel_stadt, adresse_ziel: tour.adresse_ziel,
+        strasse_rueckfuehrung: tour.strasse_rueckfuehrung,
+        plz_rueckfuehrung: tour.plz_rueckfuehrung,
+        rueckfuehrung_stadt: tour.rueckfuehrung_stadt,
+        adresse_rueckfuehrung: tour.adresse_rueckfuehrung,
+      },
+      nachher: patch,
+    });
 
     // Liste der durch das Protokoll befüllten Spalten persistieren —
     // wird beim "Verknüpfung lösen" wieder gezielt zurückgesetzt. Pro
@@ -594,8 +665,13 @@ function buildTourPayload(
   s: EingangSummary,
   eingangId: string,
 ): TourInsert {
-  const start = firstCity(s.adresseUebernahme) || 'Übernahme';
-  const ziel  = firstCity(s.adresseUebergabe) || 'Übergabe';
+  // Stadt bevorzugt aus dem eigenen Stadt-Feld des Protokolls. Nur wenn
+  // das Template die Adresse als Freitext liefert, greift die alte
+  // Heuristik auf der zusammengesetzten Zeile.
+  const start = s.adresseUebernahmeTeile.stadt
+    || firstCity(s.adresseUebernahme) || 'Übernahme';
+  const ziel = s.adresseUebergabeTeile.stadt
+    || firstCity(s.adresseUebergabe) || 'Übergabe';
   const kennzeichen = s.kennzeichen ? [s.kennzeichen.toUpperCase()] : [];
   const kontakt = (s.kontaktName || s.kontaktTelefon || s.kontaktEmail)
     ? { name: s.kontaktName ?? '', telefon: s.kontaktTelefon ?? '', email: s.kontaktEmail ?? '' }
@@ -606,7 +682,13 @@ function buildTourPayload(
   const protokollFelder: string[] = [];
   if (s.fin) protokollFelder.push('fin');
   if (kennzeichen.length > 0) protokollFelder.push('kennzeichen');
+  // Alle Adress-Spalten merken, die aus dem Protokoll kommen — beim
+  // "Verknüpfung lösen" werden genau diese wieder geleert.
+  if (s.adresseUebernahmeTeile.strasse) protokollFelder.push('strasse_start');
+  if (s.adresseUebernahmeTeile.plz) protokollFelder.push('plz_start');
   if (s.adresseUebernahme) protokollFelder.push('adresse_start');
+  if (s.adresseUebergabeTeile.strasse) protokollFelder.push('strasse_ziel');
+  if (s.adresseUebergabeTeile.plz) protokollFelder.push('plz_ziel');
   if (s.adresseUebergabe) protokollFelder.push('adresse_ziel');
   if (s.kundenname) protokollFelder.push('kundenname');
   if (s.kmGesamt != null) protokollFelder.push('km_hin', 'km_gesamt');
@@ -626,8 +708,14 @@ function buildTourPayload(
     // das Protokoll kein Datum geliefert hat.
     startdatum: s.datum ?? new Date().toISOString().slice(0, 10),
     enddatum:   s.datum ?? new Date().toISOString().slice(0, 10),
-    adresse_start: s.adresseUebernahme,
-    adresse_ziel: s.adresseUebergabe,
+    // Strukturierte Adressfelder (086/087) — daran hängt die Anzeige in
+    // der Tour-Maske. Das Freitextfeld wird zusätzlich mitgeführt.
+    strasse_start: s.adresseUebernahmeTeile.strasse,
+    plz_start: s.adresseUebernahmeTeile.plz,
+    strasse_ziel: s.adresseUebergabeTeile.strasse,
+    plz_ziel: s.adresseUebergabeTeile.plz,
+    adresse_start: composeAdresse({ ...s.adresseUebernahmeTeile, stadt: start }),
+    adresse_ziel: composeAdresse({ ...s.adresseUebergabeTeile, stadt: ziel }),
     kontakt_start: kontakt,
     kontakt_ziel: kontakt,
     eingang_id: eingangId,

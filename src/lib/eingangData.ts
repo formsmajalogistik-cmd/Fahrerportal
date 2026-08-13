@@ -3,7 +3,24 @@
 // Feld-IDs; wir prüfen daher gängige Schreibweisen und fallback auf
 // "irgendein Feld dessen ID enthält…".
 
+import { composeAdresse } from './adresse';
 import type { AusgefuelltesFormular } from '../types/db';
+
+/**
+ * Adresse eines Protokolls in Einzelteilen — dieselbe Form, die das
+ * Formular-Adressfeld liefert ({strasse, plz, stadt}) und die die Tour
+ * seit Migration 086/087 speichert.
+ *
+ * Wird beim Verknüpfen 1:1 in strasse_* / plz_* / <Station>_stadt
+ * übernommen. Liefert ein älteres Template die Adresse als reinen
+ * Freitext, landet der Wert in `strasse`; PLZ und Stadt bleiben leer —
+ * bewusst KEIN Zerlegen, das ist zu fehleranfällig.
+ */
+export interface AdresseTeile {
+  strasse: string | null;
+  plz: string | null;
+  stadt: string | null;
+}
 
 export interface EingangSummary {
   kennzeichen: string | null;
@@ -11,8 +28,12 @@ export interface EingangSummary {
   kundenname: string | null;
   /** Datum als ISO-Date-String (oder null). */
   datum: string | null;
+  /** Zusammengesetzt ("Straße, PLZ Stadt") — für Anzeige und Route. */
   adresseUebernahme: string | null;
   adresseUebergabe: string | null;
+  /** Dieselben Adressen in Einzelteilen, für die Tour-Spalten. */
+  adresseUebernahmeTeile: AdresseTeile;
+  adresseUebergabeTeile: AdresseTeile;
   fin: string | null;
   kmGesamt: number | null;
   /** Kontaktperson vor Ort — Name, Telefon, E-Mail. */
@@ -30,19 +51,32 @@ function s(v: unknown): string | null {
   return null;
 }
 
-function addressString(v: unknown): string | null {
-  if (!v) return null;
-  if (typeof v === 'string') return v.trim() || null;
+const LEERE_TEILE: AdresseTeile = { strasse: null, plz: null, stadt: null };
+
+/**
+ * Adresswert eines Formularfeldes in Einzelteile zerlegen.
+ *
+ *   { strasse, plz, stadt }  → 1:1 übernommen (Standard-Adressfeld)
+ *   "Musterweg 3, 28195 …"   → komplett ins Straßenfeld; PLZ und Stadt
+ *                              bleiben leer. Kein Parsing.
+ */
+function addressTeile(v: unknown): AdresseTeile {
+  if (!v) return { ...LEERE_TEILE };
+  if (typeof v === 'string') {
+    const t = v.trim();
+    return t ? { strasse: t, plz: null, stadt: null } : { ...LEERE_TEILE };
+  }
   if (typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    const parts: string[] = [];
-    if (o.strasse) parts.push(String(o.strasse));
-    if (o.plz || o.stadt) {
-      parts.push([o.plz, o.stadt].filter(Boolean).join(' '));
-    }
-    return parts.length > 0 ? parts.join(', ') : null;
+    return { strasse: s(o.strasse), plz: s(o.plz), stadt: s(o.stadt) };
   }
-  return null;
+  return { ...LEERE_TEILE };
+}
+
+/** Zusammengesetzte Adresse — identisches Format wie in der Tour. */
+function addressString(v: unknown): string | null {
+  const t = addressTeile(v);
+  return composeAdresse(t);
 }
 
 function findKey(data: Record<string, unknown>, candidates: string[]): unknown {
@@ -81,12 +115,12 @@ export function summarizeEingang(formular: AusgefuelltesFormular): EingangSummar
     if (!isNaN(d.getTime())) datum = d.toISOString();
   }
 
-  const adresseUebernahme = addressString(
-    findKey(data, ['uebernahme_adresse', 'adresse_uebernahme', 'abholort']),
-  );
-  const adresseUebergabe = addressString(
-    findKey(data, ['uebergabe_adresse', 'adresse_uebergabe', 'zielort']),
-  );
+  const rohUebernahme = findKey(data, ['uebernahme_adresse', 'adresse_uebernahme', 'abholort']);
+  const rohUebergabe  = findKey(data, ['uebergabe_adresse', 'adresse_uebergabe', 'zielort']);
+  const adresseUebernahmeTeile = addressTeile(rohUebernahme);
+  const adresseUebergabeTeile  = addressTeile(rohUebergabe);
+  const adresseUebernahme = addressString(rohUebernahme);
+  const adresseUebergabe  = addressString(rohUebergabe);
 
   // Kontaktperson vor Ort — Templates haben unterschiedliche Feld-IDs
   // ("kontakt", "ansprechpartner", "rufnummer", "email_kunde", …). Wir
@@ -108,6 +142,8 @@ export function summarizeEingang(formular: AusgefuelltesFormular): EingangSummar
     datum,
     adresseUebernahme,
     adresseUebergabe,
+    adresseUebernahmeTeile,
+    adresseUebergabeTeile,
     fin,
     kmGesamt,
     kontaktName,

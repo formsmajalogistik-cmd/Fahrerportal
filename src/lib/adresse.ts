@@ -45,18 +45,26 @@ export function composeAdresse(teile: Partial<AdressTeile>): string | null {
 /**
  * Adresse einer Station für Anzeige und Routenberechnung.
  *
- * Sind Einzelteile gepflegt, gewinnen sie — sonst fällt die Funktion
- * auf den gespeicherten Freitext zurück. Genau das hält Bestandstouren
- * (Freitext, nie zerlegt) und neue Touren (Einzelteile) im selben
- * Code-Pfad.
+ * Sind Straße oder PLZ gepflegt, gewinnen die Einzelteile — sonst fällt
+ * die Funktion auf den gespeicherten Freitext zurück. Genau das hält
+ * Bestandstouren (Freitext, nie zerlegt) und neue Touren (Einzelteile)
+ * im selben Code-Pfad.
+ *
+ * Die STADT allein zählt dabei ausdrücklich NICHT als Adresse: sie ist
+ * bei jeder Tour gesetzt (NOT NULL seit Migration 012). Würde sie
+ * genügen, lieferte eine Bestandstour nur noch "Bremen" statt ihrer
+ * vollständigen Freitext-Adresse — mit Folgen bis in die
+ * Routenberechnung.
  */
 export function effektiveAdresse(
   teile: Partial<AdressTeile>,
   freitext: string | null | undefined,
 ): string {
-  const zusammengesetzt = composeAdresse(teile);
-  if (zusammengesetzt) return zusammengesetzt;
-  return leer(freitext);
+  if (hatAdressTeile(teile)) return composeAdresse(teile) ?? '';
+  const alt = leer(freitext);
+  if (alt) return alt;
+  // Weder Einzelteile noch Freitext — dann bleibt höchstens die Stadt.
+  return composeAdresse(teile) ?? '';
 }
 
 /**
@@ -80,4 +88,72 @@ export function altAdresseHinweis(
   if (hatAdressTeile(teile)) return null;
   const t = leer(freitext);
   return t || null;
+}
+
+/**
+ * Adress-Übernahme aus einem Protokoll in eine Station der Tour
+ * (Migration 086/087).
+ *
+ * Regeln:
+ *  - Es werden NUR leere Tour-Felder befüllt; vorhandene Werte bleiben.
+ *  - Straße, PLZ und Stadt gehen in die strukturierten Spalten; das
+ *    Freitextfeld `adresse_*` wird aus den EFFEKTIVEN Werten (alt + neu)
+ *    zusammengesetzt, damit Auftrags-E-Mail, Export, PDF-Platzhalter und
+ *    Routenberechnung unverändert funktionieren.
+ *  - Die Stadt ist zugleich die Tour-Stadt (start_stadt / ziel_stadt /
+ *    rueckfuehrung_stadt) — kein zweites Feld.
+ *  - `trackKeys` enthält die Spalten, die beim „Verknüpfung lösen"
+ *    zurückgesetzt werden dürfen. Die Stadt-Spalten fehlen dort
+ *    absichtlich: sie sind NOT NULL (Migration 012).
+ */
+export function adressPatchFuerStation(args: {
+  station: 'start' | 'ziel' | 'rueckfuehrung';
+  /** Werte aus dem Protokoll. */
+  neu: Partial<AdressTeile>;
+  /** Aktuelle Werte der Tour. */
+  alt: { strasse: string | null; plz: string | null; stadt: string | null; adresse: string | null };
+}): { patch: Record<string, string>; trackKeys: string[]; labels: string[] } {
+  const { station, neu, alt } = args;
+  const stadtSpalte = station === 'rueckfuehrung' ? 'rueckfuehrung_stadt' : `${station}_stadt`;
+  const patch: Record<string, string> = {};
+  const trackKeys: string[] = [];
+  const labels: string[] = [];
+  const istLeer = (v: string | null | undefined) => !(v ?? '').trim();
+
+  const setze = (spalte: string, label: string, altWert: string | null,
+                 neuWert: string | null | undefined, track: boolean) => {
+    if (!istLeer(altWert)) return;
+    const w = (neuWert ?? '').trim();
+    if (!w) return;
+    patch[spalte] = w;
+    labels.push(label);
+    if (track) trackKeys.push(spalte);
+  };
+
+  setze(`strasse_${station}`, 'Straße', alt.strasse, neu.strasse, true);
+  setze(`plz_${station}`, 'PLZ', alt.plz, neu.plz, true);
+  // Stadt bewusst NICHT getrackt — NOT NULL, siehe oben.
+  setze(stadtSpalte, 'Stadt', alt.stadt, neu.stadt, false);
+
+  // Freitext nachziehen. Er ist ein ABGELEITETES Feld (genau wie beim
+  // Speichern der Tour-Maske) und wird deshalb überschrieben, sobald
+  // strukturierte Werte dazugekommen sind — sonst zeigte die Maske die
+  // neue Adresse, Export und Auftrags-E-Mail aber weiter die alte.
+  // Kam nichts Strukturiertes dazu, bleibt ein vorhandener Freitext
+  // unangetastet.
+  const etwasGefuellt = Object.keys(patch).length > 0;
+  const eff = composeAdresse({
+    strasse: patch[`strasse_${station}`] ?? alt.strasse,
+    plz: patch[`plz_${station}`] ?? alt.plz,
+    stadt: patch[stadtSpalte] ?? alt.stadt,
+  });
+  if (etwasGefuellt && eff && eff !== (alt.adresse ?? '').trim()) {
+    patch[`adresse_${station}`] = eff;
+    labels.push('Adresse');
+    trackKeys.push(`adresse_${station}`);
+  } else {
+    setze(`adresse_${station}`, 'Adresse', alt.adresse, eff, true);
+  }
+
+  return { patch, trackKeys, labels };
 }

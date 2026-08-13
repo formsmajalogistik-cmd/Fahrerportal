@@ -99,6 +99,15 @@ const PROTOKOLL_FELD_LABEL: Record<string, string> = {
   adresse_start: 'Adresse Übernahme',
   adresse_ziel: 'Adresse Übergabe',
   adresse_rueckfuehrung: 'Adresse Rückführung',
+  // Strukturierte Adressfelder (086/087). Die Stadt-Spalten stehen
+  // bewusst NICHT hier — sie sind NOT NULL und werden beim Lösen der
+  // Verknüpfung nicht zurückgesetzt.
+  strasse_start: 'Straße Übernahme',
+  plz_start: 'PLZ Übernahme',
+  strasse_ziel: 'Straße Übergabe',
+  plz_ziel: 'PLZ Übergabe',
+  strasse_rueckfuehrung: 'Straße Rückführung',
+  plz_rueckfuehrung: 'PLZ Rückführung',
   kontakt_start: 'Kontakt Übernahme',
   kontakt_ziel: 'Kontakt Übergabe',
   kontakt_rueckfuehrung: 'Kontakt Rückführung',
