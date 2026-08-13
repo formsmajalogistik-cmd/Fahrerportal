@@ -11,6 +11,11 @@ import {
   type Rechnungsformat, type TourForRechnung, type TourenartReal,
 } from '../../../lib/rechnungsformat';
 import { PositionsTable } from './PositionsTable';
+import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfaengerFeldsatz';
+import {
+  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaenger, nameZeile,
+  snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
+} from '../../../lib/manuelleEmpfaenger';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { SummenBlock } from './SummenBlock';
 import {
@@ -73,6 +78,10 @@ function snapshotFromRechnungsadresse(r: Rechnungsadresse): AdressSnapshot {
   };
 }
 
+// Manuelle Empfänger (Migration 088) — Rechnung an jemanden, der kein
+// Auftraggeber ist. Der Adress-Snapshot wird dann direkt aus den
+// Eingaben befüllt statt aus den Auftraggeber-Stammdaten.
+
 export function RechnungNewPage() {
   const navigate = useNavigate();
   const [auftraggeberList, setAuftraggeberList] = useState<AuftraggeberFull[]>([]);
@@ -82,6 +91,16 @@ export function RechnungNewPage() {
 
   // Kopfdaten
   const [auftraggeberId, setAuftraggeberId] = useState<string>('');
+  /** true, sobald im Dropdown "Manuell (kein Auftraggeber)" gewählt ist. */
+  const istManuell = auftraggeberId === MANUELL_OPTION;
+  const [manuell, setManuell] = useState<ManuellerEmpfaengerEntwurf>(leererEmpfaenger());
+  const [manuellMerken, setManuellMerken] = useState(false);
+  /**
+   * Rechnungsformat für manuelle Rechnungen. Ohne Auftraggeber gibt es
+   * keine Stammdaten-Vorgabe — Standard, alternativ das Format eines
+   * beliebigen Auftraggebers als Vorlage.
+   */
+  const [manuellFormatVon, setManuellFormatVon] = useState<string>('');
   /**
    * Optionaler Filter auf einen einzelnen Rechnungsempfänger
    * (auftraggeber_kontakte.id). Leer = "Alle" (Verhalten wie bisher).
@@ -205,16 +224,29 @@ export function RechnungNewPage() {
     [auftraggeberList, auftraggeberId],
   );
 
-  const format = useMemo(
-    () => parseRechnungsformat(auftraggeber?.rechnungsformat ?? null),
-    [auftraggeber],
-  );
+  const format = useMemo(() => {
+    if (istManuell) {
+      // Ohne Auftraggeber greift das Standard-Format; optional das
+      // Format eines vorhandenen Auftraggebers als Vorlage.
+      const vorlage = auftraggeberList.find((a) => a.id === manuellFormatVon);
+      return parseRechnungsformat(vorlage?.rechnungsformat ?? null);
+    }
+    return parseRechnungsformat(auftraggeber?.rechnungsformat ?? null);
+  }, [istManuell, manuellFormatVon, auftraggeberList, auftraggeber]);
   const getrennt = format.getrennte_auslagen_rechnung;
 
   // Bei Auftraggeber-Wechsel: Adress-Snapshot, Anrede, USt, Kundennummer,
   // Sachbearbeiter aus den Stammdaten ziehen. Wenn der Auftraggeber eine
   // hinterlegte Standard-Rechnungsadresse hat, hat die Vorrang.
   useEffect(() => {
+    if (istManuell) {
+      // Im manuellen Modus kommt der Snapshot aus dem Eingabeblock —
+      // hier NICHT überschreiben, sonst wären die Eingaben bei jedem
+      // Tastendruck wieder weg.
+      setHaupt([]); setAuslagen([]); setTouren([]);
+      setRechnungsempfaengerId('');
+      return;
+    }
     if (!auftraggeber) {
       setSnapshot(emptySnapshot());
       setKundennummer(''); setSachbearbeiter('');
@@ -238,7 +270,27 @@ export function RechnungNewPage() {
     // Auch der Rechnungsempfänger-Filter wird zurückgesetzt, sonst
     // greift er gegen den falschen Auftraggeber.
     setRechnungsempfaengerId('');
-  }, [auftraggeber, format.anrede, format.ust_satz]);
+  }, [istManuell, auftraggeber, format.anrede, format.ust_satz]);
+
+  /**
+   * Manueller Modus: Snapshot und Kundennummer werden aus den Eingaben
+   * ABGELEITET statt in den State gespiegelt — so gibt es nur eine
+   * Wahrheit und kein Nachziehen bei jedem Tastendruck.
+   */
+  const effSnapshot = istManuell ? snapshotAusEmpfaenger(manuell) : snapshot;
+  const effKundennummer = istManuell ? manuell.kundennummer.trim() : kundennummer;
+
+  /**
+   * Vorschlag für die Brief-Anrede aus Anrede + Nachname — dieselbe
+   * buildAnrede()-Logik wie bei Rechnungsempfängern
+   * ("Herr Max Mustermann" → "Sehr geehrter Herr Mustermann,").
+   * Greift nur, solange das Anrede-Feld leer ist; der Admin kann also
+   * jederzeit etwas anderes eintragen.
+   */
+  const autoAnrede = istManuell
+    ? buildAnrede(nameZeile(manuell))
+    : 'Sehr geehrte Damen und Herren,';
+  const effAnrede = anrede.trim() || (istManuell ? autoAnrede : '');
 
   /**
    * Rechnungsempfänger-Optionen für den aktuell gewählten Auftraggeber
@@ -590,7 +642,13 @@ export function RechnungNewPage() {
   }, [touren, rechnungsdatum]);
 
   async function speichern(status: 'entwurf' | 'offen') {
-    if (!auftraggeber) { setError('Bitte einen Auftraggeber wählen.'); return; }
+    if (!istManuell && !auftraggeber) {
+      setError('Bitte einen Auftraggeber wählen.'); return;
+    }
+    if (istManuell && !effSnapshot.firma.trim() && !effSnapshot.ansprechpartner.trim()) {
+      setError('Bitte für den manuellen Empfänger eine Firma oder einen Namen angeben.');
+      return;
+    }
     if (!rechnungsdatum) { setError('Bitte das Rechnungsdatum angeben.'); return; }
     setError(null);
     setSaving(status);
@@ -610,14 +668,20 @@ export function RechnungNewPage() {
       const sum = berechneSummenProUst(positionen, ustSatz);
       type Insert = Database['public']['Tables']['rechnungen']['Insert'];
       const insertPayload: Insert = {
-        auftraggeber_id: auftraggeber!.id,
+        // Manuelle Rechnung: KEIN Auftraggeber-Bezug. Es wird auch
+        // kein Eintrag in `auftraggeber` angelegt — der Empfänger
+        // taucht damit in keiner Auftraggeber-Ansicht auf.
+        auftraggeber_id: istManuell ? null : auftraggeber!.id,
+        empfaenger_typ: istManuell ? 'manuell' : 'auftraggeber',
+        empfaenger_email:  istManuell ? (manuell.email.trim() || null) : null,
+        empfaenger_ust_id: istManuell ? (manuell.ustId.trim() || null) : null,
         // FK auf rechnungsadressen wird nicht mehr genutzt — wir
         // speichern den Snapshot direkt auf der Rechnung.
         rechnungsadresse_id: null,
         datum: rechnungsdatum,
         leistungszeitraum_von: leistungszeitraum.von,
         leistungszeitraum_bis: leistungszeitraum.bis,
-        anrede: anrede || null,
+        anrede: effAnrede || null,
         netto_summe: sum.netto,
         ust_satz: ustSatz,
         ust_betrag: sum.ust,
@@ -625,14 +689,14 @@ export function RechnungNewPage() {
         status,
         notizen: notizen || null,
         ist_auslagen_rechnung: istAuslagen,
-        ansprechpartner: snapshot.ansprechpartner || null,
+        ansprechpartner: effSnapshot.ansprechpartner || null,
         sachbearbeiter: sachbearbeiter || null,
-        kundennummer: kundennummer || null,
-        rechnungsadresse_firma:   snapshot.firma   || null,
-        rechnungsadresse_strasse: snapshot.strasse || null,
-        rechnungsadresse_plz_ort: snapshot.plz_ort || null,
-        rechnungsadresse_land:    snapshot.land    || null,
-        rechnungsempfaenger_id:   rechnungsempfaengerId || null,
+        kundennummer: effKundennummer || null,
+        rechnungsadresse_firma:   effSnapshot.firma   || null,
+        rechnungsadresse_strasse: effSnapshot.strasse || null,
+        rechnungsadresse_plz_ort: effSnapshot.plz_ort || null,
+        rechnungsadresse_land:    effSnapshot.land    || null,
+        rechnungsempfaenger_id:   istManuell ? null : (rechnungsempfaengerId || null),
       };
       // Manuelle Nummer nur, wenn der Admin sie nicht leer gelassen hat;
       // ansonsten vergibt der DB-Trigger die nächste freie Nummer.
@@ -688,6 +752,13 @@ export function RechnungNewPage() {
         const r = await insertOne(haupt, false, manuelleNummer, true);
         if (!r.ok) throw new Error(r.error);
         if (r.id) firstId = r.id;
+      }
+
+      // Empfänger merken — rein optionale Eingabehilfe. Ein Fehler
+      // hier darf die bereits angelegte Rechnung nicht kippen.
+      if (istManuell && manuellMerken) {
+        const m = await merkeEmpfaenger(manuell);
+        if (!m.ok) console.warn('[manueller Empfänger] Merken fehlgeschlagen', m.fehler);
       }
 
       if (status === 'offen') {
@@ -746,8 +817,32 @@ export function RechnungNewPage() {
               {auftraggeberList.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
+              {/* Empfänger ohne Auftraggeber-Bezug. Legt bewusst KEINEN
+                  Auftraggeber an — der Empfänger erscheint in keiner
+                  Auftraggeber-Liste und in keinem Tour-Filter. */}
+              <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
             </select>
           </div>
+          {istManuell && (
+            <div>
+              <label htmlFor="fmt" className="label">Rechnungsformat</label>
+              <select
+                id="fmt"
+                className="input"
+                value={manuellFormatVon}
+                onChange={(e) => setManuellFormatVon(e.target.value)}
+              >
+                <option value="">Standard-Format</option>
+                {auftraggeberList.map((a) => (
+                  <option key={a.id} value={a.id}>Format von {a.name}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-maja-muted">
+                Ohne Auftraggeber gilt das Standard-Format; bei Bedarf ein
+                vorhandenes Format als Vorlage wählen.
+              </p>
+            </div>
+          )}
           {/* Optionaler Rechnungsempfänger-Filter. Wird nur eingeblendet,
               sobald ein Auftraggeber gewählt ist UND es mindestens
               einen Empfänger auf seinen Touren gibt — sonst wäre
@@ -803,7 +898,10 @@ export function RechnungNewPage() {
             <label htmlFor="kdnr" className="label">Kundennummer</label>
             <input
               id="kdnr" className="input"
-              value={kundennummer} onChange={(e) => setKundennummer(e.target.value)}
+              value={effKundennummer}
+              onChange={(e) => (istManuell
+                ? setManuell({ ...manuell, kundennummer: e.target.value })
+                : setKundennummer(e.target.value))}
               placeholder={auftraggeber?.kundennummer ?? ''}
             />
           </div>
@@ -828,12 +926,26 @@ export function RechnungNewPage() {
             <input
               id="anrede" className="input"
               value={anrede} onChange={(e) => setAnrede(e.target.value)}
-              placeholder="Sehr geehrte Damen und Herren,"
+              placeholder={autoAnrede}
             />
           </div>
         </div>
 
-        {/* Rechnungsadresse — editierbare Snapshot-Felder */}
+        {/* Manueller Empfänger — speist den Adress-Snapshot direkt. */}
+        {istManuell && (
+          <ManuellerEmpfaengerFeldsatz
+            idPrefix="re-man"
+            wert={manuell}
+            onChange={setManuell}
+            merken={manuellMerken}
+            onMerken={setManuellMerken}
+          />
+        )}
+
+        {/* Rechnungsadresse — editierbare Snapshot-Felder. Bei manuellen
+            Rechnungen entsteht sie aus dem Block darüber und wird nur
+            als Kontrolle angezeigt. */}
+        {!istManuell && (
         <div className="space-y-3 rounded-lg bg-maja-light/40 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-maja-navy">Rechnungsadresse</h3>
@@ -901,6 +1013,7 @@ export function RechnungNewPage() {
             </div>
           </div>
         </div>
+        )}
 
         {getrennt && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -928,12 +1041,24 @@ export function RechnungNewPage() {
           </div>
         )}
 
+        {/* Touren laden entfällt bei manuellen Rechnungen — ohne
+            Auftraggeber gibt es keine zuzuordnenden Touren. */}
+        {istManuell ? (
+          <p className="rounded-lg bg-maja-light/60 px-3 py-2 text-sm text-maja-muted">
+            Manuelle Rechnung: Positionen bitte unten von Hand erfassen.
+            Einzelne Touren lassen sich weiterhin über
+            „Tour hinzufügen" referenzieren.
+          </p>
+        ) : (
         <div className="flex flex-wrap items-center gap-3 pt-2">
           <button
             type="button"
             className="btn-primary"
             onClick={() => void loadTouren()}
             disabled={!auftraggeber || loadingTouren || loadingSchnell}
+            title={istManuell
+              ? 'Ohne Auftraggeber gibt es keine zuzuordnenden Touren — Positionen bitte manuell erfassen.'
+              : undefined}
           >
             {loadingTouren ? 'Lade Touren …' : 'Touren laden'}
           </button>
@@ -970,6 +1095,7 @@ export function RechnungNewPage() {
             </span>
           )}
         </div>
+        )}
         {schnellInfo && (
           <p className="rounded-md bg-maja-light/60 p-2 text-xs text-maja-ink">{schnellInfo}</p>
         )}
@@ -995,7 +1121,7 @@ export function RechnungNewPage() {
                 type="button"
                 className="btn-secondary text-sm"
                 onClick={() => setTourPicker('haupt')}
-                disabled={!auftraggeber}
+                disabled={!auftraggeber && !istManuell}
                 title={auftraggeber ? 'Tour auswählen + automatische Positionen' : 'Erst Auftraggeber wählen'}
               >
                 + Tour hinzufügen
@@ -1029,7 +1155,7 @@ export function RechnungNewPage() {
                 type="button"
                 className="btn-secondary text-sm"
                 onClick={() => setTourPicker('auslagen')}
-                disabled={!auftraggeber}
+                disabled={!auftraggeber && !istManuell}
                 title={auftraggeber ? 'Tour auswählen + automatische Positionen' : 'Erst Auftraggeber wählen'}
               >
                 + Tour hinzufügen
@@ -1107,9 +1233,11 @@ export function RechnungNewPage() {
         />
       )}
 
-      {tourPicker && auftraggeber && (
+      {/* Bei manuellen Rechnungen ohne Auftraggeber-Filter — einzelne
+          Touren lassen sich trotzdem referenzieren. */}
+      {tourPicker && (auftraggeber || istManuell) && (
         <AddTourPositionDialog
-          auftraggeberId={auftraggeber.id}
+          auftraggeberId={auftraggeber?.id ?? null}
           leistungszeitraumVon={leistungszeitraum.von}
           leistungszeitraumBis={leistungszeitraum.bis}
           modus={getrennt ? (tourPicker === 'auslagen' ? 'auslagen' : 'touren') : 'beides'}

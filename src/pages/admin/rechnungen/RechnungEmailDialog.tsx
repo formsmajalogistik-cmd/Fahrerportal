@@ -18,6 +18,8 @@ interface Props {
     datum: string;
     brutto_summe: number;
     auftraggeber_id: string | null;
+    /** Bei manuellen Rechnungen: hinterlegte Empfänger-Adresse (088). */
+    empfaenger_email?: string | null;
     pdf_url: string | null;
     belege_pdf_url: string | null;
     status: 'entwurf' | 'offen' | 'bezahlt';
@@ -51,7 +53,11 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
 
   const [options, setOptions] = useState<EmailOption[]>([]);
   const [optionsLoading, setOptionsLoading] = useState(true);
-  const [to, setTo] = useState<string[]>([]);
+  // Bei manuellen Rechnungen ist die Empfänger-Adresse Teil der
+  // Rechnung — sie belegt das To-Feld vor, bleibt aber änderbar.
+  const [to, setTo] = useState<string[]>(
+    () => (rechnung.empfaenger_email?.trim() ? [rechnung.empfaenger_email.trim()] : []),
+  );
   const [cc, setCc] = useState<string[]>([]);
   const [ccOpen, setCcOpen] = useState(false);
   const [subject, setSubject] = useState(`Rechnung ${rechnung.rechnungsnummer} — Maja-Logistik`);

@@ -20,6 +20,7 @@ import {
   previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
 } from '../../../lib/onedrive';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
+import { empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition, newKey } from './positionUtils';
 import type {
@@ -563,7 +564,11 @@ export function RechnungDetailPage() {
           plz_ort:         fresh.rechnungsadresse_plz_ort ?? fresh.rechnungsadresse?.plz_ort         ?? null,
           land:            fresh.rechnungsadresse_land    ?? fresh.rechnungsadresse?.land            ?? null,
         },
-        kundenUid: fresh.auftraggeber?.kunden_uid ?? null,
+        // Bei manuellen Rechnungen gibt es keinen Auftraggeber — die
+        // USt-IdNr. kommt dann aus dem Empfänger-Feld der Rechnung.
+        kundenUid: fresh.empfaenger_typ === 'manuell'
+          ? (fresh.empfaenger_ust_id ?? null)
+          : (fresh.auftraggeber?.kunden_uid ?? null),
         zahlungszielTage: zahlungsziel,
         ustSatzDefault: defaultSatz,
         positionen: pdfPositionen,
@@ -616,7 +621,12 @@ export function RechnungDetailPage() {
             )}
           </div>
           <p className="text-sm text-maja-muted">
-            {rechnung.auftraggeber?.name ?? '—'} · Zeitraum {formatDate(rechnung.leistungszeitraum_von)} – {formatDate(rechnung.leistungszeitraum_bis)}
+            {rechnung.empfaenger_typ === 'manuell'
+              ? `${empfaengerAusSnapshot({
+                  firma: rechnung.rechnungsadresse_firma,
+                  ansprechpartner: rechnung.ansprechpartner,
+                })} (manuell)`
+              : (rechnung.auftraggeber?.name ?? '—')} · Zeitraum {formatDate(rechnung.leistungszeitraum_von)} – {formatDate(rechnung.leistungszeitraum_bis)}
             {' · '}Rechnungsdatum {formatDate(rechnung.datum)}
           </p>
         </div>
@@ -769,16 +779,17 @@ export function RechnungDetailPage() {
                 <button
                   type="button" className="btn-secondary text-sm"
                   onClick={() => setTourPickerOpen(true)}
-                  disabled={!rechnung.auftraggeber_id}
                   title={rechnung.auftraggeber_id
                     ? 'Tour auswählen + Positionen automatisch erzeugen'
-                    : 'Rechnung ohne Auftraggeber — Tour-Auswahl nicht verfügbar'}
+                    : 'Manuelle Rechnung — Suche läuft ohne Auftraggeber-Filter über alle Touren'}
                 >+ Tour hinzufügen</button>
                 <button
                   type="button" className="btn-secondary text-sm"
                   onClick={() => { setKeepManual(true); setReloadConfirm(true); }}
                   disabled={!rechnung.auftraggeber_id || reloadingTouren}
-                  title="Positionen neu aus den aktuellen Touren-Daten generieren"
+                  title={rechnung.auftraggeber_id
+                    ? 'Positionen neu aus den aktuellen Touren-Daten generieren'
+                    : 'Ohne Auftraggeber gibt es keine automatisch zuordenbaren Touren'}
                 >{reloadingTouren ? 'Lade …' : 'Touren erneut laden'}</button>
                 <button
                   type="button" className="btn-primary text-sm"
@@ -993,7 +1004,9 @@ export function RechnungDetailPage() {
           onClose={() => setDeleteConfirm(false)}
         />
       )}
-      {tourPickerOpen && rechnung.auftraggeber_id && (
+      {/* Bei manuellen Rechnungen ohne Auftraggeber-Filter — einzelne
+          Touren lassen sich trotzdem referenzieren. */}
+      {tourPickerOpen && (
         <AddTourPositionDialog
           auftraggeberId={rechnung.auftraggeber_id}
           leistungszeitraumVon={rechnung.leistungszeitraum_von}
@@ -1026,6 +1039,7 @@ export function RechnungDetailPage() {
             datum: rechnung.datum,
             brutto_summe: Number(rechnung.brutto_summe),
             auftraggeber_id: rechnung.auftraggeber_id,
+            empfaenger_email: rechnung.empfaenger_email,
             pdf_url: rechnung.pdf_url,
             belege_pdf_url: rechnung.belege_pdf_url,
             status: rechnung.status,

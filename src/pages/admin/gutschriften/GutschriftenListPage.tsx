@@ -22,7 +22,15 @@ import {
   DEFAULT_GUTSCHRIFT_SETTINGS, loadGutschriftSettings,
   type GutschriftSettings,
 } from '../../../lib/gutschriftSettings';
+import { MANUELL_OPTION, empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
+import { parseAdressSnapshot } from '../../../lib/gutschriften';
 import type { Auftraggeber, AuftraggeberKontakt } from '../../../types/db';
+
+/** Empfängername einer manuellen Gutschrift aus ihrem Adress-Snapshot. */
+function gutschriftEmpfaenger(g: { adress_snapshot: unknown }): string {
+  const a = parseAdressSnapshot(g.adress_snapshot);
+  return empfaengerAusSnapshot({ firma: a.firma, ansprechpartner: a.ansprechpartner });
+}
 
 interface Row extends Gutschrift {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name'> | null;
@@ -90,10 +98,14 @@ export function GutschriftenListPage() {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (yearFilter !== 'alle' && Number((r.datum ?? '').slice(0, 4)) !== yearFilter) return false;
-      if (agFilter && r.auftraggeber_id !== agFilter) return false;
+      if (agFilter === MANUELL_OPTION) {
+        if (r.empfaenger_typ !== 'manuell') return false;
+      } else if (agFilter && r.auftraggeber_id !== agFilter) return false;
       if (!q) return true;
       return r.gutschrift_nr.toLowerCase().includes(q)
         || (r.auftraggeber?.name ?? '').toLowerCase().includes(q)
+        || (r.empfaenger_typ === 'manuell'
+          ? gutschriftEmpfaenger(r).toLowerCase().includes(q) : false)
         || (r.rechnung?.rechnungsnummer ?? '').toLowerCase().includes(q);
     });
   }, [rows, yearFilter, agFilter, search]);
@@ -152,6 +164,7 @@ export function GutschriftenListPage() {
           <select id="gs-ag-filter" className="input" value={agFilter}
                   onChange={(e) => setAgFilter(e.target.value)}>
             <option value="">Alle</option>
+            <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
             {auftraggeber.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
@@ -199,7 +212,12 @@ export function GutschriftenListPage() {
                   </td>
                   <td className="px-3 py-2 text-maja-ink">{formatDate(r.datum)}</td>
                   <td className="px-3 py-2 text-maja-ink">
-                    {r.auftraggeber?.name ?? '—'}
+                    {r.empfaenger_typ === 'manuell' ? (
+                      <>
+                        {gutschriftEmpfaenger(r)}
+                        <span className="ml-1 text-xs text-maja-muted">(manuell)</span>
+                      </>
+                    ) : (r.auftraggeber?.name ?? '—')}
                     {r.rechnungsempfaenger?.name && (
                       <span className="block text-xs text-maja-muted">
                         {r.rechnungsempfaenger.name}

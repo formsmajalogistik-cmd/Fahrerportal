@@ -1019,11 +1019,65 @@ export type Database = {
           },
         ];
       };
+      manuelle_empfaenger: {
+        Row: {
+          id: string;
+          firma: string | null;
+          anrede: string | null;
+          vorname: string | null;
+          nachname: string | null;
+          strasse: string | null;
+          plz: string | null;
+          ort: string | null;
+          land: string | null;
+          email: string | null;
+          ust_id: string | null;
+          kundennummer: string | null;
+          notiz: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          firma?: string | null;
+          anrede?: string | null;
+          vorname?: string | null;
+          nachname?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          land?: string | null;
+          email?: string | null;
+          ust_id?: string | null;
+          kundennummer?: string | null;
+          notiz?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          firma?: string | null;
+          anrede?: string | null;
+          vorname?: string | null;
+          nachname?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          land?: string | null;
+          email?: string | null;
+          ust_id?: string | null;
+          kundennummer?: string | null;
+          notiz?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       rechnungen: {
         Row: {
           id: string;
           rechnungsnummer: string;
-          auftraggeber_id: string;
+          auftraggeber_id: string | null;
           rechnungsadresse_id: string | null;
           datum: string;
           leistungszeitraum_von: string;
@@ -1047,6 +1101,9 @@ export type Database = {
           rechnungsadresse_strasse: string | null;
           rechnungsadresse_plz_ort: string | null;
           rechnungsadresse_land: string | null;
+          empfaenger_typ: string;
+          empfaenger_email: string | null;
+          empfaenger_ust_id: string | null;
           rechnungsempfaenger_id: string | null;
           created_at: string;
           updated_at: string;
@@ -1054,7 +1111,7 @@ export type Database = {
         Insert: {
           id?: string;
           rechnungsnummer?: string;
-          auftraggeber_id: string;
+          auftraggeber_id: string | null;
           rechnungsadresse_id?: string | null;
           datum?: string;
           leistungszeitraum_von: string;
@@ -1078,6 +1135,9 @@ export type Database = {
           rechnungsadresse_strasse?: string | null;
           rechnungsadresse_plz_ort?: string | null;
           rechnungsadresse_land?: string | null;
+          empfaenger_typ?: string;
+          empfaenger_email?: string | null;
+          empfaenger_ust_id?: string | null;
           rechnungsempfaenger_id?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -1085,7 +1145,7 @@ export type Database = {
         Update: {
           id?: string;
           rechnungsnummer?: string;
-          auftraggeber_id?: string;
+          auftraggeber_id?: string | null;
           rechnungsadresse_id?: string | null;
           datum?: string;
           leistungszeitraum_von?: string;
@@ -1109,6 +1169,9 @@ export type Database = {
           rechnungsadresse_strasse?: string | null;
           rechnungsadresse_plz_ort?: string | null;
           rechnungsadresse_land?: string | null;
+          empfaenger_typ?: string;
+          empfaenger_email?: string | null;
+          empfaenger_ust_id?: string | null;
           rechnungsempfaenger_id?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -1369,6 +1432,9 @@ export type Database = {
           schlusstext: string | null;
           interne_notizen: string | null;
           adress_snapshot: Json | null;
+          empfaenger_typ: string;
+          empfaenger_email: string | null;
+          empfaenger_ust_id: string | null;
           kundennummer: string | null;
           sachbearbeiter: string | null;
           ust_satz: number;
@@ -1395,6 +1461,9 @@ export type Database = {
           schlusstext?: string | null;
           interne_notizen?: string | null;
           adress_snapshot?: Json | null;
+          empfaenger_typ?: string;
+          empfaenger_email?: string | null;
+          empfaenger_ust_id?: string | null;
           kundennummer?: string | null;
           sachbearbeiter?: string | null;
           ust_satz?: number;
@@ -1421,6 +1490,9 @@ export type Database = {
           schlusstext?: string | null;
           interne_notizen?: string | null;
           adress_snapshot?: Json | null;
+          empfaenger_typ?: string;
+          empfaenger_email?: string | null;
+          empfaenger_ust_id?: string | null;
           kundennummer?: string | null;
           sachbearbeiter?: string | null;
           ust_satz?: number;

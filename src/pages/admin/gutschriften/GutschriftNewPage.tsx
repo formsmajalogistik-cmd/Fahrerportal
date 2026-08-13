@@ -19,6 +19,11 @@ import {
   berechneSummenProUst, buildAnrede, parseRechnungsformat,
 } from '../../../lib/rechnungsformat';
 import { PositionsTable } from '../rechnungen/PositionsTable';
+import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfaengerFeldsatz';
+import {
+  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaenger, nameZeile,
+  snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
+} from '../../../lib/manuelleEmpfaenger';
 import { SummenBlock } from '../rechnungen/SummenBlock';
 import {
   emptyManuellePosition, newKey, type EditorPosition,
@@ -64,6 +69,13 @@ export function GutschriftNewPage() {
 
   // Kopfdaten
   const [auftraggeberId, setAuftraggeberId] = useState('');
+  /**
+   * Manueller Empfänger (Migration 088) — Gutschrift an jemanden ohne
+   * Auftraggeber-Bezug. Gleiche Felder und Regeln wie bei Rechnungen.
+   */
+  const istManuell = auftraggeberId === MANUELL_OPTION;
+  const [manuell, setManuell] = useState<ManuellerEmpfaengerEntwurf>(leererEmpfaenger());
+  const [manuellMerken, setManuellMerken] = useState(false);
   const [rechnungId, setRechnungId] = useState(vorgabeRechnung ?? '');
   const [empfaengerId, setEmpfaengerId] = useState('');
   const [nummer, setNummer] = useState('');
@@ -245,13 +257,26 @@ export function GutschriftNewPage() {
   ), [vorschlaege, ustSatz]);
 
   async function anlegen() {
-    if (!auftraggeberId) { setError('Bitte einen Auftraggeber wählen.'); return; }
+    if (!istManuell && !auftraggeberId) {
+      setError('Bitte einen Auftraggeber wählen.'); return;
+    }
+    if (istManuell && !manuell.firma.trim() && !manuell.nachname.trim()) {
+      setError('Bitte für den manuellen Empfänger eine Firma oder einen Namen angeben.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const sum = berechneSummenProUst(positionen, ustSatz);
+      // Bei "manuell" KEIN Auftraggeber-Bezug und kein Eintrag in der
+      // auftraggeber-Tabelle — der Empfänger bleibt aus allen
+      // Auftraggeber-Ansichten heraus.
+      const effSnapshot = istManuell ? snapshotAusEmpfaenger(manuell) : snapshot;
       const insertPayload: Record<string, unknown> = {
-        auftraggeber_id: auftraggeberId,
+        auftraggeber_id: istManuell ? null : auftraggeberId,
+        empfaenger_typ: istManuell ? 'manuell' : 'auftraggeber',
+        empfaenger_email:  istManuell ? (manuell.email.trim() || null) : null,
+        empfaenger_ust_id: istManuell ? (manuell.ustId.trim() || null) : null,
         rechnungsempfaenger_id: empfaengerId || null,
         rechnung_id: rechnungId || null,
         datum,
@@ -261,7 +286,7 @@ export function GutschriftNewPage() {
         einleitungstext: einleitung || null,
         schlusstext: schluss || null,
         interne_notizen: notizen || null,
-        adress_snapshot: snapshot as unknown as Json,
+        adress_snapshot: effSnapshot as unknown as Json,
         kundennummer: kundennummer || null,
         sachbearbeiter: sachbearbeiter || null,
         ust_satz: ustSatz,
@@ -302,6 +327,13 @@ export function GutschriftNewPage() {
         const { error: pErr } = await supabase.from('gutschriftspositionen').insert(rows);
         if (pErr) throw new Error(pErr.message);
       }
+      // Empfänger merken — reine Eingabehilfe; ein Fehler hier darf die
+      // bereits angelegte Gutschrift nicht kippen.
+      if (istManuell && manuellMerken) {
+        const m = await merkeEmpfaenger(manuell);
+        if (!m.ok) console.warn('[manueller Empfänger] Merken fehlgeschlagen', m.fehler);
+      }
+
       navigate(`/gutschriften/${row.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Anlegen fehlgeschlagen.');
@@ -354,6 +386,7 @@ export function GutschriftNewPage() {
             >
               <option value="">— wählen —</option>
               {auftraggeber.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
             </select>
           </div>
           <div>
@@ -395,13 +428,31 @@ export function GutschriftNewPage() {
           <Field label="Datum" type="date" value={datum} onChange={setDatum} />
           <Field label="Leistungszeitraum von" type="date" value={zeitraumVon} onChange={setZeitraumVon} />
           <Field label="Leistungszeitraum bis" type="date" value={zeitraumBis} onChange={setZeitraumBis} />
-          <Field label="Anrede" value={anrede} onChange={setAnrede} />
+          <Field
+            label="Anrede"
+            value={anrede}
+            onChange={setAnrede}
+            hint={istManuell
+              ? `Vorschlag: ${buildAnrede(nameZeile(manuell))}`
+              : undefined}
+          />
           <Field label="USt-Satz (%)" value={String(ustSatz)}
                  onChange={(v) => setUstSatz(Number(v.replace(',', '.')) || 0)} />
           <Field label="Kundennummer" value={kundennummer} onChange={setKundennummer} />
           <Field label="Sachbearbeiter" value={sachbearbeiter} onChange={setSachbearbeiter} />
         </div>
 
+        {istManuell && (
+          <ManuellerEmpfaengerFeldsatz
+            idPrefix="gs-man"
+            wert={manuell}
+            onChange={setManuell}
+            merken={manuellMerken}
+            onMerken={setManuellMerken}
+          />
+        )}
+
+        {!istManuell && (
         <div className="grid gap-3 rounded-lg bg-maja-light/40 p-3 sm:grid-cols-2">
           <h3 className="text-sm font-semibold text-maja-navy sm:col-span-2">Empfänger-Adresse</h3>
           <Field label="Firma" value={snapshot.firma ?? ''}
@@ -415,6 +466,7 @@ export function GutschriftNewPage() {
           <Field label="Land" value={snapshot.land ?? ''}
                  onChange={(v) => setSnapshot({ ...snapshot, land: v || null })} />
         </div>
+        )}
       </section>
 
       {/* Weg A: Positionen aus der Rechnung auswählen */}

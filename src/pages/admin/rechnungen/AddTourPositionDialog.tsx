@@ -13,7 +13,12 @@ import {
 } from '../../../lib/rechnungsformat';
 
 interface Props {
-  auftraggeberId: string;
+  /**
+   * null = manuelle Rechnung ohne Auftraggeber (Migration 088). Dann
+   * wird ohne Auftraggeber-Filter gesucht und das Standard-Format zur
+   * Positionsgenerierung verwendet.
+   */
+  auftraggeberId: string | null;
   /** ISO date "YYYY-MM-DD". Default-Datumsfilter. */
   leistungszeitraumVon: string | null;
   leistungszeitraumBis: string | null;
@@ -90,6 +95,12 @@ export function AddTourPositionDialog({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // Ohne Auftraggeber (manuelle Rechnung) gibt es keine Stammdaten —
+      // dann greift das Standard-Format.
+      if (!auftraggeberId) {
+        setFormat(parseRechnungsformat(null));
+        return;
+      }
       const { data, error: err } = await supabase
         .from('auftraggeber')
         .select('rechnungsformat')
@@ -114,15 +125,18 @@ export function AddTourPositionDialog({
     void (async () => {
       setLoading(true);
       setError(null);
-      const { data, error: err } = await supabase
+      // Ohne Auftraggeber wird über ALLE Touren gesucht — dann ist die
+      // Textsuche das Filterkriterium.
+      let query = supabase
         .from('touren')
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen,
           kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
-        `)
-        .eq('auftraggeber_id', auftraggeberId)
+        `);
+      if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
+      const { data, error: err } = await query
         .gte('enddatum', dateFrom)
         .lte('enddatum', dateTo)
         .order('enddatum', { ascending: true })

@@ -7,6 +7,7 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
 import { RechnungenTabs } from './RechnungenTabs';
 import { RECHNUNG_STATUS_LABEL } from './rechnungLabels';
+import { MANUELL_OPTION, empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
 import type {
   Auftraggeber, AuftraggeberKontakt, Rechnung, RechnungStatus,
 } from '../../../types/db';
@@ -71,6 +72,7 @@ export function RechnungenListPage() {
         // Page lädt sich ihre Zeile separat mit *.
         .select(`
           id, rechnungsnummer, auftraggeber_id, datum,
+          empfaenger_typ, rechnungsadresse_firma, ansprechpartner,
           leistungszeitraum_von, leistungszeitraum_bis,
           netto_summe, brutto_summe, status, ist_auslagen_rechnung,
           auftraggeber:auftraggeber_id (id, name),
@@ -86,6 +88,9 @@ export function RechnungenListPage() {
     if (aRes.error) { setError(aRes.error.message); setLoading(false); return; }
     type RawRow = Rechnung & {
       auftraggeber: { id: string; name: string } | null;
+      empfaenger_typ: string;
+      rechnungsadresse_firma: string | null;
+      ansprechpartner: string | null;
       rechnungsempfaenger: { id: string; name: string } | null;
       positionen: Array<{ count: number }>;
     };
@@ -128,13 +133,19 @@ export function RechnungenListPage() {
         const y = Number((r.datum ?? '').slice(0, 4));
         if (y !== yearFilter) return false;
       }
-      if (agFilter && r.auftraggeber_id !== agFilter) return false;
+      // "__manuell" filtert auf Rechnungen ohne Auftraggeber-Bezug.
+      if (agFilter === MANUELL_OPTION) {
+        if (r.empfaenger_typ !== 'manuell') return false;
+      } else if (agFilter && r.auftraggeber_id !== agFilter) return false;
       if (agFilter && empfaengerFilter && r.rechnungsempfaenger?.id !== empfaengerFilter) return false;
       if (statusFilter !== 'alle' && r.status !== statusFilter) return false;
       if (q) {
         const hay = [
           r.rechnungsnummer,
           r.auftraggeber?.name ?? '',
+          r.empfaenger_typ === 'manuell' ? empfaengerAusSnapshot({
+            firma: r.rechnungsadresse_firma, ansprechpartner: r.ansprechpartner,
+          }) : '',
           r.rechnungsempfaenger?.name ?? '',
         ].join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
@@ -157,6 +168,7 @@ export function RechnungenListPage() {
     if (!agFilter) return [] as Array<{ id: string; name: string }>;
     const map = new Map<string, string>();
     for (const r of rows) {
+      if (agFilter === MANUELL_OPTION) continue;
       if (r.auftraggeber_id !== agFilter) continue;
       const e = r.rechnungsempfaenger;
       if (e?.id && e.name) map.set(e.id, e.name);
@@ -315,6 +327,7 @@ export function RechnungenListPage() {
             onChange={(e) => { setAgFilter(e.target.value); setEmpfaengerFilter(''); }}
           >
             <option value="">Alle</option>
+            <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
             {auftraggeber.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
@@ -471,7 +484,15 @@ export function RechnungenListPage() {
                   </td>
                   <td className="px-3 py-2 text-maja-ink">{formatDate(r.datum)}</td>
                   <td className="px-3 py-2 text-maja-ink">
-                    {r.auftraggeber?.name ?? '—'}
+                    {r.empfaenger_typ === 'manuell' ? (
+                      <>
+                        {empfaengerAusSnapshot({
+                          firma: r.rechnungsadresse_firma,
+                          ansprechpartner: r.ansprechpartner,
+                        })}
+                        <span className="ml-1 text-xs text-maja-muted">(manuell)</span>
+                      </>
+                    ) : (r.auftraggeber?.name ?? '—')}
                     {r.rechnungsempfaenger?.name && (
                       <div className="text-xs text-maja-muted">
                         z. Hd. {r.rechnungsempfaenger.name}

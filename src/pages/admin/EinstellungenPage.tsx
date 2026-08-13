@@ -9,6 +9,7 @@ const subNav: SubNavItem[] = [
   { to: '/einstellungen/postfaecher',  label: 'E-Mail-Postfächer' },
   { to: '/einstellungen/vorschlaege',  label: 'Feld-Vorschläge' },
   { to: '/einstellungen/gutschriften', label: 'Gutschriften' },
+  { to: '/einstellungen/manuelle-empfaenger', label: 'Manuelle Empfänger' },
   { to: '/einstellungen/auftrags-email', label: 'Auftrags-E-Mail' },
 ];
 
