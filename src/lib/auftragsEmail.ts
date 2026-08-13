@@ -9,6 +9,7 @@
 
 import { supabase } from './supabase';
 import { formatDate } from './touren';
+import { altAdresseHinweis, effektiveAdresse } from './adresse';
 import { ladeAnsprechpartner, STATIONEN, type Station } from './tourAnsprechpartner';
 import type { Json } from '../types/supabase';
 
@@ -193,6 +194,39 @@ export async function buildPlatzhalter(
   };
   for (const st of STATIONEN) kText[st] = kontaktText(kontakte[st]);
 
+  /**
+   * Adressen je Station mit Alt-Fallback.
+   *
+   * Bestandstouren haben die Adresse nur im Freitextfeld `adresse_*`.
+   * Ohne Fallback blieben dort {strasse_*} und {plz_*} leer und die
+   * Zeile fiele aus der E-Mail heraus (resolveAuftragsText entfernt
+   * Zeilen, deren Platzhalter alle leer sind). Der Freitext landet
+   * deshalb im Straßen-Platzhalter — dieselbe Regel wie in der
+   * Anzeige und bewusst ohne Zerlegen.
+   */
+  const station = (
+    strasse: string | null | undefined,
+    plz: string | null | undefined,
+    stadt: string | null | undefined,
+    freitext: string | null | undefined,
+  ) => {
+    const teile = { strasse: strasse ?? null, plz: plz ?? null, stadt: stadt ?? null };
+    const alt = altAdresseHinweis(teile, freitext);
+    return {
+      gesamt: effektiveAdresse(teile, freitext),
+      strasse: (strasse ?? '').trim() || (alt ?? ''),
+      plz: (plz ?? '').trim(),
+    };
+  };
+  const adressen = {
+    start: station(tour.strasse_start, tour.plz_start, tour.start_stadt, tour.adresse_start),
+    ziel: station(tour.strasse_ziel, tour.plz_ziel, tour.ziel_stadt, tour.adresse_ziel),
+    rueck: station(
+      tour.strasse_rueckfuehrung, tour.plz_rueckfuehrung,
+      tour.rueckfuehrung_stadt, tour.adresse_rueckfuehrung,
+    ),
+  };
+
   return {
     tour_id: tour.tour_id ?? '',
     auftraggeber: extras.auftraggeberName ?? '',
@@ -208,15 +242,18 @@ export async function buildPlatzhalter(
     zeit_start: tour.zeit_start ?? '',
     zeit_ziel: tour.zeit_ziel ?? '',
     zeit_rueckfuehrung: tour.zeit_rueckfuehrung ?? '',
-    adresse_start: tour.adresse_start ?? '',
-    strasse_start: tour.strasse_start ?? '',
-    plz_start: tour.plz_start ?? '',
-    strasse_ziel: tour.strasse_ziel ?? '',
-    plz_ziel: tour.plz_ziel ?? '',
-    strasse_rueckfuehrung: tour.strasse_rueckfuehrung ?? '',
-    plz_rueckfuehrung: tour.plz_rueckfuehrung ?? '',
-    adresse_ziel: tour.adresse_ziel ?? '',
-    adresse_rueckfuehrung: tour.adresse_rueckfuehrung ?? '',
+    // Adressen: bei Bestandstouren ohne strukturierte Felder fällt
+    // sowohl {adresse_*} als auch {strasse_*} auf den alten Freitext
+    // zurück — sonst bliebe die Adresse in der Auftrags-E-Mail leer.
+    adresse_start: adressen.start.gesamt,
+    adresse_ziel: adressen.ziel.gesamt,
+    adresse_rueckfuehrung: adressen.rueck.gesamt,
+    strasse_start: adressen.start.strasse,
+    plz_start: adressen.start.plz,
+    strasse_ziel: adressen.ziel.strasse,
+    plz_ziel: adressen.ziel.plz,
+    strasse_rueckfuehrung: adressen.rueck.strasse,
+    plz_rueckfuehrung: adressen.rueck.plz,
     kontakt_start: kText.start,
     kontakt_ziel: kText.ziel,
     kontakt_rueckfuehrung: kText.rueckfuehrung,
