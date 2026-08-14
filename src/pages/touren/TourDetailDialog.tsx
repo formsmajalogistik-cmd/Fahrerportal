@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { cachedQuery } from '../../lib/queryCache';
 import { useAuth } from '../../auth/AuthContext';
 import { useFahrerContext } from '../../auth/FahrerContext';
+import { fahrerKontoName, tourUebergeben } from '../../lib/tourUebergabe';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -1183,6 +1184,19 @@ export function TourDetailDialog({
           onOpenRouteDialog={setRouteDialog}
           routeConfirm={routeConfirm}
           tourId={tour.id}
+        />
+      )}
+
+      {/* Tour an ein eigenes Unterkonto übergeben. Nur für Fahrer-
+          Konten mit Unterkonten — Admins verteilen über die normale
+          Tour-Bearbeitung. Die Berechtigung prüft der Server
+          (Migration 089), das hier ist nur die Bedienung. */}
+      {!isAdmin && fahrerCtx.availableFahrer.length > 1 && (
+        <TourUebergabeBlock
+          tourId={tour.id}
+          aktuellerFahrerId={tour.fahrer_id}
+          konten={fahrerCtx.availableFahrer}
+          onUebergeben={() => { void load(); onChanged(); }}
         />
       )}
 
@@ -2924,5 +2938,100 @@ function ViewModeProtokollList({ tourId }: { tourId: string }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+// ---------- Tour an ein eigenes Unterkonto übergeben (089) ----------
+
+/**
+ * „Tour zuweisen an" für Fahrer-Hauptkonten mit Unterkonten.
+ *
+ * Das Dropdown zeigt ausschließlich die eigene Konto-Familie
+ * (`FahrerContext.availableFahrer` = eigener Haupt-Eintrag + eigene
+ * Unterkonten). Fremde Fahrer stehen gar nicht zur Auswahl — und selbst
+ * wenn jemand die RPC direkt aufriefe, lehnt der Server sie ab.
+ *
+ * Bewusst NICHT sichtbar, wenn das Konto keine Unterkonten hat.
+ */
+function TourUebergabeBlock({
+  tourId, aktuellerFahrerId, konten, onUebergeben,
+}: {
+  tourId: string;
+  aktuellerFahrerId: string | null;
+  konten: Fahrer[];
+  onUebergeben: () => void;
+}) {
+  const guard = useTestGuard();
+  const [ziel, setZiel] = useState<string>(aktuellerFahrerId ?? '');
+  const [busy, setBusy] = useState(false);
+  const [meldung, setMeldung] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // Tour gehört jemand anderem (z.B. Admin hat sie umverteilt) —
+  // dann gibt es hier nichts zu übergeben.
+  const gehoertMir = konten.some((k) => k.id === aktuellerFahrerId);
+  if (!gehoertMir) return null;
+
+  async function uebergeben() {
+    if (!ziel || ziel === aktuellerFahrerId) return;
+    if (guard()) return;
+    setBusy(true);
+    setMeldung(null);
+    const res = await tourUebergeben(tourId, ziel);
+    setBusy(false);
+    if (!res.ok) {
+      setMeldung({ kind: 'err', text: res.fehler ?? 'Übergabe fehlgeschlagen.' });
+      return;
+    }
+    setMeldung({ kind: 'ok', text: `Tour zugewiesen an ${res.neu ?? 'das gewählte Konto'}.` });
+    onUebergeben();
+  }
+
+  return (
+    <div className="mt-6 rounded-xl border border-maja-navy/15 p-4">
+      <h3 className="text-sm font-semibold text-maja-navy">Tour zuweisen an</h3>
+      <p className="mt-1 text-xs text-maja-muted">
+        Die Tour kann an eines Ihrer eigenen Unterkonten weitergegeben werden.
+        Zugewiesene Protokolle und Zugänge wandern mit.
+      </p>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <div className="min-w-[14rem] flex-1">
+          <label htmlFor="tu-ziel" className="label">Konto</label>
+          <select
+            id="tu-ziel"
+            className="input"
+            value={ziel}
+            onChange={(e) => { setZiel(e.target.value); setMeldung(null); }}
+            disabled={busy}
+          >
+            {konten.map((k) => (
+              <option key={k.id} value={k.id}>
+                {fahrerKontoName(k)}
+                {k.id === aktuellerFahrerId ? ' (aktuell)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => void uebergeben()}
+          disabled={busy || !ziel || ziel === aktuellerFahrerId}
+        >
+          {busy ? 'Wird zugewiesen …' : 'Zuweisen'}
+        </button>
+      </div>
+      {meldung && (
+        <div
+          role="status"
+          className={`mt-3 rounded-lg px-3 py-2 text-sm ${
+            meldung.kind === 'ok'
+              ? 'bg-green-50 text-green-700'
+              : 'bg-red-50 text-red-700'
+          }`}
+        >
+          {meldung.text}
+        </div>
+      )}
+    </div>
   );
 }

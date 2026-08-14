@@ -960,7 +960,7 @@ export function TourenlistePage() {
                   {g.eintraege.map((e) => {
                     // Manche Änderungen liest man als Satz besser als
                     // im Schema "Feld: alt → neu" (z.B. auf Eis).
-                    const satz = aenderungSatz(e.feld, e.wert_neu);
+                    const satz = aenderungSatz(e.feld, e.wert_neu, e.wert_alt);
                     return (
                       <li key={e.id} className="text-sm text-maja-ink">
                         {satz ? (

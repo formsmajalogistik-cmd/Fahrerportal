@@ -1674,6 +1674,14 @@ export type Database = {
         Args: { p_daten: Json };
         Returns: Json;
       };
+      tour_uebergeben: {
+        Args: { p_tour_id: string; p_neuer_fahrer_id: string };
+        Returns: Json;
+      };
+      fahrer_anzeigename: {
+        Args: { p_fahrer_id: string };
+        Returns: string;
+      };
       ag_tour_ansprechpartner_setzen: {
         Args: { p_tour_id: string; p_station: string; p_liste: Json };
         Returns: Json;

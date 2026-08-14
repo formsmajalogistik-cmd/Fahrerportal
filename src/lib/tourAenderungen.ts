@@ -47,6 +47,8 @@ const FELD_LABEL: Record<string, string> = {
   strasse_rueckfuehrung: 'Straße Rückführung',
   plz_rueckfuehrung: 'PLZ Rückführung',
   auf_eis: 'Terminierung',
+  // Migration 089 — Weitergabe an ein eigenes Unterkonto.
+  fahrer_id: 'Fahrer',
   auf_eis_notiz: 'Notiz zur Terminierung',
   ansprechpartner_start: 'Ansprechpartner Start',
   ansprechpartner_ziel: 'Ansprechpartner Ziel',
@@ -61,11 +63,19 @@ export function feldLabel(feld: string): string {
  * Ganze Änderungszeile in Klartext, wo "nein → ja" nichts sagt.
  * Gibt null zurück, wenn die normale Feld/Alt/Neu-Darstellung reicht.
  */
-export function aenderungSatz(feld: string, wertNeu: string | null): string | null {
-  if (feld !== 'auf_eis') return null;
-  return wertNeu === 'ja'
-    ? 'Tour auf Eis gelegt (Termin offen)'
-    : 'Terminierung aufgehoben';
+export function aenderungSatz(
+  feld: string, wertNeu: string | null, wertAlt?: string | null,
+): string | null {
+  if (feld === 'auf_eis') {
+    return wertNeu === 'ja'
+      ? 'Tour auf Eis gelegt (Termin offen)'
+      : 'Terminierung aufgehoben';
+  }
+  // Weitergabe innerhalb einer Fahrer-Konto-Familie (089).
+  if (feld === 'fahrer_id') {
+    return `Tour weitergegeben: ${wertAlt || '—'} → ${wertNeu || '—'}`;
+  }
+  return null;
 }
 
 /** Datumsfelder im Protokoll als deutsches Datum ausgeben. */
