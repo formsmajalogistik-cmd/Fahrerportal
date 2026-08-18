@@ -18,6 +18,8 @@ import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { formatDateTime } from '../../lib/touren';
 import { EingangLinkDialog } from './EingangLinkDialog';
 import { EingangSendEmailDialog } from './EingangSendEmailDialog';
+import { BelegeErgaenzenDialog } from './BelegeErgaenzenDialog';
+import { belegFelder, belegeAusDaten, ergaenztNachVersand } from '../../lib/belegeErgaenzen';
 import { EingangFormularViewDialog } from './EingangFormularViewDialog';
 import type {
   AppUser, AusgefuelltesFormular, EmailSendLogEntry,
@@ -280,6 +282,20 @@ export function EingaengePage() {
     if (!r.template) return;
     setRegen(r.id);
     try {
+      // WICHTIG: `daten` FRISCH aus der Datenbank holen. Der Zeilen-State
+      // stammt vom letzten Laden der Seite — wurden gerade Belege
+      // ergänzt, fehlen sie sonst in der neuen PDF. (Gleiche Lehre wie
+      // beim Rechnungs-PDF: vor der Generierung neu laden.)
+      const { data: frisch, error: frischErr } = await supabase
+        .from('ausgefuellte_formulare')
+        .select('daten')
+        .eq('id', r.id)
+        .single();
+      if (frischErr) throw new Error(frischErr.message);
+      const formularFrisch: Row = {
+        ...r,
+        daten: (frisch?.daten ?? r.daten) as Row['daten'],
+      };
       const tpl: FormularTemplate = {
         id: r.template_id,
         name: r.template.name ?? '',
@@ -292,7 +308,7 @@ export function EingaengePage() {
         archiviert_am: null,
         pdfs_zusammenfuehren: r.template.pdfs_zusammenfuehren ?? false,
       };
-      const generated = await generateAndUploadFormPdfs(tpl, r);
+      const generated = await generateAndUploadFormPdfs(tpl, formularFrisch);
       // pdf_paths wurde von generateAndUploadFormPdfs persistiert — wir
       // patchen den lokalen State, damit die UI sofort die aktuelle
       // Liste zeigt (übersprungene PDFs sind weg).
@@ -308,6 +324,9 @@ export function EingaengePage() {
           .eq('id', r.id);
       } catch { /* nicht kritisch */ }
       await patchRowInState(r.id, {
+        // Auch die frischen `daten` in den State übernehmen — sonst
+        // zeigte die Ergänzt-Warnung weiter den alten Stand.
+        daten: formularFrisch.daten,
         pdf_paths: paths as unknown as AusgefuelltesFormular['pdf_paths'],
         pdf_status: 'ok',
         pdf_fehler: null,
@@ -319,8 +338,27 @@ export function EingaengePage() {
     }
   }
 
+  /** Zeile, für die der Dialog „Belege ergänzen" offen ist. */
+  const [belegeFuer, setBelegeFuer] = useState<Row | null>(null);
+
   async function patchRowInState(id: string, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  /** Eine Zeile frisch aus der Datenbank nachziehen (z.B. nach dem
+   *  Ergänzen von Belegen — `daten` hat sich geändert). */
+  async function reloadRow(id: string) {
+    const { data } = await supabase
+      .from('ausgefuellte_formulare')
+      .select('daten, pdf_paths, email_versendet_am')
+      .eq('id', id)
+      .maybeSingle();
+    if (!data) return;
+    await patchRowInState(id, {
+      daten: data.daten as Row['daten'],
+      pdf_paths: data.pdf_paths as Row['pdf_paths'],
+      email_versendet_am: data.email_versendet_am as Row['email_versendet_am'],
+    });
   }
 
   if (loading) return <Spinner label="Eingänge werden geladen …" />;
@@ -474,6 +512,7 @@ export function EingaengePage() {
               onSeen={() => void handleSeen(r)}
               onView={() => setViewing(r.id)}
               onRegenerate={() => { void handleSeen(r); void regeneratePdfs(r); }}
+              onBelege={() => { void handleSeen(r); setBelegeFuer(r); }}
               onLink={() => { void handleSeen(r); setLinking(r); }}
               onResendEmail={() => {
                 void handleSeen(r);
@@ -503,6 +542,19 @@ export function EingaengePage() {
             {loadingMore ? 'Lädt …' : 'Mehr laden'}
           </button>
         </div>
+      )}
+
+      {/* Belege nachträglich ergänzen. Nach dem Speichern die Zeile
+          frisch nachladen, damit die Ergänzt-Warnung und die nächste
+          PDF-Generierung den aktuellen Stand sehen. */}
+      {belegeFuer && isAdmin && (
+        <BelegeErgaenzenDialog
+          formular={belegeFuer}
+          templateName={belegeFuer.template?.name ?? ''}
+          schema={(belegeFuer.template?.schema as FormularTemplate['schema']) ?? null}
+          onClose={() => setBelegeFuer(null)}
+          onSaved={() => { void reloadRow(belegeFuer.id); }}
+        />
       )}
 
       {linking && isAdmin && (
@@ -619,6 +671,8 @@ interface CardProps {
   onSeen: () => void;
   onView: () => void;
   onRegenerate: () => void;
+  /** Dialog „Belege ergänzen" öffnen. */
+  onBelege: () => void;
   onLink: () => void;
   onResendEmail: () => void;
   /** Zwischenprotokoll-Mail manuell nachholen. */
@@ -630,10 +684,18 @@ interface CardProps {
 function EingangCard({
   row, isAdmin, regenBusy,
   selectable, selected, onToggleSelected,
-  onSeen, onView, onRegenerate, onLink, onResendEmail, onSendZwischen,
+  onSeen, onView, onRegenerate, onBelege, onLink, onResendEmail, onSendZwischen,
   onDelete, onZwischenChanged,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
+  // Über ALLE Beleg-Sektionen des Templates prüfen — ein Template kann
+  // mehrere dynamic_photos-Felder haben.
+  const belegeNachVersand = useMemo(() => {
+    const daten = row.daten as Record<string, unknown> | null;
+    const schema = (row.template?.schema as FormularTemplate['schema']) ?? null;
+    return belegFelder(schema).some((f) =>
+      ergaenztNachVersand(belegeAusDaten(daten, f.id), row.email_versendet_am));
+  }, [row.daten, row.template?.schema, row.email_versendet_am]);
   const fahrer = displayName(row.fahrer?.user ?? null) || summary.fahrername || '—';
   const tpl: FormularTemplate | null = row.template ? {
     id: row.template_id,
@@ -719,6 +781,15 @@ function EingangCard({
           {row.email_versendet_am && (
             <div className="mt-1 text-xs font-medium text-emerald-700">
               E-Mail versendet: {formatDateTime(row.email_versendet_am)}
+            </div>
+          )}
+          {/* Belege kamen NACH dem Versand dazu — die verschickte PDF ist
+              damit nicht mehr der aktuelle Stand. Bewusst nur ein
+              Hinweis: erneutes Versenden bleibt jederzeit möglich. */}
+          {belegeNachVersand && (
+            <div className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900">
+              Belege wurden nach dem Versand ergänzt — PDF neu erzeugen und
+              ggf. erneut versenden.
             </div>
           )}
 
@@ -820,6 +891,16 @@ function EingangCard({
               title="E-Mail mit PDFs versenden"
             >
               <MailIcon className="h-3.5 w-3.5" /> E-Mail versenden
+            </button>
+          )}
+          {isAdmin && row.status === 'submitted' && (
+            <button
+              type="button"
+              onClick={onBelege}
+              className="text-xs font-medium text-maja-accent hover:underline"
+              title="Belege nachträglich hinzufügen — z.B. per E-Mail nachgereichte"
+            >
+              Belege ergänzen
             </button>
           )}
           {isAdmin && row.status === 'submitted' && (row.template?.pdfs ?? []).some((p) => p.path) && (

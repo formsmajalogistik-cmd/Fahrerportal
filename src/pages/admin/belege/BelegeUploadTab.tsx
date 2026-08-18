@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { compressImage } from '../../../lib/photo';
-import { pdfjsLib } from '../../../lib/pdfjs';
+import { pdfToJpegPages } from '../../../lib/pdfSeiten';
 import {
   addBelege, clearBelege, DEFAULT_KENNZEICHEN_POSITION, listBelege,
   removeBeleg, reorderBelege, updateBelegBlob, updateBelegKennzeichen,
@@ -23,46 +23,6 @@ interface BelegItem {
 // Render-Auflösung für aus PDFs extrahierte Seiten. PDFs sind
 // standardmäßig 72 DPI; 150 ist ein guter Kompromiss zwischen
 // Qualität und Datei-/Speichergröße auf mobilen Geräten.
-const PDF_RENDER_DPI = 150;
-
-/**
- * Rendert jede Seite einer PDF als JPEG-Bild im Browser. Nutzt das
- * bereits global konfigurierte pdfjs-dist (siehe src/lib/pdfjs.ts).
- * onProgress wird vor dem Rendern jeder Seite aufgerufen, damit der
- * Aufrufer einen "Seite x von y"-Hinweis anzeigen kann.
- */
-async function pdfToJpegPages(
-  file: File,
-  onProgress?: (current: number, total: number) => void,
-): Promise<File[]> {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const total = pdf.numPages;
-  const out: File[] = [];
-  const baseName = file.name.replace(/\.pdf$/i, '') || 'pdf';
-  const scale = PDF_RENDER_DPI / 72;
-  for (let i = 1; i <= total; i += 1) {
-    onProgress?.(i, total);
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      page.cleanup();
-      throw new Error('Canvas-Kontext nicht verfügbar');
-    }
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    const blob: Blob | null = await new Promise((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', 0.85),
-    );
-    page.cleanup();
-    if (!blob) throw new Error(`Seite ${i} konnte nicht gerendert werden`);
-    out.push(new File([blob], `${baseName} - Seite ${i}.jpg`, { type: 'image/jpeg' }));
-  }
-  return out;
-}
 
 function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
