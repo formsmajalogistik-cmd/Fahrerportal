@@ -1,5 +1,6 @@
 import type { AddressValue, FormField } from '../../../types/db';
 import { SuggestCombobox } from '../../SuggestCombobox';
+import { AdressUebernehmen } from '../../AdressUebernehmen';
 import { adressTeilTyp, feldTypVon } from '../../../lib/feldVorschlaege';
 
 interface Props {
@@ -35,6 +36,12 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
       <label className="label">
         {field.label}{required && <span className="text-red-600"> *</span>}
       </label>
+      {/* Manuell gepflegte Adressen — füllt alle drei Felder auf einmal. */}
+      {!disabled && (
+        <AdressUebernehmen
+          onWaehlen={(a) => onChange({ strasse: a.strasse, plz: a.plz, stadt: a.ort })}
+        />
+      )}
       <div className="space-y-2">
         <SuggestCombobox
           feldTyp={basis ? adressTeilTyp(basis, 'strasse') : null}

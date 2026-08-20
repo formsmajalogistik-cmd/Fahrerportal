@@ -1073,6 +1073,42 @@ export type Database = {
         };
         Relationships: [];
       };
+      adressbuch: {
+        Row: {
+          id: string;
+          bezeichnung: string | null;
+          strasse: string | null;
+          plz: string | null;
+          ort: string | null;
+          auftraggeber_id: string | null;
+          notiz: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          bezeichnung?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          auftraggeber_id?: string | null;
+          notiz?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          bezeichnung?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          auftraggeber_id?: string | null;
+          notiz?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       rechnungen: {
         Row: {
           id: string;
@@ -1573,6 +1609,7 @@ export type Database = {
           wert: string;
           anzahl: number;
           letzte_nutzung: string;
+          ist_manuell: boolean;
           created_at: string;
         };
         Insert: {
@@ -1581,6 +1618,7 @@ export type Database = {
           wert: string;
           anzahl?: number;
           letzte_nutzung?: string;
+          ist_manuell?: boolean;
           created_at?: string;
         };
         Update: {
@@ -1589,6 +1627,7 @@ export type Database = {
           wert?: string;
           anzahl?: number;
           letzte_nutzung?: string;
+          ist_manuell?: boolean;
           created_at?: string;
         };
         Relationships: [];

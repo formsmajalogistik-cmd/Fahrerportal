@@ -23,3 +23,17 @@ Reihenfolge:
 Rückgängig machen: Schritt 2 lässt sich zurücknehmen, indem die
 betroffenen `strasse_*` wieder geleert werden — der Originalwert steht
 unverändert in `adresse_*`.
+
+## Vorschlags-Pool nachträglich befüllen
+
+Der Pool blieb leer, weil die Sammlung ein reines Opt-in war, das bei
+den produktiven Templates nirgends aktiviert wurde (Migration 090 stellt
+das auf automatische Ableitung um). Damit er nicht bei null startet:
+
+1. `vorschlaege_trockenlauf.sql` — **nur lesen.** Zeigt je Topf, wie
+   viele Einträge aus den eingereichten Formularen und den
+   Tour-Adressfeldern entstehen würden, plus 20 Beispielwerte.
+2. `vorschlaege_uebernahme.sql` — legt sie an. Bestehende Werte werden
+   hochgezählt statt verdoppelt, kurze Werte (< 3 Zeichen) fallen weg.
+   Ein zweiter Lauf bricht mit einer Meldung ab
+   (`vorschlaege_backfill_log`).

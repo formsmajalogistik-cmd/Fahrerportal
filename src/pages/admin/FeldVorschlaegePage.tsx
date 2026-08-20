@@ -10,8 +10,9 @@ import { Spinner } from '../../components/Spinner';
 import { XIcon } from '../../components/icons';
 import { useTestGuard } from '../../auth/TestModeContext';
 import {
-  ladeAlleVorschlaege, loescheVorschlag, type FeldVorschlag,
+  ladeAlleVorschlaege, legeVorschlagAn, loescheVorschlag, type FeldVorschlag,
 } from '../../lib/feldVorschlaege';
+import { AdressbuchSektion } from './AdressbuchSektion';
 
 export function FeldVorschlaegePage() {
   const guard = useTestGuard();
@@ -20,6 +21,19 @@ export function FeldVorschlaegePage() {
   const [error, setError] = useState<string | null>(null);
   const [suche, setSuche] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [neuTyp, setNeuTyp] = useState('');
+  const [neuWert, setNeuWert] = useState('');
+
+  async function anlegen() {
+    if (guard()) return;
+    setBusy('neu');
+    const res = await legeVorschlagAn(neuTyp, neuWert);
+    setBusy(null);
+    if (!res.ok) { setError(res.fehler ?? 'Anlegen fehlgeschlagen'); return; }
+    setError(null);
+    setNeuTyp(''); setNeuWert('');
+    await load();
+  }
 
   const load = useCallback(async () => {
     try {
@@ -69,16 +83,48 @@ export function FeldVorschlaegePage() {
   if (loading) return <Spinner />;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
+      {/* Adressen zuerst — das ist der Teil, den man von Hand pflegt. */}
+      <AdressbuchSektion />
+
+      <div className="space-y-4 border-t border-maja-navy/10 pt-6">
       <div>
-        <h2 className="text-lg font-semibold text-maja-navy">Feld-Vorschläge</h2>
+        <h2 className="text-lg font-semibold text-maja-navy">Gesammelte Werte</h2>
         <p className="text-sm text-maja-muted">
           Werte, die beim Ausfüllen von Formularen gesammelt wurden und den
-          Fahrern als Vorschlag angeboten werden. Welche Felder sammeln, wird
-          im Template unter „Struktur" je Feld eingestellt („Vorschläge
-          aktivieren"). Auftraggeber-Konten haben keinen Zugriff auf diese
-          Liste.
+          Fahrern als Vorschlag angeboten werden. Adress-, PLZ-, Orts-,
+          E-Mail-, Kontakt- und Fahrzeugfelder sammeln automatisch; im
+          Template lässt sich das je Feld gezielt an- oder abschalten.
+          Auftraggeber-Konten haben keinen Zugriff auf diese Liste.
         </p>
+      </div>
+
+      {/* Manuellen Wert ergänzen — z.B. eine korrekte Schreibweise
+          vorgeben, bevor sie zum ersten Mal getippt wird. */}
+      <div className="card flex flex-wrap items-end gap-3 p-4">
+        <div>
+          <label htmlFor="fv-neu-typ" className="label">Topf</label>
+          <input id="fv-neu-typ" className="input" list="fv-toepfe"
+                 placeholder="z.B. kontaktname"
+                 value={neuTyp} onChange={(e) => setNeuTyp(e.target.value)} />
+          <datalist id="fv-toepfe">
+            {[...new Set(alle.map((v) => v.feld_typ))].map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+        </div>
+        <div className="min-w-[12rem] flex-1">
+          <label htmlFor="fv-neu-wert" className="label">Wert</label>
+          <input id="fv-neu-wert" className="input"
+                 value={neuWert} onChange={(e) => setNeuWert(e.target.value)} />
+        </div>
+        <button
+          type="button" className="btn-primary"
+          disabled={busy !== null}
+          onClick={() => void anlegen()}
+        >
+          Hinzufügen
+        </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -118,9 +164,19 @@ export function FeldVorschlaegePage() {
                     key={v.id}
                     className="inline-flex items-stretch overflow-hidden rounded-full border border-slate-300 bg-maja-light text-xs text-maja-navy dark:border-slate-600 dark:bg-surface-700"
                   >
-                    <span className="px-2.5 py-1" title={`${v.anzahl}× genutzt`}>
+                    <span
+                      className="px-2.5 py-1"
+                      title={v.ist_manuell
+                        ? 'Manuell gepflegt — wird zuerst vorgeschlagen'
+                        : `${v.anzahl}× genutzt`}
+                    >
+                      {v.ist_manuell && (
+                        <span className="mr-1 font-semibold text-maja-accent">✎</span>
+                      )}
                       {v.wert}
-                      <span className="ml-1.5 text-maja-muted">{v.anzahl}×</span>
+                      <span className="ml-1.5 text-maja-muted">
+                        {v.ist_manuell ? 'manuell' : `${v.anzahl}×`}
+                      </span>
                     </span>
                     <button
                       type="button"
@@ -139,6 +195,7 @@ export function FeldVorschlaegePage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

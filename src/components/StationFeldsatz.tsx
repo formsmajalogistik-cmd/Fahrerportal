@@ -20,6 +20,7 @@
 
 import { AnsprechpartnerFeldsatz } from './AnsprechpartnerFeldsatz';
 import { TfBlock } from './TfBlock';
+import { AdressUebernehmen } from './AdressUebernehmen';
 import { altAdresseHinweis } from '../lib/adresse';
 import type { KontaktEntwurf } from '../lib/tourAnsprechpartner';
 
@@ -110,6 +111,18 @@ export function StationFeldsatz({
                  value={zeit} onChange={(e) => onZeit(e.target.value)} />
         </div>
       </div>
+      {/* Manuell gepflegte Adressen. Setzt Straße, PLZ und Ort
+          gemeinsam — der Ort ist zugleich die Tour-Stadt, weil beide am
+          selben State hängen (Migration 086). */}
+      <AdressUebernehmen
+        kompakt
+        id={`${idPrefix}-adressbuch`}
+        onWaehlen={(a) => {
+          onStrasse(a.strasse);
+          onPlz(a.plz);
+          if (a.ort) onStadt(a.ort);
+        }}
+      />
       {altAdresse && (
         <p className="tf-hint">
           Bisher erfasst: <span className="font-medium text-maja-ink">{altAdresse}</span>
