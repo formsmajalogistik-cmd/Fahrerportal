@@ -25,6 +25,11 @@ import { PosteingangPage } from './pages/admin/PosteingangPage';
 import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
 import { FeldVorschlaegePage } from './pages/admin/FeldVorschlaegePage';
 import { ManuelleEmpfaengerPage } from './pages/admin/ManuelleEmpfaengerPage';
+import { BriefeListPage } from './pages/admin/briefe/BriefeListPage';
+import { BriefDetailPage } from './pages/admin/briefe/BriefDetailPage';
+import { TankkartenPage } from './pages/admin/briefe/TankkartenPage';
+import { BriefVorlagenPage } from './pages/admin/BriefVorlagenPage';
+import { FahrerBriefePage } from './pages/FahrerBriefePage';
 import { GutschriftSettingsPage } from './pages/admin/GutschriftSettingsPage';
 import { AuftragsEmailSettingsPage } from './pages/admin/AuftragsEmailSettingsPage';
 import { GutschriftenListPage } from './pages/admin/gutschriften/GutschriftenListPage';
@@ -160,6 +165,10 @@ export default function App() {
           <Route path="/gutschriften" element={<GutschriftenListPage />} />
           <Route path="/gutschriften/neu" element={<GutschriftNewPage />} />
           <Route path="/gutschriften/:id" element={<GutschriftDetailPage />} />
+          <Route path="/briefe" element={<BriefeListPage />} />
+          <Route path="/briefe/neu" element={<BriefDetailPage />} />
+          <Route path="/briefe/:id" element={<BriefDetailPage />} />
+          <Route path="/tankkarten" element={<TankkartenPage />} />
           <Route path="/templates" element={<TemplatesListPage />} />
           <Route path="/templates/:id" element={<TemplateEditorPage />} />
           <Route path="/einstellungen" element={<EinstellungenPage />}>
@@ -171,6 +180,7 @@ export default function App() {
             <Route path="vorschlaege" element={<FeldVorschlaegePage />} />
             <Route path="gutschriften" element={<GutschriftSettingsPage />} />
             <Route path="manuelle-empfaenger" element={<ManuelleEmpfaengerPage />} />
+            <Route path="brief-vorlagen" element={<BriefVorlagenPage />} />
             <Route path="auftrags-email" element={<AuftragsEmailSettingsPage />} />
           </Route>
           {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
@@ -199,6 +209,7 @@ export default function App() {
           <Route path="/touren" element={<TourenlistePage />} />
           <Route path="/meine-formulare" element={<FahrerDashboard />} />
           <Route path="/offen" element={<Navigate to="/meine-formulare" replace />} />
+          <Route path="/briefe" element={<FahrerBriefePage />} />
           <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
           <Route path="/eingaenge" element={<EingaengePage />} />
           <Route path="/formular/:id" element={<FormularPage />} />

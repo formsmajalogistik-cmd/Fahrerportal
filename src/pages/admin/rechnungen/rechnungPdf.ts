@@ -11,7 +11,7 @@ import { berechneSummenProUst, type UstGroup } from '../../../lib/rechnungsforma
 // ----- Design-System (Maja Navy/Accent/Light) -----
 const NAVY      = rgb(0x1B / 255, 0x3A / 255, 0x5C / 255);
 const WHITE     = rgb(1, 1, 1);
-const INK       = rgb(0.12, 0.16, 0.22);
+export const INK = rgb(0.12, 0.16, 0.22);
 const MUTED     = rgb(0.45, 0.50, 0.55);
 const FAINT     = rgb(0.78, 0.81, 0.85);
 const SEPARATOR = rgb(0.85, 0.87, 0.90);
@@ -29,12 +29,12 @@ const ABSENDER = {
 };
 
 // ----- Geometrie -----
-const A4_W = 595.28;
-const A4_H = 841.89;
-const MARGIN_X = 36;          // 12 mm
-const MARGIN_BOTTOM = 24;
+export const A4_W = 595.28;
+export const A4_H = 841.89;
+export const MARGIN_X = 36;          // 12 mm
+export const MARGIN_BOTTOM = 24;
 
-const HEADER_H = 56;
+export const HEADER_H = 56;
 const FOOTER_H = 36;
 const TBL_HEAD_H = 22;
 const ROW_BASE_H = 18;        // pro Hauptzeile
@@ -143,7 +143,7 @@ function formatPercent(n: number): string {
  * nur einen kleinen Unicode-Bereich ab. Sonderzeichen wie → werden
  * gemappt; alles außerhalb 0x20..0xFF ersetzen wir mit "?".
  */
-function winAnsi(s: string): string {
+export function winAnsi(s: string): string {
   return s
     .replace(/→/g, '->')
     .replace(/←/g, '<-')
@@ -155,7 +155,7 @@ function winAnsi(s: string): string {
     .replace(/[^\x20-\xFF]/g, '?');
 }
 
-async function fetchLogoBytes(): Promise<Uint8Array | null> {
+export async function fetchLogoBytes(): Promise<Uint8Array | null> {
   try {
     const resp = await fetch('/Firmenlogo.png');
     if (!resp.ok) return null;
@@ -163,9 +163,9 @@ async function fetchLogoBytes(): Promise<Uint8Array | null> {
   } catch { return null; }
 }
 
-interface Fonts { regular: PDFFont; bold: PDFFont }
+export interface Fonts { regular: PDFFont; bold: PDFFont }
 
-interface PageCtx {
+export interface PageCtx {
   page: PDFPage;
   fonts: Fonts;
   logo: PDFImage | null;
@@ -173,7 +173,7 @@ interface PageCtx {
   y: number;
 }
 
-function drawHeader(ctx: PageCtx, titel: string) {
+export function drawHeader(ctx: PageCtx, titel: string) {
   const { page, fonts, logo } = ctx;
   // Navy-Streifen
   page.drawRectangle({
@@ -204,7 +204,7 @@ function drawHeader(ctx: PageCtx, titel: string) {
   ctx.y = A4_H - HEADER_H - 8;
 }
 
-function drawFooter(ctx: PageCtx) {
+export function drawFooter(ctx: PageCtx) {
   const { page, fonts } = ctx;
   const lines = [
     'Maja-Logistik',
@@ -223,7 +223,7 @@ function drawFooter(ctx: PageCtx) {
   }
 }
 
-function drawAbsenderRechts(ctx: PageCtx) {
+export function drawAbsenderRechts(ctx: PageCtx) {
   // Absender-Block oben rechts in 8 pt Navy.
   const { page, fonts } = ctx;
   const lines = [
@@ -249,7 +249,7 @@ function drawAbsenderRechts(ctx: PageCtx) {
   ctx.y = y - 4;
 }
 
-function drawAbsenderzeile(ctx: PageCtx) {
+export function drawAbsenderzeile(ctx: PageCtx) {
   // Sehr kleine Abs.-Zeile über dem Empfängerblock.
   const { page, fonts } = ctx;
   const text = winAnsi(
@@ -345,7 +345,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxW: number): stri
 }
 
 /** Zeichnet einen umgebrochenen Fließtext ab dem aktuellen Cursor. */
-function drawFliesstext(ctx: PageCtx, text: string, size = 10) {
+export function drawFliesstext(ctx: PageCtx, text: string, size = 10) {
   const zeilen = wrapText(text, ctx.fonts.regular, size, TABLE_W);
   for (const zeile of zeilen) {
     if (zeile !== '') {
@@ -591,7 +591,7 @@ function drawAbschluss(ctx: PageCtx, schlusstext?: string | null) {
   ctx.y -= 14;
 }
 
-function newPage(
+export function newPage(
   doc: PDFDocument, fonts: Fonts, logo: PDFImage | null, titel: string,
 ): PageCtx {
   const page = doc.addPage([A4_W, A4_H]);

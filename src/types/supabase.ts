@@ -28,6 +28,9 @@ export type Database = {
           nachname: string | null;
           telefon: string | null;
           position: string | null;
+          strasse: string | null;
+          plz: string | null;
+          ort: string | null;
           auftraggeber_id: string | null;
         };
         Insert: {
@@ -38,6 +41,9 @@ export type Database = {
           nachname?: string | null;
           telefon?: string | null;
           position?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
           auftraggeber_id?: string | null;
         };
         Update: {
@@ -48,6 +54,9 @@ export type Database = {
           nachname?: string | null;
           telefon?: string | null;
           position?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
           auftraggeber_id?: string | null;
         };
         Relationships: [
@@ -494,6 +503,9 @@ export type Database = {
           telefon: string | null;
           email: string | null;
           position: string | null;
+          strasse: string | null;
+          plz: string | null;
+          ort: string | null;
           created_at: string;
         };
         Insert: {
@@ -503,6 +515,9 @@ export type Database = {
           telefon?: string | null;
           email?: string | null;
           position?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
           created_at?: string;
         };
         Update: {
@@ -512,6 +527,9 @@ export type Database = {
           telefon?: string | null;
           email?: string | null;
           position?: string | null;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -1103,6 +1121,144 @@ export type Database = {
           plz?: string | null;
           ort?: string | null;
           auftraggeber_id?: string | null;
+          notiz?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      briefe: {
+        Row: {
+          id: string;
+          brief_nr: string;
+          vorlage_id: string | null;
+          empfaenger_typ: string;
+          fahrer_id: string | null;
+          adress_snapshot: Json | null;
+          datum: string;
+          betreff: string | null;
+          inhalt: string | null;
+          status: string;
+          pdf_url: string | null;
+          pdf_signiert_url: string | null;
+          unterschrift_bild: string | null;
+          an_fahrer_gesendet_am: string | null;
+          unterschrieben_am: string | null;
+          email_versendet_am: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          brief_nr?: string;
+          vorlage_id?: string | null;
+          empfaenger_typ?: string;
+          fahrer_id?: string | null;
+          adress_snapshot?: Json | null;
+          datum?: string;
+          betreff?: string | null;
+          inhalt?: string | null;
+          status?: string;
+          pdf_url?: string | null;
+          pdf_signiert_url?: string | null;
+          unterschrift_bild?: string | null;
+          an_fahrer_gesendet_am?: string | null;
+          unterschrieben_am?: string | null;
+          email_versendet_am?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          brief_nr?: string;
+          vorlage_id?: string | null;
+          empfaenger_typ?: string;
+          fahrer_id?: string | null;
+          adress_snapshot?: Json | null;
+          datum?: string;
+          betreff?: string | null;
+          inhalt?: string | null;
+          status?: string;
+          pdf_url?: string | null;
+          pdf_signiert_url?: string | null;
+          unterschrift_bild?: string | null;
+          an_fahrer_gesendet_am?: string | null;
+          unterschrieben_am?: string | null;
+          email_versendet_am?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      brief_vorlagen: {
+        Row: {
+          id: string;
+          name: string;
+          betreff: string | null;
+          inhalt: string | null;
+          typ: string;
+          unterschrift_erforderlich: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name?: string;
+          betreff?: string | null;
+          inhalt?: string | null;
+          typ?: string;
+          unterschrift_erforderlich?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          betreff?: string | null;
+          inhalt?: string | null;
+          typ?: string;
+          unterschrift_erforderlich?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      tankkarten: {
+        Row: {
+          id: string;
+          anbieter: string | null;
+          kartennummer: string;
+          fahrer_id: string | null;
+          brief_id: string | null;
+          ausgegeben_am: string | null;
+          zurueck_am: string | null;
+          status: string;
+          notiz: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          anbieter?: string | null;
+          kartennummer?: string;
+          fahrer_id?: string | null;
+          brief_id?: string | null;
+          ausgegeben_am?: string | null;
+          zurueck_am?: string | null;
+          status?: string;
+          notiz?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          anbieter?: string | null;
+          kartennummer?: string;
+          fahrer_id?: string | null;
+          brief_id?: string | null;
+          ausgegeben_am?: string | null;
+          zurueck_am?: string | null;
+          status?: string;
           notiz?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -1712,6 +1868,14 @@ export type Database = {
       ag_tour_anlegen: {
         Args: { p_daten: Json };
         Returns: Json;
+      };
+      brief_unterschreiben: {
+        Args: { p_brief_id: string; p_unterschrift: string };
+        Returns: Json;
+      };
+      next_brief_nr: {
+        Args: { p_year?: number };
+        Returns: string;
       };
       tour_uebergeben: {
         Args: { p_tour_id: string; p_neuer_fahrer_id: string };

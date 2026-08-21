@@ -1,14 +1,16 @@
-// Umschalter zwischen Rechnungen und Gutschriften.
+// Umschalter zwischen Rechnungen, Gutschriften, Briefen und Tankkarten.
 //
-// Bewusst KEIN neuer Hauptreiter — die Hauptnavigation ist voll. Beide
-// Übersichten liegen unter /rechnungen bzw. /gutschriften und teilen
-// sich diese Leiste.
+// Bewusst KEIN neuer Hauptreiter — die Hauptnavigation ist voll. Alle
+// Dokument-Übersichten teilen sich diese Leiste; Briefe und Tankkarten
+// sind mit 091 dazugekommen.
 
 import { NavLink } from 'react-router-dom';
 
 const TABS = [
   { to: '/rechnungen',   label: 'Rechnungen' },
   { to: '/gutschriften', label: 'Gutschriften' },
+  { to: '/briefe',       label: 'Briefe' },
+  { to: '/tankkarten',   label: 'Tankkarten' },
 ];
 
 export function RechnungenTabs() {

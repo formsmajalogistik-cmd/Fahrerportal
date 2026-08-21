@@ -7,6 +7,7 @@ import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { TestModeBanner } from './TestModeBanner';
 import { FuehrerscheinPopupGate } from './FuehrerscheinPopupGate';
 import { FuehrerscheinReminderDot } from './FuehrerscheinReminderDot';
+import { BriefeReminderDot } from './BriefeReminderDot';
 
 interface NavItem { to: string; label: string }
 
@@ -15,6 +16,7 @@ const fahrerNav: NavItem[] = [
   { to: '/meine-formulare',  label: 'Formulare' },
   { to: '/greimel-zugaenge', label: 'Greimel Zugänge' },
   { to: '/eingaenge',        label: 'Eingänge' },
+  { to: '/briefe',           label: 'Briefe' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -37,7 +39,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="mx-auto max-w-screen-2xl overflow-x-auto px-2 lg:px-6">
           <ul className="flex gap-1 py-1">
             {nav.map((item) => (
-              <li key={item.to}>
+              <li key={item.to} className="relative">
+                {/* Offene Briefe brauchen einen Hinweis, auch wenn der
+                    Fahrer gerade woanders ist. */}
+                {item.to === '/briefe' && <BriefeReminderDot />}
                 <NavLink
                   to={item.to}
                   end
