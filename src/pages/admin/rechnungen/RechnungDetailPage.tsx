@@ -16,6 +16,10 @@ import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { RechnungEmailDialog } from './RechnungEmailDialog';
 import { generateRechnungPdf, rechnungPdfFilename, type RechnungPdfPosition } from './rechnungPdf';
+import { AbsenderSignaturSchalter } from '../../../components/AbsenderSignaturSchalter';
+import {
+  ladeAbsenderBilder, ladeAbsenderSignatur, type AbsenderSignatur,
+} from '../../../lib/absenderSignatur';
 import {
   previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
 } from '../../../lib/onedrive';
@@ -125,6 +129,11 @@ export function RechnungDetailPage() {
   // PDF-Generierung
   const [generatingPdf, setGeneratingPdf] = useState(false);
 
+  // Unterschrift/Firmenstempel des Absenders (Migration 092). Die
+  // Schalter greifen direkt auf die Rechnung durch — sie gehören nicht
+  // zum Kopf-Entwurf, damit sie auch ohne Bearbeiten-Modus wirken.
+  const [absenderSig, setAbsenderSig] = useState<AbsenderSignatur | null>(null);
+
   // E-Mail-Versand (Aufgabe 3)
   const [emailOpen, setEmailOpen] = useState(false);
 
@@ -177,6 +186,7 @@ export function RechnungDetailPage() {
     if (pRes.error) { setError(pRes.error.message); setLoading(false); return; }
     const r = rRes.data as unknown as RechnungFull;
     setRechnung(r);
+    setAbsenderSig(await ladeAbsenderSignatur());
     setNotizen(r.notizen ?? '');
     setKopfDraft(draftFromRechnung(r));
     const rows = (pRes.data ?? []) as Rechnungsposition[];
@@ -250,6 +260,20 @@ export function RechnungDetailPage() {
       .eq('id', rechnung.id);
     setSavingNotizen(false);
     if (err) setError(err.message);
+  }
+
+  /** Schalter für Unterschrift/Stempel sofort speichern — sie sind eine
+   *  Ausgabe-Option, kein Teil des Kopf-Entwurfs. */
+  async function setzeAbsenderSchalter(patch: { mitUnterschrift?: boolean; mitStempel?: boolean }) {
+    if (!rechnung) return;
+    const neu = {
+      mit_unterschrift: patch.mitUnterschrift ?? rechnung.mit_unterschrift ?? true,
+      mit_stempel: patch.mitStempel ?? rechnung.mit_stempel ?? true,
+    };
+    setRechnung({ ...rechnung, ...neu });
+    const { error: err } = await supabase
+      .from('rechnungen').update(neu).eq('id', rechnung.id);
+    if (err) { setError(err.message); await load(); }
   }
 
   async function speichereKopf() {
@@ -550,6 +574,12 @@ export function RechnungDetailPage() {
         d.setDate(d.getDate() + Number(zahlungsziel));
         faelligAm = d.toISOString().slice(0, 10);
       }
+      // Unterschrift/Stempel des Absenders — nur das laden, was diese
+      // Rechnung auch einsetzen soll.
+      const absender = await ladeAbsenderBilder({
+        mitUnterschrift: fresh.mit_unterschrift ?? true,
+        mitStempel: fresh.mit_stempel ?? true,
+      });
       const blob = await generateRechnungPdf({
         rechnungsnummer: fresh.rechnungsnummer,
         datum: fresh.datum,
@@ -572,6 +602,8 @@ export function RechnungDetailPage() {
         zahlungszielTage: zahlungsziel,
         ustSatzDefault: defaultSatz,
         positionen: pdfPositionen,
+        absenderUnterschrift: absender.unterschrift,
+        absenderStempel: absender.stempel,
       });
 
       const jahr = (fresh.datum ?? '').slice(0, 4) || String(new Date().getFullYear());
@@ -841,6 +873,14 @@ export function RechnungDetailPage() {
       {/* PDF-Bereich */}
       <section className="card space-y-2 p-5">
         <h2 className="text-base font-semibold text-maja-navy">PDF</h2>
+        <AbsenderSignaturSchalter
+          signatur={absenderSig}
+          mitUnterschrift={rechnung.mit_unterschrift ?? true}
+          mitStempel={rechnung.mit_stempel ?? true}
+          disabled={generatingPdf}
+          zielBeschreibung="über die Absenderzeile unter dem Gruß"
+          onChange={(patch) => void setzeAbsenderSchalter(patch)}
+        />
         {rechnung.pdf_url ? (
           <div className="space-y-2">
             <RechnungPdfButtons

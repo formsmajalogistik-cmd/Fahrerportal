@@ -23,6 +23,10 @@ import { emptyManuellePosition, type EditorPosition } from '../rechnungen/positi
 import {
   generateRechnungPdf, type RechnungPdfPosition,
 } from '../rechnungen/rechnungPdf';
+import { AbsenderSignaturSchalter } from '../../../components/AbsenderSignaturSchalter';
+import {
+  ladeAbsenderBilder, ladeAbsenderSignatur, type AbsenderSignatur,
+} from '../../../lib/absenderSignatur';
 import { GutschriftStatusBadge } from './GutschriftStatusBadge';
 import { GutschriftEmailDialog } from './GutschriftEmailDialog';
 import {
@@ -82,6 +86,10 @@ export function GutschriftDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Unterschrift/Firmenstempel des Absenders (Migration 092) — als
+  // Ausgabe-Option direkt am Dokument, unabhängig vom Kopf-Entwurf.
+  const [absenderSig, setAbsenderSig] = useState<AbsenderSignatur | null>(null);
+
   const [editingKopf, setEditingKopf] = useState(false);
   const [kopfDraft, setKopfDraft] = useState<KopfDraft | null>(null);
   const [savingKopf, setSavingKopf] = useState(false);
@@ -115,6 +123,7 @@ export function GutschriftDetailPage() {
     if (!gRes.data) { setError('Dokument nicht gefunden.'); setLoading(false); return; }
     const g = gRes.data as unknown as GutschriftFull;
     setGutschrift(g);
+    setAbsenderSig(await ladeAbsenderSignatur());
     setKopfDraft(draftVon(g));
     setNotizen(g.interne_notizen ?? '');
     setSettings(cfg);
@@ -282,6 +291,11 @@ export function GutschriftDetailPage() {
               : '')
         : null;
 
+      // Unterschrift/Stempel — nur laden, was dieses Dokument einsetzt.
+      const absender = await ladeAbsenderBilder({
+        mitUnterschrift: fresh.mit_unterschrift ?? true,
+        mitStempel: fresh.mit_stempel ?? true,
+      });
       const blob = await generateRechnungPdf({
         dokumentTitel: cfg.dokumentbezeichnung,
         rechnungsnummer: fresh.gutschrift_nr,
@@ -300,6 +314,8 @@ export function GutschriftDetailPage() {
         kundenUid: fresh.auftraggeber?.kunden_uid ?? null,
         ustSatzDefault: defaultSatz,
         positionen: pdfPositionen,
+        absenderUnterschrift: absender.unterschrift,
+        absenderStempel: absender.stempel,
       });
 
       const filename = gutschriftPdfFilename(cfg.dokumentbezeichnung, fresh.gutschrift_nr);
@@ -314,6 +330,19 @@ export function GutschriftDetailPage() {
     } finally {
       setGeneratingPdf(false);
     }
+  }
+
+  /** Schalter für Unterschrift/Stempel sofort speichern. */
+  async function setzeAbsenderSchalter(patch: { mitUnterschrift?: boolean; mitStempel?: boolean }) {
+    if (!gutschrift) return;
+    const neu = {
+      mit_unterschrift: patch.mitUnterschrift ?? gutschrift.mit_unterschrift ?? true,
+      mit_stempel: patch.mitStempel ?? gutschrift.mit_stempel ?? true,
+    };
+    setGutschrift({ ...gutschrift, ...neu });
+    const { error: err } = await supabase
+      .from('gutschriften').update(neu).eq('id', gutschrift.id);
+    if (err) { setError(err.message); await load(); }
   }
 
   async function loeschen() {
@@ -567,6 +596,14 @@ export function GutschriftDetailPage() {
       {/* PDF + Versand */}
       <section className="card space-y-2 p-5">
         <h2 className="text-base font-semibold text-maja-navy">PDF</h2>
+        <AbsenderSignaturSchalter
+          signatur={absenderSig}
+          mitUnterschrift={gutschrift.mit_unterschrift ?? true}
+          mitStempel={gutschrift.mit_stempel ?? true}
+          disabled={generatingPdf}
+          zielBeschreibung="über die Absenderzeile unter dem Gruß"
+          onChange={(patch) => void setzeAbsenderSchalter(patch)}
+        />
         {gutschrift.pdf_url ? (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">

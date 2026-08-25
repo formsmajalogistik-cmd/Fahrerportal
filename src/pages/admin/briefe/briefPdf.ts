@@ -11,7 +11,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFImage } from 'pdf-lib';
 import {
   A4_H, INK, MARGIN_BOTTOM, MARGIN_X,
-  drawAbsenderRechts, drawAbsenderzeile, drawFliesstext,
+  drawAbsenderRechts, drawAbsenderzeile, drawBildProportional, drawFliesstext,
   fetchLogoBytes, newPage, winAnsi,
   type Fonts, type PageCtx,
 } from '../rechnungen/rechnungPdf';
@@ -31,7 +31,13 @@ export interface BriefPdfInput {
   unterschrift?: string | null;
   /** ISO-Zeitstempel der digitalen Unterschrift. */
   unterschriebenAm?: string | null;
+  /** Data-URL der hinterlegten Absender-Unterschrift (Migration 092).
+   *  null/undefined = der Bereich bleibt leer, wie bisher. */
+  absenderUnterschrift?: string | null;
+  /** Data-URL des hinterlegten Firmenstempels (Migration 092). */
+  absenderStempel?: string | null;
 }
+
 
 function datumDe(iso: string | null | undefined): string {
   if (!iso) return '';
@@ -88,13 +94,15 @@ function drawEmpfaengerUndMeta(ctx: PageCtx, input: BriefPdfInput) {
 async function drawUnterschrift(
   ctx: PageCtx, doc: PDFDocument, input: BriefPdfInput,
 ) {
-  const { page, fonts } = ctx;
-  // Genug Platz? Sonst neue Seite.
-  if (ctx.y < MARGIN_BOTTOM + 130) {
+  // Genug Platz? Sonst neue Seite. Der Umbruch MUSS vor dem Auslesen
+  // von ctx.page passieren — sonst landete alles Folgende auf der alten
+  // Seite, während der Cursor schon auf der neuen stand.
+  if (ctx.y < MARGIN_BOTTOM + 150) {
     const neu = newPage(doc, ctx.fonts, ctx.logo, 'Brief');
     ctx.page = neu.page;
     ctx.y = neu.y;
   }
+  const { page, fonts } = ctx;
 
   ctx.y -= 24;
   const ortDatum = [input.ort || '', datumDe(input.unterschriebenAm ?? input.datum)]
@@ -107,27 +115,10 @@ async function drawUnterschrift(
   // Unterschrift des Empfängers (links).
   const linienY = ctx.y - 46;
   if (input.unterschrift) {
-    try {
-      const base64 = input.unterschrift.split(',')[1] ?? '';
-      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-      let bild: PDFImage;
-      if (input.unterschrift.startsWith('data:image/png')) {
-        bild = await doc.embedPng(bytes);
-      } else {
-        bild = await doc.embedJpg(bytes);
-      }
-      const maxB = 180;
-      const maxH = 44;
-      const skala = Math.min(maxB / bild.width, maxH / bild.height, 1);
-      page.drawImage(bild, {
-        x: MARGIN_X,
-        y: linienY + 4,
-        width: bild.width * skala,
-        height: bild.height * skala,
-      });
-    } catch {
-      // Unterschrift nicht einbettbar — die Linie bleibt stehen.
-    }
+    // Nicht einbettbar? Dann bleibt die Linie einfach stehen.
+    await drawBildProportional(doc, page, input.unterschrift, {
+      x: MARGIN_X, unten: linienY + 4, maxB: 180, maxH: 44,
+    });
   }
 
   page.drawLine({
@@ -146,18 +137,44 @@ async function drawUnterschrift(
     );
   }
 
-  // Absender (rechts).
+  // ---------------- Absender (rechts) ----------------
+  //
+  // Reihenfolge wie auf Papier: Unterschrift ÜBER der Linie, der
+  // Stempel daneben und leicht überlappend. Ist nichts hinterlegt (oder
+  // der Schalter am Brief aus), bleibt exakt das alte Bild — Linie plus
+  // Absenderzeile zum Unterschreiben von Hand.
+  const absenderX = 340;
+  const absenderB = 200;
+
+  if (input.absenderUnterschrift) {
+    await drawBildProportional(doc, page, input.absenderUnterschrift, {
+      x: absenderX, unten: linienY + 4, maxB: 120, maxH: 40,
+    });
+  }
+
+  if (input.absenderStempel) {
+    // Nach rechts versetzt und tiefer angesetzt, sodass er die Linie
+    // überlappt und die Unterschrift nur am Rand berührt. Der Rahmen ist
+    // so gewählt, dass der Stempel bei jedem Seitenverhältnis innerhalb
+    // des Absenderblocks bleibt (340 + 100 + 80 = 520 < 559).
+    await drawBildProportional(doc, page, input.absenderStempel, {
+      x: absenderX + 100, unten: linienY - 16, maxB: 80, maxH: 80,
+    });
+  }
+
   page.drawLine({
-    start: { x: 340, y: linienY },
-    end: { x: 340 + 200, y: linienY },
+    start: { x: absenderX, y: linienY },
+    end: { x: absenderX + absenderB, y: linienY },
     thickness: 0.7,
     color: rgb(0.6, 0.65, 0.7),
   });
   page.drawText(winAnsi('M. Janßen, Maja-Logistik'), {
-    x: 340, y: linienY - 11, size: 8, font: fonts.regular, color: rgb(0.45, 0.5, 0.56),
+    x: absenderX, y: linienY - 11, size: 8, font: fonts.regular, color: rgb(0.45, 0.5, 0.56),
   });
 
-  ctx.y = linienY - 34;
+  // Der Stempel darf unter die Linie ragen — der Cursor muss dann
+  // entsprechend tiefer weitergehen.
+  ctx.y = linienY - (input.absenderStempel ? 40 : 34);
 }
 
 export function briefPdfFilename(briefNr: string): string {

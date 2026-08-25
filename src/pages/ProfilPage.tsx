@@ -6,6 +6,7 @@ import { Spinner } from '../components/Spinner';
 import {
   applyTheme, loadThemePreference, saveThemePreference, type ThemePreference,
 } from '../lib/theme';
+import { AbsenderSignaturEinstellungen } from '../components/AbsenderSignaturEinstellungen';
 
 export function ProfilPage() {
   const { profile, refreshProfile, updatePassword } = useAuth();
@@ -29,6 +30,9 @@ export function ProfilPage() {
   // Signatur-Hinweise (und das Feld „Position / Rolle" mit dem
   // Maja-Default) blenden wir für diese Rolle aus.
   const istAuftraggeber = profile?.role === 'auftraggeber';
+  // Unterschrift und Firmenstempel gehen in ausgehende Dokumente ein —
+  // deshalb ausschließlich für Admins (Migration 092).
+  const istAdmin = profile?.role === 'admin';
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg]       = useState<string | null>(null);
@@ -163,6 +167,8 @@ export function ProfilPage() {
           </button>
         </div>
       </form>
+
+      {istAdmin && <AbsenderSignaturEinstellungen />}
 
       {/* Darstellung — Light/Dark/System (Aufgabe 4). Preference lebt
           in localStorage; pro Gerät individuell. */}

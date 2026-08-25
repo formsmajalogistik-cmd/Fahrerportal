@@ -100,6 +100,11 @@ export interface RechnungPdfInput {
   zahlungszielTage: number | null;
   ustSatzDefault: number;
   positionen: RechnungPdfPosition[];
+  /** Data-URL der hinterlegten Absender-Unterschrift (Migration 092);
+   *  null/undefined = wie bisher nur die Lücke über der Absenderzeile. */
+  absenderUnterschrift?: string | null;
+  /** Data-URL des hinterlegten Firmenstempels (Migration 092). */
+  absenderStempel?: string | null;
 }
 
 // ============================================================
@@ -574,7 +579,16 @@ function drawSummenBlock(ctx: PageCtx, groups: UstGroup[], summen: { netto: numb
   ctx.y = Math.min(leftY, rightY) - 6;
 }
 
-function drawAbschluss(ctx: PageCtx, schlusstext?: string | null) {
+/**
+ * Grußformel + Absenderzeile. Zwischen beiden lag schon immer eine
+ * Lücke zum Unterschreiben von Hand — genau dort landen jetzt, sofern
+ * hinterlegt und am Dokument angehakt, Unterschrift und Firmenstempel
+ * (Migration 092). Ohne Bilder bleibt das Layout unverändert.
+ */
+async function drawAbschluss(
+  ctx: PageCtx, doc: PDFDocument, schlusstext?: string | null,
+  absender?: { unterschrift?: string | null; stempel?: string | null },
+) {
   const { page, fonts } = ctx;
   if (schlusstext && schlusstext.trim()) {
     ctx.y -= 14;
@@ -584,11 +598,62 @@ function drawAbschluss(ctx: PageCtx, schlusstext?: string | null) {
   page.drawText(winAnsi('mit freundlichen Grüßen'), {
     x: MARGIN_X, y: ctx.y, size: 10, font: fonts.regular, color: INK,
   });
-  ctx.y -= 30;
+
+  const hatBild = !!(absender?.unterschrift || absender?.stempel);
+  // Mit Bild deutlich mehr Luft: Unterschrift und Stempel brauchen die
+  // Höhe zwischen Grußformel und Absenderzeile, ohne in eine von beiden
+  // zu laufen.
+  ctx.y -= hatBild ? 62 : 30;
+
+  if (absender?.unterschrift) {
+    await drawBildProportional(doc, page, absender.unterschrift, {
+      x: MARGIN_X, unten: ctx.y + 12, maxB: 150, maxH: 36,
+    });
+  }
+  if (absender?.stempel) {
+    // Rechts daneben, leicht überlappend — wie auf einem Papierdokument.
+    // x = 36 + 120 hält ihn rechts der Absenderzeile, sodass der Name
+    // lesbar bleibt.
+    await drawBildProportional(doc, page, absender.stempel, {
+      x: MARGIN_X + 120, unten: ctx.y - 14, maxB: 70, maxH: 70,
+    });
+  }
+
   page.drawText(winAnsi('M.Janßen, Maja-Logistik'), {
     x: MARGIN_X, y: ctx.y, size: 10, font: fonts.regular, color: INK,
   });
-  ctx.y -= 14;
+  // Der Stempel darf unter die Namenszeile ragen.
+  ctx.y -= absender?.stempel ? 26 : 14;
+}
+
+/**
+ * Bettet eine Data-URL ein und zeichnet sie proportional skaliert in
+ * den gegebenen Rahmen. Wird für Unterschrift und Firmenstempel des
+ * Absenders benutzt (Migration 092) und deshalb hier geteilt, damit
+ * Brief-, Rechnungs- und Gutschrifts-PDF dieselbe Skalierung verwenden.
+ *
+ * `unten` ist die Grundlinie, `x` die linke Kante. Vergrößert wird nie
+ * (Skala max. 1). Ein nicht lesbares Bild wird stillschweigend
+ * übersprungen — lieber ein Dokument ohne Unterschrift als gar keins.
+ */
+export async function drawBildProportional(
+  doc: PDFDocument, page: PDFPage, dataUrl: string,
+  opts: { x: number; unten: number; maxB: number; maxH: number },
+): Promise<{ breite: number; hoehe: number } | null> {
+  try {
+    const base64 = dataUrl.split(',')[1] ?? '';
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const bild: PDFImage = dataUrl.startsWith('data:image/png')
+      ? await doc.embedPng(bytes)
+      : await doc.embedJpg(bytes);
+    const skala = Math.min(opts.maxB / bild.width, opts.maxH / bild.height, 1);
+    const breite = bild.width * skala;
+    const hoehe = bild.height * skala;
+    page.drawImage(bild, { x: opts.x, y: opts.unten, width: breite, height: hoehe });
+    return { breite, hoehe };
+  } catch {
+    return null;
+  }
 }
 
 export function newPage(
@@ -654,12 +719,19 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
   const schlussZeilen = input.schlusstext?.trim()
     ? wrapText(input.schlusstext.trim(), fonts.regular, 10, TABLE_W).length
     : 0;
-  const summenH = 30 + Math.max(sum.groups.length, 1) * 16 + 60 + schlussZeilen * 14;
+  // Unterschrift/Stempel brauchen zusätzliche Höhe im Abschluss —
+  // sonst rutschen sie in die Fußzeile.
+  const absender = {
+    unterschrift: input.absenderUnterschrift ?? null,
+    stempel: input.absenderStempel ?? null,
+  };
+  const abschlussH = (absender.unterschrift || absender.stempel) ? 115 : 60;
+  const summenH = 30 + Math.max(sum.groups.length, 1) * 16 + abschlussH + schlussZeilen * 14;
   if (ctx.y - summenH - FOOTER_H < MARGIN_BOTTOM) {
     ctx = newPage(doc, fonts, logo, titel);
   }
   drawSummenBlock(ctx, sum.groups, sum, input);
-  drawAbschluss(ctx, input.schlusstext);
+  await drawAbschluss(ctx, doc, input.schlusstext, absender);
 
   const bytes = await doc.save();
   return new Blob([bytes as unknown as ArrayBuffer], { type: 'application/pdf' });

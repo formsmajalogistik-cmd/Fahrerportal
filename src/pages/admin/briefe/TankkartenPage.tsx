@@ -12,9 +12,16 @@ import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate } from '../../../lib/touren';
 import { useTestGuard } from '../../../auth/TestModeContext';
 import { RechnungenTabs } from '../rechnungen/RechnungenTabs';
+import { FahrerSelect, type FahrerOptionRaw } from '../../touren/FahrerSelect';
+import { displayName, fahrerName } from '../../../lib/names';
 import { TANKKARTEN_STATUS_LABEL, type Tankkarte } from '../../../lib/briefe';
 
-interface FahrerOption { id: string; vorname: string | null; nachname: string | null }
+// Namensbildung und Unterkonto-Gruppierung kommen aus der geteilten
+// FahrerSelect-Komponente — dieselbe Logik wie in der Tour-Zuweisung.
+// Vorher wurde hier von Hand gebaut UND der user-Join fehlte, wodurch
+// jeder Fahrer als "Ohne Namen" erschien: Haupt-Konten führen ihren
+// Namen in app_users, nicht auf der fahrer-Zeile.
+type FahrerOption = FahrerOptionRaw;
 
 const STATUS_KLASSE: Record<string, string> = {
   aktiv: 'bg-emerald-100 text-emerald-800 dark:!bg-emerald-900 dark:!text-emerald-100',
@@ -47,8 +54,11 @@ export function TankkartenPage() {
     setLoading(true);
     const [kRes, fRes] = await Promise.all([
       supabase.from('tankkarten').select('*').order('created_at', { ascending: false }),
-      supabase.from('fahrer').select('id, vorname, nachname')
-        .eq('aktiv', true).eq('ist_unterkonto', false),
+      // Unterkonten bewusst MIT laden — FahrerSelect gruppiert sie unter
+      // ihrem Haupt-Konto und macht sie damit unterscheidbar.
+      supabase.from('fahrer')
+        .select('id, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname)')
+        .eq('aktiv', true),
     ]);
     setKarten((kRes.data as Tankkarte[]) ?? []);
     setFahrer((fRes.data as FahrerOption[]) ?? []);
@@ -60,10 +70,12 @@ export function TankkartenPage() {
     return () => window.clearTimeout(t);
   }, [laden]);
 
-  const fahrerName = (id: string | null) => {
+  /** Anzeigename eines Fahrers — zentrale Hilfsfunktion, mit E-Mail als
+   *  letztem Rückfall statt "Ohne Namen". */
+  const fahrerLabel = (id: string | null) => {
     const f = fahrer.find((x) => x.id === id);
     if (!f) return null;
-    return [f.vorname, f.nachname].filter(Boolean).join(' ').trim() || 'Ohne Namen';
+    return fahrerName(f, f.user ?? null) || displayName(f.user ?? null) || '—';
   };
 
   const anbieterListe = useMemo(
@@ -213,7 +225,7 @@ export function TankkartenPage() {
           <ul className="flex flex-wrap gap-2">
             {proFahrer.map(([fid, ks]) => (
               <li key={fid} className="rounded-lg bg-maja-light px-3 py-1.5 text-sm text-maja-navy">
-                <span className="font-medium">{fahrerName(fid) ?? 'Unbekannt'}</span>
+                <span className="font-medium">{fahrerLabel(fid) ?? 'Unbekannt'}</span>
                 <span className="ml-1 text-xs text-maja-muted">
                   {ks.length} {ks.length === 1 ? 'Karte' : 'Karten'}
                 </span>
@@ -236,13 +248,13 @@ export function TankkartenPage() {
         </div>
         <div>
           <label htmlFor="tk-ff" className="label">Fahrer</label>
-          <select id="tk-ff" className="input" value={filterFahrer}
-                  onChange={(e) => setFilterFahrer(e.target.value)}>
-            <option value="">Alle</option>
-            {fahrer.map((f) => (
-              <option key={f.id} value={f.id}>{fahrerName(f.id)}</option>
-            ))}
-          </select>
+          <FahrerSelect
+            id="tk-ff"
+            value={filterFahrer}
+            onChange={setFilterFahrer}
+            fahrer={fahrer}
+            placeholder="Alle"
+          />
         </div>
         {anbieterListe.length > 0 && (
           <div>
@@ -284,7 +296,7 @@ export function TankkartenPage() {
                 <tr key={k.id} className="hover:bg-maja-light/40">
                   <td className="px-3 py-2">{k.anbieter ?? '—'}</td>
                   <td className="px-3 py-2 font-mono text-maja-navy">{k.kartennummer}</td>
-                  <td className="px-3 py-2">{fahrerName(k.fahrer_id) ?? '—'}</td>
+                  <td className="px-3 py-2">{fahrerLabel(k.fahrer_id) ?? '—'}</td>
                   <td className="px-3 py-2">
                     {k.ausgegeben_am ? formatDate(k.ausgegeben_am) : '—'}
                     {k.zurueck_am && (
@@ -350,13 +362,13 @@ export function TankkartenPage() {
             </p>
             <div>
               <label htmlFor="tk-ziel" className="label">Fahrer</label>
-              <select id="tk-ziel" className="input" value={zielFahrer}
-                      onChange={(e) => setZielFahrer(e.target.value)}>
-                <option value="">— wählen —</option>
-                {fahrer.map((f) => (
-                  <option key={f.id} value={f.id}>{fahrerName(f.id)}</option>
-                ))}
-              </select>
+              <FahrerSelect
+                id="tk-ziel"
+                value={zielFahrer}
+                onChange={setZielFahrer}
+                fahrer={fahrer}
+                placeholder="— wählen —"
+              />
             </div>
             <label className="flex items-center gap-2 text-sm text-maja-ink">
               <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"

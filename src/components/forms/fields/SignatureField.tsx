@@ -68,7 +68,7 @@ interface OverlayProps {
  * direkt im 2D-Kontext (`ctx.scale(dpr, dpr)`), sodass die Pointer-
  * Koordinaten 1:1 in CSS-Pixeln mit dem gezeichneten Bild übereinstimmen.
  */
-function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps) {
+export function SignatureOverlay({ title, initial, onCancel, onConfirm }: OverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
   const last = useRef<{ x: number; y: number } | null>(null);

@@ -1129,6 +1129,8 @@ export type Database = {
       };
       briefe: {
         Row: {
+          mit_unterschrift: boolean;
+          mit_stempel: boolean;
           id: string;
           brief_nr: string;
           vorlage_id: string | null;
@@ -1149,6 +1151,8 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          mit_unterschrift?: boolean;
+          mit_stempel?: boolean;
           id?: string;
           brief_nr?: string;
           vorlage_id?: string | null;
@@ -1169,6 +1173,8 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          mit_unterschrift?: boolean;
+          mit_stempel?: boolean;
           id?: string;
           brief_nr?: string;
           vorlage_id?: string | null;
@@ -1267,6 +1273,8 @@ export type Database = {
       };
       rechnungen: {
         Row: {
+          mit_unterschrift: boolean;
+          mit_stempel: boolean;
           id: string;
           rechnungsnummer: string;
           auftraggeber_id: string | null;
@@ -1301,6 +1309,8 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          mit_unterschrift?: boolean;
+          mit_stempel?: boolean;
           id?: string;
           rechnungsnummer?: string;
           auftraggeber_id: string | null;
@@ -1335,6 +1345,8 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          mit_unterschrift?: boolean;
+          mit_stempel?: boolean;
           id?: string;
           rechnungsnummer?: string;
           auftraggeber_id?: string | null;
@@ -1611,6 +1623,8 @@ export type Database = {
       };
       gutschriften: {
         Row: {
+          mit_unterschrift: boolean;
+          mit_stempel: boolean;
           id: string;
           gutschrift_nr: string;
           auftraggeber_id: string | null;
@@ -1640,6 +1654,8 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          mit_unterschrift?: boolean;
+          mit_stempel?: boolean;
           id?: string;
           gutschrift_nr?: string;
           auftraggeber_id?: string | null;
@@ -1669,6 +1685,8 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          mit_unterschrift?: boolean;
+          mit_stempel?: boolean;
           id?: string;
           gutschrift_nr?: string;
           auftraggeber_id?: string | null;
@@ -1785,6 +1803,30 @@ export type Database = {
           letzte_nutzung?: string;
           ist_manuell?: boolean;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      // Unterschrift + Firmenstempel des Absenders (Migration 092).
+      // Die Spalten halten Pfade im privaten Bucket „absender", keine
+      // Bilddaten.
+      absender_signaturen: {
+        Row: {
+          user_id: string;
+          unterschrift_pfad: string | null;
+          stempel_pfad: string | null;
+          aktualisiert_am: string;
+        };
+        Insert: {
+          user_id: string;
+          unterschrift_pfad?: string | null;
+          stempel_pfad?: string | null;
+          aktualisiert_am?: string;
+        };
+        Update: {
+          user_id?: string;
+          unterschrift_pfad?: string | null;
+          stempel_pfad?: string | null;
+          aktualisiert_am?: string;
         };
         Relationships: [];
       };

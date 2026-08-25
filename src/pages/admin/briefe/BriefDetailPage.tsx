@@ -18,6 +18,12 @@ import { leererEmpfaenger, merkeEmpfaenger, type ManuellerEmpfaengerEntwurf } fr
 import { uploadToOneDrive } from '../../../lib/onedrive';
 import { previewFormPdf, downloadFormPdf } from '../../../lib/pdfGenerate';
 import { generateBriefPdf, briefPdfFilename } from './briefPdf';
+import { FahrerSelect, type FahrerOptionRaw } from '../../touren/FahrerSelect';
+import { displayName, fahrerName } from '../../../lib/names';
+import {
+  ladeAbsenderBilder, ladeAbsenderSignatur, type AbsenderSignatur,
+} from '../../../lib/absenderSignatur';
+import { AbsenderSignaturSchalter } from '../../../components/AbsenderSignaturSchalter';
 import { BriefEmailDialog } from './BriefEmailDialog';
 import {
   BRIEF_STATUS_LABEL, adressZeilen, adresseAlsJson, empfaengerAnzeige,
@@ -26,12 +32,20 @@ import {
   type Brief, type BriefAdresse, type BriefVorlage, type Tankkarte,
 } from '../../../lib/briefe';
 
-interface FahrerOption {
-  id: string;
-  vorname: string | null;
-  nachname: string | null;
-  user: { vorname: string | null; nachname: string | null; strasse: string | null;
-          plz: string | null; ort: string | null } | null;
+/**
+ * Fahrer für die Empfängerauswahl. Basis ist die geteilte Option der
+ * FahrerSelect-Komponente (Namensbildung, Unterkonto-Gruppierung) —
+ * ergänzt um die Adressfelder, mit denen der Brief vorbelegt wird.
+ */
+interface FahrerOption extends FahrerOptionRaw {
+  user?: {
+    email: string;
+    vorname: string | null;
+    nachname: string | null;
+    strasse: string | null;
+    plz: string | null;
+    ort: string | null;
+  } | null;
 }
 
 function heute(): string {
@@ -66,6 +80,13 @@ export function BriefDetailPage() {
   const [manuellMerken, setManuellMerken] = useState(false);
   const [fahrerId, setFahrerId] = useState('');
 
+  // Unterschrift/Stempel des Absenders (Migration 092). Die Schalter
+  // stehen standardmäßig an; ist nichts hinterlegt, bleibt der Bereich
+  // wie bisher leer — dann sind sie auch nicht bedienbar.
+  const [absenderSig, setAbsenderSig] = useState<AbsenderSignatur | null>(null);
+  const [mitUnterschrift, setMitUnterschrift] = useState(true);
+  const [mitStempel, setMitStempel] = useState(true);
+
   // Stammdaten
   const [vorlagen, setVorlagen] = useState<BriefVorlage[]>([]);
   const [fahrer, setFahrer] = useState<FahrerOption[]>([]);
@@ -74,16 +95,22 @@ export function BriefDetailPage() {
 
   const laden = useCallback(async () => {
     setLoading(true);
-    const [vRes, fRes, kRes] = await Promise.all([
+    const [vRes, fRes, kRes, sigRes] = await Promise.all([
       ladeVorlagen(),
+      // E-Mail bewusst mitladen: Haupt-Konten führen ihren Namen in
+      // app_users, und wenn dort gar nichts steht, ist die E-Mail der
+      // letzte brauchbare Anzeigename. Unterkonten kommen mit — die
+      // FahrerSelect-Komponente gruppiert sie unter ihrem Haupt-Konto.
       supabase.from('fahrer')
-        .select('id, vorname, nachname, user:user_id (vorname, nachname, strasse, plz, ort)')
-        .eq('aktiv', true).eq('ist_unterkonto', false),
+        .select('id, vorname, nachname, ist_unterkonto, haupt_user_id, user:user_id (email, vorname, nachname, strasse, plz, ort)')
+        .eq('aktiv', true),
       supabase.from('tankkarten').select('*').order('kartennummer'),
+      ladeAbsenderSignatur(),
     ]);
     setVorlagen(vRes);
     setFahrer((fRes.data as unknown as FahrerOption[]) ?? []);
     setKarten((kRes.data as Tankkarte[]) ?? []);
+    setAbsenderSig(sigRes);
 
     if (istNeu) {
       const nr = await naechsteBriefNr(new Date().getFullYear());
@@ -112,6 +139,8 @@ export function BriefDetailPage() {
     setVorlageId(b.vorlage_id ?? '');
     setEmpfTyp(b.empfaenger_typ === 'fahrer' ? 'fahrer' : 'manuell');
     setFahrerId(b.fahrer_id ?? '');
+    setMitUnterschrift(b.mit_unterschrift ?? true);
+    setMitStempel(b.mit_stempel ?? true);
     const a = parseBriefAdresse(b.adress_snapshot);
     setManuell({
       ...leererEmpfaenger(),
@@ -130,10 +159,9 @@ export function BriefDetailPage() {
     () => fahrer.find((f) => f.id === fahrerId) ?? null, [fahrer, fahrerId],
   );
 
-  function fahrerName(f: FahrerOption): string {
-    const eigen = [f.vorname, f.nachname].filter(Boolean).join(' ').trim();
-    if (eigen) return eigen;
-    return [f.user?.vorname, f.user?.nachname].filter(Boolean).join(' ').trim() || 'Ohne Namen';
+  /** Anzeigename — zentrale Hilfsfunktion, E-Mail als letzter Rückfall. */
+  function fahrerLabel(f: FahrerOption): string {
+    return fahrerName(f, f.user ?? null) || displayName(f.user ?? null) || '';
   }
 
   /**
@@ -173,7 +201,7 @@ export function BriefDetailPage() {
     const ctx = {
       adresse, datum, briefNr,
       tankkarte: gewaehlteKarte,
-      fahrerName: gewaehlterFahrer ? fahrerName(gewaehlterFahrer) : '',
+      fahrerName: gewaehlterFahrer ? fahrerLabel(gewaehlterFahrer) : '',
     };
     setBetreff(loesePlatzhalter(v.betreff ?? '', ctx));
     setInhalt(loesePlatzhalter(v.inhalt ?? '', ctx));
@@ -198,6 +226,8 @@ export function BriefDetailPage() {
       datum,
       betreff: betreff.trim() || null,
       inhalt: inhalt.trim() || null,
+      mit_unterschrift: mitUnterschrift,
+      mit_stempel: mitStempel,
     };
     let neueId = brief?.id ?? null;
     if (istNeu && !brief) {
@@ -236,6 +266,13 @@ export function BriefDetailPage() {
       // dazugekommen sein (gleiche Lehre wie beim Rechnungs-PDF).
       const { data } = await supabase.from('briefe').select('*').eq('id', bid).single();
       const b = (data as Brief) ?? brief!;
+      // Unterschrift/Stempel des Absenders — nur laden, was der Brief
+      // auch einsetzen soll. Fehlt beides, kommt null zurück und das
+      // PDF sieht aus wie vorher (Linie zum Unterschreiben).
+      const absender = await ladeAbsenderBilder({
+        mitUnterschrift: b.mit_unterschrift ?? true,
+        mitStempel: b.mit_stempel ?? true,
+      });
       const blob = await generateBriefPdf({
         briefNr: b.brief_nr,
         datum: b.datum,
@@ -245,6 +282,8 @@ export function BriefDetailPage() {
         ort: parseBriefAdresse(b.adress_snapshot).ort,
         unterschrift: signiert ? b.unterschrift_bild : null,
         unterschriebenAm: signiert ? b.unterschrieben_am : null,
+        absenderUnterschrift: absender.unterschrift,
+        absenderStempel: absender.stempel,
       });
       const jahr = b.datum.slice(0, 4);
       const name = signiert
@@ -366,11 +405,13 @@ export function BriefDetailPage() {
         {empfTyp === 'fahrer' && (
           <div>
             <label htmlFor="b-fahrer" className="label">Fahrer</label>
-            <select id="b-fahrer" className="input" value={fahrerId}
-                    onChange={(e) => setFahrerId(e.target.value)}>
-              <option value="">— wählen —</option>
-              {fahrer.map((f) => <option key={f.id} value={f.id}>{fahrerName(f)}</option>)}
-            </select>
+            <FahrerSelect
+              id="b-fahrer"
+              value={fahrerId}
+              onChange={setFahrerId}
+              fahrer={fahrer}
+              placeholder="— wählen —"
+            />
             <p className="mt-1 text-xs text-maja-muted">
               Adresse kommt aus dem Profil; fehlende Angaben unten ergänzen.
               Nur bei dieser Variante ist der Versand in die App möglich.
@@ -430,6 +471,23 @@ export function BriefDetailPage() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Unterschrift des Absenders (Migration 092). Bewusst je Brief
+          abwählbar — Schreiben, die von Hand unterschrieben werden
+          sollen, brauchen die leere Linie. */}
+      <section className="card space-y-3 p-5">
+        <h2 className="text-base font-semibold text-maja-navy">Unterschrift des Absenders</h2>
+        <AbsenderSignaturSchalter
+          signatur={absenderSig}
+          mitUnterschrift={mitUnterschrift}
+          mitStempel={mitStempel}
+          zielBeschreibung="in den Unterschriftsbereich rechts"
+          onChange={(p) => {
+            if (p.mitUnterschrift !== undefined) setMitUnterschrift(p.mitUnterschrift);
+            if (p.mitStempel !== undefined) setMitStempel(p.mitStempel);
+          }}
+        />
       </section>
 
       {/* Aktionen */}
