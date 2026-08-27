@@ -83,6 +83,7 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 
 import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
+import { merkeTourAdressen } from '../../lib/feldVorschlaege';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
 } from '../../lib/tourenartAutomatik';
@@ -718,11 +719,16 @@ export function TourDetailDialog({
     const km_hin = parseInteger(draft.kmHin);
     const km_rueck = draft.hatRueckfuehrung ? parseInteger(draft.kmRueck) : null;
 
+    // Index 0 = Hin, Index 1 = Rück — diese Positionen lesen Rechnungs-
+    // Platzhalter, Export und Auftrags-Mail. Ist nur das Rück-Kennzeichen
+    // bekannt, bleibt an Index 0 ein leerer Platzhalter stehen; sonst
+    // rutschte der Rück-Wert auf 0 und würde überall als Hin gelesen.
+    const kzHin = draft.kennzeichenHin.trim().toUpperCase();
+    const kzRueck = draft.hatRueckfuehrung
+      ? draft.kennzeichenRueck.trim().toUpperCase() : '';
     const kennzeichen: string[] = [];
-    if (draft.kennzeichenHin.trim()) kennzeichen.push(draft.kennzeichenHin.trim().toUpperCase());
-    if (draft.hatRueckfuehrung && draft.kennzeichenRueck.trim()) {
-      kennzeichen.push(draft.kennzeichenRueck.trim().toUpperCase());
-    }
+    if (kzHin || kzRueck) kennzeichen.push(kzHin);
+    if (kzRueck) kennzeichen.push(kzRueck);
 
     setSaving(true);
     // Protokoll-Felder normalisieren — bei Status 'abgeschlossen' wird der
@@ -869,6 +875,16 @@ export function TourDetailDialog({
       });
       return;
     }
+
+    // Adressteile in den Vorschlags-Pool (4b) — dieselben Töpfe, aus
+    // denen auch die Formular-Adressfelder schöpfen.
+    void merkeTourAdressen([
+      { strasse: draft.strasseStart, plz: draft.plzStart, stadt: draft.startStadt },
+      { strasse: draft.strasseZiel, plz: draft.plzZiel, stadt: draft.zielStadt },
+      ...(draft.hatRueckfuehrung
+        ? [{ strasse: draft.strasseRueck, plz: draft.plzRueck, stadt: draft.rueckfuehrungStadt }]
+        : []),
+    ], false);
 
     // Greimel-Zugang Zuweisung synchron halten:
     // - Wenn Tour 'abgeschlossen' wurde → vorherige Zuweisung freigeben.
@@ -1065,7 +1081,20 @@ export function TourDetailDialog({
       ? { eingang_id_bc: null, protokoll_daten_felder_bc: [] }
       : { eingang_id: null, protokoll_daten_felder: [] };
     for (const f of fieldsToReset) {
-      patch[f] = f === 'kennzeichen' ? [] : null;
+      if (f === 'kennzeichen') {
+        // Das Array trägt BEIDE Abschnitte (Index 0 = Hin, 1 = Rück).
+        // Beim Lösen eines Abschnitts darf deshalb nur dessen Slot
+        // geleert werden — vorher flog immer das ganze Array raus und
+        // riss beim Rück-Teil das Hin-Kennzeichen mit.
+        const kz = Array.isArray(tour.kennzeichen) ? [...tour.kennzeichen] : [];
+        const hin = (kz[0] ?? '').trim();
+        const rueck = (kz[1] ?? '').trim();
+        patch.kennzeichen = slot === 'bc'
+          ? (hin ? [hin] : [])
+          : (rueck ? ['', rueck] : []);
+        continue;
+      }
+      patch[f] = null;
     }
     const { error: err } = await supabase
       .from('touren')

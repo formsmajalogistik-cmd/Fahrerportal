@@ -12,6 +12,7 @@ import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { SuggestCombobox } from '../../components/SuggestCombobox';
+import { merkeTourAdressen } from '../../lib/feldVorschlaege';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
 import { RouteFeldsatz } from '../../components/RouteFeldsatz';
 import { composeAdresse, effektiveAdresse } from '../../lib/adresse';
@@ -338,13 +339,14 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     const km_hin = parseInteger(kmHin);
     const km_rueck = hatRueckfuehrung ? parseInteger(kmRueck) : null;
 
-    const kennzeichen: string[] = [];
+    // Index 0 = Hin, Index 1 = Rück. Ist nur das Rück-Kennzeichen
+    // bekannt, bleibt Index 0 als leerer Platzhalter stehen — sonst
+    // würde der Rück-Wert überall als Hin-Kennzeichen gelesen.
     const kzHin = kennzeichenHin.trim().toUpperCase();
-    if (kzHin) kennzeichen.push(kzHin);
-    if (hatRueckfuehrung) {
-      const kzRueck = kennzeichenRueck.trim().toUpperCase();
-      if (kzRueck) kennzeichen.push(kzRueck);
-    }
+    const kzRueck = hatRueckfuehrung ? kennzeichenRueck.trim().toUpperCase() : '';
+    const kennzeichen: string[] = [];
+    if (kzHin || kzRueck) kennzeichen.push(kzHin);
+    if (kzRueck) kennzeichen.push(kzRueck);
 
     let verguetung: number | null;
     if (istSondervereinbarung) {
@@ -450,6 +452,17 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       try { await speichereAlleAnsprechpartner(neu.id, stationsKontakte); }
       catch (kErr) { console.warn('Ansprechpartner konnten nicht gespeichert werden', kErr); }
     }
+
+    // Adressteile in den Vorschlags-Pool (4b) — dieselben Töpfe, aus
+    // denen auch die Formular-Adressfelder schöpfen. Fehlschläge sind
+    // unkritisch, die Tour ist bereits gespeichert.
+    void merkeTourAdressen([
+      { strasse: strasseStart, plz: plzStart, stadt: startStadt },
+      { strasse: strasseZiel, plz: plzZiel, stadt: zielStadt },
+      ...(hatRueckfuehrung
+        ? [{ strasse: strasseRueck, plz: plzRueck, stadt: rueckfuehrungStadt }]
+        : []),
+    ], false);
 
     // Greimel-Zugang automatisch dem Fahrer zuweisen
     if (greimelEffective && fahrerId) {

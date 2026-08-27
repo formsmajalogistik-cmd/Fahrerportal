@@ -36,12 +36,14 @@ interface Props {
   disabled?: boolean;
   inputMode?: 'text' | 'numeric';
   autoComplete?: string;
+  /** Tooltip am Eingabefeld (z.B. der Stadt-Kopplungshinweis). */
+  title?: string;
   'aria-label'?: string;
 }
 
 export function SuggestCombobox({
   feldTyp, value, onChange, id, className = 'input', placeholder,
-  required, disabled, inputMode, autoComplete = 'off',
+  required, disabled, inputMode, autoComplete = 'off', title,
   'aria-label': ariaLabel,
 }: Props) {
   const reactId = useId();
@@ -192,6 +194,7 @@ export function SuggestCombobox({
         disabled={disabled}
         inputMode={inputMode}
         autoComplete={autoComplete}
+        title={title}
         aria-label={ariaLabel}
         role={aktiviert ? 'combobox' : undefined}
         aria-expanded={aktiviert ? zeigen : undefined}

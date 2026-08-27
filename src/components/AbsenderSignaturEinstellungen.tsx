@@ -16,9 +16,11 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { processStampImage } from '../lib/stampProcessing';
 import { useTestGuard } from '../auth/TestModeContext';
 import {
+  ABSENDER_BUCKET, ABSENDER_MIGRATION,
   absenderSignedUrl, entferneAbsenderBild, ladeAbsenderSignatur,
   speichereAbsenderBild, type AbsenderBildArt, type AbsenderSignatur,
 } from '../lib/absenderSignatur';
+import { storageFehlerText } from '../lib/storageFehler';
 
 /** Data-URL → Blob, ohne Umweg über fetch(). */
 function dataUrlZuBlob(dataUrl: string): Blob {
@@ -80,7 +82,9 @@ export function AbsenderSignaturEinstellungen() {
       await speichereAbsenderBild(art, blob);
       await laden();
     } catch (err) {
-      setFehler(err instanceof Error ? err.message : 'Speichern fehlgeschlagen.');
+      setFehler(storageFehlerText(err, {
+        bucket: ABSENDER_BUCKET, migration: ABSENDER_MIGRATION,
+      }));
     } finally {
       setBusy(null);
     }
@@ -93,7 +97,9 @@ export function AbsenderSignaturEinstellungen() {
       await entferneAbsenderBild(art);
       await laden();
     } catch (err) {
-      setFehler(err instanceof Error ? err.message : 'Entfernen fehlgeschlagen.');
+      setFehler(storageFehlerText(err, {
+        bucket: ABSENDER_BUCKET, migration: ABSENDER_MIGRATION,
+      }));
     } finally {
       setBusy(null);
       setLoeschen(null);

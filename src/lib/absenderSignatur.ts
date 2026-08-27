@@ -10,7 +10,14 @@
 
 import { supabase } from './supabase';
 
-const BUCKET = 'absender';
+/** Name des privaten Buckets. Wird von Migration 092 angelegt; die
+ *  Konstante ist exportiert, damit Fehlermeldungen ihn benennen können. */
+export const ABSENDER_BUCKET = 'absender';
+/** Migration, die Bucket und Tabelle anlegt — für die Fehlermeldung,
+ *  falls die Ablage in der Datenbank noch fehlt. */
+export const ABSENDER_MIGRATION = '092_absender_signatur.sql';
+
+const BUCKET = ABSENDER_BUCKET;
 
 export type AbsenderBildArt = 'unterschrift' | 'stempel';
 

@@ -35,6 +35,9 @@ export interface EingangSummary {
   adresseUebernahmeTeile: AdresseTeile;
   adresseUebergabeTeile: AdresseTeile;
   fin: string | null;
+  /** Fahrzeugmodell laut Protokoll — füllt je nach Abschnitt
+   *  `fahrzeugmodell` oder `fahrzeugmodell_rueck` der Tour. */
+  fahrzeugmodell: string | null;
   kmGesamt: number | null;
   /** Kontaktperson vor Ort — Name, Telefon, E-Mail. */
   kontaktName: string | null;
@@ -96,6 +99,11 @@ export function summarizeEingang(formular: AusgefuelltesFormular): EingangSummar
   const fahrername  = s(findKey(data, ['fahrername', 'fahrer_name', 'Fahrername']));
   const kundenname  = s(findKey(data, ['kundenname', 'kunde', 'Kundenname']));
   const fin         = s(findKey(data, ['fin', 'FIN', 'fahrzeugidentifizierungsnummer']));
+  // "fahrzeugmodell" zuerst — sonst würde der enthält-Fallback von
+  // "modell" auch auf "fahrzeugmodell_rueck" o.ä. greifen.
+  const fahrzeugmodell = s(findKey(data, [
+    'fahrzeugmodell', 'fahrzeug_modell', 'modell', 'fahrzeugtyp', 'fahrzeug',
+  ]));
 
   const km = findKey(data, ['uebergabe_km', 'uebernahme_km', 'km_gesamt', 'km']);
   const kmGesamt = typeof km === 'number' && Number.isFinite(km)
@@ -145,6 +153,7 @@ export function summarizeEingang(formular: AusgefuelltesFormular): EingangSummar
     adresseUebernahmeTeile,
     adresseUebergabeTeile,
     fin,
+    fahrzeugmodell,
     kmGesamt,
     kontaktName,
     kontaktTelefon,

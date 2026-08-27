@@ -460,11 +460,13 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       const km_gesamt = cIdx.km >= 0 ? parseInteger(r[cIdx.km]) : null;
       const verguetung = cIdx.verguetung >= 0 ? parseDecimalNumber(r[cIdx.verguetung]) : null;
       // Kennzeichen: "Kennzeichen" (Hin) + optional "Kennzeichen Rück".
+      // Index 0 = Hin, Index 1 = Rück — bei fehlendem Hin-Wert bleibt
+      // Index 0 leer, damit der Rück-Wert nicht auf 0 rutscht.
+      const kzHin = (cellStr(at(r, cIdx.kennzeichen)) || '').toUpperCase();
+      const kzRueck = (cellStr(at(r, oIdx.kennzeichen_rueck)) || '').toUpperCase();
       const kz: string[] = [];
-      const kzHin = cellStr(at(r, cIdx.kennzeichen));
-      if (kzHin) kz.push(kzHin.toUpperCase());
-      const kzRueck = cellStr(at(r, oIdx.kennzeichen_rueck));
-      if (kzRueck) kz.push(kzRueck.toUpperCase());
+      if (kzHin || kzRueck) kz.push(kzHin);
+      if (kzRueck) kz.push(kzRueck);
 
       // Optionale Roundtrip-Felder — nur setzen, wenn Spalte vorhanden.
       const enddatum = oIdx.enddatum >= 0 ? excelDateToISO(at(r, oIdx.enddatum)) : undefined;

@@ -14,6 +14,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { downloadFromOneDrive } from '../../lib/onedrive';
 import {
   belegFelder, belegeAusDaten, istErgaenzt, ladeBelegHoch, speichereBelege,
+  standardBelegFeld,
   type ErgaenzterBeleg,
 } from '../../lib/belegeErgaenzen';
 import type { AusgefuelltesFormular, FormSchema } from '../../types/db';
@@ -35,9 +36,14 @@ export function BelegeErgaenzenDialog({
   const { profile } = useAuth();
 
   const felder = useMemo(() => belegFelder(schema), [schema]);
-  const [feldId, setFeldId] = useState<string>(felder[0]?.id ?? '');
+  // Vorauswahl ist die BELEG-Sektion, nicht einfach das erste Bild-Feld.
+  // Lässt sie sich nicht eindeutig bestimmen, bleibt die Auswahl leer und
+  // der Admin entscheidet — lieber nachfragen als still in den
+  // Zusatzbildern landen.
+  const standard = useMemo(() => standardBelegFeld(schema), [schema]);
+  const [feldId, setFeldId] = useState<string>(standard?.id ?? '');
   const [liste, setListe] = useState<ErgaenzterBeleg[]>(
-    () => belegeAusDaten(formular.daten as Record<string, unknown>, felder[0]?.id ?? ''),
+    () => belegeAusDaten(formular.daten as Record<string, unknown>, standard?.id ?? ''),
   );
   const [kennzeichen, setKennzeichen] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -56,6 +62,7 @@ export function BelegeErgaenzenDialog({
 
   async function dateienHinzufuegen(files: FileList | null) {
     if (!files || files.length === 0) return;
+    if (!feldId) { setFehler('Bitte zuerst die Beleg-Sektion wählen.'); return; }
     if (guard()) return;
     setFehler(null);
     const neu: ErgaenzterBeleg[] = [];
@@ -96,6 +103,7 @@ export function BelegeErgaenzenDialog({
   }
 
   async function speichern() {
+    if (!feldId) { setFehler('Bitte zuerst die Beleg-Sektion wählen.'); return; }
     if (guard()) return;
     setBusy('Speichern …');
     setFehler(null);
@@ -108,6 +116,7 @@ export function BelegeErgaenzenDialog({
   }
 
   const anzahlErgaenzt = liste.filter(istErgaenzt).length;
+  const gewaehltesFeld = felder.find((f) => f.id === feldId) ?? null;
 
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
@@ -138,7 +147,7 @@ export function BelegeErgaenzenDialog({
           </div>
         ) : (
           <div className="space-y-4">
-            {felder.length > 1 && (
+            {(felder.length > 1 || !feldId) && (
               <div>
                 <label htmlFor="be-feld" className="label">Beleg-Sektion</label>
                 <select
@@ -147,10 +156,31 @@ export function BelegeErgaenzenDialog({
                   onChange={(e) => setFeldId(e.target.value)}
                   disabled={!!busy}
                 >
+                  {!feldId && <option value="">— bitte wählen —</option>}
                   {felder.map((f) => (
-                    <option key={f.id} value={f.id}>{f.label}</option>
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                      {f.art === 'zusatz' ? ' (Zusatzbilder — nicht in der Belege-PDF)' : ''}
+                    </option>
                   ))}
                 </select>
+                {!feldId ? (
+                  <p className="mt-1 text-sm text-amber-900">
+                    In diesem Template ist keine eindeutige Beleg-Sektion zu
+                    erkennen. Bitte die richtige Sektion wählen — Zusatzbilder
+                    erscheinen NICHT in der Belege-PDF.
+                  </p>
+                ) : gewaehltesFeld?.art === 'zusatz' ? (
+                  <p className="mt-1 text-sm text-amber-900">
+                    Achtung: „{gewaehltesFeld.label}" ist die Zusatzbilder-Sektion.
+                    Hier abgelegte Dateien erscheinen nicht in der Belege-PDF.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-maja-muted">
+                    Ergänzte Belege landen in dieser Sektion und damit in der
+                    Belege-PDF.
+                  </p>
+                )}
               </div>
             )}
 

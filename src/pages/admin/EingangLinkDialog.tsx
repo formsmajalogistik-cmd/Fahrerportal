@@ -109,6 +109,7 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
           startdatum, enddatum, tourenart, kennzeichen, kundenname, fin,
+          fin_rueck, fahrzeugmodell, fahrzeugmodell_rueck,
           adresse_start, adresse_ziel, adresse_rueckfuehrung,
           strasse_start, plz_start, strasse_ziel, plz_ziel,
           strasse_rueckfuehrung, plz_rueckfuehrung,
@@ -190,11 +191,51 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
         if (track) fieldKeys.push(key as string);
       }
     }
-    // Feld-übergreifende Daten (FIN, Kennzeichen, Kundenname, km) gelten
-    // für die ganze Tour — nur ergänzen, wenn noch leer.
-    maybe('fin', 'FIN', tour.fin, summary.fin);
-    maybe('kennzeichen', 'Kennzeichen', tour.kennzeichen, summary.kennzeichen ? [summary.kennzeichen.toUpperCase()] : null);
+    /**
+     * Kennzeichen liegt als Array auf der Tour: Index 0 = Hinfahrt,
+     * Index 1 = Rückführung (so lesen es Rechnungs-Platzhalter,
+     * Tour-Maske und Export). Deshalb kein `maybe` — der Slot muss
+     * gezielt getroffen werden, ohne den anderen zu verschieben.
+     */
+    function kennzeichenUebernehmen(slot: 0 | 1, label: string) {
+      const neu = summary.kennzeichen?.trim().toUpperCase();
+      if (!neu) return;
+      const alt = Array.isArray(tour.kennzeichen) ? [...tour.kennzeichen] : [];
+      if ((alt[slot] ?? '').trim()) return;   // schon gefüllt — nicht überschreiben
+      // Fehlt die Hinfahrt noch, bleibt an Index 0 ein leerer
+      // Platzhalter stehen. Sonst rutschte das Rück-Kennzeichen auf
+      // Index 0 und würde überall als Hin-Kennzeichen gelesen.
+      while (alt.length < slot) alt.push('');
+      alt[slot] = neu;
+      (patch as Record<string, unknown>).kennzeichen = alt;
+      filled.push(label);
+      fieldKeys.push('kennzeichen');
+    }
+
+    // Kundenname gilt für die ganze Tour, unabhängig vom Abschnitt.
     maybe('kundenname', 'Kundenname', tour.kundenname, summary.kundenname);
+
+    // Fahrzeugdaten dagegen gehören zum jeweiligen Abschnitt: Bei
+    // ABA/ABC ist das Rückfahrzeug ein anderes als das Hinfahrzeug.
+    // Vorher landeten sie immer in den Hin-Spalten — dort waren sie
+    // durch das erste Protokoll längst gefüllt, weshalb die Übernahme
+    // beim Rück-Teil wirkungslos blieb.
+    if (abschnitt === 'bc') {
+      maybe('fin_rueck', 'FIN Rück', tour.fin_rueck, summary.fin);
+      kennzeichenUebernehmen(1, 'Kennzeichen Rück');
+      maybe('fahrzeugmodell_rueck', 'Fahrzeugmodell Rück',
+            tour.fahrzeugmodell_rueck, summary.fahrzeugmodell);
+    } else {
+      maybe('fin', 'FIN', tour.fin, summary.fin);
+      kennzeichenUebernehmen(0, 'Kennzeichen');
+      maybe('fahrzeugmodell', 'Fahrzeugmodell',
+            tour.fahrzeugmodell, summary.fahrzeugmodell);
+    }
+
+    // Kilometer werden bewusst NICHT übernommen — weder km_hin noch
+    // km_rueck. Sie gehen über km_gesamt in die Preisstufe ein; eine
+    // stille Übernahme könnte den Preis einer bestehenden Tour ändern.
+    // Das bleibt eine bewusste Eingabe des Admins.
 
     const kontaktPayload = (summary.kontaktName || summary.kontaktTelefon || summary.kontaktEmail) ? {
       name: summary.kontaktName ?? '',
@@ -630,6 +671,7 @@ function PrefillSummary({ summary }: { summary: EingangSummary }) {
   const items: Array<{ label: string; value: string | null }> = [
     { label: 'Kennzeichen',          value: summary.kennzeichen },
     { label: 'FIN',                  value: summary.fin },
+    { label: 'Fahrzeugmodell',       value: summary.fahrzeugmodell },
     { label: 'Fahrer',               value: summary.fahrername },
     { label: 'Kunde',                value: summary.kundenname },
     { label: 'Datum',                value: summary.datum?.slice(0, 10) ?? null },
@@ -681,6 +723,7 @@ function buildTourPayload(
   // gezielt nur diese Felder zurücksetzen.
   const protokollFelder: string[] = [];
   if (s.fin) protokollFelder.push('fin');
+  if (s.fahrzeugmodell) protokollFelder.push('fahrzeugmodell');
   if (kennzeichen.length > 0) protokollFelder.push('kennzeichen');
   // Alle Adress-Spalten merken, die aus dem Protokoll kommen — beim
   // "Verknüpfung lösen" werden genau diese wieder geleert.
@@ -700,6 +743,7 @@ function buildTourPayload(
     ziel_stadt: ziel,
     auftraggeber_id: null,
     fin: s.fin,
+    fahrzeugmodell: s.fahrzeugmodell,
     kennzeichen,
     kundenname: s.kundenname,
     km_hin: s.kmGesamt,

@@ -13,6 +13,12 @@
 // sind "08:00", "vormittags" und "nach Absprache" gleichermaßen
 // möglich, und es braucht kein zweites Hinweis-Feld daneben.
 //
+// Vorschläge (4c): Straße, PLZ und Stadt schöpfen aus denselben Töpfen
+// wie die Adressfelder der Formulare (adresse_strasse / _plz / _stadt).
+// Für Auftraggeber liefert die RLS aus dem Pool grundsätzlich nichts —
+// sie sehen nur die ihnen zugeordneten Adressen über den Adressbuch-
+// Block darunter, und zwar ohne dass dieses Modul filtern müsste.
+//
 // Layout: Straße breit, PLZ schmal, Stadt und Zeit mittel — auf Desktop
 // stehen Straße/PLZ/Stadt/Zeit in einer Zeile (5/2/2/3 von 12). Auf
 // Tablet bekommt jedes Feld mindestens eine halbe Zeile, auf Mobile ist
@@ -21,6 +27,7 @@
 import { AnsprechpartnerFeldsatz } from './AnsprechpartnerFeldsatz';
 import { TfBlock } from './TfBlock';
 import { AdressUebernehmen } from './AdressUebernehmen';
+import { SuggestCombobox } from './SuggestCombobox';
 import { altAdresseHinweis } from '../lib/adresse';
 import type { KontaktEntwurf } from '../lib/tourAnsprechpartner';
 
@@ -86,23 +93,29 @@ export function StationFeldsatz({
           <label htmlFor={`${idPrefix}-strasse`} className="tf-label">
             Straße{adressePflicht ? ' *' : ''}
           </label>
-          <input id={`${idPrefix}-strasse`} className={cls(adresseFehler)}
-                 placeholder="z.B. Heiligenroder Strasse 38e"
-                 value={strasse} onChange={(e) => onStrasse(e.target.value)} />
+          <SuggestCombobox
+            id={`${idPrefix}-strasse`} className={cls(adresseFehler)}
+            feldTyp="adresse_strasse"
+            placeholder="z.B. Heiligenroder Strasse 38e"
+            value={strasse} onChange={onStrasse} />
         </div>
         <div className="sm:col-span-2 lg:col-span-2">
           <label htmlFor={`${idPrefix}-plz`} className="tf-label">PLZ</label>
-          <input id={`${idPrefix}-plz`} className="tf-input" inputMode="numeric"
-                 placeholder="28195"
-                 value={plz} onChange={(e) => onPlz(e.target.value)} />
+          <SuggestCombobox
+            id={`${idPrefix}-plz`} className="tf-input" inputMode="numeric"
+            feldTyp="adresse_plz"
+            placeholder="28195"
+            value={plz} onChange={onPlz} />
         </div>
         <div className="sm:col-span-4 lg:col-span-3">
           <label htmlFor={`${idPrefix}-stadt`} className="tf-label">
             {stadtLabel}{stadtPflicht ? ' *' : ''}
           </label>
-          <input id={`${idPrefix}-stadt`} className={cls(stadtFehler)}
-                 title={STADT_HINWEIS}
-                 value={stadt} onChange={(e) => onStadt(e.target.value)} />
+          <SuggestCombobox
+            id={`${idPrefix}-stadt`} className={cls(stadtFehler)}
+            feldTyp="adresse_stadt"
+            title={STADT_HINWEIS}
+            value={stadt} onChange={onStadt} />
         </div>
         <div className="sm:col-span-3 lg:col-span-3">
           <label htmlFor={`${idPrefix}-zeit`} className="tf-label">{zeitLabel}</label>

@@ -13,6 +13,7 @@
 //   * ein Auftraggeber bekommt fremde Adressen nie geliefert
 
 import { supabase } from './supabase';
+import { grossAnfang } from './textNormalisierung';
 import type { Database } from '../types/supabase';
 
 export type Adressbucheintrag =
@@ -85,11 +86,15 @@ export function resetAdressbuchCache(): void {
 
 function toRow(e: AdressEntwurf) {
   const n = (v: string) => (v.trim() ? v.trim() : null);
+  // Straße, Ort und Bezeichnung mit großem Anfangsbuchstaben — sonst
+  // stehen manuelle Adressen anders geschrieben da als die gesammelten
+  // Vorschläge (4a). PLZ bleibt unverändert.
+  const g = (v: string) => (v.trim() ? grossAnfang(v.trim().replace(/\s+/g, ' ')) : null);
   return {
-    bezeichnung: n(e.bezeichnung),
-    strasse: n(e.strasse),
+    bezeichnung: g(e.bezeichnung),
+    strasse: g(e.strasse),
     plz: n(e.plz),
-    ort: n(e.ort),
+    ort: g(e.ort),
     auftraggeber_id: e.auftraggeberId || null,
     notiz: n(e.notiz),
   };
