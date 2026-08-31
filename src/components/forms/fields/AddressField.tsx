@@ -2,6 +2,8 @@ import type { AddressValue, FormField } from '../../../types/db';
 import { SuggestCombobox } from '../../SuggestCombobox';
 import { AdressUebernehmen } from '../../AdressUebernehmen';
 import { adressTeilTyp, feldTypVon } from '../../../lib/feldVorschlaege';
+import { useAdressVorschlaege } from '../../useAdressVorschlaege';
+import { adressAuswahlPatch } from '../../../lib/adresse';
 
 interface Props {
   field: FormField;
@@ -31,20 +33,35 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
   // Straße/PLZ/Stadt haben eigene Töpfe, die sich aber alle Adressfelder
   // mit demselben feld_typ teilen (z.B. Abhol- und Zieladresse).
   const basis = feldTypVon(field);
+  const adressVorschlaege = useAdressVorschlaege();
+
+  /**
+   * Auswahl einer ganzen Adresse: verteilt Straße, PLZ und Ort auf die
+   * drei Felder, überschreibt dabei aber NICHTS, was schon dasteht.
+   */
+  function adresseUebernehmen(a: { strasse: string; plz: string; ort: string }) {
+    const p = adressAuswahlPatch({ strasse: v.strasse, plz: v.plz, stadt: v.stadt }, a);
+    onChange({
+      strasse: p.strasse ?? v.strasse ?? '',
+      plz: p.plz ?? v.plz ?? '',
+      stadt: p.stadt ?? v.stadt ?? '',
+    });
+  }
   return (
     <div>
       <label className="label">
         {field.label}{required && <span className="text-red-600"> *</span>}
       </label>
-      {/* Manuell gepflegte Adressen — füllt alle drei Felder auf einmal. */}
+      {/* Manuell gepflegte Adressen — füllt alle drei Felder auf einmal,
+          aber nur die noch leeren. */}
       {!disabled && (
-        <AdressUebernehmen
-          onWaehlen={(a) => onChange({ strasse: a.strasse, plz: a.plz, stadt: a.ort })}
-        />
+        <AdressUebernehmen onWaehlen={adresseUebernehmen} />
       )}
       <div className="space-y-2">
         <SuggestCombobox
           feldTyp={basis ? adressTeilTyp(basis, 'strasse') : null}
+          strukturVorschlaege={adressVorschlaege}
+          onStruktur={adresseUebernehmen}
           placeholder="Straße + Hausnummer"
           aria-label={`${field.label} — Straße + Hausnummer`}
           value={v.strasse ?? ''}

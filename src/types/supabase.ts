@@ -1947,6 +1947,28 @@ export type Database = {
         Args: { p_eintraege: Json };
         Returns: number;
       };
+      // Bestandsbereinigung des Adress-Pools (Migration 094). Beide
+      // liefern GENAU EINE Zeile — Supabase typisiert set-returning
+      // Funktionen als Array.
+      adress_pool_status: {
+        Args: Record<string, never>;
+        Returns: Array<{
+          eintraege_gesamt: number;
+          offen_schreibweise: number;
+          duplikat_gruppen: number;
+          duplikat_ueberzaehlig: number;
+          adressbuch_offen: number;
+        }>;
+      };
+      adress_pool_bereinigen: {
+        Args: { p_limit?: number };
+        Returns: Array<{
+          zusammengefuehrt: number;
+          umbenannt: number;
+          adressbuch: number;
+          offen: number;
+        }>;
+      };
       auftraggeber_formular_zuweisen: {
         Args: { p_tour_id: string; p_template_id: string };
         Returns: void;

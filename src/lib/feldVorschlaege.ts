@@ -333,3 +333,79 @@ export async function merkeTourAdressen(
   if (eintraege.length === 0) return;
   await merkeVorschlaege(eintraege);
 }
+
+// ---- Bestandsbereinigung (Migration 094) -------------------------
+
+export interface PoolStatus {
+  eintraegeGesamt: number;
+  offenSchreibweise: number;
+  duplikatGruppen: number;
+  duplikatUeberzaehlig: number;
+  adressbuchOffen: number;
+  /** Summe aller offenen Posten — 0 = nichts zu tun. */
+  offen: number;
+}
+
+interface StatusRow {
+  eintraege_gesamt: number;
+  offen_schreibweise: number;
+  duplikat_gruppen: number;
+  duplikat_ueberzaehlig: number;
+  adressbuch_offen: number;
+}
+
+function alsStatus(r: StatusRow | null): PoolStatus | null {
+  if (!r) return null;
+  return {
+    eintraegeGesamt: r.eintraege_gesamt ?? 0,
+    offenSchreibweise: r.offen_schreibweise ?? 0,
+    duplikatGruppen: r.duplikat_gruppen ?? 0,
+    duplikatUeberzaehlig: r.duplikat_ueberzaehlig ?? 0,
+    adressbuchOffen: r.adressbuch_offen ?? 0,
+    offen: (r.offen_schreibweise ?? 0)
+      + (r.duplikat_ueberzaehlig ?? 0)
+      + (r.adressbuch_offen ?? 0),
+  };
+}
+
+/** Zustand des Pools — Grundlage für die Fortschrittsanzeige. */
+export async function ladePoolStatus(): Promise<PoolStatus | null> {
+  const { data, error } = await supabase.rpc('adress_pool_status');
+  if (error) {
+    console.warn('[feldVorschlaege] Status fehlgeschlagen', error.message);
+    return null;
+  }
+  const rows = (data as StatusRow[] | null) ?? [];
+  return alsStatus(rows[0] ?? null);
+}
+
+export interface BereinigungsSchritt {
+  zusammengefuehrt: number;
+  umbenannt: number;
+  adressbuch: number;
+  /** Nach diesem Block noch offen. 0 = fertig. */
+  offen: number;
+}
+
+/**
+ * Ein Block der Bestandsbereinigung.
+ *
+ * Bewusst blockweise statt in einem Rutsch: der ursprüngliche
+ * Gesamtdurchlauf lief im SQL-Editor in einen Verbindungs-Timeout.
+ * Jeder Aufruf hier bleibt kurz; die Oberfläche wiederholt ihn, bis
+ * `offen` 0 meldet.
+ */
+export async function bereinigePoolBlock(limit = 500): Promise<BereinigungsSchritt> {
+  const { data, error } = await supabase.rpc('adress_pool_bereinigen', { p_limit: limit });
+  if (error) throw new Error(error.message);
+  const rows = (data as BereinigungsSchritt[] | null) ?? [];
+  const r = rows[0];
+  if (!r) throw new Error('Keine Antwort von der Bereinigung erhalten.');
+  resetVorschlagCache();
+  return {
+    zusammengefuehrt: r.zusammengefuehrt ?? 0,
+    umbenannt: r.umbenannt ?? 0,
+    adressbuch: r.adressbuch ?? 0,
+    offen: r.offen ?? 0,
+  };
+}

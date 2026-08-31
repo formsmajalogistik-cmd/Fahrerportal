@@ -43,6 +43,32 @@ Rückgängig machen: Schritt 2 lässt sich zurücknehmen, indem die
 betroffenen `strasse_*` wieder geleert werden — der Originalwert steht
 unverändert in `adresse_*`.
 
+## Adress-Pool bereinigen (Schreibweise + Dubletten)
+
+Bequemer Weg: In der Pool-Pflege gibt es den Knopf **„Adress-Pool
+bereinigen"** — er ruft die RPC aus Migration 094 blockweise auf und
+zeigt den Fortschritt. Kein SQL-Editor nötig.
+
+Von Hand geht es genauso, jeweils so oft ausführen, bis `offen_danach`
+0 meldet:
+
+1. `vorschlaege_status.sql` — **nur lesen.** Wie viele Einträge gibt es,
+   wie viele sind noch nicht normalisiert, wie viele Dubletten-Gruppen
+   entstehen, plus die zwanzig größten Gruppen als Beispiel.
+2. `vorschlaege_duplikate_block.sql` — führt bis zu 500 Wertgruppen
+   zusammen (`anzahl` wird addiert, `letzte_nutzung` auf den jüngsten
+   Wert gesetzt), löscht die überzähligen Zeilen.
+3. `vorschlaege_normalisieren_block.sql` — bringt bis zu 500 Zeilen auf
+   die einheitliche Schreibweise und zieht das Adressbuch nach.
+
+Reihenfolge 2 vor 3: Dubletten müssen zuerst weg, sonst liefe das
+Umbenennen in die Eindeutigkeit `(feld_typ, wert)`. Alle drei Skripte
+sind beliebig oft wiederholbar.
+
+Der frühere Einzeldurchlauf in Migration 093 lief im SQL-Editor in einen
+Verbindungs-Timeout („Failed to fetch") — er verglich für jede Gruppe die
+komplette Tabelle. 093 legt deshalb nur noch die Funktionen an.
+
 ## Vorschlags-Pool: Bestandsaufnahme
 
 `vorschlaege_bestand.sql` — **nur lesen.** Zeigt je Topf, wie viele

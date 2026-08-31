@@ -23,9 +23,31 @@ export function grossAnfang(wert: string): string {
   return wert.replace(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu, (wort) => {
     const fest = RECHTSFORMEN.get(wort.toLowerCase());
     if (fest) return fest;
-    if (wort.length > 1 && wort === wort.toLocaleUpperCase('de-DE')) return wort;
-    return wort.charAt(0).toLocaleUpperCase('de-DE') + wort.slice(1);
+    if (istAkronym(wort)) return wort;
+    const kopf = wort.charAt(0).toLocaleUpperCase('de-DE');
+    // Durchgehend groß und kein Kürzel: Rest kleinschreiben, sonst
+    // bliebe „BREMEN" als „BREMEN" stehen. Gemischte Schreibweisen
+    // („GmbH", „McDonald") bleiben unangetastet.
+    const rest = wort.length > 1 && wort === wort.toLocaleUpperCase('de-DE')
+      ? wort.slice(1).toLocaleLowerCase('de-DE')
+      : wort.slice(1);
+    return kopf + rest;
   });
+}
+
+/**
+ * Durchgehend groß geschriebene Wörter bleiben nur dann stehen, wenn es
+ * plausibel Kürzel sind: höchstens drei Zeichen („BMW", „VW", „ZOB",
+ * „HB") oder mit einer Ziffer darin (Kennzeichen, Hausnummern).
+ *
+ * Ohne diese Schranke bliebe versehentlich in Großbuchstaben getipptes
+ * „BREMEN" für immer so stehen und stünde als eigener Eintrag neben
+ * „Bremen" — genau die Dublette, die hier verschwinden soll.
+ */
+function istAkronym(wort: string): boolean {
+  if (wort.length < 2) return false;
+  if (wort !== wort.toLocaleUpperCase('de-DE')) return false;
+  return wort.length <= 3 || /\d/.test(wort);
 }
 
 /**

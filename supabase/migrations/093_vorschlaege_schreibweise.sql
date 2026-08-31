@@ -3,9 +3,9 @@
 -- „bremen", „Bremen" und „BREMEN" standen bisher als drei getrennte
 -- Einträge im selben Topf. Ab sofort normalisiert das Frontend beim
 -- Sammeln und bei manuellen Einträgen (src/lib/textNormalisierung.ts);
--- diese Migration zieht die Bestandsdaten einmalig nach und führt die
--- entstehenden Dubletten zusammen — die Häufigkeiten werden dabei
--- addiert, nicht überschrieben.
+-- diese Migration legt die dazu passenden SQL-Funktionen an. Die
+-- Bestandsdaten werden NICHT hier umgestellt, sondern blockweise —
+-- siehe Abschnitt 2.
 --
 -- Die SQL-Funktionen bilden dieselben Regeln ab wie das Frontend:
 --   * jedes Wort beginnt groß, Bindestriche trennen mit
@@ -14,7 +14,7 @@
 --   * Hausnummern bleiben, wie sie sind („38e" wird nicht „38E")
 --   * E-Mail wird klein, Telefon und PLZ bleiben unverändert
 --
--- Idempotent: ein zweiter Lauf ändert nichts mehr.
+-- Idempotent und schnell: nur Funktionsdefinitionen.
 
 -- ------------------------------------------------------------
 -- 1. Hilfsfunktionen
@@ -32,8 +32,17 @@ as $$
     when lower(w) = 'ohg'  then 'OHG'
     when lower(w) = 'gbr'  then 'GbR'
     when w = ''            then w
-    -- Akronyme und Kennzeichen unverändert lassen.
-    when length(w) > 1 and w = upper(w) then w
+    -- Durchgehend groß geschriebene Wörter bleiben nur stehen, wenn es
+    -- plausibel Kürzel sind: höchstens drei Zeichen („BMW", „ZOB", „HB")
+    -- oder mit einer Ziffer darin (Kennzeichen, Hausnummern). Sonst
+    -- bliebe versehentlich getipptes „BREMEN" für immer so stehen und
+    -- stünde als eigener Eintrag neben „Bremen".
+    when length(w) > 1 and w = upper(w)
+         and (length(w) <= 3 or w ~ '[0-9]') then w
+    -- Sonst durchgehend groß geschrieben: Rest kleinschreiben, sonst
+    -- bliebe „BREMEN" als „BREMEN" stehen.
+    when length(w) > 1 and w = upper(w) then upper(left(w, 1)) || lower(substr(w, 2))
+    -- Gemischte Schreibweise NICHT anfassen — „GmbH", „McDonald".
     else upper(left(w, 1)) || substr(w, 2)
   end;
 $$;
@@ -93,57 +102,24 @@ as $$
 $$;
 
 -- ------------------------------------------------------------
--- 2. Bestand normalisieren + Dubletten zusammenführen
+-- 2. Bestandsdaten laufen NICHT hier
 --
---    Gruppiert wird über die NORMALISIERTE Schreibweise (klein
---    verglichen). Damit fallen auch Fälle zusammen, die sich nur in
---    Leerzeichen unterscheiden — sonst liefe das anschließende Update
---    in die Unique-Bedingung (feld_typ, wert).
--- ------------------------------------------------------------
-do $$
-declare
-  r record;
-begin
-  for r in
-    select
-      feld_typ,
-      lower(public.maja_vorschlag_schreibweise(feld_typ, wert)) as schluessel,
-      -- Behalten wird der manuell gepflegte bzw. häufigste Eintrag; die
-      -- id als letztes Kriterium macht den Lauf reproduzierbar.
-      (array_agg(id order by ist_manuell desc, anzahl desc, id))[1] as behalten,
-      sum(anzahl)          as summe,
-      max(letzte_nutzung)  as letzte,
-      bool_or(ist_manuell) as manuell
-    from public.feld_vorschlaege
-    group by 1, 2
-  loop
-    delete from public.feld_vorschlaege
-     where feld_typ = r.feld_typ
-       and lower(public.maja_vorschlag_schreibweise(feld_typ, wert)) = r.schluessel
-       and id <> r.behalten;
-
-    update public.feld_vorschlaege
-       set wert           = public.maja_vorschlag_schreibweise(feld_typ, wert),
-           anzahl         = r.summe,
-           letzte_nutzung = r.letzte,
-           ist_manuell    = r.manuell
-     where id = r.behalten;
-  end loop;
-end;
-$$;
-
--- ------------------------------------------------------------
--- 3. Adressbuch nachziehen
+-- Der ursprüngliche Einzeldurchlauf hat im SQL-Editor die Verbindung
+-- überdauert („Failed to fetch"): er verglich für JEDE Gruppe die
+-- komplette Tabelle über die Normalisierungs-Funktion — quadratischer
+-- Aufwand, der bei einem gewachsenen Pool minutenlang läuft.
 --
---    Keine Unique-Bedingung, deshalb reicht ein einfaches Update.
---    PLZ bleibt unangetastet.
+-- Diese Migration legt deshalb nur noch die Funktionen an (schnell und
+-- gefahrlos wiederholbar). Die Bestandsbereinigung läuft blockweise:
+--   * bequem über „Adress-Pool bereinigen" in der Pool-Pflege
+--     (RPC aus Migration 094), oder
+--   * von Hand über die Skripte in supabase/scripts/:
+--       vorschlaege_status.sql          (nur lesen)
+--       vorschlaege_normalisieren_block.sql
+--       vorschlaege_duplikate_block.sql
+--
+-- Neu hinzukommende Werte werden ohnehin schon beim Speichern
+-- normalisiert (Frontend + RPC aus Migration 094).
 -- ------------------------------------------------------------
-update public.adressbuch
-   set bezeichnung = public.maja_gross_anfang(bezeichnung),
-       strasse     = public.maja_gross_anfang(strasse),
-       ort         = public.maja_gross_anfang(ort)
- where bezeichnung is distinct from public.maja_gross_anfang(bezeichnung)
-    or strasse     is distinct from public.maja_gross_anfang(strasse)
-    or ort         is distinct from public.maja_gross_anfang(ort);
 
 notify pgrst, 'reload schema';

@@ -13,6 +13,7 @@ import {
   ladeAlleVorschlaege, legeVorschlagAn, loescheVorschlag, type FeldVorschlag,
 } from '../../lib/feldVorschlaege';
 import { AdressbuchSektion } from './AdressbuchSektion';
+import { AdressPoolBereinigen } from '../../components/AdressPoolBereinigen';
 
 export function FeldVorschlaegePage() {
   const guard = useTestGuard();
@@ -98,6 +99,10 @@ export function FeldVorschlaegePage() {
           Auftraggeber-Konten haben keinen Zugriff auf diese Liste.
         </p>
       </div>
+
+      {/* Bestandsbereinigung — steht direkt über der Liste, damit der
+          Zusammenhang zu den gesammelten Werten sichtbar ist. */}
+      <AdressPoolBereinigen onFertig={() => { void load(); }} />
 
       {/* Manuellen Wert ergänzen — z.B. eine korrekte Schreibweise
           vorgeben, bevor sie zum ersten Mal getippt wird. */}

@@ -28,7 +28,8 @@ import { AnsprechpartnerFeldsatz } from './AnsprechpartnerFeldsatz';
 import { TfBlock } from './TfBlock';
 import { AdressUebernehmen } from './AdressUebernehmen';
 import { SuggestCombobox } from './SuggestCombobox';
-import { altAdresseHinweis } from '../lib/adresse';
+import { useAdressVorschlaege } from './useAdressVorschlaege';
+import { adressAuswahlPatch, altAdresseHinweis } from '../lib/adresse';
 import type { KontaktEntwurf } from '../lib/tourAnsprechpartner';
 
 export const ZEIT_PLATZHALTER = 'z.B. 08:00 oder vormittags';
@@ -86,6 +87,20 @@ export function StationFeldsatz({
 }: Props) {
   const cls = (fehler?: boolean) => (fehler ? 'tf-input border-red-500' : 'tf-input');
   const altAdresse = altAdresseHinweis({ strasse, plz }, adresseFreitext);
+  // Manuelle Adressen als ganze Einträge im Straßen-Dropdown.
+  const adressVorschlaege = useAdressVorschlaege();
+
+  /**
+   * Auswahl einer ganzen Adresse. Es werden NUR leere Felder gefüllt —
+   * die Stadt ist zugleich die Tour-Stadt und darf einen bereits
+   * gesetzten Wert nicht verlieren.
+   */
+  function adresseUebernehmen(a: { strasse: string; plz: string; ort: string }) {
+    const patch = adressAuswahlPatch({ strasse, plz, stadt }, a);
+    if (patch.strasse !== undefined) onStrasse(patch.strasse);
+    if (patch.plz !== undefined) onPlz(patch.plz);
+    if (patch.stadt !== undefined) onStadt(patch.stadt);
+  }
   return (
     <TfBlock titel={titel} akzent={akzent} aktion={aktion}>
       <div className="tf-grid">
@@ -96,6 +111,8 @@ export function StationFeldsatz({
           <SuggestCombobox
             id={`${idPrefix}-strasse`} className={cls(adresseFehler)}
             feldTyp="adresse_strasse"
+            strukturVorschlaege={adressVorschlaege}
+            onStruktur={adresseUebernehmen}
             placeholder="z.B. Heiligenroder Strasse 38e"
             value={strasse} onChange={onStrasse} />
         </div>
@@ -126,15 +143,12 @@ export function StationFeldsatz({
       </div>
       {/* Manuell gepflegte Adressen. Setzt Straße, PLZ und Ort
           gemeinsam — der Ort ist zugleich die Tour-Stadt, weil beide am
-          selben State hängen (Migration 086). */}
+          selben State hängen (Migration 086). Befüllt werden nur LEERE
+          Felder; was schon dasteht, bleibt. */}
       <AdressUebernehmen
         kompakt
         id={`${idPrefix}-adressbuch`}
-        onWaehlen={(a) => {
-          onStrasse(a.strasse);
-          onPlz(a.plz);
-          if (a.ort) onStadt(a.ort);
-        }}
+        onWaehlen={adresseUebernehmen}
       />
       {altAdresse && (
         <p className="tf-hint">

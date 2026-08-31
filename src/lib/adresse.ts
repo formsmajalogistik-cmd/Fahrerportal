@@ -157,3 +157,35 @@ export function adressPatchFuerStation(args: {
 
   return { patch, trackKeys, labels };
 }
+
+/** Eine ausgewählte Adresse mit getrennten Bestandteilen. */
+export interface AdressAuswahl {
+  strasse: string;
+  plz: string;
+  ort: string;
+}
+
+/**
+ * Übernahme einer ausgewählten Adresse in ein Formular- oder Tour-
+ * Adressfeld.
+ *
+ * Regel: NUR leere Zielfelder werden gefüllt. Was der Bearbeiter schon
+ * eingetragen hat, bleibt stehen — auch die Stadt, die in der Tour-Maske
+ * zugleich die Tour-Stadt ist und deshalb nie überschrieben werden darf.
+ *
+ * Zurück kommt nur, was tatsächlich gesetzt werden soll; leere Teile der
+ * Auswahl werden übersprungen.
+ */
+export function adressAuswahlPatch(
+  aktuell: { strasse?: string | null; plz?: string | null; stadt?: string | null },
+  auswahl: AdressAuswahl,
+): { strasse?: string; plz?: string; stadt?: string } {
+  // Eigener Helfer statt des modulweiten `leer` — das liefert den
+  // getrimmten Wert, hier wird die Ja/Nein-Frage gebraucht.
+  const istLeer = (v: string | null | undefined) => !(v ?? '').trim();
+  const patch: { strasse?: string; plz?: string; stadt?: string } = {};
+  if (istLeer(aktuell.strasse) && auswahl.strasse.trim()) patch.strasse = auswahl.strasse.trim();
+  if (istLeer(aktuell.plz) && auswahl.plz.trim()) patch.plz = auswahl.plz.trim();
+  if (istLeer(aktuell.stadt) && auswahl.ort.trim()) patch.stadt = auswahl.ort.trim();
+  return patch;
+}
