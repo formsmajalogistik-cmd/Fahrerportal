@@ -1958,6 +1958,10 @@ export type Database = {
           duplikat_gruppen: number;
           duplikat_ueberzaehlig: number;
           adressbuch_offen: number;
+          // Aufräum-Kandidaten (Migration 095) — werden NICHT von der
+          // Bereinigung angefasst, sondern in der Liste gelöscht.
+          fremde_toepfe: number;
+          gesamtadressen: number;
         }>;
       };
       adress_pool_bereinigen: {

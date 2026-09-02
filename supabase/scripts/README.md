@@ -43,6 +43,28 @@ Rückgängig machen: Schritt 2 lässt sich zurücknehmen, indem die
 betroffenen `strasse_*` wieder geleert werden — der Originalwert steht
 unverändert in `adresse_*`.
 
+## Pool aufräumen: Fremd-Töpfe und ganze Adressen
+
+Vorschläge sind seit Migration 095 ausschließlich eine ADRESS-Funktion.
+Was aus der Zeit davor noch im Pool liegt, wird hier gefunden:
+
+1. `pool_aufraeumen_trockenlauf.sql` — **nur lesen.** Zeigt, wie viele
+   Einträge in Töpfen liegen, die es nicht mehr geben soll
+   (Kennzeichen, Modelle, E-Mails, Namen …) und wie viele Straßen-
+   Einträge in Wahrheit ganze Adressen sind („Heiligenroder Strasse 38e,
+   28816 Stuhr"). Mit bis zu 30 Beispielen, dazu je Eintrag der
+   Vorschlag, was ein KÜRZEN auf den Straßenteil ergäbe.
+2. `pool_aufraeumen_block.sql` — löscht beides, höchstens 500 Zeilen pro
+   Lauf. So oft ausführen, bis `offen_danach` 0 meldet.
+
+Bewusst löschen statt kürzen: vor der PLZ steht nicht immer eine
+brauchbare Straße. Wer kürzen will, entscheidet das anhand der Spalte
+`vorschlag_kuerzen` im Trockenlauf.
+
+Dasselbe geht auch ohne SQL: in der Pool-Pflege gibt es die Filter
+**„Sonstige"** und **„Ganze Adressen"** samt Mehrfachauswahl und
+Sammel-Löschen.
+
 ## Adress-Pool bereinigen (Schreibweise + Dubletten)
 
 Bequemer Weg: In der Pool-Pflege gibt es den Knopf **„Adress-Pool
@@ -74,10 +96,15 @@ komplette Tabelle. 093 legt deshalb nur noch die Funktionen an.
 `vorschlaege_bestand.sql` — **nur lesen.** Zeigt je Topf, wie viele
 Einträge drinstehen, eine Stichprobe der häufigsten Werte, wie viel aus
 den Tour-Adressen zu holen wäre und welche Formularfelder überhaupt
-Adressen liefern. Damit lässt sich die Frage „warum fehlen die Straßen?"
-an echten Daten beantworten statt zu raten — die häufigste Ursache steht
-in Zeile `nur_freitext_adresse`: Bestandstouren tragen ihre Adresse noch
-als Freitext, die strukturierten Spalten sind leer.
+Adressen liefern.
+
+Nachtrag: Die ursprüngliche Frage „warum fehlen die Straßen?" hatte einen
+anderen Grund — sie fehlten gar nicht, sie waren nur in der Pflegeansicht
+nicht zu sehen. Die Liste wurde ohne Blättern geladen und der Server
+schnitt bei seiner Zeilen-Obergrenze ab; weil nach `feld_typ` sortiert
+wird, fiel ausgerechnet `adresse_strasse` heraus. Behoben. Die Zeile
+`nur_freitext_adresse` bleibt trotzdem nützlich: sie zeigt Bestandstouren,
+deren Adresse noch als Freitext dasteht.
 
 ## Vorschlags-Pool nachträglich befüllen
 

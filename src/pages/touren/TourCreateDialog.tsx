@@ -11,7 +11,6 @@ import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import { ProtokollSection } from './ProtokollSection';
 import { useTestGuard } from '../../auth/TestModeContext';
-import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { merkeTourAdressen } from '../../lib/feldVorschlaege';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
 import { RouteFeldsatz } from '../../components/RouteFeldsatz';
@@ -714,12 +713,11 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
               </div>
               <div className="sm:col-span-2 lg:col-span-4">
                 <label htmlFor="t-modell" className="tf-label">Fahrzeugmodell</label>
-                <SuggestCombobox
+                <input type="text"
                   id="t-modell"
                   className="tf-input"
-                  feldTyp="fahrzeugmodell"
                   value={fahrzeugmodell}
-                  onChange={setFahrzeugmodell}
+                  onChange={(e) => setFahrzeugmodell(e.target.value)}
                   placeholder="z.B. VW Polo"
                 />
               </div>
@@ -788,12 +786,11 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
                   </div>
                   <div className="sm:col-span-2 lg:col-span-4">
                     <label htmlFor="t-modell-rueck" className="tf-label">Fahrzeugmodell Rück</label>
-                    <SuggestCombobox
+                    <input type="text"
                       id="t-modell-rueck"
                       className="tf-input"
-                      feldTyp="fahrzeugmodell"
                       value={fahrzeugmodellRueck}
-                      onChange={setFahrzeugmodellRueck}
+                      onChange={(e) => setFahrzeugmodellRueck(e.target.value)}
                       placeholder="z.B. Audi A3"
                     />
                   </div>

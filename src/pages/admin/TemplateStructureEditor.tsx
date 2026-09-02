@@ -26,25 +26,32 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
 /** Feldtypen, für die Vorschläge angeboten werden dürfen (Migration 077). */
 const VORSCHLAG_TYPEN: FieldType[] = ['text', 'address'];
 
-/** Bekannte Töpfe als Auswahlhilfe — freie Eingabe bleibt möglich. */
-const FELD_TYP_VORSCHLAEGE = [
-  'adresse', 'kontaktname', 'firma', 'email', 'telefon', 'ort', 'fahrzeugtyp',
-];
+/**
+ * Die einzigen Töpfe, die es noch gibt. Vorschläge sind ausschließlich
+ * eine Adress-Funktion — Kennzeichen, Modelle, E-Mails und Namen werden
+ * weder gesammelt noch angeboten.
+ */
+const FELD_TYP_VORSCHLAEGE = ['adresse', 'adresse_strasse', 'adresse_plz', 'adresse_stadt'];
 
 /**
  * Erster Vorschlag für den Topf beim Aktivieren: aus Label/ID geraten,
- * damit gleichartige Felder automatisch im selben Topf landen.
+ * damit gleichartige Felder automatisch im selben Topf landen. Passt
+ * nichts, bleibt der Topf leer und die Ableitung entscheidet.
  */
 function rateFeldTyp(field: FormField): string {
   const s = `${field.id} ${field.label}`.toLowerCase();
   if (field.type === 'address') return 'adresse';
-  if (/mail/.test(s)) return 'email';
-  if (/telefon|tel\.|mobil|handy/.test(s)) return 'telefon';
-  if (/firma|unternehmen|kunde|händler|haendler/.test(s)) return 'firma';
-  if (/kontakt|ansprech|name/.test(s)) return 'kontaktname';
-  if (/ort|stadt|standort/.test(s)) return 'ort';
-  if (/adresse|straße|strasse|anschrift/.test(s)) return 'adresse';
-  return field.id;
+  if (/(^|[^a-z])plz([^a-z]|$)|postleitzahl/.test(s)) return 'adresse_plz';
+  if (/adresse|straße|strasse|anschrift/.test(s)) return 'adresse_strasse';
+  if (/(^|[^a-z])ort([^a-z]|$)|stadt|standort/.test(s)) return 'adresse_stadt';
+  return '';
+}
+
+/** Nur Adressfelder dürfen überhaupt in den Pool. */
+function kannVorschlaege(field: FormField): boolean {
+  if (!VORSCHLAG_TYPEN.includes(field.type)) return false;
+  if (field.type === 'address') return true;
+  return !!rateFeldTyp(field);
 }
 
 interface Props {
@@ -446,10 +453,11 @@ function FieldEditor({
           </label>
         )}
 
-        {/* Vorschläge nur für Text- und Adressfelder — Freitext
-            (Schäden, Notizen) und Zahlen (Kilometerstand) sollen gar
-            nicht erst in den Pool wandern. */}
-        {VORSCHLAG_TYPEN.includes(field.type) && (
+        {/* Vorschläge gibt es nur noch für ADRESSFELDER — Straße, PLZ
+            und Ort. Alles andere (Kennzeichen, Modelle, Namen, Freitext,
+            Kilometerstand) wandert weder in den Pool noch bekommt es ein
+            Dropdown. */}
+        {kannVorschlaege(field) && (
           <label className="inline-flex items-center gap-2 text-sm text-maja-ink">
             <input
               type="checkbox"
@@ -468,7 +476,7 @@ function FieldEditor({
           </label>
         )}
 
-        {VORSCHLAG_TYPEN.includes(field.type) && field.vorschlaege?.enabled && (
+        {kannVorschlaege(field) && field.vorschlaege?.enabled && (
           <div className="min-w-[220px]">
             <label className="label">Vorschlags-Topf</label>
             <input
@@ -485,7 +493,8 @@ function FieldEditor({
             </datalist>
             <p className="mt-1 text-xs text-maja-muted">
               Felder mit demselben Topf teilen sich die Vorschläge — z.B.
-              alle Adressfelder. Leer = Feld-ID als Topf.
+              alle Adressfelder. Nur Adress-Töpfe sind zulässig; leer =
+              automatisch aus Feldname und Beschriftung abgeleitet.
             </p>
           </div>
         )}

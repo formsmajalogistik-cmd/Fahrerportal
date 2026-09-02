@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { speichereAgTour } from '../../lib/tourAenderungen';
 import { meldeTourAenderung } from '../../lib/onedrive';
-import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
 import { RouteFeldsatz } from '../../components/RouteFeldsatz';
 import { effektiveAdresse } from '../../lib/adresse';
@@ -353,12 +352,11 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
               </div>
               <div className="sm:col-span-2 lg:col-span-3">
                 <label htmlFor="et-modell" className="tf-label">Fahrzeugmodell</label>
-                <SuggestCombobox
+                <input type="text"
                   id="et-modell"
                   className="tf-input"
-                  feldTyp="fahrzeugmodell"
                   value={fahrzeugmodell}
-                  onChange={setFahrzeugmodell}
+                  onChange={(e) => setFahrzeugmodell(e.target.value)}
                   placeholder="z.B. VW Polo"
                 />
               </div>
@@ -427,12 +425,11 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                   </div>
                   <div className="sm:col-span-2 lg:col-span-3">
                     <label htmlFor="et-modell2" className="tf-label">Fahrzeugmodell Rück</label>
-                    <SuggestCombobox
+                    <input type="text"
                       id="et-modell2"
                       className="tf-input"
-                      feldTyp="fahrzeugmodell"
                       value={fahrzeugmodellRueck}
-                      onChange={setFahrzeugmodellRueck}
+                      onChange={(e) => setFahrzeugmodellRueck(e.target.value)}
                       placeholder="z.B. Audi A3"
                     />
                   </div>

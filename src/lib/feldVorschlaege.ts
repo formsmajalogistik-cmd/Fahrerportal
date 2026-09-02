@@ -90,6 +90,48 @@ export function resetVorschlagCache(feldTyp?: string): void {
 export interface VorschlagEintrag { feld_typ: string; wert: string }
 
 /**
+ * Die einzigen Töpfe, die es noch gibt. Vorschläge sind ausdrücklich
+ * eine ADRESS-Funktion: Kennzeichen, FIN, Fahrzeugmodelle, E-Mails,
+ * Kontakt- und Kundennamen werden nicht mehr gesammelt und nicht mehr
+ * angeboten. Sie sind entweder pro Fahrt verschieden oder
+ * personenbezogen — in beiden Fällen taugen sie nicht als firmenweiter
+ * Vorschlag.
+ */
+export const ADRESS_TOEPFE = ['adresse_strasse', 'adresse_plz', 'adresse_stadt'] as const;
+
+/** Gehört dieser Topf zu den Adressfeldern? Auch Töpfe mit eigener
+ *  Basis („abholung_strasse") zählen dazu. */
+export function istAdressTopf(feldTyp: string | null | undefined): boolean {
+  const t = (feldTyp ?? '').trim().toLowerCase();
+  if (!t) return false;
+  return (ADRESS_TOEPFE as readonly string[]).includes(t)
+    || /_(strasse|plz|stadt)$/.test(t);
+}
+
+/**
+ * Fünfstellige PLZ im Wert — dann ist es keine Straße, sondern eine
+ * komplette Adresse („Heiligenroder Strasse 38e, 28816 Stuhr").
+ * Solche Werte landen beim Auswählen vollständig im Straßenfeld und
+ * gehören deshalb gar nicht erst in den Topf.
+ */
+export function istGesamtadresse(wert: string): boolean {
+  return /(^|\D)\d{5}(\D|$)/.test(wert);
+}
+
+/**
+ * Darf dieser Wert in diesen Topf? Wird beim Sammeln UND beim manuellen
+ * Anlegen geprüft; dieselbe Regel steckt zusätzlich in der Schreib-RPC
+ * (Migration 095), damit sie nicht am Frontend hängt.
+ */
+export function istGueltigerPoolWert(feldTyp: string, wert: string): boolean {
+  if (!istAdressTopf(feldTyp)) return false;
+  const t = feldTyp.trim().toLowerCase();
+  const istStrasse = t === 'adresse_strasse' || t.endsWith('_strasse');
+  if (istStrasse && istGesamtadresse(wert)) return false;
+  return true;
+}
+
+/**
  * Feldnamen, die NIE gesammelt werden — auch dann nicht, wenn die
  * Ableitung unten sonst greifen würde.
  *
@@ -122,14 +164,12 @@ export function abgeleiteterFeldTyp(field: FormField): string | null {
   const s = `${field.id} ${field.label ?? ''}`.toLowerCase();
   if (AUSGESCHLOSSEN.test(s)) return null;
   if (field.type === 'address') return 'adresse';
-  if (/mail/.test(s)) return 'email';
-  if (/telefon|tel\.|mobil|handy|rufnummer/.test(s)) return 'telefon';
+  // Nur noch Adressteile. E-Mail, Telefon, Fahrzeugmodell, Firma und
+  // Kontaktname sind bewusst herausgenommen — die Vorschläge sind eine
+  // reine Adress-Funktion.
   if (/(^|[^a-z])plz([^a-z]|$)|postleitzahl/.test(s)) return 'adresse_plz';
   if (/stra(ß|ss)e|anschrift|adresse/.test(s)) return 'adresse_strasse';
   if (/(^|[^a-z])ort([^a-z]|$)|stadt|standort/.test(s)) return 'adresse_stadt';
-  if (/fahrzeug|modell|marke|hersteller/.test(s)) return 'fahrzeugmodell';
-  if (/firma|unternehmen|kunde|händler|haendler/.test(s)) return 'firma';
-  if (/kontakt|ansprech|name/.test(s)) return 'kontaktname';
   return null;
 }
 
@@ -144,7 +184,11 @@ export function feldTypVon(field: FormField): string | null {
   if (field.vorschlaege && field.vorschlaege.enabled === false) return null;
   if (field.vorschlaege?.enabled) {
     const typ = field.vorschlaege.feld_typ?.trim();
-    return typ || abgeleiteterFeldTyp(field) || field.id;
+    // Ein Opt-in im Template darf keinen Nicht-Adress-Topf mehr
+    // wiederbeleben: früher konnte hier ein beliebiger Topfname (oder
+    // ersatzweise die Feld-ID) gesetzt werden.
+    if (typ) return istAdressTopf(typ) ? typ : null;
+    return abgeleiteterFeldTyp(field);
   }
   return abgeleiteterFeldTyp(field);
 }
@@ -171,6 +215,10 @@ export function sammleVorschlaege(
     // Einheitliche Schreibweise, sonst stehen „bremen" und „Bremen"
     // als zwei Einträge im selben Topf (4a).
     const wert = normalisiereFuerTyp(feld_typ, roh);
+    // Kein Fremd-Topf und keine Gesamtadresse im Straßen-Topf. Ein
+    // Alt-Formular, das die Adresse als EINEN Text führt, wird dadurch
+    // gar nicht gesammelt statt fälschlich als Straße abgelegt.
+    if (!istGueltigerPoolWert(feld_typ, wert)) return;
     const key = `${feld_typ}|${wert.toLowerCase()}`;
     if (gesehen.has(key)) return;
     gesehen.add(key);
@@ -246,16 +294,55 @@ export async function merkeAusFormular(
 
 // ---- Pflege (Admin) ---------------------------------------------
 
+/** Seitengröße beim Blättern — deutlich unter jedem Server-Limit. */
+const SEITE = 1000;
+
+/**
+ * ALLE Einträge für die Pflegeansicht.
+ *
+ * Wird bewusst seitenweise geholt: ohne `range` schneidet der Server bei
+ * seiner Obergrenze ab (Supabase: 1000 Zeilen). Weil zusätzlich nach
+ * `feld_typ` sortiert wird, fiel dabei immer der alphabetisch letzte
+ * Adress-Topf heraus — `adresse_strasse` kommt nach `adresse_plz` und
+ * `adresse_stadt`. Genau deshalb waren in der Verwaltung nur PLZ und
+ * Orte zu sehen und die Straßen schienen zu fehlen.
+ */
 export async function ladeAlleVorschlaege(): Promise<FeldVorschlag[]> {
-  const { data, error } = await supabase
-    .from('feld_vorschlaege')
-    .select('id, feld_typ, wert, anzahl, letzte_nutzung, ist_manuell')
-    .order('feld_typ', { ascending: true })
-    .order('ist_manuell', { ascending: false })
-    .order('anzahl', { ascending: false })
-    .order('letzte_nutzung', { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data as unknown as FeldVorschlag[]) ?? [];
+  const out: FeldVorschlag[] = [];
+  for (let von = 0; ; von += SEITE) {
+    const { data, error } = await supabase
+      .from('feld_vorschlaege')
+      .select('id, feld_typ, wert, anzahl, letzte_nutzung, ist_manuell')
+      .order('feld_typ', { ascending: true })
+      .order('ist_manuell', { ascending: false })
+      .order('anzahl', { ascending: false })
+      .order('letzte_nutzung', { ascending: false })
+      // Eindeutiger Schluss-Sortierschlüssel: ohne ihn ist die
+      // Reihenfolge bei gleichen Werten nicht stabil und einzelne
+      // Zeilen könnten zwischen zwei Seiten verloren gehen.
+      .order('id', { ascending: true })
+      .range(von, von + SEITE - 1);
+    if (error) throw new Error(error.message);
+    const seite = (data as unknown as FeldVorschlag[]) ?? [];
+    out.push(...seite);
+    if (seite.length < SEITE) break;
+  }
+  return out;
+}
+
+/** Mehrere Einträge auf einmal löschen (Sammel-Auswahl in der Pflege). */
+export async function loescheVorschlaege(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  let geloescht = 0;
+  // In Blöcken, damit weder URL-Länge noch Laufzeit zum Problem werden.
+  for (let i = 0; i < ids.length; i += 200) {
+    const block = ids.slice(i, i + 200);
+    const { error } = await supabase.from('feld_vorschlaege').delete().in('id', block);
+    if (error) throw new Error(error.message);
+    geloescht += block.length;
+  }
+  resetVorschlagCache();
+  return geloescht;
 }
 
 export async function loescheVorschlag(id: string): Promise<void> {
@@ -274,6 +361,12 @@ export async function legeVorschlagAn(
   // Gleiche Normalisierung wie beim Sammeln — ein manueller Eintrag soll
   // nicht als eigene Schreibweise neben den gesammelten stehen.
   const w = normalisiereFuerTyp(t, roh);
+  if (!istAdressTopf(t)) {
+    return { ok: false, fehler: 'Es gibt nur noch Adress-Töpfe: adresse_strasse, adresse_plz, adresse_stadt.' };
+  }
+  if (!istGueltigerPoolWert(t, w)) {
+    return { ok: false, fehler: 'Dieser Wert enthält eine PLZ und ist damit eine ganze Adresse — in den Straßen-Topf gehört nur die Straße mit Hausnummer.' };
+  }
   const { error } = await supabase.from('feld_vorschlaege').insert({
     feld_typ: t, wert: w, ist_manuell: true,
   });
@@ -320,6 +413,7 @@ export async function merkeTourAdressen(
     const roh = normalisiereWert(raw);
     if (!roh) return;
     const wert = normalisiereFuerTyp(feld_typ, roh);
+    if (!istGueltigerPoolWert(feld_typ, wert)) return;
     const key = `${feld_typ}|${wert.toLowerCase()}`;
     if (gesehen.has(key)) return;
     gesehen.add(key);
@@ -342,7 +436,15 @@ export interface PoolStatus {
   duplikatGruppen: number;
   duplikatUeberzaehlig: number;
   adressbuchOffen: number;
-  /** Summe aller offenen Posten — 0 = nichts zu tun. */
+  /**
+   * Einträge in Töpfen, die es nicht mehr geben soll, und Straßen-
+   * Einträge mit PLZ (= ganze Adressen). Beides fasst die Bereinigung
+   * NICHT an — Löschen braucht eine bewusste Entscheidung und läuft
+   * über die Liste.
+   */
+  fremdeToepfe: number;
+  gesamtadressen: number;
+  /** Summe der Posten, die der Bereinigungs-Knopf erledigt. 0 = fertig. */
   offen: number;
 }
 
@@ -352,6 +454,8 @@ interface StatusRow {
   duplikat_gruppen: number;
   duplikat_ueberzaehlig: number;
   adressbuch_offen: number;
+  fremde_toepfe?: number;
+  gesamtadressen?: number;
 }
 
 function alsStatus(r: StatusRow | null): PoolStatus | null {
@@ -362,6 +466,8 @@ function alsStatus(r: StatusRow | null): PoolStatus | null {
     duplikatGruppen: r.duplikat_gruppen ?? 0,
     duplikatUeberzaehlig: r.duplikat_ueberzaehlig ?? 0,
     adressbuchOffen: r.adressbuch_offen ?? 0,
+    fremdeToepfe: r.fremde_toepfe ?? 0,
+    gesamtadressen: r.gesamtadressen ?? 0,
     offen: (r.offen_schreibweise ?? 0)
       + (r.duplikat_ueberzaehlig ?? 0)
       + (r.adressbuch_offen ?? 0),

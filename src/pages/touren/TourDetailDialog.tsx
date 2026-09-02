@@ -82,7 +82,6 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 };
 
 import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
-import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { merkeTourAdressen } from '../../lib/feldVorschlaege';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
@@ -2223,11 +2222,9 @@ function EditMode(p: EditModeProps) {
           </div>
           <div className="sm:col-span-2 lg:col-span-4">
             <label className="tf-label">Fahrzeugmodell</label>
-            <SuggestCombobox
-              className="tf-input"
-              feldTyp="fahrzeugmodell"
+            <input type="text" className="tf-input"
               value={draft.fahrzeugmodell}
-              onChange={(v) => patchDraft({ fahrzeugmodell: v })}
+              onChange={(e) => patchDraft({ fahrzeugmodell: e.target.value })}
               placeholder="z.B. VW Polo"
             />
           </div>
@@ -2298,11 +2295,9 @@ function EditMode(p: EditModeProps) {
               </div>
               <div className="sm:col-span-2 lg:col-span-4">
                 <label className="tf-label">Fahrzeugmodell Rück</label>
-                <SuggestCombobox
-                  className="tf-input"
-                  feldTyp="fahrzeugmodell"
+                <input type="text" className="tf-input"
                   value={draft.fahrzeugmodellRueck}
-                  onChange={(v) => patchDraft({ fahrzeugmodellRueck: v })}
+                  onChange={(e) => patchDraft({ fahrzeugmodellRueck: e.target.value })}
                   placeholder="z.B. Audi A3"
                 />
               </div>

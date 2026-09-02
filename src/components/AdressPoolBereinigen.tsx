@@ -109,6 +109,25 @@ export function AdressPoolBereinigen({ onFertig }: { onFertig?: () => void }) {
         </div>
       </dl>
 
+      {/* Aufräum-Kandidaten. Bewusst NICHT Teil des Knopfes: Löschen ist
+          eine bewusste Entscheidung und läuft über die Liste unten. */}
+      {(status.fremdeToepfe > 0 || status.gesamtadressen > 0) && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Zusätzlich liegen im Pool
+          {status.fremdeToepfe > 0 && (
+            <> <strong>{status.fremdeToepfe}</strong> Einträge in Töpfen, die es
+            nicht mehr geben soll (Filter „Sonstige")</>
+          )}
+          {status.fremdeToepfe > 0 && status.gesamtadressen > 0 && ' und'}
+          {status.gesamtadressen > 0 && (
+            <> <strong>{status.gesamtadressen}</strong> Straßen-Einträge, die in
+            Wahrheit ganze Adressen sind (Filter „Ganze Adressen")</>
+          )}
+          . Diese werden hier bewusst NICHT automatisch entfernt — sie lassen
+          sich unten über den passenden Filter ansehen und gesammelt löschen.
+        </p>
+      )}
+
       {laeuft && (
         <div>
           <div

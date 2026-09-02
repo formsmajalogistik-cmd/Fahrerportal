@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
-import { SuggestCombobox } from '../../components/SuggestCombobox';
 import { StationFeldsatz } from '../../components/StationFeldsatz';
 import { RouteFeldsatz } from '../../components/RouteFeldsatz';
 import { composeAdresse } from '../../lib/adresse';
@@ -340,12 +339,11 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
               </div>
               <div className="sm:col-span-2 lg:col-span-3">
                 <label htmlFor="at-modell" className="tf-label">Fahrzeugmodell</label>
-                <SuggestCombobox
+                <input type="text"
                   id="at-modell"
                   className="tf-input"
-                  feldTyp="fahrzeugmodell"
                   value={fahrzeugmodell}
-                  onChange={setFahrzeugmodell}
+                  onChange={(e) => setFahrzeugmodell(e.target.value)}
                   placeholder="z.B. VW Polo"
                 />
               </div>
@@ -422,12 +420,11 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                   </div>
                   <div className="sm:col-span-3 lg:col-span-4">
                     <label htmlFor="at-modell2" className="tf-label">Fahrzeugmodell Rück</label>
-                    <SuggestCombobox
+                    <input type="text"
                       id="at-modell2"
                       className="tf-input"
-                      feldTyp="fahrzeugmodell"
                       value={fahrzeugmodellRueck}
-                      onChange={setFahrzeugmodellRueck}
+                      onChange={(e) => setFahrzeugmodellRueck(e.target.value)}
                       placeholder="z.B. Audi A3"
                     />
                   </div>
