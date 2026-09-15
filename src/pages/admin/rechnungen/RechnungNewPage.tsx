@@ -13,7 +13,7 @@ import {
 import { PositionsTable } from './PositionsTable';
 import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfaengerFeldsatz';
 import {
-  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaenger, nameZeile,
+  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaengerWennGewuenscht, nameZeile,
   snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../../../lib/manuelleEmpfaenger';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
@@ -756,9 +756,13 @@ export function RechnungNewPage() {
 
       // Empfänger merken — rein optionale Eingabehilfe. Ein Fehler
       // hier darf die bereits angelegte Rechnung nicht kippen.
-      if (istManuell && manuellMerken) {
-        const m = await merkeEmpfaenger(manuell);
-        if (!m.ok) console.warn('[manueller Empfänger] Merken fehlgeschlagen', m.fehler);
+      const gemerkt = await merkeEmpfaengerWennGewuenscht({
+        merken: istManuell && manuellMerken, entwurf: manuell, quelle: 'Rechnung',
+      });
+      if (gemerkt.status === 'fehler') {
+        // Die Rechnung steht bereits — der Fehler betrifft nur die
+        // Eingabehilfe, darf aber nicht unsichtbar bleiben.
+        setError(`Rechnung angelegt, aber der Empfänger konnte nicht gemerkt werden: ${gemerkt.fehler}`);
       }
 
       if (status === 'offen') {

@@ -14,7 +14,10 @@ import { Spinner } from '../../../components/Spinner';
 import { formatDate, formatDateTime } from '../../../lib/touren';
 import { useTestGuard } from '../../../auth/TestModeContext';
 import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfaengerFeldsatz';
-import { leererEmpfaenger, merkeEmpfaenger, type ManuellerEmpfaengerEntwurf } from '../../../lib/manuelleEmpfaenger';
+import {
+  leererEmpfaenger, merkeEmpfaengerWennGewuenscht,
+  type ManuellerEmpfaengerEntwurf,
+} from '../../../lib/manuelleEmpfaenger';
 import { uploadToOneDrive } from '../../../lib/onedrive';
 import { previewFormPdf, downloadFormPdf } from '../../../lib/pdfGenerate';
 import { generateBriefPdf, briefPdfFilename } from './briefPdf';
@@ -122,8 +125,54 @@ export function BriefDetailPage() {
       if (kId) setKarteId(kId);
       if (fId) { setEmpfTyp('fahrer'); setFahrerId(fId); }
       if (kId) {
-        const tkVorlage = vRes.find((v) => v.typ === 'tankkarte');
-        if (tkVorlage) setVorlageId(tkVorlage.id);
+        // Vorher wurde hier NUR die vorlage_id gesetzt — Betreff und
+        // Inhalt blieben leer, weil das Übernehmen am onChange des
+        // Vorlagen-Dropdowns hing. Aus der Tankkarte heraus wurde das
+        // nie ausgelöst, der Brief kam also ohne Text.
+        //
+        // Der Platzhalter-Kontext wird hier aus den FRISCH geladenen
+        // Daten gebaut: die States (Karte, Fahrer, Adresse) sind in
+        // diesem Durchlauf noch nicht gesetzt.
+        const tkVorlagen = vRes.filter((v) => v.typ === 'tankkarte');
+        if (tkVorlagen.length === 0) {
+          setHinweis(null);
+          setFehler('Keine Tankkarten-Vorlage hinterlegt — bitte in den '
+            + 'Einstellungen unter „Brief-Vorlagen" eine Vorlage vom Typ '
+            + '„Tankkarte" anlegen.');
+        } else {
+          // Mehrere Vorlagen: die erste übernehmen, der Admin kann im
+          // Dropdown wechseln — das Umschalten übernimmt den Text neu.
+          const v = tkVorlagen[0];
+          setVorlageId(v.id);
+          const karte = (kRes.data as Tankkarte[] | null)?.find((k) => k.id === kId) ?? null;
+          const fahrerListe = (fRes.data as unknown as FahrerOption[]) ?? [];
+          const f = fId ? fahrerListe.find((x) => x.id === fId) ?? null : null;
+          const u = f?.user ?? null;
+          // Dieselbe Adress-Ableitung wie im `adresse`-useMemo für den
+          // Empfänger-Typ „fahrer".
+          const adr: BriefAdresse = {
+            firma: '',
+            anrede: '',
+            vorname: f?.vorname ?? u?.vorname ?? '',
+            nachname: f?.nachname ?? u?.nachname ?? '',
+            strasse: u?.strasse ?? '',
+            plz: u?.plz ?? '',
+            ort: u?.ort ?? '',
+          };
+          const ctx = {
+            adresse: adr,
+            datum: heute(),
+            briefNr: nr ?? '',
+            tankkarte: karte,
+            fahrerName: f ? fahrerLabel(f) : '',
+          };
+          setBetreff(loesePlatzhalter(v.betreff ?? '', ctx));
+          setInhalt(loesePlatzhalter(v.inhalt ?? '', ctx));
+          setHinweis(tkVorlagen.length > 1
+            ? `Vorlage „${v.name}" übernommen — es gibt mehrere Tankkarten-Vorlagen, `
+              + 'oben lässt sich eine andere wählen.'
+            : `Vorlage „${v.name}" übernommen — der Text ist frei bearbeitbar.`);
+        }
       }
       setLoading(false);
       return;
@@ -245,12 +294,25 @@ export function BriefDetailPage() {
       if (error) { setBusy(null); setFehler(error.message); return null; }
       await laden();
     }
-    if (empfTyp === 'manuell' && manuellMerken) {
-      const m = await merkeEmpfaenger(manuell);
-      if (!m.ok) console.warn('[Brief] Empfänger merken fehlgeschlagen', m.fehler);
-    }
+    // Empfänger merken — bewusst NICHT mehr an `empfTyp` gekoppelt:
+    // der Eingabeblock steht auch beim Empfänger-Typ „Fahrer" zur
+    // Verfügung (als Übersteuerung), und ein dort gesetzter Haken lief
+    // vorher wirkungslos ins Leere. Maßgeblich ist jetzt, ob überhaupt
+    // etwas Eintragenswertes dasteht.
+    const gemerkt = await merkeEmpfaengerWennGewuenscht({
+      merken: manuellMerken, entwurf: manuell, quelle: 'Brief',
+    });
     setBusy(null);
-    setHinweis('Gespeichert.');
+    if (gemerkt.status === 'fehler') {
+      // Der Brief ist gespeichert — nur das Merken hat nicht geklappt.
+      // Das gehört gesagt, statt in einer console.warn zu verschwinden.
+      setFehler(`Brief gespeichert, aber der Empfänger konnte nicht gemerkt werden: ${gemerkt.fehler}`);
+      return neueId;
+    }
+    setHinweis(gemerkt.status === 'gespeichert'
+      ? 'Gespeichert. Empfänger gemerkt.'
+      : 'Gespeichert.');
+    if (gemerkt.status === 'gespeichert') setManuellMerken(false);
     return neueId;
   }
 

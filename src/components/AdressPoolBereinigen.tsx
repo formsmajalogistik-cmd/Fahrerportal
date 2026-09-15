@@ -123,8 +123,10 @@ export function AdressPoolBereinigen({ onFertig }: { onFertig?: () => void }) {
             <> <strong>{status.gesamtadressen}</strong> Straßen-Einträge, die in
             Wahrheit ganze Adressen sind (Filter „Ganze Adressen")</>
           )}
-          . Diese werden hier bewusst NICHT automatisch entfernt — sie lassen
-          sich unten über den passenden Filter ansehen und gesammelt löschen.
+          . Beides fasst dieser Knopf bewusst nicht an. Die Gesamtadressen
+          werden über das Skript `gesamtadressen_zerlegen_block.sql` in
+          Straße, PLZ und Ort zerlegt und zusätzlich als vollständige Adresse
+          ins Adressbuch übernommen — vorher steht der Trockenlauf.
         </p>
       )}
 

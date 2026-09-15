@@ -118,17 +118,65 @@ export function istGesamtadresse(wert: string): boolean {
   return /(^|\D)\d{5}(\D|$)/.test(wert);
 }
 
-/**
- * Darf dieser Wert in diesen Topf? Wird beim Sammeln UND beim manuellen
- * Anlegen geprüft; dieselbe Regel steckt zusätzlich in der Schreib-RPC
- * (Migration 095), damit sie nicht am Frontend hängt.
- */
-export function istGueltigerPoolWert(feldTyp: string, wert: string): boolean {
-  if (!istAdressTopf(feldTyp)) return false;
+/** Ist das ein Straßen-Topf (auch mit eigener Basis)? */
+function istStrassenTopf(feldTyp: string): boolean {
   const t = feldTyp.trim().toLowerCase();
-  const istStrasse = t === 'adresse_strasse' || t.endsWith('_strasse');
-  if (istStrasse && istGesamtadresse(wert)) return false;
-  return true;
+  return t === 'adresse_strasse' || t.endsWith('_strasse');
+}
+
+/**
+ * Gesamtadresse in ihre Bestandteile zerlegen.
+ *
+ * Anker ist die erste fünfstellige Zahl, die nicht Teil einer längeren
+ * Ziffernfolge ist — Straßennamen und Hausnummern enthalten praktisch
+ * nie fünfstellige Zahlen.
+ *
+ *   „Heiligenroder Strasse 38e, 28816 Stuhr"
+ *     → { strasse: 'Heiligenroder Strasse 38e', plz: '28816', ort: 'Stuhr' }
+ *
+ * Bleibt vor oder nach der PLZ nichts übrig, kommt null zurück — dann
+ * wird bewusst NICHT geraten. Spiegelt maja_adresse_zerlegen() aus
+ * Migration 096.
+ */
+export function zerlegeGesamtadresse(
+  wert: string,
+): { strasse: string; plz: string; ort: string } | null {
+  const m = /^(.*?)([^0-9]|^)(\d{5})([^0-9]|$)(.*)$/.exec(wert);
+  if (!m) return null;
+  const trenner = /^[\s,;\-/]+|[\s,;\-/]+$/g;
+  const strasse = (m[1] + (m[2] ?? '')).replace(trenner, '');
+  const ort = ((m[4] ?? '') + (m[5] ?? '')).replace(trenner, '');
+  if (!strasse || !ort) return null;
+  return { strasse, plz: m[3], ort };
+}
+
+/**
+ * Die Pool-Einträge, die aus EINEM erfassten Wert entstehen.
+ *
+ * Normalfall: genau einer. Enthält ein Straßenwert eine PLZ, ist es in
+ * Wahrheit eine ganze Adresse — dann werden daraus drei Einträge
+ * (Straße, PLZ, Ort), damit in den Straßen-Topf weiterhin nur der
+ * Straßenteil wandert. Nicht eindeutig zerlegbare Werte ergeben gar
+ * keinen Eintrag.
+ *
+ * Dieselbe Regel steckt in der Schreib-RPC (096), damit sie nicht am
+ * Frontend hängt.
+ */
+export function poolEintraegeFuer(feldTyp: string, wert: string): VorschlagEintrag[] {
+  if (!istAdressTopf(feldTyp)) return [];
+  if (!istStrassenTopf(feldTyp) || !istGesamtadresse(wert)) {
+    return [{ feld_typ: feldTyp, wert }];
+  }
+  const teile = zerlegeGesamtadresse(wert);
+  if (!teile) return [];
+  const basis = feldTyp.trim().toLowerCase() === 'adresse_strasse'
+    ? 'adresse'
+    : feldTyp.trim().toLowerCase().replace(/_strasse$/, '');
+  return [
+    { feld_typ: `${basis}_strasse`, wert: teile.strasse },
+    { feld_typ: `${basis}_plz`, wert: teile.plz },
+    { feld_typ: `${basis}_stadt`, wert: teile.ort },
+  ];
 }
 
 /**
@@ -214,15 +262,16 @@ export function sammleVorschlaege(
     if (!roh) return;
     // Einheitliche Schreibweise, sonst stehen „bremen" und „Bremen"
     // als zwei Einträge im selben Topf (4a).
-    const wert = normalisiereFuerTyp(feld_typ, roh);
-    // Kein Fremd-Topf und keine Gesamtadresse im Straßen-Topf. Ein
-    // Alt-Formular, das die Adresse als EINEN Text führt, wird dadurch
-    // gar nicht gesammelt statt fälschlich als Straße abgelegt.
-    if (!istGueltigerPoolWert(feld_typ, wert)) return;
-    const key = `${feld_typ}|${wert.toLowerCase()}`;
-    if (gesehen.has(key)) return;
-    gesehen.add(key);
-    out.push({ feld_typ, wert });
+    // Aus einem Wert können mehrere Einträge werden: eine im
+    // Straßenfeld erfasste Gesamtadresse wird in Straße, PLZ und Ort
+    // zerlegt, statt komplett als „Straße" abgelegt zu werden.
+    for (const e of poolEintraegeFuer(feld_typ, normalisiereFuerTyp(feld_typ, roh))) {
+      const wert = normalisiereFuerTyp(e.feld_typ, e.wert);
+      const key = `${e.feld_typ}|${wert.toLowerCase()}`;
+      if (gesehen.has(key)) continue;
+      gesehen.add(key);
+      out.push({ feld_typ: e.feld_typ, wert });
+    }
   };
 
   for (const section of schema.sections ?? []) {
@@ -364,8 +413,16 @@ export async function legeVorschlagAn(
   if (!istAdressTopf(t)) {
     return { ok: false, fehler: 'Es gibt nur noch Adress-Töpfe: adresse_strasse, adresse_plz, adresse_stadt.' };
   }
-  if (!istGueltigerPoolWert(t, w)) {
-    return { ok: false, fehler: 'Dieser Wert enthält eine PLZ und ist damit eine ganze Adresse — in den Straßen-Topf gehört nur die Straße mit Hausnummer.' };
+  // Eine von Hand eingetippte Gesamtadresse gehört ins Adressbuch, nicht
+  // in den Straßen-Topf — dort steht sie als Ganzes zur Auswahl und
+  // füllt alle drei Felder.
+  if (poolEintraegeFuer(t, w).length !== 1) {
+    return {
+      ok: false,
+      fehler: 'Dieser Wert enthält eine PLZ und ist damit eine ganze Adresse. '
+        + 'Bitte oben im Adressbuch anlegen — dort füllt die Auswahl Straße, '
+        + 'PLZ und Ort gemeinsam.',
+    };
   }
   const { error } = await supabase.from('feld_vorschlaege').insert({
     feld_typ: t, wert: w, ist_manuell: true,
@@ -412,12 +469,13 @@ export async function merkeTourAdressen(
   const push = (feld_typ: string, raw: unknown) => {
     const roh = normalisiereWert(raw);
     if (!roh) return;
-    const wert = normalisiereFuerTyp(feld_typ, roh);
-    if (!istGueltigerPoolWert(feld_typ, wert)) return;
-    const key = `${feld_typ}|${wert.toLowerCase()}`;
-    if (gesehen.has(key)) return;
-    gesehen.add(key);
-    eintraege.push({ feld_typ, wert });
+    for (const e of poolEintraegeFuer(feld_typ, normalisiereFuerTyp(feld_typ, roh))) {
+      const wert = normalisiereFuerTyp(e.feld_typ, e.wert);
+      const key = `${e.feld_typ}|${wert.toLowerCase()}`;
+      if (gesehen.has(key)) continue;
+      gesehen.add(key);
+      eintraege.push({ feld_typ: e.feld_typ, wert });
+    }
   };
   for (const s of stationen) {
     push('adresse_strasse', s.strasse);

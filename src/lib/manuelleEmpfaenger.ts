@@ -149,6 +149,56 @@ export async function merkeEmpfaenger(
   return { ok: true };
 }
 
+/**
+ * Empfänger merken, wenn der Haken gesetzt ist — gemeinsamer Weg für
+ * Rechnung, Gutschrift und Brief.
+ *
+ * Bisher stand in jedem der drei Module dieselbe Zeile, und ein Fehler
+ * landete jeweils nur in einer console.warn. Dadurch war von außen nicht
+ * zu unterscheiden, ob der Haken gar nicht ausgewertet wurde, der Insert
+ * scheiterte oder schlicht nichts einzutragen war.
+ *
+ * Drei Rückmeldungen statt einer:
+ *   'gespeichert'  — Eintrag ist angelegt
+ *   'uebersprungen' — Haken aus oder nichts Eintragenswertes
+ *   'fehler'       — Insert abgelehnt, `fehler` nennt den Grund
+ *
+ * Der Aufrufer zeigt 'fehler' an, statt ihn zu verschlucken; das
+ * Dokument selbst ist zu diesem Zeitpunkt längst gespeichert und darf
+ * daran nicht scheitern.
+ */
+export async function merkeEmpfaengerWennGewuenscht(args: {
+  /** Zustand der Checkbox. */
+  merken: boolean;
+  entwurf: ManuellerEmpfaengerEntwurf;
+  /** Modul-Kennung für die Diagnose-Ausgabe, z.B. 'Brief'. */
+  quelle: string;
+}): Promise<{ status: 'gespeichert' | 'uebersprungen' | 'fehler'; fehler?: string }> {
+  const { merken, entwurf, quelle } = args;
+  // Ohne Firma UND ohne Nachnamen gibt es nichts, was später
+  // wiederzuerkennen wäre — ein leerer Eintrag hilft niemandem.
+  const hatInhalt = !!(t(entwurf.firma) || t(entwurf.nachname));
+  const payload = toRow(entwurf);
+
+  if (!merken || !hatInhalt) {
+    console.log(`[${quelle}] Empfänger merken`, {
+      haken: merken, payload, ergebnis: 'uebersprungen',
+      fehler: null,
+      grund: !merken ? 'Haken nicht gesetzt' : 'Weder Firma noch Nachname eingetragen',
+    });
+    return { status: 'uebersprungen' };
+  }
+
+  const { error } = await supabase.from('manuelle_empfaenger').insert(payload);
+  console.log(`[${quelle}] Empfänger merken`, {
+    haken: merken, payload,
+    ergebnis: error ? 'fehler' : 'gespeichert',
+    fehler: error?.message ?? null,
+  });
+  if (error) return { status: 'fehler', fehler: error.message };
+  return { status: 'gespeichert' };
+}
+
 export async function aktualisiereEmpfaenger(
   id: string, e: ManuellerEmpfaengerEntwurf,
 ): Promise<{ ok: boolean; fehler?: string }> {

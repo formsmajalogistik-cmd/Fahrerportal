@@ -293,9 +293,11 @@ export function FeldVorschlaegePage() {
         {filter === 'gesamtadressen' && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Diese Straßen-Einträge enthalten eine PLZ und sind damit ganze
-            Adressen. Beim Auswählen landen sie vollständig im Straßenfeld —
-            sie gehören gelöscht. Neue Werte dieser Art werden gar nicht mehr
-            gesammelt.
+            Adressen. Beim Auswählen landen sie vollständig im Straßenfeld.
+            Sie werden in ihre Bestandteile zerlegt: Straße, PLZ und Ort
+            wandern in ihre Töpfe, die vollständige Adresse kommt ins
+            Adressbuch und lässt sich dort als Ganzes auswählen. Neu erfasste
+            Werte werden bereits beim Sammeln zerlegt.
           </p>
         )}
 

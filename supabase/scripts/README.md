@@ -43,27 +43,43 @@ Rückgängig machen: Schritt 2 lässt sich zurücknehmen, indem die
 betroffenen `strasse_*` wieder geleert werden — der Originalwert steht
 unverändert in `adresse_*`.
 
-## Pool aufräumen: Fremd-Töpfe und ganze Adressen
+## Gesamtadressen im Straßen-Pool zerlegen
 
-Vorschläge sind seit Migration 095 ausschließlich eine ADRESS-Funktion.
-Was aus der Zeit davor noch im Pool liegt, wird hier gefunden:
+Manche Straßen-Einträge tragen die komplette Adresse
+(„Heiligenroder Strasse 38e, 28816 Stuhr"). Sie werden nicht gelöscht,
+sondern zerlegt — Anker ist die fünfstellige PLZ:
 
-1. `pool_aufraeumen_trockenlauf.sql` — **nur lesen.** Zeigt, wie viele
-   Einträge in Töpfen liegen, die es nicht mehr geben soll
-   (Kennzeichen, Modelle, E-Mails, Namen …) und wie viele Straßen-
-   Einträge in Wahrheit ganze Adressen sind („Heiligenroder Strasse 38e,
-   28816 Stuhr"). Mit bis zu 30 Beispielen, dazu je Eintrag der
-   Vorschlag, was ein KÜRZEN auf den Straßenteil ergäbe.
-2. `pool_aufraeumen_block.sql` — löscht beides, höchstens 500 Zeilen pro
-   Lauf. So oft ausführen, bis `offen_danach` 0 meldet.
+1. `gesamtadressen_trockenlauf.sql` — **nur lesen.** Anzahl, bis zu 30
+   Beispiele im Format `Original → Straße | PLZ | Ort`, dazu die Werte,
+   die sich NICHT eindeutig zerlegen lassen (die bleiben unverändert —
+   es wird nicht geraten).
+2. `gesamtadressen_zerlegen_block.sql` — **ändert Daten**, höchstens 200
+   Adressen pro Lauf. Je Adresse: die drei Teile wandern in ihre Töpfe
+   (vorhandene werden hochgezählt, nicht verdoppelt), die vollständige
+   Adresse kommt ins Adressbuch und ist dort als Ganzes auswählbar, die
+   Ursprungszeile im Straßen-Topf fällt weg.
 
-Bewusst löschen statt kürzen: vor der PLZ steht nicht immer eine
-brauchbare Straße. Wer kürzen will, entscheidet das anhand der Spalte
-`vorschlag_kuerzen` im Trockenlauf.
+Neu erfasste Werte werden bereits beim Sammeln zerlegt (Migration 096),
+im Frontend wie in der Schreib-RPC.
 
-Dasselbe geht auch ohne SQL: in der Pool-Pflege gibt es die Filter
-**„Sonstige"** und **„Ganze Adressen"** samt Mehrfachauswahl und
-Sammel-Löschen.
+## Unterschiedliche Schreibweisen zusammenführen
+
+Derselbe Wert steht mehrfach da: `Bahnhofstraße 5` / `Bahnhofstrasse 5` /
+`Bahnhofstr. 5` / `Bahnhofstr.5`. Die Gruppierung läuft über einen
+Vergleichsschlüssel (Kleinschreibung, ß → ss, „str." → „strasse",
+Satzzeichen weg) — er entscheidet NUR, was zusammengehört.
+
+1. `schreibweisen_trockenlauf.sql` — **nur lesen.** Anzahl der Gruppen
+   und bis zu 30 Beispiele `[Variante A, Variante B, …] → behaltener
+   Wert (Summe anzahl)`.
+2. `schreibweisen_zusammenfuehren_block.sql` — **ändert Daten**,
+   höchstens 500 Gruppen pro Lauf. `anzahl` wird addiert,
+   `letzte_nutzung` auf den jüngsten Wert gesetzt, behalten wird die
+   HÄUFIGSTE Original-Schreibweise — nur getrimmt und mit großem
+   Anfangsbuchstaben. Es wird nichts umgeschrieben.
+
+Liegt die automatische Zusammenführung einmal daneben, lässt sich der
+Eintrag in der Pool-Pflege bearbeiten oder löschen.
 
 ## Adress-Pool bereinigen (Schreibweise + Dubletten)
 

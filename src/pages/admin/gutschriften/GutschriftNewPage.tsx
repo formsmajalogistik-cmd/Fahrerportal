@@ -21,7 +21,7 @@ import {
 import { PositionsTable } from '../rechnungen/PositionsTable';
 import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfaengerFeldsatz';
 import {
-  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaenger, nameZeile,
+  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaengerWennGewuenscht, nameZeile,
   snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../../../lib/manuelleEmpfaenger';
 import { SummenBlock } from '../rechnungen/SummenBlock';
@@ -329,9 +329,11 @@ export function GutschriftNewPage() {
       }
       // Empfänger merken — reine Eingabehilfe; ein Fehler hier darf die
       // bereits angelegte Gutschrift nicht kippen.
-      if (istManuell && manuellMerken) {
-        const m = await merkeEmpfaenger(manuell);
-        if (!m.ok) console.warn('[manueller Empfänger] Merken fehlgeschlagen', m.fehler);
+      const gemerkt = await merkeEmpfaengerWennGewuenscht({
+        merken: istManuell && manuellMerken, entwurf: manuell, quelle: 'Gutschrift',
+      });
+      if (gemerkt.status === 'fehler') {
+        setError(`Gutschrift angelegt, aber der Empfänger konnte nicht gemerkt werden: ${gemerkt.fehler}`);
       }
 
       navigate(`/gutschriften/${row.id}`);
