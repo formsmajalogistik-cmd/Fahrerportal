@@ -72,6 +72,27 @@ bleiben „Werner-Haas-Straße 1" und „Werner-Haas-Straße 1, 74172
 Neckarsulm" zwei getrennte Gruppen; nach dem Zerlegen fallen sie
 zusammen.
 
+## Adress-Kombinationen aus dem Bestand zurückgewinnen
+
+Nach dem Zerlegen steht im Pool nur noch die reine Straße — die
+Zuordnung zu PLZ und Ort hält die Tabelle `adress_kombinationen`
+(Migration 097). Aus Touren und eingereichten Formularen lässt sie sich
+nachträglich füllen, damit die Funktion nicht bei null startet:
+
+1. `kombinationen_trockenlauf.sql` — **nur lesen.** Anzahl der
+   gefundenen Kombinationen, wie viele Straßen in mehreren Orten
+   vorkommen, und bis zu 20 Beispiele.
+2. `kombinationen_block.sql` — **ändert Daten**, höchstens 500
+   Kombinationen pro Lauf. Legt ausschließlich FEHLENDE an; vorhandene
+   bleiben unangetastet, damit ein zweiter Lauf die Häufigkeiten nicht
+   aufbläht.
+
+Gruppiert wird über den Vergleichsschlüssel: „Bahnhofstr. 5" und
+„Bahnhofstraße 5" ergeben eine Kombination, nicht zwei.
+
+Am besten NACH dem Zerlegen und Zusammenführen laufen lassen — dann
+stehen die Straßen schon in ihrer endgültigen Schreibweise.
+
 ## Unterschiedliche Schreibweisen zusammenführen
 
 Derselbe Wert steht mehrfach da: `Bahnhofstraße 5` / `Bahnhofstrasse 5` /

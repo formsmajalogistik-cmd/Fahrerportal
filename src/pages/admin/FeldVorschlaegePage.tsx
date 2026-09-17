@@ -26,6 +26,7 @@ import {
 import { formatDate } from '../../lib/touren';
 import { AdressbuchSektion } from './AdressbuchSektion';
 import { AdressPoolBereinigen } from '../../components/AdressPoolBereinigen';
+import { AdressKombinationenSektion } from './AdressKombinationenSektion';
 
 type Filter = 'alle' | 'strasse' | 'plz' | 'stadt' | 'sonstige' | 'gesamtadressen';
 
@@ -36,6 +37,23 @@ const FILTER: Array<{ id: Filter; label: string }> = [
   { id: 'stadt', label: 'Ort' },
   { id: 'sonstige', label: 'Sonstige' },
   { id: 'gesamtadressen', label: 'Ganze Adressen' },
+];
+
+/**
+ * Sortierung der VERWALTUNGSANSICHT. Default ist das Alphabet: nur so
+ * stehen ähnliche Schreibweisen direkt untereinander und Tippfehler
+ * fallen auf.
+ *
+ * Das Eingabe-Dropdown sortiert weiterhin nach Relevanz (häufigste
+ * zuerst, dann zuletzt genutzt) — siehe ladeVorschlaege(). Dort ist
+ * Relevanz hilfreicher als das Alphabet.
+ */
+type Sortierung = 'alphabet' | 'haeufigkeit' | 'zuletzt';
+
+const SORTIERUNGEN: Array<{ id: Sortierung; label: string }> = [
+  { id: 'alphabet', label: 'A–Z' },
+  { id: 'haeufigkeit', label: 'Häufigkeit' },
+  { id: 'zuletzt', label: 'Zuletzt genutzt' },
 ];
 
 /** Wie viele Zeilen auf einmal gerendert werden — bei ein paar tausend
@@ -71,6 +89,7 @@ export function FeldVorschlaegePage() {
   const [hinweis, setHinweis] = useState<string | null>(null);
   const [suche, setSuche] = useState('');
   const [filter, setFilter] = useState<Filter>('alle');
+  const [sortierung, setSortierung] = useState<Sortierung>('alphabet');
   const [busy, setBusy] = useState<string | null>(null);
   const [neuTyp, setNeuTyp] = useState('adresse_strasse');
   const [neuWert, setNeuWert] = useState('');
@@ -101,12 +120,25 @@ export function FeldVorschlaegePage() {
 
   const gefiltert = useMemo(() => {
     const q = suche.trim().toLowerCase();
-    return alle.filter((v) => {
+    const liste = alle.filter((v) => {
       if (!passtZuFilter(v, filter)) return false;
       if (!q) return true;
       return v.wert.toLowerCase().includes(q) || v.feld_typ.toLowerCase().includes(q);
     });
-  }, [alle, filter, suche]);
+    const sortiert = [...liste];
+    if (sortierung === 'alphabet') {
+      // localeCompare mit 'de': Umlaute einsortiert wie erwartet
+      // („Österstraße" bei O), Groß/Klein egal.
+      sortiert.sort((a, b) => a.wert.localeCompare(b.wert, 'de', { sensitivity: 'base' }));
+    } else if (sortierung === 'haeufigkeit') {
+      sortiert.sort((a, b) => b.anzahl - a.anzahl
+        || a.wert.localeCompare(b.wert, 'de', { sensitivity: 'base' }));
+    } else {
+      sortiert.sort((a, b) => b.letzte_nutzung.localeCompare(a.letzte_nutzung)
+        || a.wert.localeCompare(b.wert, 'de', { sensitivity: 'base' }));
+    }
+    return sortiert;
+  }, [alle, filter, suche, sortierung]);
 
   /** Zähler je Filter — zeigt sofort, wo noch aufzuräumen ist. */
   const anzahlJeFilter = useMemo(() => {
@@ -212,6 +244,11 @@ export function FeldVorschlaegePage() {
 
         <AdressPoolBereinigen onFertig={() => { void load(); }} />
 
+        {/* Kombinationen Straße → PLZ → Ort. Stehen hier, weil sich
+            dieselben Tippfehler ansammeln wie im Pool — und dort
+            doppelt so störend wirken, weil sie drei Felder füllen. */}
+        <AdressKombinationenSektion />
+
         {/* Manuellen Wert ergänzen — z.B. eine korrekte Schreibweise
             vorgeben, bevor sie zum ersten Mal getippt wird. */}
         <div className="card flex flex-wrap items-end gap-3 p-4">
@@ -260,6 +297,27 @@ export function FeldVorschlaegePage() {
                 </button>
               );
             })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-maja-muted">Sortierung:</span>
+            {SORTIERUNGEN.map((so) => (
+              <button
+                key={so.id}
+                type="button"
+                onClick={() => setSortierung(so.id)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                  sortierung === so.id
+                    ? 'bg-maja-navy text-white dark:bg-blue-600'
+                    : 'bg-maja-light text-maja-navy hover:bg-maja-navy/10 dark:bg-surface-700 dark:text-slate-200'
+                }`}
+              >
+                {so.label}
+              </button>
+            ))}
+            <span className="text-xs text-maja-muted">
+              — im Eingabe-Dropdown bleibt es bei „häufigste zuerst".
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

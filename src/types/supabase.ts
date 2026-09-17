@@ -1806,6 +1806,39 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Zuordnung Straße → PLZ → Ort (Migration 097). Ergänzt den
+      // Vorschlags-Pool, damit die Auswahl einer Straße alle drei
+      // Adressfelder gemeinsam füllt.
+      adress_kombinationen: {
+        Row: {
+          id: string;
+          strasse: string;
+          plz: string | null;
+          ort: string | null;
+          anzahl: number | null;
+          letzte_nutzung: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          strasse: string;
+          plz?: string | null;
+          ort?: string | null;
+          anzahl?: number | null;
+          letzte_nutzung?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          strasse?: string;
+          plz?: string | null;
+          ort?: string | null;
+          anzahl?: number | null;
+          letzte_nutzung?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
       // Unterschrift + Firmenstempel des Absenders (Migration 092).
       // Die Spalten halten Pfade im privaten Bucket „absender", keine
       // Bilddaten.
@@ -1950,6 +1983,10 @@ export type Database = {
       // Bestandsbereinigung des Adress-Pools (Migration 094). Beide
       // liefern GENAU EINE Zeile — Supabase typisiert set-returning
       // Funktionen als Array.
+      adress_kombination_merken: {
+        Args: { p_kombis: Json };
+        Returns: number;
+      };
       adress_pool_status: {
         Args: Record<string, never>;
         Returns: Array<{

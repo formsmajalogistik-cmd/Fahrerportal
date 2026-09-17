@@ -33,7 +33,7 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
   // Straße/PLZ/Stadt haben eigene Töpfe, die sich aber alle Adressfelder
   // mit demselben feld_typ teilen (z.B. Abhol- und Zieladresse).
   const basis = feldTypVon(field);
-  const adressVorschlaege = useAdressVorschlaege();
+  const { adressbuch, erweitereText } = useAdressVorschlaege();
 
   /**
    * Auswahl einer ganzen Adresse: verteilt Straße, PLZ und Ort auf die
@@ -60,7 +60,8 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
       <div className="space-y-2">
         <SuggestCombobox
           feldTyp={basis ? adressTeilTyp(basis, 'strasse') : null}
-          strukturVorschlaege={adressVorschlaege}
+          strukturVorschlaege={adressbuch}
+          erweitereText={erweitereText}
           onStruktur={adresseUebernehmen}
           placeholder="Straße + Hausnummer"
           aria-label={`${field.label} — Straße + Hausnummer`}

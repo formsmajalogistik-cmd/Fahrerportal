@@ -14,6 +14,7 @@
 
 import { supabase } from './supabase';
 import { normalisiereFuerTyp } from './textNormalisierung';
+import { merkeKombinationen, type KombiEntwurf } from './adressKombinationen';
 import type { FormField, FormSchema } from '../types/db';
 import type { Json } from '../types/supabase';
 
@@ -352,6 +353,49 @@ export async function merkeVorschlaege(eintraege: VorschlagEintrag[]): Promise<v
  * Bequemer Aufruf aus den Formular-Seiten: sammelt und speichert in
  * einem Rutsch. `istTest` unterdrückt das Speichern schon im Client.
  */
+/**
+ * Vollständige Adressen eines Formulars — Straße, PLZ und Ort aus
+ * demselben Adressfeld. Sie werden zusätzlich zum Pool als Kombination
+ * gemerkt (097), damit die Auswahl einer Straße später alle drei Felder
+ * gemeinsam füllt.
+ *
+ * Eine im Straßenfeld erfasste Gesamtadresse wird vorher zerlegt — so
+ * geht auch aus Alt-Erfassungen die Zuordnung nicht verloren.
+ */
+export function sammleKombinationen(
+  schema: FormSchema,
+  daten: Record<string, unknown>,
+): KombiEntwurf[] {
+  const out: KombiEntwurf[] = [];
+  for (const section of schema.sections ?? []) {
+    for (const field of section.fields ?? []) {
+      if (field.type !== 'address') continue;
+      if (!feldTypVon(field)) continue;
+      const value = daten[field.id];
+      if (!value || typeof value !== 'object') continue;
+      const a = value as Record<string, unknown>;
+      let strasse = normalisiereWert(a.strasse) ?? '';
+      let plz = normalisiereWert(a.plz) ?? '';
+      let ort = normalisiereWert(a.stadt) ?? '';
+      // Alt-Erfassung: alles im Straßenfeld.
+      if (strasse && istGesamtadresse(strasse)) {
+        const teile = zerlegeGesamtadresse(strasse);
+        if (!teile) continue;
+        strasse = teile.strasse;
+        plz = plz || teile.plz;
+        ort = ort || teile.ort;
+      }
+      if (!strasse || !plz || !ort) continue;
+      out.push({
+        strasse: normalisiereFuerTyp('adresse_strasse', strasse),
+        plz,
+        ort: normalisiereFuerTyp('adresse_stadt', ort),
+      });
+    }
+  }
+  return out;
+}
+
 export async function merkeAusFormular(
   schema: FormSchema,
   daten: Record<string, unknown>,
@@ -359,6 +403,7 @@ export async function merkeAusFormular(
 ): Promise<void> {
   if (istTest) return;
   await merkeVorschlaege(sammleVorschlaege(schema, daten));
+  await merkeKombinationen(sammleKombinationen(schema, daten), istTest);
 }
 
 // ---- Pflege (Admin) ---------------------------------------------
@@ -502,6 +547,18 @@ export async function merkeTourAdressen(
     push('adresse_plz', s.plz);
     push('adresse_stadt', s.stadt);
   }
+  // Vollständige Stationen zusätzlich als Kombination merken (097) —
+  // daraus entsteht die Zuordnung Straße → PLZ → Ort.
+  await merkeKombinationen(
+    stationen
+      .map((s) => ({
+        strasse: normalisiereFuerTyp('adresse_strasse', (s.strasse ?? '').trim()),
+        plz: (s.plz ?? '').trim(),
+        ort: normalisiereFuerTyp('adresse_stadt', (s.stadt ?? '').trim()),
+      }))
+      .filter((k) => k.strasse && k.plz && k.ort && !istGesamtadresse(k.strasse)),
+    istTest,
+  );
   if (eintraege.length === 0) return;
   await merkeVorschlaege(eintraege);
 }

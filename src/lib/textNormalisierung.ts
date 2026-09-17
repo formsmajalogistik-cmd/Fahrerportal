@@ -109,3 +109,28 @@ export function normalisiereAdresse<T extends {
     ort: a.ort ? grossAnfang(a.ort.trim().replace(/\s+/g, ' ')) : a.ort,
   };
 }
+
+/**
+ * Vergleichsschlüssel für die Dubletten-Erkennung — spiegelt
+ * maja_vergleichsschluessel() aus Migration 096.
+ *
+ * Kleinschreibung, ß → ss, „str."/„str" → „strasse", danach alles außer
+ * Buchstaben und Ziffern weg. Damit fallen zusammen:
+ *
+ *   Bahnhofstraße 5 / Bahnhofstrasse 5 / Bahnhofstr. 5 / Bahnhofstr.5
+ *   Am Hafen 5, / Am Hafen 5
+ *
+ * Der Schlüssel wird NIE angezeigt und NIE gespeichert — er entscheidet
+ * ausschließlich, was zusammengehört. Die angezeigte Schreibweise
+ * bleibt unangetastet.
+ */
+export function vergleichsSchluessel(wert: string): string {
+  return wert
+    .trim()
+    .toLocaleLowerCase('de-DE')
+    .replace(/ß/g, 'ss')
+    // Wortende: trifft „str.", „str " und „str" am Ende, aber nicht das
+    // „str" in „strasse" (dort folgt ein Buchstabe).
+    .replace(/str(?![a-z0-9äöü])/g, 'strasse')
+    .replace(/[^a-z0-9äöü]/g, '');
+}

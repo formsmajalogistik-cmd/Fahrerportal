@@ -87,8 +87,9 @@ export function StationFeldsatz({
 }: Props) {
   const cls = (fehler?: boolean) => (fehler ? 'tf-input border-red-500' : 'tf-input');
   const altAdresse = altAdresseHinweis({ strasse, plz }, adresseFreitext);
-  // Manuelle Adressen als ganze Einträge im Straßen-Dropdown.
-  const adressVorschlaege = useAdressVorschlaege();
+  // Manuelle Adressen als ganze Einträge im Straßen-Dropdown, dazu die
+  // gesammelten Kombinationen Straße → PLZ → Ort.
+  const { adressbuch, erweitereText } = useAdressVorschlaege();
 
   /**
    * Auswahl einer ganzen Adresse. Es werden NUR leere Felder gefüllt —
@@ -111,7 +112,8 @@ export function StationFeldsatz({
           <SuggestCombobox
             id={`${idPrefix}-strasse`} className={cls(adresseFehler)}
             feldTyp="adresse_strasse"
-            strukturVorschlaege={adressVorschlaege}
+            strukturVorschlaege={adressbuch}
+            erweitereText={erweitereText}
             onStruktur={adresseUebernehmen}
             placeholder="z.B. Heiligenroder Strasse 38e"
             value={strasse} onChange={onStrasse} />

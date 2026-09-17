@@ -53,6 +53,16 @@ interface Props {
    */
   strukturVorschlaege?: StrukturVorschlag[];
   onStruktur?: (v: StrukturVorschlag) => void;
+  /**
+   * Erweitert einen Pool-Wert zu vollständigen Adressen.
+   *
+   * Nach dem Zerlegen steht im Straßen-Topf nur noch die Straße. Sind zu
+   * ihr Kombinationen bekannt (Migration 097), erscheint sie hier als
+   * „Straße — PLZ Ort" — bei mehreren Orten einmal je Ort, sodass vor
+   * dem Klick klar ist, was eingesetzt wird. Kommt eine leere Liste
+   * zurück, bleibt der Wert ein einfacher Vorschlag.
+   */
+  erweitereText?: (wert: string) => StrukturVorschlag[];
   value: string;
   onChange: (v: string) => void;
   id?: string;
@@ -68,7 +78,7 @@ interface Props {
 }
 
 export function SuggestCombobox({
-  feldTyp, strukturVorschlaege, onStruktur,
+  feldTyp, strukturVorschlaege, onStruktur, erweitereText,
   value, onChange, id, className = 'input', placeholder,
   required, disabled, inputMode, autoComplete = 'off', title,
   'aria-label': ariaLabel,
@@ -125,14 +135,24 @@ export function SuggestCombobox({
       .map((a) => ({ art: 'struktur' as const, wert: a.strasse || a.label, adresse: a }));
 
     const gefiltert = q ? alle.filter(passt) : alle;
-    // Exakte Eingabe nicht als einzigen Vorschlag anbieten.
-    const textTreffer: Eintrag[] =
-      (gefiltert.length === 1 && gefiltert[0].toLowerCase() === q)
-        ? []
-        : gefiltert.map((w) => ({ art: 'text' as const, wert: w }));
+    // Exakte Eingabe nicht als einzigen Vorschlag anbieten — es sei
+    // denn, dazu sind vollständige Adressen bekannt: dann ist die Liste
+    // gerade DANN nützlich, wenn die Straße schon dasteht.
+    const nurExakt = gefiltert.length === 1 && gefiltert[0].toLowerCase() === q;
+    const textTreffer: Eintrag[] = [];
+    for (const w of gefiltert) {
+      const varianten = erweitereText?.(w) ?? [];
+      if (varianten.length > 0) {
+        for (const v of varianten) {
+          textTreffer.push({ art: 'struktur' as const, wert: v.strasse || w, adresse: v });
+        }
+      } else if (!nurExakt) {
+        textTreffer.push({ art: 'text' as const, wert: w });
+      }
+    }
 
     return [...strukturTreffer, ...textTreffer].slice(0, MAX_SICHTBAR);
-  }, [aktiviert, alle, struktur, value]);
+  }, [aktiviert, alle, erweitereText, struktur, value]);
 
   /**
    * Platz messen: passt die Liste unter das Feld, oder muss sie darüber?
