@@ -51,10 +51,23 @@ gruppen as (
     count(*)::int as anzahl_varianten,
     sum(anzahl)   as summe,
     string_agg(wert || ' (' || anzahl || ')', ', ' order by anzahl desc, wert) as varianten,
-    -- Behalten wird der manuell gepflegte bzw. häufigste Eintrag —
-    -- seine ORIGINAL-Schreibweise, nur getrimmt und mit großem
-    -- Anfangsbuchstaben.
-    (array_agg(wert order by ist_manuell desc, anzahl desc, id))[1] as behalten_roh,
+    -- Behalten wird der manuell gepflegte bzw. häufigste Eintrag.
+    -- Bei GLEICHSTAND entschied bisher die id, also der Zufall — und
+    -- das traf im Bestand oft die unsaubere Variante („Münchenerstr. 41
+    -- , 85123 Karlskron"). Jetzt gewinnt die gepflegtere Schreibweise:
+    -- kein Leerzeichen vor einem Satzzeichen, ein Leerzeichen nach dem
+    -- Komma, keine Doppelleerzeichen; danach die ausgeschriebene Form
+    -- („Daimlerstraße 1" statt „Daimlerstr. 1"); bei gleicher Länge die
+    -- mit Bindestrich („Bernhard-Nocht-Straße" statt „Bernhard Nocht
+    -- Straße"). Umgeschrieben wird weiterhin NICHTS — es wird nur unter
+    -- den vorhandenen Varianten gewählt.
+    (array_agg(wert order by
+       ist_manuell desc,
+       anzahl desc,
+       (wert ~ ' [,;]' or wert ~ ',[^ ]' or wert ~ '  '),
+       length(wert) desc,
+       length(wert) - length(replace(wert, ' ', '')),
+       id))[1] as behalten_roh,
     -- Gibt es an der Spitze einen Gleichstand? Dann ist die Auswahl
     -- willkürlich und einen Blick wert.
     (count(*) filter (where anzahl = (select max(k2.anzahl) from kandidaten k2

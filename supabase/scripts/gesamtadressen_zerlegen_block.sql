@@ -41,14 +41,24 @@ limit 200;
 update maja_zerlegung set basis = 'adresse' where basis = 'adresse_strasse';
 
 -- ---- 1. Bestandteile in die Töpfe ----
+-- WICHTIG vorher gruppieren: mehrere Gesamtadressen im selben Block
+-- zerfallen oft in DENSELBEN Teil — die vier Schreibweisen von
+-- „Offakamp 10-20 22529 Hamburg" ergeben viermal dieselbe Straße.
+-- Ein ON CONFLICT DO UPDATE darf dieselbe Zielzeile aber nur einmal je
+-- Anweisung treffen, sonst bricht Postgres mit „cannot affect row a
+-- second time" ab. Deshalb werden die Häufigkeiten zuerst summiert.
 insert into public.feld_vorschlaege (feld_typ, wert, anzahl)
-select basis || '_strasse', strasse, anzahl from maja_zerlegung
-union all
-select basis || '_plz', plz, anzahl from maja_zerlegung
-union all
--- Der Ort kann fehlen („Offakamp 10, 22529"). Dann gibt es nichts
--- einzutragen — er wird NICHT aus der PLZ abgeleitet.
-select basis || '_stadt', ort, anzahl from maja_zerlegung where ort is not null
+select feld_typ, wert, sum(anzahl)::int
+from (
+  select basis || '_strasse' as feld_typ, strasse as wert, anzahl from maja_zerlegung
+  union all
+  select basis || '_plz', plz, anzahl from maja_zerlegung
+  union all
+  -- Der Ort kann fehlen („Offakamp 10, 22529"). Dann gibt es nichts
+  -- einzutragen — er wird NICHT aus der PLZ abgeleitet.
+  select basis || '_stadt', ort, anzahl from maja_zerlegung where ort is not null
+) teile
+group by feld_typ, wert
 on conflict (feld_typ, wert) do update
   set anzahl         = public.feld_vorschlaege.anzahl + excluded.anzahl,
       letzte_nutzung = now();

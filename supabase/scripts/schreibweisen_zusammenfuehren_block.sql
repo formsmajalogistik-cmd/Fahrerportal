@@ -33,8 +33,30 @@ zeilen as (
 ziel as (
   select
     feld_typ, schluessel,
-    (array_agg(id   order by ist_manuell desc, anzahl desc, id))[1] as behalten,
-    (array_agg(wert order by ist_manuell desc, anzahl desc, id))[1] as behalten_wert,
+    -- Behalten wird der manuell gepflegte bzw. häufigste Eintrag.
+    -- Bei GLEICHSTAND entschied bisher die id, also der Zufall — und
+    -- das traf im Bestand oft die unsaubere Variante („Münchenerstr. 41
+    -- , 85123 Karlskron"). Jetzt gewinnt die gepflegtere Schreibweise:
+    -- kein Leerzeichen vor einem Satzzeichen, ein Leerzeichen nach dem
+    -- Komma, keine Doppelleerzeichen; danach die ausgeschriebene Form
+    -- („Daimlerstraße 1" statt „Daimlerstr. 1"); bei gleicher Länge die
+    -- mit Bindestrich („Bernhard-Nocht-Straße" statt „Bernhard Nocht
+    -- Straße"). Umgeschrieben wird weiterhin NICHTS — es wird nur unter
+    -- den vorhandenen Varianten gewählt.
+    (array_agg(id order by
+       ist_manuell desc,
+       anzahl desc,
+       (wert ~ ' [,;]' or wert ~ ',[^ ]' or wert ~ '  '),
+       length(wert) desc,
+       length(wert) - length(replace(wert, ' ', '')),
+       id))[1] as behalten,
+    (array_agg(wert order by
+       ist_manuell desc,
+       anzahl desc,
+       (wert ~ ' [,;]' or wert ~ ',[^ ]' or wert ~ '  '),
+       length(wert) desc,
+       length(wert) - length(replace(wert, ' ', '')),
+       id))[1] as behalten_wert,
     sum(anzahl)::int     as summe,
     max(letzte_nutzung)  as letzte,
     bool_or(ist_manuell) as manuell
