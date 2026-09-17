@@ -131,12 +131,20 @@ function istStrassenTopf(feldTyp: string): boolean {
  * Ziffernfolge ist — Straßennamen und Hausnummern enthalten praktisch
  * nie fünfstellige Zahlen.
  *
- *   „Heiligenroder Strasse 38e, 28816 Stuhr"
- *     → { strasse: 'Heiligenroder Strasse 38e', plz: '28816', ort: 'Stuhr' }
+ * Drei Schreibweisen kommen im Bestand vor:
+ *   a) Straße zuerst   „Heiligenroder Strasse 38e, 28816 Stuhr"
+ *   b) PLZ zuerst      „85123 Karlskron, Münchener Straße 41"
+ *   c) ohne Ort        „Offakamp 10, 22529"
  *
- * Bleibt vor oder nach der PLZ nichts übrig, kommt null zurück — dann
- * wird bewusst NICHT geraten. Spiegelt maja_adresse_zerlegen() aus
- * Migration 096.
+ * Unterschieden wird an der HAUSNUMMER: steht vor der PLZ eine Ziffer,
+ * ist das die Straße. Steht dort keine und hinter der PLZ folgt
+ * „Ort, Straße mit Hausnummer", ist es die umgekehrte Reihenfolge — die
+ * Ziffernprüfung verhindert, dass aus „20095 Hamburg, Deutschland" eine
+ * Straße namens Deutschland wird. Fehlt hinter der PLZ alles, fehlt
+ * schlicht der Ort; er bleibt leer statt geraten zu werden.
+ *
+ * Ohne Straße kommt null zurück — der Wert gilt dann als nicht
+ * eindeutig zerlegbar. Spiegelt maja_adresse_zerlegen() aus 096.
  */
 export function zerlegeGesamtadresse(
   wert: string,
@@ -144,9 +152,21 @@ export function zerlegeGesamtadresse(
   const m = /^(.*?)([^0-9]|^)(\d{5})([^0-9]|$)(.*)$/.exec(wert);
   if (!m) return null;
   const trenner = /^[\s,;\-/]+|[\s,;\-/]+$/g;
-  const strasse = (m[1] + (m[2] ?? '')).replace(trenner, '');
-  const ort = ((m[4] ?? '') + (m[5] ?? '')).replace(trenner, '');
-  if (!strasse || !ort) return null;
+  const vorne = (m[1] + (m[2] ?? '')).replace(trenner, '');
+  const hinten = ((m[4] ?? '') + (m[5] ?? '')).replace(trenner, '');
+
+  const komma = hinten.indexOf(',');
+  const schwanz = komma >= 0 ? hinten.slice(komma + 1).replace(trenner, '') : '';
+  let strasse: string;
+  let ort: string;
+  if (!/\d/.test(vorne) && komma >= 0 && /\d/.test(schwanz)) {
+    ort = hinten.slice(0, komma).replace(trenner, '');
+    strasse = schwanz;
+  } else {
+    strasse = vorne;
+    ort = hinten;
+  }
+  if (!strasse) return null;
   return { strasse, plz: m[3], ort };
 }
 

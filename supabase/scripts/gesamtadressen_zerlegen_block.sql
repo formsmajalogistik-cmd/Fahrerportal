@@ -3,9 +3,10 @@
 -- ERST gesamtadressen_trockenlauf.sql laufen lassen und freigeben.
 --
 -- Je erkannter Gesamtadresse passiert dreierlei:
---   1. Die drei Bestandteile landen in ihren Töpfen (Straße, PLZ, Ort).
+--   1. Die Bestandteile landen in ihren Töpfen (Straße, PLZ, Ort).
 --      Steht ein Teil schon dort, wird er hochgezählt statt doppelt
---      angelegt.
+--      angelegt. Fehlt der Ort im Original, bleibt er leer — er wird
+--      nicht aus der PLZ abgeleitet.
 --   2. Die vollständige Adresse kommt als EIN Eintrag ins Adressbuch —
 --      damit lässt sie sich künftig als Ganzes auswählen und füllt
 --      Straße, PLZ und Ort gemeinsam. Auch hier: nicht doppelt anlegen.
@@ -45,7 +46,9 @@ select basis || '_strasse', strasse, anzahl from maja_zerlegung
 union all
 select basis || '_plz', plz, anzahl from maja_zerlegung
 union all
-select basis || '_stadt', ort, anzahl from maja_zerlegung
+-- Der Ort kann fehlen („Offakamp 10, 22529"). Dann gibt es nichts
+-- einzutragen — er wird NICHT aus der PLZ abgeleitet.
+select basis || '_stadt', ort, anzahl from maja_zerlegung where ort is not null
 on conflict (feld_typ, wert) do update
   set anzahl         = public.feld_vorschlaege.anzahl + excluded.anzahl,
       letzte_nutzung = now();

@@ -28,9 +28,15 @@ select
   (select coalesce(sum(varianten - 1), 0) from gruppen) as zeilen_die_wegfallen;
 
 -- ------------------------------------------------------------
--- 2. Bis zu 30 Beispiele
+-- 2. Bis zu 30 Beispiele — die GRÖSSTEN Gruppen zuerst
 --
---    [Variante A, Variante B, …] → behaltener Wert (Summe anzahl)
+--    [Variante A (n), Variante B (n), …] → behaltener Wert (Summe)
+--
+--    Die Varianten stehen mit ihrer eigenen `anzahl` da. Das ist
+--    wichtig: behalten wird die häufigste Schreibweise, und bei
+--    Gleichstand entscheidet die Reihenfolge — dann lohnt ein Blick,
+--    ob die behaltene Variante wirklich die schönere ist. Wenn nicht:
+--    in der Pool-Pflege bearbeiten, dafür ist sie da.
 -- ------------------------------------------------------------
 with kandidaten as (
   select
@@ -42,25 +48,36 @@ with kandidaten as (
 gruppen as (
   select
     feld_typ, schluessel,
-    count(*)                                  as varianten,
-    sum(anzahl)                               as summe,
-    string_agg(wert, ', ' order by anzahl desc, wert) as alle_varianten,
+    count(*)::int as anzahl_varianten,
+    sum(anzahl)   as summe,
+    string_agg(wert || ' (' || anzahl || ')', ', ' order by anzahl desc, wert) as varianten,
     -- Behalten wird der manuell gepflegte bzw. häufigste Eintrag —
     -- seine ORIGINAL-Schreibweise, nur getrimmt und mit großem
     -- Anfangsbuchstaben.
-    (array_agg(wert order by ist_manuell desc, anzahl desc, id))[1] as behalten_roh
+    (array_agg(wert order by ist_manuell desc, anzahl desc, id))[1] as behalten_roh,
+    -- Gibt es an der Spitze einen Gleichstand? Dann ist die Auswahl
+    -- willkürlich und einen Blick wert.
+    (count(*) filter (where anzahl = (select max(k2.anzahl) from kandidaten k2
+                                       where k2.feld_typ = kandidaten.feld_typ
+                                         and k2.schluessel = kandidaten.schluessel)) > 1)
+      as gleichstand
   from kandidaten
   group by feld_typ, schluessel
   having count(*) > 1
 )
 select
   feld_typ,
-  alle_varianten                        as varianten,
-  -- genau die Aufbereitung, die das Block-Skript anwendet
+  varianten,
   (select upper(left(b, 1)) || substr(b, 2)
      from (select btrim(behalten_roh, ' ,;') as b) t) as behaltener_wert,
-  summe                                 as summe_anzahl,
-  varianten                             as anzahl_varianten
+  summe            as summe_anzahl,
+  anzahl_varianten,
+  gleichstand      as auswahl_willkuerlich
 from gruppen
-order by varianten desc, summe desc
+-- WICHTIG: nach der ZAHL sortieren, nicht nach dem Text. Beim ersten
+-- Anlauf hieß die Textspalte ebenfalls „varianten"; PostgreSQL löst
+-- ORDER BY zuerst gegen Ausgabespalten auf und sortierte deshalb
+-- alphabetisch — die Stichprobe zeigte das Ende des Alphabets statt
+-- der größten Gruppen.
+order by anzahl_varianten desc, summe desc
 limit 30;

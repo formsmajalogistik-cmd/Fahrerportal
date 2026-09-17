@@ -26,9 +26,20 @@
 --      „Heiligenroder Strasse 38e, 28816 Stuhr"
 --        → Straße „Heiligenroder Strasse 38e" | PLZ „28816" | Ort „Stuhr"
 --
---    Bleibt vor oder nach der PLZ nichts übrig, kommt dort NULL zurück.
---    Der Aufrufer behandelt solche Werte als „nicht eindeutig
---    zerlegbar" und lässt sie unverändert — bewusst kein Raten.
+--    Drei Schreibweisen kommen im Bestand vor:
+--
+--      a) Straße zuerst   „Heiligenroder Strasse 38e, 28816 Stuhr"
+--      b) PLZ zuerst      „85123 Karlskron, Münchener Straße 41"
+--      c) ohne Ort        „Offakamp 10, 22529"
+--
+--    Unterschieden wird an der HAUSNUMMER: steht vor der PLZ eine
+--    Ziffer, ist das die Straße (a). Steht dort keine und hinter der PLZ
+--    folgt „Ort, Straße mit Hausnummer", ist es die umgekehrte
+--    Reihenfolge (b). Bleibt hinter der PLZ gar nichts, fehlt schlicht
+--    der Ort (c) — auch das ist kein Raten, der Ort bleibt NULL.
+--
+--    Bleibt die Straße leer, kommt überall NULL zurück; solche Werte
+--    gelten als „nicht eindeutig zerlegbar" und bleiben unverändert.
 -- ------------------------------------------------------------
 create or replace function public.maja_adresse_zerlegen(
   wert text,
@@ -38,7 +49,11 @@ language plpgsql
 immutable
 as $$
 declare
-  m text[];
+  m       text[];
+  vorne   text;
+  hinten  text;
+  komma   int;
+  schwanz text;
 begin
   strasse := null; plz := null; ort := null;
   if wert is null then return; end if;
@@ -46,11 +61,30 @@ begin
   if m is null then return; end if;
   -- Das Zeichen vor/nach der PLZ gehört zum jeweiligen Nachbarn und
   -- wird beim Trimmen mit entfernt, falls es ein Trenner war.
-  strasse := btrim(m[1] || coalesce(m[2], ''), ' ,;-/');
-  plz     := m[3];
-  ort     := btrim(coalesce(m[4], '') || coalesce(m[5], ''), ' ,;-/');
+  vorne  := btrim(m[1] || coalesce(m[2], ''), ' ,;-/');
+  plz    := m[3];
+  hinten := btrim(coalesce(m[4], '') || coalesce(m[5], ''), ' ,;-/');
+
+  -- (b) PLZ zuerst: vor der PLZ steht keine Hausnummer, dahinter folgt
+  -- „Ort, Straße <Hausnummer>". Der Teil hinter dem Komma muss eine
+  -- Ziffer enthalten — sonst wäre „20095 Hamburg, Deutschland" eine
+  -- Straße namens Deutschland.
+  komma := position(',' in hinten);
+  schwanz := case when komma > 0 then btrim(substr(hinten, komma + 1), ' ,;-/') else '' end;
+  if vorne !~ '[0-9]' and komma > 0 and schwanz ~ '[0-9]' then
+    ort     := btrim(substr(hinten, 1, komma - 1), ' ,;-/');
+    strasse := schwanz;
+  else
+    -- (a) Straße zuerst, (c) ohne Ort.
+    strasse := vorne;
+    ort     := hinten;
+  end if;
+
   if strasse = '' then strasse := null; end if;
   if ort = '' then ort := null; end if;
+  -- Ohne Straße ist nichts gewonnen — dann gilt der Wert als nicht
+  -- zerlegbar und bleibt unangetastet.
+  if strasse is null then plz := null; ort := null; end if;
 end;
 $$;
 
@@ -60,9 +94,12 @@ returns boolean
 language sql
 immutable
 as $$
+  -- Straße und PLZ müssen dastehen. Der ORT darf fehlen: „Offakamp 10,
+  -- 22529" ist eindeutig in Straße und PLZ zerlegbar, nur die Stadt ist
+  -- nicht angegeben. Sie aus der PLZ abzuleiten wäre Raten — der Ort
+  -- bleibt deshalb leer und wird beim Auswählen vom Bearbeiter ergänzt.
   select (z).strasse is not null
      and (z).plz     is not null
-     and (z).ort     is not null
   from (select public.maja_adresse_zerlegen(wert) as z) t;
 $$;
 

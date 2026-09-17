@@ -59,8 +59,18 @@ sondern zerlegt — Anker ist die fünfstellige PLZ:
    Adresse kommt ins Adressbuch und ist dort als Ganzes auswählbar, die
    Ursprungszeile im Straßen-Topf fällt weg.
 
+Drei Schreibweisen kommen im Bestand vor und werden alle erkannt:
+Straße zuerst („Heiligenroder Strasse 38e, 28816 Stuhr"), PLZ zuerst
+(„85123 Karlskron, Münchener Straße 41") und ohne Ort („Offakamp 10,
+22529" — der Ort bleibt dann leer, er wird NICHT aus der PLZ abgeleitet).
+
 Neu erfasste Werte werden bereits beim Sammeln zerlegt (Migration 096),
 im Frontend wie in der Schreib-RPC.
+
+**Reihenfolge: erst zerlegen, dann Schreibweisen zusammenführen.** Sonst
+bleiben „Werner-Haas-Straße 1" und „Werner-Haas-Straße 1, 74172
+Neckarsulm" zwei getrennte Gruppen; nach dem Zerlegen fallen sie
+zusammen.
 
 ## Unterschiedliche Schreibweisen zusammenführen
 
