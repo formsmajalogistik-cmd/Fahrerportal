@@ -165,13 +165,27 @@ export interface AdressAuswahl {
   ort: string;
 }
 
+/** In welchem Feld wurde die Auswahl getroffen? */
+export type AdressQuelle = 'strasse' | 'plz' | 'stadt';
+
 /**
  * Übernahme einer ausgewählten Adresse in ein Formular- oder Tour-
  * Adressfeld.
  *
- * Regel: NUR leere Zielfelder werden gefüllt. Was der Bearbeiter schon
- * eingetragen hat, bleibt stehen — auch die Stadt, die in der Tour-Maske
- * zugleich die Tour-Stadt ist und deshalb nie überschrieben werden darf.
+ * Zwei Regeln, und die Unterscheidung ist wichtig:
+ *
+ *   * Das Feld, IN DEM ausgewählt wurde (`quelle`), wird immer gesetzt.
+ *     Der dort stehende Text ist die Sucheingabe — ein Filter, kein
+ *     gepflegter Inhalt. Ohne diese Ausnahme blieb nach „Offa" →
+ *     „Offakamp 12 — 22529 Hamburg" im Straßenfeld „Offa" stehen,
+ *     während PLZ und Ort korrekt gefüllt wurden.
+ *   * Alle anderen Felder werden nur gefüllt, wenn sie leer sind. Was
+ *     der Bearbeiter dort eingetragen hat, bleibt — auch die Stadt, die
+ *     in der Tour-Maske zugleich die Tour-Stadt ist.
+ *
+ * Ohne `quelle` (z.B. Auswahl über das separate Adressbuch-Dropdown, wo
+ * in keinem Feld getippt wurde) gilt die Nur-wenn-leer-Regel für alle
+ * drei.
  *
  * Zurück kommt nur, was tatsächlich gesetzt werden soll; leere Teile der
  * Auswahl werden übersprungen.
@@ -179,13 +193,20 @@ export interface AdressAuswahl {
 export function adressAuswahlPatch(
   aktuell: { strasse?: string | null; plz?: string | null; stadt?: string | null },
   auswahl: AdressAuswahl,
+  quelle?: AdressQuelle,
 ): { strasse?: string; plz?: string; stadt?: string } {
   // Eigener Helfer statt des modulweiten `leer` — das liefert den
   // getrimmten Wert, hier wird die Ja/Nein-Frage gebraucht.
   const istLeer = (v: string | null | undefined) => !(v ?? '').trim();
   const patch: { strasse?: string; plz?: string; stadt?: string } = {};
-  if (istLeer(aktuell.strasse) && auswahl.strasse.trim()) patch.strasse = auswahl.strasse.trim();
-  if (istLeer(aktuell.plz) && auswahl.plz.trim()) patch.plz = auswahl.plz.trim();
-  if (istLeer(aktuell.stadt) && auswahl.ort.trim()) patch.stadt = auswahl.ort.trim();
+  const setze = (feld: AdressQuelle, alt: string | null | undefined, neu: string) => {
+    const w = neu.trim();
+    if (!w) return;
+    if (quelle !== feld && !istLeer(alt)) return;
+    patch[feld] = w;
+  };
+  setze('strasse', aktuell.strasse, auswahl.strasse);
+  setze('plz', aktuell.plz, auswahl.plz);
+  setze('stadt', aktuell.stadt, auswahl.ort);
   return patch;
 }

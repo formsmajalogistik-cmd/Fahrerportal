@@ -1,18 +1,21 @@
-// Pflege des Vorschlags-Pools (Migration 077, Adress-Beschränkung 095).
+// Adressverwaltung: Vorschlags-Pool (077 / 095) und Kombinationen (097).
+//
+// Aufbau der Seite, und der ist Absicht: Suche, Filter und Aktionen
+// stehen GANZ OBEN und bleiben beim Scrollen stehen; die Liste läuft
+// darunter in ihrem eigenen Scroll-Bereich. Vorher lag die Liste oben
+// und man musste an ihr vorbeiscrollen, um überhaupt filtern zu können.
 //
 // Der Pool enthält ausschließlich ADRESSTEILE: Straße, PLZ, Ort.
 // Kennzeichen, Modelle, E-Mails und Namen werden weder gesammelt noch
-// angeboten — Alt-Einträge lassen sich hier über den Filter „Sonstige"
-// finden und löschen.
+// angeboten — Alt-Einträge finden sich über den Filter „Sonstige".
 //
-// Löschen ist per RLS auf Admins beschränkt; Test-Profile sehen die
-// Liste, das Löschen läuft dann ins Leere und wird zusätzlich im Client
-// geblockt.
+// Die Kombinationen (Straße → PLZ → Ort) sind ein eigener Filter statt
+// einer zweiten Sektion: es ist dieselbe Aufräumarbeit mit denselben
+// Werkzeugen, nur eine andere Tabelle.
 //
-// Die Liste wird seitenweise geladen (siehe ladeAlleVorschlaege) — ohne
-// das schnitt der Server bei seiner Zeilen-Obergrenze ab, und weil nach
-// `feld_typ` sortiert wird, fiel dabei ausgerechnet `adresse_strasse`
-// heraus. Genau deshalb waren hier lange nur PLZ und Orte zu sehen.
+// Beide Listen werden seitenweise geladen — ohne das schneidet der
+// Server bei seiner Zeilen-Obergrenze ab, und weil nach `feld_typ`
+// sortiert wird, fiel dabei ausgerechnet `adresse_strasse` heraus.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Spinner } from '../../components/Spinner';
@@ -23,12 +26,18 @@ import {
   aktualisiereVorschlag, istGesamtadresse, ladeAlleVorschlaege, legeVorschlagAn,
   loescheVorschlag, loescheVorschlaege, type FeldVorschlag,
 } from '../../lib/feldVorschlaege';
+import {
+  ladeAlleKombinationen, loescheKombinationen, type AdressKombination,
+} from '../../lib/adressKombinationen';
+import { vergleichsSchluessel } from '../../lib/textNormalisierung';
 import { formatDate } from '../../lib/touren';
 import { AdressbuchSektion } from './AdressbuchSektion';
 import { AdressPoolBereinigen } from '../../components/AdressPoolBereinigen';
-import { AdressKombinationenSektion } from './AdressKombinationenSektion';
+import { AdressKombinationenTabelle } from './AdressKombinationenTabelle';
 
-type Filter = 'alle' | 'strasse' | 'plz' | 'stadt' | 'sonstige' | 'gesamtadressen';
+type Filter =
+  | 'alle' | 'strasse' | 'plz' | 'stadt' | 'sonstige' | 'gesamtadressen'
+  | 'kombinationen';
 
 const FILTER: Array<{ id: Filter; label: string }> = [
   { id: 'alle', label: 'Alle' },
@@ -37,6 +46,7 @@ const FILTER: Array<{ id: Filter; label: string }> = [
   { id: 'stadt', label: 'Ort' },
   { id: 'sonstige', label: 'Sonstige' },
   { id: 'gesamtadressen', label: 'Ganze Adressen' },
+  { id: 'kombinationen', label: 'Kombinationen' },
 ];
 
 /**
@@ -60,6 +70,9 @@ const SORTIERUNGEN: Array<{ id: Sortierung; label: string }> = [
  *  Einträgen wäre die Seite sonst spürbar träge. */
 const SICHTBAR_SCHRITT = 300;
 
+const deVergleich = (a: string, b: string) =>
+  a.localeCompare(b, 'de', { sensitivity: 'base' });
+
 function istStrasse(typ: string): boolean {
   return typ === 'adresse_strasse' || typ.endsWith('_strasse');
 }
@@ -77,13 +90,14 @@ function passtZuFilter(v: FeldVorschlag, f: Filter): boolean {
         && !(t === 'adresse_stadt' || t.endsWith('_stadt'));
     // Straßen-Einträge, die in Wahrheit eine ganze Adresse sind.
     case 'gesamtadressen': return istStrasse(t) && istGesamtadresse(v.wert);
-    default: return true;
+    default: return false;
   }
 }
 
 export function FeldVorschlaegePage() {
   const guard = useTestGuard();
   const [alle, setAlle] = useState<FeldVorschlag[]>([]);
+  const [kombis, setKombis] = useState<AdressKombination[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hinweis, setHinweis] = useState<string | null>(null);
@@ -100,10 +114,16 @@ export function FeldVorschlaegePage() {
   const [bearbeiteId, setBearbeiteId] = useState<string | null>(null);
   const [bearbeitetWert, setBearbeitetWert] = useState('');
 
+  const istKombiAnsicht = filter === 'kombinationen';
+
   const load = useCallback(async () => {
     try {
-      const list = await ladeAlleVorschlaege();
-      setAlle(list);
+      const [pool, kombiListe] = await Promise.all([
+        ladeAlleVorschlaege(),
+        ladeAlleKombinationen(),
+      ]);
+      setAlle(pool);
+      setKombis(kombiListe);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Laden fehlgeschlagen');
@@ -118,7 +138,18 @@ export function FeldVorschlaegePage() {
     return () => window.clearTimeout(t);
   }, [load]);
 
-  const gefiltert = useMemo(() => {
+  /** Straßen, zu denen es mehr als eine Kombination gibt. */
+  const mehrdeutig = useMemo(() => {
+    const zaehler = new Map<string, number>();
+    for (const k of kombis) {
+      const key = vergleichsSchluessel(k.strasse);
+      zaehler.set(key, (zaehler.get(key) ?? 0) + 1);
+    }
+    return zaehler;
+  }, [kombis]);
+
+  // ---- Pool: filtern + sortieren ----
+  const poolGefiltert = useMemo(() => {
     const q = suche.trim().toLowerCase();
     const liste = alle.filter((v) => {
       if (!passtZuFilter(v, filter)) return false;
@@ -129,27 +160,66 @@ export function FeldVorschlaegePage() {
     if (sortierung === 'alphabet') {
       // localeCompare mit 'de': Umlaute einsortiert wie erwartet
       // („Österstraße" bei O), Groß/Klein egal.
-      sortiert.sort((a, b) => a.wert.localeCompare(b.wert, 'de', { sensitivity: 'base' }));
+      sortiert.sort((a, b) => deVergleich(a.wert, b.wert));
     } else if (sortierung === 'haeufigkeit') {
-      sortiert.sort((a, b) => b.anzahl - a.anzahl
-        || a.wert.localeCompare(b.wert, 'de', { sensitivity: 'base' }));
+      sortiert.sort((a, b) => b.anzahl - a.anzahl || deVergleich(a.wert, b.wert));
     } else {
       sortiert.sort((a, b) => b.letzte_nutzung.localeCompare(a.letzte_nutzung)
-        || a.wert.localeCompare(b.wert, 'de', { sensitivity: 'base' }));
+        || deVergleich(a.wert, b.wert));
     }
     return sortiert;
   }, [alle, filter, suche, sortierung]);
 
+  // ---- Kombinationen: filtern + sortieren ----
+  const kombiGefiltert = useMemo(() => {
+    const q = suche.trim().toLowerCase();
+    const liste = kombis.filter((k) => {
+      if (!q) return true;
+      return `${k.strasse} ${k.plz ?? ''} ${k.ort ?? ''}`.toLowerCase().includes(q);
+    });
+    const sortiert = [...liste];
+    if (sortierung === 'alphabet') {
+      sortiert.sort((a, b) => deVergleich(a.strasse, b.strasse)
+        || (a.plz ?? '').localeCompare(b.plz ?? ''));
+    } else if (sortierung === 'haeufigkeit') {
+      sortiert.sort((a, b) => (b.anzahl ?? 0) - (a.anzahl ?? 0)
+        || deVergleich(a.strasse, b.strasse));
+    } else {
+      sortiert.sort((a, b) => (b.letzte_nutzung ?? '').localeCompare(a.letzte_nutzung ?? '')
+        || deVergleich(a.strasse, b.strasse));
+    }
+    return sortiert;
+  }, [kombis, suche, sortierung]);
+
   /** Zähler je Filter — zeigt sofort, wo noch aufzuräumen ist. */
   const anzahlJeFilter = useMemo(() => {
     const m = new Map<Filter, number>();
-    for (const f of FILTER) m.set(f.id, alle.filter((v) => passtZuFilter(v, f.id)).length);
+    for (const f of FILTER) {
+      m.set(f.id, f.id === 'kombinationen'
+        ? kombis.length
+        : alle.filter((v) => passtZuFilter(v, f.id)).length);
+    }
     return m;
-  }, [alle]);
+  }, [alle, kombis]);
 
-  const angezeigt = gefiltert.slice(0, sichtbar);
-  const alleAngezeigtGewaehlt = angezeigt.length > 0
-    && angezeigt.every((v) => gewaehlt.has(v.id));
+  const gefiltertAnzahl = istKombiAnsicht ? kombiGefiltert.length : poolGefiltert.length;
+  const gesamtAnzahl = istKombiAnsicht ? kombis.length : alle.length;
+  const angezeigtPool = poolGefiltert.slice(0, sichtbar);
+  const angezeigtKombi = kombiGefiltert.slice(0, sichtbar);
+  const angezeigteIds = istKombiAnsicht
+    ? angezeigtKombi.map((k) => k.id)
+    : angezeigtPool.map((v) => v.id);
+  const alleAngezeigtGewaehlt = angezeigteIds.length > 0
+    && angezeigteIds.every((id) => gewaehlt.has(id));
+
+  /** Filterwechsel: Auswahl verwerfen — sie bezöge sich auf die andere
+   *  Tabelle und wäre beim Sammel-Löschen ein böser Fehler. */
+  function filterSetzen(f: Filter) {
+    setFilter(f);
+    setSichtbar(SICHTBAR_SCHRITT);
+    setGewaehlt(new Set());
+    setBearbeiteId(null);
+  }
 
   function umschalten(id: string) {
     setGewaehlt((cur) => {
@@ -162,8 +232,8 @@ export function FeldVorschlaegePage() {
   function alleUmschalten() {
     setGewaehlt((cur) => {
       const next = new Set(cur);
-      if (alleAngezeigtGewaehlt) for (const v of angezeigt) next.delete(v.id);
-      else for (const v of angezeigt) next.add(v.id);
+      if (alleAngezeigtGewaehlt) for (const id of angezeigteIds) next.delete(id);
+      else for (const id of angezeigteIds) next.add(id);
       return next;
     });
   }
@@ -179,31 +249,31 @@ export function FeldVorschlaegePage() {
     await load();
   }
 
-  async function entfernen(v: FeldVorschlag) {
-    if (guard('Testmodus — Vorschläge werden nicht gelöscht.')) return;
-    setBusy(v.id);
+  /** Löscht in der gerade sichtbaren Tabelle — Pool oder Kombinationen. */
+  async function entfernen(ids: string[]) {
+    if (guard('Testmodus — es wird nichts gelöscht.')) return;
+    setBusy('loeschen');
     setError(null);
     try {
-      await loescheVorschlag(v.id);
-      setAlle((cur) => cur.filter((x) => x.id !== v.id));
-      setGewaehlt((cur) => { const n = new Set(cur); n.delete(v.id); return n; });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen');
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function auswahlLoeschen() {
-    if (guard('Testmodus — Vorschläge werden nicht gelöscht.')) return;
-    const ids = [...gewaehlt];
-    setBusy('sammel');
-    setError(null);
-    try {
-      const n = await loescheVorschlaege(ids);
-      setAlle((cur) => cur.filter((x) => !gewaehlt.has(x.id)));
-      setGewaehlt(new Set());
-      setHinweis(`${n} ${n === 1 ? 'Eintrag' : 'Einträge'} gelöscht.`);
+      const weg = new Set(ids);
+      if (istKombiAnsicht) {
+        const n = await loescheKombinationen(ids);
+        setKombis((cur) => cur.filter((k) => !weg.has(k.id)));
+        setHinweis(`${n} ${n === 1 ? 'Kombination' : 'Kombinationen'} gelöscht.`);
+      } else if (ids.length === 1) {
+        await loescheVorschlag(ids[0]);
+        setAlle((cur) => cur.filter((v) => !weg.has(v.id)));
+        setHinweis('Eintrag gelöscht.');
+      } else {
+        const n = await loescheVorschlaege(ids);
+        setAlle((cur) => cur.filter((v) => !weg.has(v.id)));
+        setHinweis(`${n} ${n === 1 ? 'Eintrag' : 'Einträge'} gelöscht.`);
+      }
+      setGewaehlt((cur) => {
+        const next = new Set(cur);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen');
     } finally {
@@ -226,29 +296,277 @@ export function FeldVorschlaegePage() {
   if (loading) return <Spinner />;
 
   return (
-    <div className="space-y-8">
-      {/* Adressen zuerst — das ist der Teil, den man von Hand pflegt. */}
-      <AdressbuchSektion />
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-maja-navy">Adressverwaltung</h2>
+        <p className="text-sm text-maja-muted">
+          Gesammelte Adressteile und die Zuordnung Straße → PLZ → Ort.
+          Einträge unter „Sonstige" stammen aus der Zeit vor der
+          Beschränkung auf Adressen und können gelöscht werden.
+          Auftraggeber-Konten haben keinen Zugriff auf diese Listen.
+        </p>
+      </div>
 
-      <div className="space-y-4 border-t border-maja-navy/10 pt-6">
-        <div>
-          <h2 className="text-lg font-semibold text-maja-navy">Gesammelte Werte</h2>
-          <p className="text-sm text-maja-muted">
-            Adressteile, die beim Ausfüllen von Formularen und beim Anlegen
-            von Touren gesammelt wurden und als Vorschlag angeboten werden.
-            Es gibt nur noch die Töpfe Straße, PLZ und Ort — Einträge unter
-            „Sonstige" stammen aus der Zeit davor und können gelöscht
-            werden. Auftraggeber-Konten haben keinen Zugriff auf diese Liste.
-          </p>
+      {/* ---------------- Bedienleiste ----------------
+          Bleibt beim Scrollen stehen, damit Suche und Filter auch
+          mitten in einer langen Liste erreichbar sind. */}
+      {/* Auf dem Handy NICHT fixiert: dort füllt die Leiste fast den
+          halben Bildschirm und für die Liste bliebe kaum Platz. Ab
+          Tablet-Breite bleibt sie stehen. */}
+      <div className="z-20 space-y-3 rounded-lg border border-maja-navy/10 bg-maja-light/95 p-3 backdrop-blur sm:sticky sm:top-0 dark:border-surface-700 dark:bg-surface-800/95">
+        {/* 1 — Suche */}
+        <div className="relative max-w-md">
+          <input
+            className="input pr-9"
+            placeholder={istKombiAnsicht
+              ? 'Suchen (Straße, PLZ oder Ort) …'
+              : 'Suchen (Wert oder Topf) …'}
+            aria-label="Adressen durchsuchen"
+            value={suche}
+            onChange={(e) => { setSuche(e.target.value); setSichtbar(SICHTBAR_SCHRITT); }}
+          />
+          {suche && (
+            <button
+              type="button"
+              aria-label="Suche leeren"
+              title="Suche leeren"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-maja-muted hover:bg-maja-navy/10"
+              onClick={() => { setSuche(''); setSichtbar(SICHTBAR_SCHRITT); }}
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        <AdressPoolBereinigen onFertig={() => { void load(); }} />
+        {/* 2 — Filter und Sortierung */}
+        <div className="flex flex-wrap gap-1.5">
+          {FILTER.map((f) => {
+            const n = anzahlJeFilter.get(f.id) ?? 0;
+            const aktiv = filter === f.id;
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => filterSetzen(f.id)}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                  aktiv
+                    ? 'bg-maja-navy text-white dark:bg-blue-600'
+                    : 'bg-white text-maja-navy hover:bg-maja-navy/10 dark:bg-surface-700 dark:text-slate-200'
+                }`}
+              >
+                {f.label}
+                <span className={aktiv ? 'ml-1.5 opacity-80' : 'ml-1.5 text-maja-muted'}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
 
-        {/* Kombinationen Straße → PLZ → Ort. Stehen hier, weil sich
-            dieselben Tippfehler ansammeln wie im Pool — und dort
-            doppelt so störend wirken, weil sie drei Felder füllen. */}
-        <AdressKombinationenSektion />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-maja-muted">Sortierung:</span>
+          {SORTIERUNGEN.map((so) => (
+            <button
+              key={so.id}
+              type="button"
+              onClick={() => setSortierung(so.id)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                sortierung === so.id
+                  ? 'bg-maja-navy text-white dark:bg-blue-600'
+                  : 'bg-white text-maja-navy hover:bg-maja-navy/10 dark:bg-surface-700 dark:text-slate-200'
+              }`}
+            >
+              {so.label}
+            </button>
+          ))}
+          <span className="text-xs text-maja-muted">
+            — im Eingabe-Dropdown bleibt es bei „häufigste zuerst".
+          </span>
+        </div>
 
+        {/* 3 — Aktionsleiste */}
+        <div className="flex flex-wrap items-center gap-3 border-t border-maja-navy/10 pt-2">
+          <span className="text-xs text-maja-muted">
+            {gefiltertAnzahl} von {gesamtAnzahl}{' '}
+            {istKombiAnsicht ? 'Kombinationen' : 'Einträgen'}
+          </span>
+          {gewaehlt.size > 0 ? (
+            <button
+              type="button"
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+              disabled={busy !== null}
+              onClick={() => setSammelLoeschen(true)}
+            >
+              {gewaehlt.size} ausgewählte löschen
+            </button>
+          ) : (
+            <span className="text-xs text-maja-muted">
+              Zeilen ankreuzen, um mehrere auf einmal zu löschen.
+            </span>
+          )}
+        </div>
+      </div>
+
+      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {hinweis && (
+        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{hinweis}</div>
+      )}
+
+      {filter === 'gesamtadressen' && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Diese Straßen-Einträge enthalten eine PLZ und sind damit ganze
+          Adressen. Sie werden in ihre Bestandteile zerlegt: Straße, PLZ und
+          Ort wandern in ihre Töpfe, die vollständige Adresse kommt ins
+          Adressbuch. Neu erfasste Werte werden bereits beim Sammeln zerlegt.
+        </p>
+      )}
+      {istKombiAnsicht && (
+        <p className="text-xs text-maja-muted">
+          Welche Straße gehört zu welcher PLZ und welchem Ort? Wird
+          automatisch aus Touren und Formularen gesammelt und füllt bei der
+          Auswahl einer Straße alle drei Adressfelder gemeinsam. Kommt eine
+          Straße in mehreren Orten vor, ist sie markiert — dort lohnt der
+          Blick besonders.
+        </p>
+      )}
+
+      {/* ---------------- Liste ----------------
+          Eigener Scroll-Bereich mit begrenzter Höhe: die Bedienleiste
+          darüber bleibt dadurch immer sichtbar. */}
+      {gefiltertAnzahl === 0 ? (
+        <p className="text-sm text-maja-muted">
+          {gesamtAnzahl === 0
+            ? (istKombiAnsicht
+                ? 'Noch keine Kombinationen gesammelt. Sie entstehen, sobald eine '
+                  + 'Tour oder ein Formular mit vollständiger Adresse gespeichert wird.'
+                : 'Noch keine Vorschläge gesammelt.')
+            : 'Keine Treffer für Suche und Filter.'}
+        </p>
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="max-h-[70vh] overflow-auto sm:max-h-[60vh]">
+            {istKombiAnsicht ? (
+              <AdressKombinationenTabelle
+                zeilen={angezeigtKombi}
+                mehrdeutig={mehrdeutig}
+                gewaehlt={gewaehlt}
+                onUmschalten={umschalten}
+                onAlleUmschalten={alleUmschalten}
+                alleGewaehlt={alleAngezeigtGewaehlt}
+                onLoeschen={(ids) => void entfernen(ids)}
+                onGeaendert={() => { void load(); }}
+                busy={busy !== null}
+                onFehler={setError}
+              />
+            ) : (
+              <table className="w-full min-w-[36rem] text-sm">
+                <thead className="sticky top-0 z-10 bg-white dark:bg-surface-800">
+                  <tr className="border-b border-maja-navy/10 text-left text-xs uppercase tracking-wide text-maja-muted">
+                    <th className="w-10 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                        aria-label="Alle angezeigten auswählen"
+                        checked={alleAngezeigtGewaehlt}
+                        onChange={alleUmschalten}
+                      />
+                    </th>
+                    <th className="px-3 py-2">Wert</th>
+                    <th className="w-36 px-3 py-2">Topf</th>
+                    <th className="w-20 px-3 py-2 text-right">Anzahl</th>
+                    <th className="w-32 px-3 py-2">Zuletzt</th>
+                    <th className="w-28 px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {angezeigtPool.map((v) => (
+                    <tr key={v.id} className="border-b border-maja-navy/5 last:border-b-0">
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                          aria-label={`„${v.wert}" auswählen`}
+                          checked={gewaehlt.has(v.id)}
+                          onChange={() => umschalten(v.id)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-maja-ink">
+                        {bearbeiteId === v.id ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              className="input flex-1"
+                              aria-label="Wert bearbeiten"
+                              value={bearbeitetWert}
+                              onChange={(e) => setBearbeitetWert(e.target.value)}
+                            />
+                            <button type="button" className="btn-primary px-3 py-1.5 text-sm"
+                                    disabled={busy !== null}
+                                    onClick={() => void bearbeitungSpeichern(v)}>
+                              Speichern
+                            </button>
+                            <button type="button" className="btn-secondary px-3 py-1.5 text-sm"
+                                    onClick={() => setBearbeiteId(null)}>
+                              Abbrechen
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            {v.ist_manuell && (
+                              <span className="mr-1 font-semibold text-maja-accent" title="Manuell gepflegt">✎</span>
+                            )}
+                            {v.wert}
+                          </>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-maja-muted">{v.feld_typ}</td>
+                      <td className="px-3 py-2 text-right text-maja-muted">
+                        {v.ist_manuell ? '—' : v.anzahl}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-maja-muted">
+                        {formatDate(v.letzte_nutzung)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {bearbeiteId !== v.id && (
+                          <div className="flex justify-end gap-1">
+                            <button
+                              type="button"
+                              className="rounded-md px-2 py-1 text-xs font-medium text-maja-accent hover:bg-maja-light"
+                              onClick={() => { setBearbeiteId(v.id); setBearbeitetWert(v.wert); }}
+                            >
+                              Bearbeiten
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-md p-1 text-red-600 hover:bg-red-50"
+                              title="Vorschlag löschen"
+                              aria-label={`„${v.wert}" löschen`}
+                              disabled={busy !== null}
+                              onClick={() => void entfernen([v.id])}
+                            >
+                              <XIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {gefiltertAnzahl > angezeigteIds.length && (
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => setSichtbar((n) => n + SICHTBAR_SCHRITT)}
+        >
+          Weitere {Math.min(SICHTBAR_SCHRITT, gefiltertAnzahl - angezeigteIds.length)} anzeigen
+        </button>
+      )}
+
+      {/* ---------------- Werkzeuge unterhalb der Liste ---------------- */}
+      <div className="space-y-4 border-t border-maja-navy/10 pt-6">
         {/* Manuellen Wert ergänzen — z.B. eine korrekte Schreibweise
             vorgeben, bevor sie zum ersten Mal getippt wird. */}
         <div className="card flex flex-wrap items-end gap-3 p-4">
@@ -275,211 +593,22 @@ export function FeldVorschlaegePage() {
           </button>
         </div>
 
-        {/* Filter + Suche */}
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-1.5">
-            {FILTER.map((f) => {
-              const n = anzahlJeFilter.get(f.id) ?? 0;
-              const aktiv = filter === f.id;
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => { setFilter(f.id); setSichtbar(SICHTBAR_SCHRITT); }}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                    aktiv
-                      ? 'bg-maja-navy text-white dark:bg-blue-600'
-                      : 'bg-maja-light text-maja-navy hover:bg-maja-navy/10 dark:bg-surface-700 dark:text-slate-200'
-                  }`}
-                >
-                  {f.label}
-                  <span className={aktiv ? 'ml-1.5 opacity-80' : 'ml-1.5 text-maja-muted'}>{n}</span>
-                </button>
-              );
-            })}
-          </div>
+        <AdressPoolBereinigen onFertig={() => { void load(); }} />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-maja-muted">Sortierung:</span>
-            {SORTIERUNGEN.map((so) => (
-              <button
-                key={so.id}
-                type="button"
-                onClick={() => setSortierung(so.id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                  sortierung === so.id
-                    ? 'bg-maja-navy text-white dark:bg-blue-600'
-                    : 'bg-maja-light text-maja-navy hover:bg-maja-navy/10 dark:bg-surface-700 dark:text-slate-200'
-                }`}
-              >
-                {so.label}
-              </button>
-            ))}
-            <span className="text-xs text-maja-muted">
-              — im Eingabe-Dropdown bleibt es bei „häufigste zuerst".
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <input
-              className="input max-w-sm"
-              placeholder="Suchen (Wert oder Topf) …"
-              value={suche}
-              onChange={(e) => { setSuche(e.target.value); setSichtbar(SICHTBAR_SCHRITT); }}
-            />
-            <span className="text-xs text-maja-muted">
-              {gefiltert.length} von {alle.length} Einträgen
-            </span>
-            {gewaehlt.size > 0 && (
-              <button
-                type="button"
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
-                disabled={busy !== null}
-                onClick={() => setSammelLoeschen(true)}
-              >
-                {gewaehlt.size} ausgewählte löschen
-              </button>
-            )}
-          </div>
-        </div>
-
-        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-        {hinweis && (
-          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{hinweis}</div>
-        )}
-
-        {filter === 'gesamtadressen' && (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Diese Straßen-Einträge enthalten eine PLZ und sind damit ganze
-            Adressen. Beim Auswählen landen sie vollständig im Straßenfeld.
-            Sie werden in ihre Bestandteile zerlegt: Straße, PLZ und Ort
-            wandern in ihre Töpfe, die vollständige Adresse kommt ins
-            Adressbuch und lässt sich dort als Ganzes auswählen. Neu erfasste
-            Werte werden bereits beim Sammeln zerlegt.
-          </p>
-        )}
-
-        {gefiltert.length === 0 ? (
-          <p className="text-sm text-maja-muted">
-            {alle.length === 0
-              ? 'Noch keine Vorschläge gesammelt.'
-              : 'Keine Treffer für diesen Filter.'}
-          </p>
-        ) : (
-          <div className="card overflow-x-auto">
-            <table className="w-full min-w-[36rem] text-sm">
-              <thead>
-                <tr className="border-b border-maja-navy/10 text-left text-xs uppercase tracking-wide text-maja-muted">
-                  <th className="w-10 px-3 py-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-                      aria-label="Alle angezeigten auswählen"
-                      checked={alleAngezeigtGewaehlt}
-                      onChange={alleUmschalten}
-                    />
-                  </th>
-                  <th className="px-3 py-2">Wert</th>
-                  <th className="w-36 px-3 py-2">Topf</th>
-                  <th className="w-20 px-3 py-2 text-right">Anzahl</th>
-                  <th className="w-32 px-3 py-2">Zuletzt</th>
-                  <th className="w-28 px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {angezeigt.map((v) => (
-                  <tr key={v.id} className="border-b border-maja-navy/5 last:border-b-0">
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
-                        aria-label={`„${v.wert}" auswählen`}
-                        checked={gewaehlt.has(v.id)}
-                        onChange={() => umschalten(v.id)}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-maja-ink">
-                      {bearbeiteId === v.id ? (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <input
-                            className="input flex-1"
-                            value={bearbeitetWert}
-                            onChange={(e) => setBearbeitetWert(e.target.value)}
-                          />
-                          <button type="button" className="btn-primary px-3 py-1.5 text-sm"
-                                  disabled={busy !== null}
-                                  onClick={() => void bearbeitungSpeichern(v)}>
-                            Speichern
-                          </button>
-                          <button type="button" className="btn-secondary px-3 py-1.5 text-sm"
-                                  onClick={() => setBearbeiteId(null)}>
-                            Abbrechen
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          {v.ist_manuell && (
-                            <span className="mr-1 font-semibold text-maja-accent" title="Manuell gepflegt">✎</span>
-                          )}
-                          {v.wert}
-                        </>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-maja-muted">{v.feld_typ}</td>
-                    <td className="px-3 py-2 text-right text-maja-muted">
-                      {v.ist_manuell ? '—' : v.anzahl}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-maja-muted">
-                      {formatDate(v.letzte_nutzung)}
-                    </td>
-                    <td className="px-3 py-2">
-                      {bearbeiteId !== v.id && (
-                        <div className="flex justify-end gap-1">
-                          <button
-                            type="button"
-                            className="rounded-md px-2 py-1 text-xs font-medium text-maja-accent hover:bg-maja-light"
-                            onClick={() => { setBearbeiteId(v.id); setBearbeitetWert(v.wert); }}
-                          >
-                            Bearbeiten
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-md p-1 text-red-600 hover:bg-red-50"
-                            title="Vorschlag löschen"
-                            aria-label={`„${v.wert}" löschen`}
-                            disabled={busy !== null}
-                            onClick={() => void entfernen(v)}
-                          >
-                            <XIcon className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {gefiltert.length > angezeigt.length && (
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setSichtbar((n) => n + SICHTBAR_SCHRITT)}
-          >
-            Weitere {Math.min(SICHTBAR_SCHRITT, gefiltert.length - angezeigt.length)} anzeigen
-          </button>
-        )}
+        {/* Adressbuch zuletzt — das ist der handgepflegte Teil und wird
+            beim Aufräumen des Pools nicht gebraucht. */}
+        <AdressbuchSektion />
       </div>
 
       {sammelLoeschen && (
         <ConfirmDialog
           title={`${gewaehlt.size} ${gewaehlt.size === 1 ? 'Eintrag' : 'Einträge'} löschen?`}
-          message="Die Werte werden aus dem Vorschlags-Pool entfernt. Formulare und Touren bleiben unverändert — es verschwinden nur die Vorschläge."
+          message={istKombiAnsicht
+            ? 'Die Zuordnung Straße → PLZ → Ort wird entfernt. Der Vorschlags-Pool bleibt unverändert; Touren und Formulare sowieso.'
+            : 'Die Werte werden aus dem Vorschlags-Pool entfernt. Formulare und Touren bleiben unverändert — es verschwinden nur die Vorschläge.'}
           confirmLabel="Löschen"
           destructive
-          onConfirm={async () => { await auswahlLoeschen(); }}
+          onConfirm={async () => { await entfernen([...gewaehlt]); }}
           onClose={() => setSammelLoeschen(false)}
         />
       )}

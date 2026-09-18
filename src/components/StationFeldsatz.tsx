@@ -29,7 +29,9 @@ import { TfBlock } from './TfBlock';
 import { AdressUebernehmen } from './AdressUebernehmen';
 import { SuggestCombobox } from './SuggestCombobox';
 import { useAdressVorschlaege } from './useAdressVorschlaege';
-import { adressAuswahlPatch, altAdresseHinweis } from '../lib/adresse';
+import {
+  adressAuswahlPatch, altAdresseHinweis, type AdressQuelle,
+} from '../lib/adresse';
 import type { KontaktEntwurf } from '../lib/tourAnsprechpartner';
 
 export const ZEIT_PLATZHALTER = 'z.B. 08:00 oder vormittags';
@@ -92,12 +94,18 @@ export function StationFeldsatz({
   const { adressbuch, erweitereText } = useAdressVorschlaege();
 
   /**
-   * Auswahl einer ganzen Adresse. Es werden NUR leere Felder gefüllt —
-   * die Stadt ist zugleich die Tour-Stadt und darf einen bereits
-   * gesetzten Wert nicht verlieren.
+   * Auswahl einer ganzen Adresse.
+   *
+   * `quelle` ist das Feld, in dem ausgewählt wurde — dort steht nur die
+   * Sucheingabe und der gewählte Wert ersetzt sie. Die übrigen Felder
+   * werden nur gefüllt, wenn sie leer sind; die Stadt ist zugleich die
+   * Tour-Stadt und darf einen gesetzten Wert nicht verlieren.
    */
-  function adresseUebernehmen(a: { strasse: string; plz: string; ort: string }) {
-    const patch = adressAuswahlPatch({ strasse, plz, stadt }, a);
+  function adresseUebernehmen(
+    a: { strasse: string; plz: string; ort: string },
+    quelle?: AdressQuelle,
+  ) {
+    const patch = adressAuswahlPatch({ strasse, plz, stadt }, a, quelle);
     if (patch.strasse !== undefined) onStrasse(patch.strasse);
     if (patch.plz !== undefined) onPlz(patch.plz);
     if (patch.stadt !== undefined) onStadt(patch.stadt);
@@ -114,7 +122,7 @@ export function StationFeldsatz({
             feldTyp="adresse_strasse"
             strukturVorschlaege={adressbuch}
             erweitereText={erweitereText}
-            onStruktur={adresseUebernehmen}
+            onStruktur={(a) => adresseUebernehmen(a, 'strasse')}
             placeholder="z.B. Heiligenroder Strasse 38e"
             value={strasse} onChange={onStrasse} />
         </div>

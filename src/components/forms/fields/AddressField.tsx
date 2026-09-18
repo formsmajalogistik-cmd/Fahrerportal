@@ -3,7 +3,7 @@ import { SuggestCombobox } from '../../SuggestCombobox';
 import { AdressUebernehmen } from '../../AdressUebernehmen';
 import { adressTeilTyp, feldTypVon } from '../../../lib/feldVorschlaege';
 import { useAdressVorschlaege } from '../../useAdressVorschlaege';
-import { adressAuswahlPatch } from '../../../lib/adresse';
+import { adressAuswahlPatch, type AdressQuelle } from '../../../lib/adresse';
 
 interface Props {
   field: FormField;
@@ -37,10 +37,15 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
 
   /**
    * Auswahl einer ganzen Adresse: verteilt Straße, PLZ und Ort auf die
-   * drei Felder, überschreibt dabei aber NICHTS, was schon dasteht.
+   * drei Felder. Das Feld, in dem ausgewählt wurde (`quelle`), wird
+   * ersetzt — dort steht nur die Sucheingabe. Die übrigen bleiben, wenn
+   * sie schon etwas enthalten.
    */
-  function adresseUebernehmen(a: { strasse: string; plz: string; ort: string }) {
-    const p = adressAuswahlPatch({ strasse: v.strasse, plz: v.plz, stadt: v.stadt }, a);
+  function adresseUebernehmen(
+    a: { strasse: string; plz: string; ort: string },
+    quelle?: AdressQuelle,
+  ) {
+    const p = adressAuswahlPatch({ strasse: v.strasse, plz: v.plz, stadt: v.stadt }, a, quelle);
     onChange({
       strasse: p.strasse ?? v.strasse ?? '',
       plz: p.plz ?? v.plz ?? '',
@@ -62,7 +67,7 @@ export function AddressField({ field, value, onChange, disabled }: Props) {
           feldTyp={basis ? adressTeilTyp(basis, 'strasse') : null}
           strukturVorschlaege={adressbuch}
           erweitereText={erweitereText}
-          onStruktur={adresseUebernehmen}
+          onStruktur={(a) => adresseUebernehmen(a, 'strasse')}
           placeholder="Straße + Hausnummer"
           aria-label={`${field.label} — Straße + Hausnummer`}
           value={v.strasse ?? ''}
