@@ -65,7 +65,15 @@ export async function loadTourProtokollZuweisungen(tourId: string): Promise<Tour
     sort_order: number;
     template: { id: string; name: string; schema: unknown } | null;
   };
-  return ((data ?? []) as unknown as Row[]).map((r) => ({
+  return ((data ?? []) as unknown as Row[]).map((r) => {
+    // „(unbekannt)" heißt praktisch immer: der Betrachter darf das
+    // Template nicht lesen (RLS), nicht dass es fehlt. Bis Migration 098
+    // war das der Normalfall für unsichtbare, zugewiesene Protokolle.
+    if (!r.template) {
+      console.warn('[loadTourProtokollZuweisungen] Template nicht lesbar',
+        { zuweisung: r.id, template_id: r.template_id, tourId });
+    }
+    return ({
     id: r.id,
     template_id: r.template_id,
     template_name: r.template?.name ?? '(unbekannt)',
@@ -75,7 +83,8 @@ export async function loadTourProtokollZuweisungen(tourId: string): Promise<Tour
       : null,
     vorgefuellte_daten: r.vorgefuellte_daten,
     sort_order: r.sort_order,
-  }));
+    });
+  });
 }
 
 export function ProtokollSection({

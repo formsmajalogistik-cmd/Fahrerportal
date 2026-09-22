@@ -227,6 +227,40 @@ export function tourTitel(
   return parts.filter(Boolean).join(' → ');
 }
 
+/**
+ * Route einer Tour in Worten: „Bremen nach München", mit Rückführung
+ * „Bremen nach München nach Hamburg".
+ *
+ * Gedacht für die Fahrer-Ansichten, in denen ein zugewiesenes Protokoll
+ * benannt wird — dort steht die Route als Unterzeile unter dem
+ * Protokollnamen und wird gelesen, nicht überflogen. `tourTitel()` mit
+ * seinen Pfeilen bleibt für Listen und Admin-Ansichten unverändert.
+ */
+export function tourRoute(
+  t: Partial<Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt'>> | null | undefined,
+): string {
+  if (!t) return '';
+  const parts = [t.start_stadt, t.ziel_stadt, t.rueckfuehrung_stadt]
+    .map((s) => (s ?? '').trim())
+    .filter(Boolean);
+  return parts.join(' nach ');
+}
+
+/**
+ * Dezenter Zusatz hinter der Route: „29.07.2026 · T-2026-4419".
+ * Fehlt eines von beidem, fällt es weg; fehlt beides, kommt ''.
+ */
+export function tourZusatz(
+  datum: string | null | undefined,
+  tourId: string | null | undefined,
+): string {
+  const teile: string[] = [];
+  if (datum) teile.push(formatDate(datum));
+  const t = (tourId ?? '').trim();
+  if (t) teile.push(t);
+  return teile.join(' · ');
+}
+
 /** ABA- und ABC-Touren brauchen zwei Protokoll-Formulare (einen pro Abschnitt). */
 export function hasTwoProtokollSlots(art: TourenArt | null | undefined): boolean {
   return art === 'ABA' || art === 'ABC';

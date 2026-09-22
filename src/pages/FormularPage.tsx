@@ -26,6 +26,7 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { useTestGuard, useTestMode } from '../auth/TestModeContext';
 import { merkeAusFormular } from '../lib/feldVorschlaege';
+import { tourRoute, tourZusatz } from '../lib/touren';
 import { useSync } from '../sync/SyncContext';
 import { displayName } from '../lib/names';
 import type {
@@ -58,6 +59,12 @@ export function FormularPage() {
 
   const [formular, setFormular] = useState<AusgefuelltesFormular | null>(null);
   const [template, setTemplate] = useState<FormularTemplate | null>(null);
+  /** Tour, aus der dieses Formular stammt — nur für die Kopfzeile. */
+  const [tourBezug, setTourBezug] = useState<{
+    tour_id: string | null; start_stadt: string | null;
+    ziel_stadt: string | null; rueckfuehrung_stadt: string | null;
+    startdatum: string | null; enddatum: string | null;
+  } | null>(null);
   const [data, setData] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +181,19 @@ export function FormularPage() {
       // Alt-Touren aus der Zeit vor 054.
       const tourId = typeof nextData._tour_id === 'string' ? nextData._tour_id : null;
       if (tourId) {
+        // Tour-Bezug für die Kopfzeile: unter dem Protokollnamen steht die
+        // Route, damit der Fahrer bei mehreren gleichnamigen Protokollen
+        // sieht, zu welcher Tour er gerade ausfüllt.
+        try {
+          const { data: bezug } = await supabase
+            .from('touren')
+            .select('tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt, startdatum, enddatum')
+            .eq('id', tourId)
+            .maybeSingle();
+          if (bezug) setTourBezug(bezug);
+        } catch (err) {
+          console.warn('[FormularPage] Tour-Bezug laden fehlgeschlagen', err);
+        }
         try {
           let prefill: Record<string, unknown> | null = null;
           let quelle = 'keine';
@@ -698,6 +718,17 @@ export function FormularPage() {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold text-maja-navy">{title}</h1>
+        {tourRoute(tourBezug) && (
+          <p className="text-sm text-maja-ink">
+            <span className="font-medium">{tourRoute(tourBezug)}</span>
+            {tourZusatz(tourBezug?.startdatum ?? tourBezug?.enddatum, tourBezug?.tour_id) && (
+              <span className="text-maja-muted">
+                {' · '}
+                {tourZusatz(tourBezug?.startdatum ?? tourBezug?.enddatum, tourBezug?.tour_id)}
+              </span>
+            )}
+          </p>
+        )}
         {formular && (
           <p className="text-sm text-maja-muted">
             Status: {readonly ? 'eingereicht' : 'Entwurf'} · Erstellt am{' '}

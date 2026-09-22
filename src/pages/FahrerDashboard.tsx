@@ -6,7 +6,7 @@ import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { summarizeEingang } from '../lib/eingangData';
-import { computeTourStatus, formatDate, tourTitel } from '../lib/touren';
+import { computeTourStatus, formatDate, tourRoute, tourZusatz } from '../lib/touren';
 import { zeigeTourProtokoll, zuweisungsSchluessel } from '../lib/tourProtokolle';
 import type {
   Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
@@ -474,38 +474,38 @@ function DraftCard({
 function TourProtokollCard({
   item, opening, onOpen,
 }: { item: TourProtokoll; opening: boolean; onOpen: () => void }) {
-  const titel = tourTitel({
+  // Zweizeilig: oben WAS auszufüllen ist (der echte Protokollname), darunter
+  // WOFÜR — die Tour als Route, dahinter dezent Datum und Tour-ID.
+  const route = tourRoute({
     start_stadt: item.tour.start_stadt,
     ziel_stadt: item.tour.ziel_stadt,
     rueckfuehrung_stadt: item.tour.rueckfuehrung_stadt,
   });
-  const dateRange = item.tour.startdatum || item.tour.enddatum
-    ? `${formatDate(item.tour.startdatum)} – ${formatDate(item.tour.enddatum)}`
-    : null;
+  const zusatz = tourZusatz(item.tour.startdatum ?? item.tour.enddatum, item.tour.tour_id);
   return (
     <li className="card flex flex-col p-5">
       <div className="flex items-start justify-between gap-2">
         <span className="inline-block rounded-full bg-maja-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-maja-accent">
           Tour-Protokoll
         </span>
-        <div className="flex shrink-0 items-center gap-2">
-          {item.draftId && (
-            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-              In Bearbeitung
-            </span>
-          )}
-          {item.tour.tour_id && (
-            <span className="text-xs font-semibold text-maja-muted">{item.tour.tour_id}</span>
-          )}
-        </div>
+        {item.draftId && (
+          <span className="inline-block shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+            In Bearbeitung
+          </span>
+        )}
       </div>
       <h3 className="mt-2 text-base font-semibold text-maja-navy">
         {item.template.name}
       </h3>
       <div className="mt-1 text-xs text-maja-ink space-y-0.5">
-        <div className="font-medium">{titel}</div>
+        {route && (
+          <div>
+            <span className="font-medium">{route}</span>
+            {zusatz && <span className="text-maja-muted"> · {zusatz}</span>}
+          </div>
+        )}
+        {!route && zusatz && <div className="text-maja-muted">{zusatz}</div>}
         {item.auftraggeber && <div className="text-maja-muted">{item.auftraggeber.name}</div>}
-        {dateRange && <div className="text-maja-muted">{dateRange}</div>}
       </div>
       <div className="mt-4">
         <button onClick={onOpen} disabled={opening} className="btn-primary w-full">
