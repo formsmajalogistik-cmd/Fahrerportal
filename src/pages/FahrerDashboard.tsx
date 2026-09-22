@@ -7,6 +7,7 @@ import { Spinner } from '../components/Spinner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { summarizeEingang } from '../lib/eingangData';
 import { computeTourStatus, formatDate, tourTitel } from '../lib/touren';
+import { zeigeTourProtokoll, zuweisungsSchluessel } from '../lib/tourProtokolle';
 import type {
   Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../types/db';
@@ -99,25 +100,48 @@ export function FahrerDashboard() {
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
+    // Eingereichte Formulare dieses Fahrers — nur als Schlüssel für die
+    // „erledigt"-Prüfung. Bewusst NUR id, template_id und die Tour-ID aus
+    // dem daten-JSONB (`_tour_id`), nicht das ganze JSONB: die Prüfung
+    // braucht nichts weiter, und eingereichte Protokolle summieren sich.
+    const eingereichtPromise = fahrerRow
+      ? supabase
+          .from('ausgefuellte_formulare')
+          .select('id, template_id, tour_ref:daten->>_tour_id')
+          .eq('fahrer_id', fahrerRow.id)
+          .eq('status', 'submitted')
+      : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
+
     // Tour-Protokolle: alle Templates, die einer der Touren dieses Fahrers
     // zugewiesen sind (über tour_protokoll_zuweisungen) und deren Tour
     // den Status geplant/aktiv hat.
+    //
+    // Die Tour hängt als `!inner` dran und wird direkt serverseitig auf
+    // das aktive Konto und schriftliche Protokolle eingegrenzt. Vorher
+    // kamen ALLE lesbaren Zuweisungen (inkl. Unterkonten) herüber und
+    // wurden erst im Browser verworfen — das lief irgendwann in die
+    // Zeilen-Obergrenze von PostgREST.
     const tourPromise = fahrerRow
       ? supabase
           .from('tour_protokoll_zuweisungen')
           .select(`
             id, template_id, vorgefuellte_daten,
             template:template_id (id, name),
-            tour:tour_id (
+            tour:tour_id!inner (
               id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
               startdatum, enddatum, fahrer_id, protokoll_art,
               auftraggeber:auftraggeber_id (name)
             )
           `)
+          .eq('tour.fahrer_id', fahrerRow.id)
+          .eq('tour.protokoll_art', 'schriftlich')
           .order('sort_order', { ascending: true })
+          .order('id', { ascending: true })
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
-    const [tplRes, draftRes, tourRes] = await Promise.all([tplPromise, draftPromise, tourPromise]);
+    const [tplRes, draftRes, tourRes, eingereichtRes] = await Promise.all([
+      tplPromise, draftPromise, tourPromise, eingereichtPromise,
+    ]);
     if (tplRes.error) setError(tplRes.error.message);
     if (draftRes.error) {
       // Vorher still geschluckt: ein PostgREST-400 (z.B. weil eine
@@ -143,6 +167,22 @@ export function FahrerDashboard() {
       return matches[0] ?? null;
     };
 
+    // „Erledigt" — und zwar AUSSCHLIESSLICH je konkreter Zuweisung, also
+    // je Tour UND Template. Niemals je Template allein: dasselbe Protokoll
+    // kann am selben Tag an mehrere Fahrer und mehrere Touren gehen, jede
+    // Zuweisung wird eigenständig eingereicht. Ein Schlüssel ohne die Tour
+    // würde alle übrigen Zuweisungen mit ausblenden.
+    if (eingereichtRes.error) {
+      console.warn('[FahrerDashboard] Eingereichte laden fehlgeschlagen', eingereichtRes.error);
+    }
+    type EingereichtRow = { template_id: string; tour_ref: string | null };
+    const eingereichtList = (Array.isArray(eingereichtRes.data)
+      ? eingereichtRes.data : []) as unknown as EingereichtRow[];
+    const erledigt = new Set<string>();
+    for (const e of eingereichtList) {
+      if (e.tour_ref) erledigt.add(zuweisungsSchluessel(e.tour_ref, e.template_id));
+    }
+
     // Tour-Protokoll-Zuweisungen clientseitig auf Status der Tour
     // filtern und pro Zuweisung als eigenständiger Eintrag rendern —
     // bei ABA/ABC-Touren kann eine Tour mehrere Protokoll-Karten
@@ -164,18 +204,25 @@ export function FahrerDashboard() {
     const rawList: RawAssignment[] = (Array.isArray(tourRes.data) ? tourRes.data : []) as unknown as RawAssignment[];
     const filtered: TourProtokoll[] = [];
     for (const a of rawList) {
-      if (!a.template || !a.tour) continue;
-      if (a.tour.protokoll_art !== 'schriftlich') continue;
-      if (a.tour.fahrer_id !== fahrerRow?.id) continue;
+      if (!a.tour) continue;
+      // Kommt das Template als NULL zurück, fehlt dem Fahrer das Leserecht
+      // darauf. Genau das war der Fehler „zugewiesenes Protokoll taucht
+      // nicht auf" — behoben in Migration 098. Sollte es erneut auftreten,
+      // steht es jetzt in der Konsole statt still zu verschwinden.
+      if (!a.template) {
+        console.warn('[FahrerDashboard] Zuweisung ohne lesbares Template',
+          { zuweisung: a.id, template_id: a.template_id, tour: a.tour.tour_id });
+        continue;
+      }
       const openDraft = findOpenDraft(a.template.id, a.tour.id);
-      // „To-Do"-Ansicht (vereinfachte Regel): anzeigen, solange die Tour
-      // geplant/aktiv ist ODER noch ein offener Entwurf existiert. Sobald
-      // die Tour abgeschlossen ist UND kein offener Entwurf mehr besteht
-      // (i.d.R. nach dem Einreichen), verschwindet das Protokoll hier —
-      // über Tourenliste/Eingänge bleibt es weiter einsehbar.
-      const s = computeTourStatus(a.tour.startdatum, a.tour.enddatum);
-      const aktiv = s === 'geplant' || s === 'aktiv';
-      if (!aktiv && !openDraft) continue;
+      // Anzeige-Regel und „erledigt"-Schlüssel liegen in lib/tourProtokolle —
+      // dort steht auch, warum der Schlüssel Tour UND Template enthält.
+      // Über Tourenliste/Eingänge bleibt ein erledigtes Protokoll einsehbar.
+      if (!zeigeTourProtokoll({
+        tourStatus: computeTourStatus(a.tour.startdatum, a.tour.enddatum),
+        hatOffenenEntwurf: !!openDraft,
+        bereitsEingereicht: erledigt.has(zuweisungsSchluessel(a.tour.id, a.template.id)),
+      })) continue;
       filtered.push({
         tour: {
           ...a.tour,

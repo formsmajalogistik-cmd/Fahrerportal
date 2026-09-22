@@ -22,6 +22,15 @@ Verbindliche Regeln für alle neuen Migrationen in diesem Projekt:
    gedroppt — die aktive Zuweisungs-Tabelle ist
    `tour_protokoll_zuweisungen` (Migration 054).
 
+   Zweite Falle aus derselben Ecke: `touren.schriftliches_protokoll_id`
+   existiert noch, wird aber von keiner Oberfläche mehr beschrieben.
+   Migration 054 hat die Zuweisungen in die neue Tabelle verlegt, die
+   Lesepolicy auf `formular_templates` aber weiter an der Altspalte
+   hängen lassen — ein zugewiesenes UNSICHTBARES Protokoll war dadurch
+   für den Fahrer nicht lesbar und verschwand wortlos aus seiner Liste
+   (Migration 098). **Wer eine Verknüpfung umzieht, muss auch die
+   Policies mitziehen, die daran hängen.**
+
 2. **Idempotent schreiben.** `add column if not exists`,
    `drop policy if exists` + `create policy`,
    `create or replace function`, `drop view if exists` + `create view`,
