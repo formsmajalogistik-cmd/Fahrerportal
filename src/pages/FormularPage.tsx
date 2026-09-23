@@ -714,19 +714,22 @@ export function FormularPage() {
       : (template?.schema?.sections ?? []).some((s) => s.id === zwischenSectionId)
   );
 
+  // Unterzeile unter dem Protokollnamen: Route, dahinter Datum · Tour-ID.
+  // Fehlt die Route (Start und Ziel leer), bleibt nur der Zusatz stehen.
+  const bezugRoute = tourRoute(tourBezug);
+  const bezugZusatz = tourBezug
+    ? tourZusatz(tourBezug.startdatum ?? tourBezug.enddatum, tourBezug.tour_id)
+    : '';
+
   const header = (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-2xl font-semibold text-maja-navy">{title}</h1>
-        {tourRoute(tourBezug) && (
+        {(bezugRoute || bezugZusatz) && (
           <p className="text-sm text-maja-ink">
-            <span className="font-medium">{tourRoute(tourBezug)}</span>
-            {tourZusatz(tourBezug?.startdatum ?? tourBezug?.enddatum, tourBezug?.tour_id) && (
-              <span className="text-maja-muted">
-                {' · '}
-                {tourZusatz(tourBezug?.startdatum ?? tourBezug?.enddatum, tourBezug?.tour_id)}
-              </span>
-            )}
+            {bezugRoute && <span className="font-medium">{bezugRoute}</span>}
+            {bezugRoute && bezugZusatz && <span className="text-maja-muted"> · </span>}
+            {bezugZusatz && <span className="text-maja-muted">{bezugZusatz}</span>}
           </p>
         )}
         {formular && (

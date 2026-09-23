@@ -236,14 +236,27 @@ export function tourTitel(
  * Protokollnamen und wird gelesen, nicht überflogen. `tourTitel()` mit
  * seinen Pfeilen bleibt für Listen und Admin-Ansichten unverändert.
  */
-export function tourRoute(
-  t: Partial<Pick<Tour, 'start_stadt' | 'ziel_stadt' | 'rueckfuehrung_stadt'>> | null | undefined,
-): string {
+export function tourRoute(t: RouteQuelle | null | undefined): string {
   if (!t) return '';
-  const parts = [t.start_stadt, t.ziel_stadt, t.rueckfuehrung_stadt]
-    .map((s) => (s ?? '').trim())
-    .filter(Boolean);
-  return parts.join(' nach ');
+  const teil = (s: string | null | undefined) => (s ?? '').trim();
+  // Fehlende Städte fallen weg — nie „null", nie „ nach ".
+  const kern = [teil(t.start_stadt), teil(t.ziel_stadt)].filter(Boolean);
+  // Ohne Start UND Ziel gibt es keine Route; eine Rückführung allein wäre
+  // irreführend. Dann '' — der Aufrufer zeigt stattdessen Datum/Tour-ID.
+  if (kern.length === 0) return '';
+  const rueck = teil(t.rueckfuehrung_stadt);
+  return (rueck ? [...kern, rueck] : kern).join(' nach ');
+}
+
+/**
+ * Was tourRoute() braucht. Bewusst nicht `Partial<Pick<Tour, …>>`: die
+ * Werte kommen aus der Datenbank und sind dort legitim `null` — Partial
+ * erlaubt nur `undefined`.
+ */
+export interface RouteQuelle {
+  start_stadt?: string | null;
+  ziel_stadt?: string | null;
+  rueckfuehrung_stadt?: string | null;
 }
 
 /**
