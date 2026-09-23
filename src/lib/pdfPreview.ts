@@ -6,6 +6,7 @@ import {
   OPTION_DEFAULT_SIZE, TEXT_DEFAULT_FONT,
 } from './fieldMapping';
 import { fetchDamageDiagramBytes } from './damageDiagramStorage';
+import { entferneFormularfelder } from './pdfFormularfelder';
 import type { FieldMapping, FormField, FormSchema } from '../types/db';
 
 const ACCENT = rgb(0.17, 0.37, 0.54); // Maja-Accent
@@ -146,6 +147,9 @@ export async function buildPreviewPdf(
     }
   }
 
+  // Vorschau soll aussehen wie die fertige PDF — also ebenfalls ohne die
+  // blau hervorgehobenen, leeren Formularfelder der Vorlage.
+  entferneFormularfelder(pdf);
   const bytes = await pdf.save();
   return new Blob([bytes as unknown as ArrayBuffer], { type: 'application/pdf' });
 }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PDFDocument } from 'pdf-lib';
 import { buildPreviewPdf } from '../../lib/pdfPreview';
+import { pruefeFormularfelder, type FormularfelderBefund } from '../../lib/pdfFormularfelder';
 import { fetchPdfBytes, getPdfSignedUrl, uploadPdfTemplate } from '../../lib/pdfStorage';
 import { PdfMappingCanvas } from '../../components/forms/PdfMappingCanvas';
 import { CheckBoxEmptyIcon, CheckIcon } from '../../components/icons';
@@ -78,6 +80,32 @@ export function TemplateMappingEditor({
     })();
     return () => { cancelled = true; };
   }, [pdfPath]);
+
+  // Enthält die Vorlage ausfüllbare Formularfelder? Dann Hinweis anzeigen.
+  // Die Vorlage selbst bleibt unverändert — die Felder werden erst beim
+  // Generieren entfernt (lib/pdfFormularfelder). Das kostet dort nichts
+  // Messbares und das hochgeladene Original bleibt für Rückfragen intakt.
+  // Gespeichert wird der Befund zusammen mit den Bytes, auf die er sich
+  // bezieht — so zeigt ein Vorlagenwechsel nie den alten Befund.
+  const [feldBefund, setFeldBefund] = useState<{
+    bytes: ArrayBuffer; befund: FormularfelderBefund;
+  } | null>(null);
+  useEffect(() => {
+    if (!pdfBytes) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const doc = await PDFDocument.load(pdfBytes.slice(0), { ignoreEncryption: true });
+        if (!cancelled) setFeldBefund({ bytes: pdfBytes, befund: pruefeFormularfelder(doc) });
+      } catch (err) {
+        console.warn('[TemplateMappingEditor] Formularfelder-Prüfung fehlgeschlagen', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pdfBytes]);
+  const formularfelder = feldBefund && feldBefund.bytes === pdfBytes
+    && (feldBefund.befund.widgets > 0 || feldBefund.befund.acroForm)
+    ? feldBefund.befund : null;
 
   // Wenn die aktive PDF wechselt, Auswahl & Seite resetten.
   useEffect(() => {
@@ -310,6 +338,14 @@ export function TemplateMappingEditor({
         {error && (
           <div role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
+          </div>
+        )}
+        {formularfelder && (
+          <div className="mt-3 rounded-lg bg-maja-light px-3 py-2 text-sm text-maja-ink">
+            Diese Vorlage enthält interaktive Formularfelder
+            {formularfelder.widgets > 0 && ` (${formularfelder.widgets})`} — sie werden
+            beim Generieren automatisch entfernt. In der fertigen PDF erscheinen
+            dadurch keine blau hervorgehobenen Kästen.
           </div>
         )}
       </div>

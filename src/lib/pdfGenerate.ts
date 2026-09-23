@@ -11,6 +11,7 @@ import {
 } from './fieldMapping';
 import { fetchDamageDiagramBytes } from './damageDiagramStorage';
 import { fetchPdfBytes } from './pdfStorage';
+import { entferneFormularfelder } from './pdfFormularfelder';
 import {
   deleteFromOneDrive, downloadFromOneDrive, previewOneDrivePdf, sendEmail,
   triggerOneDriveDownload, uploadToOneDrive,
@@ -798,6 +799,13 @@ export async function fillPdf(
     }
   }
 
+  // Leere AcroForm-Felder der Vorlage raus — sonst legen Betrachter blaue
+  // Kästen über die gezeichneten Einträge. Erst hier am Ende, damit auch
+  // die per copyPages erzeugten Foto-Folgeseiten erfasst sind.
+  const befund = entferneFormularfelder(pdf);
+  if (befund.widgets > 0 || befund.acroForm) {
+    console.info('[fillPdf] Formularebene entfernt', befund);
+  }
   return await pdf.save();
 }
 
@@ -998,6 +1006,9 @@ export async function generateAndUploadFormPdfs(
         const copied = await merged.copyPages(doc, doc.getPageIndices());
         for (const pg of copied) merged.addPage(pg);
       }
+      // Die Teile kommen bereits bereinigt aus fillPdf — hier trotzdem,
+      // damit die Gesamt-PDF garantiert frei von Formularfeldern ist.
+      entferneFormularfelder(merged);
       const mergedBytes = await merged.save();
       // Dateiname: filename_pattern der ERSTEN Vorlage, sonst Template-Name.
       const first = mergeParts[0].tplPdf;
@@ -1199,6 +1210,9 @@ export async function generateAndUploadZwischenprotokoll(
   })}`;
   await applyZwischenWatermark(merged, label);
 
+  // Wie bei der Gesamt-PDF: Teile sind schon bereinigt, das Ergebnis
+  // wird trotzdem noch einmal geprüft.
+  entferneFormularfelder(merged);
   const out = await merged.save();
   const path = zwischenprotokollPath(formular);
   const blob = new Blob([out as unknown as ArrayBuffer], { type: 'application/pdf' });
