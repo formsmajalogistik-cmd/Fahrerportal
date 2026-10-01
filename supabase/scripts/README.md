@@ -166,3 +166,20 @@ das auf automatische Ableitung um). Damit er nicht bei null startet:
    hochgezählt statt verdoppelt, kurze Werte (< 3 Zeichen) fallen weg.
    Ein zweiter Lauf bricht mit einer Meldung ab
    (`vorschlaege_backfill_log`).
+
+## Schadensaufnahme: Bestandsprüfung
+
+`schadensaufnahme_diagnose.sql` — **nur lesen.** Drei Abfragen:
+
+1. Welche Vorlagen sind vom Foto-Problem betroffen — Schadendiagramm und
+   Zusatzbilder auf verschiedenen Formularseiten (dann tut „Foto
+   aufnehmen" nach dem Setzen eines Schadens nichts), oder das erste
+   Foto-Feld ist die Beleg-Sektion (dann landen Schadenfotos dort).
+2. Eingereichte Formulare mit Schäden: Anzahl, ungültige Punkte (fehlen
+   still im PDF), Obergrenze 20 erreicht, Punktpaare, die sich im PDF
+   überdecken (Abstand < 14 pt in der gemappten Box).
+3. Eine Zusammenfassungszeile zu 2.
+
+Einen Vergleich „Entwurf vs. eingereicht" gibt es nicht: Der Server
+hält keine Versionsstände, der Entwurf wird beim Einreichen in derselben
+Zeile überschrieben.
