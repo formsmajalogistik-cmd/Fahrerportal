@@ -2052,6 +2052,10 @@ export type Database = {
         Args: { p_ids: string[] };
         Returns: string[];
       };
+      touren_picker_suche: {
+        Args: { p_suche: string; p_limit?: number };
+        Returns: string[];
+      };
     };
     Enums: {
       user_role: UserRole;

@@ -3,11 +3,23 @@ import { supabase } from '../../lib/supabase';
 import { displayName } from '../../lib/names';
 import { XIcon } from '../../components/icons';
 import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
+import {
+  naechstliegendZuerst, zeitfensterGrenzen, zeitfensterOrFilter, type Zeitfenster,
+} from '../../lib/tourZeitfenster';
 
 interface Props {
   onClose: () => void;
   /** Wird mit der ausgewählten Tour-ID aufgerufen. */
   onPick: (tourId: string) => void;
+  /**
+   * Optionales Zeitfenster. Gesetzt (Zusätze/Belege): die Liste zeigt nur
+   * Touren, die sich damit überschneiden, plus Touren auf Eis; eine Suche
+   * läuft serverseitig ohne Datumsgrenze. Nicht gesetzt („Tour öffnen"):
+   * unverändertes Verhalten von vorher.
+   */
+  zeitfenster?: Zeitfenster;
+  titel?: string;
+  beschreibung?: string;
 }
 
 interface PickRow {
@@ -16,8 +28,9 @@ interface PickRow {
   start_stadt: string;
   ziel_stadt: string;
   rueckfuehrung_stadt: string | null;
-  startdatum: string;
-  enddatum: string;
+  startdatum: string | null;
+  enddatum: string | null;
+  auf_eis: boolean | null;
   kennzeichen: string[];
   auftraggeber: { name: string } | null;
   fahrer: {
@@ -28,69 +41,144 @@ interface PickRow {
   } | null;
 }
 
+const SELECT = `
+  id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+  startdatum, enddatum, auf_eis, kennzeichen,
+  auftraggeber:auftraggeber_id (name),
+  fahrer:fahrer_id (
+    id, vorname, nachname,
+    user:user_id (email, vorname, nachname)
+  )
+`;
+
+/** Clientseitiger Textfilter — für den Modus ohne Zeitfenster und als Rückfall. */
+function passtZurSuche(r: PickRow, q: string): boolean {
+  const fahrerName = displayName(r.fahrer?.user ?? null).toLowerCase();
+  const hay = [
+    r.tour_id ?? '',
+    r.start_stadt, r.ziel_stadt, r.rueckfuehrung_stadt ?? '',
+    ...(r.kennzeichen ?? []),
+    r.auftraggeber?.name ?? '',
+    fahrerName,
+  ].join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
 /**
  * Picker für eine bestehende Tour aus dem Posteingang. Filtert nach
- * Tour-ID, Stadt, Kennzeichen oder Fahrername. Limit 100 — typischer
- * Use-Case ist eine konkrete Mail-Anfrage zu einer kürzlich angelegten
- * Tour, eine Volltextsuche über alle Touren ist nicht nötig.
+ * Tour-ID, Stadt, Kennzeichen oder Fahrername.
+ *
+ * Ohne `zeitfenster`: die 150 Touren mit dem spätesten Startdatum,
+ * gefiltert im Browser — so wie bisher.
+ *
+ * Mit `zeitfenster`: Diese 150 waren für Zusätze und Belege das Problem.
+ * Geplante Zukunftstouren belegten die Plätze, und schon eine Fahrt von
+ * vor zwei Tagen war weder in der Liste noch per Suche zu finden. Deshalb
+ * filtert hier die Abfrage selbst nach dem Zeitfenster, und die Suche
+ * läuft über die RPC `touren_picker_suche` (Migration 099) über alle
+ * Touren.
  */
-export function TourPickerDialog({ onClose, onPick }: Props) {
+export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschreibung }: Props) {
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<PickRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Suche lief im Rückfall (RPC fehlt) nur über die jüngsten Touren. */
+  const [suchRueckfall, setSuchRueckfall] = useState(false);
+
+  const fensterAktiv = !!zeitfenster;
+  const tageZurueck = zeitfenster?.tageZurueck ?? 0;
+  const tageVoraus = zeitfenster?.tageVoraus ?? 0;
+  const suchbegriff = search.trim();
+  // Ohne Zeitfenster bleibt die Suche wie bisher rein clientseitig und
+  // löst kein Neuladen aus.
+  const serverSuche = fensterAktiv && suchbegriff.length >= 2 ? suchbegriff : '';
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      setLoading(true);
-      const { data, error: err } = await supabase
-        .from('touren')
-        .select(`
-          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-          startdatum, enddatum, kennzeichen,
-          auftraggeber:auftraggeber_id (name),
-          fahrer:fahrer_id (
-            id, vorname, nachname,
-            user:user_id (email, vorname, nachname)
-          )
-        `)
-        .order('startdatum', { ascending: false, nullsFirst: false })
-        .limit(150);
-      if (cancelled) return;
-      if (err) setError(err.message);
-      else setRows((data as unknown as PickRow[]) ?? []);
-      setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    // Beim Tippen kurz warten, damit nicht jeder Buchstabe eine Abfrage wird.
+    const verzoegerung = serverSuche ? 300 : 0;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setLoading(true);
+        setError(null);
+        let ergebnis: PickRow[] = [];
+        let fehler: string | null = null;
+        let rueckfall = false;
+
+        if (!fensterAktiv) {
+          const { data, error: err } = await supabase
+            .from('touren').select(SELECT)
+            .order('startdatum', { ascending: false, nullsFirst: false })
+            .limit(150);
+          if (err) fehler = err.message;
+          else ergebnis = (data as unknown as PickRow[]) ?? [];
+        } else if (!serverSuche) {
+          const { von, bis } = zeitfensterGrenzen(new Date(), { tageZurueck, tageVoraus });
+          const { data, error: err } = await supabase
+            .from('touren').select(SELECT)
+            .or(zeitfensterOrFilter(von, bis))
+            .order('enddatum', { ascending: false, nullsFirst: false })
+            .order('id')
+            .limit(500);
+          if (err) fehler = err.message;
+          else ergebnis = (data as unknown as PickRow[]) ?? [];
+        } else {
+          const { data: ids, error: rpcErr } = await supabase
+            .rpc('touren_picker_suche', { p_suche: serverSuche, p_limit: 200 });
+          if (!rpcErr) {
+            const liste = ((ids as unknown as string[] | null) ?? []);
+            if (liste.length > 0) {
+              const { data, error: err } = await supabase
+                .from('touren').select(SELECT).in('id', liste);
+              if (err) fehler = err.message;
+              else ergebnis = (data as unknown as PickRow[]) ?? [];
+            }
+          } else {
+            // Migration 099 noch nicht eingespielt: nicht scheitern, sondern
+            // wie früher in den jüngsten Touren suchen — und das sagen.
+            console.warn('[TourPickerDialog] Suche über RPC nicht verfügbar — Rückfall', rpcErr);
+            rueckfall = true;
+            const { data, error: err } = await supabase
+              .from('touren').select(SELECT)
+              .order('enddatum', { ascending: false, nullsFirst: false })
+              .limit(500);
+            if (err) fehler = err.message;
+            else {
+              const q = serverSuche.toLowerCase();
+              ergebnis = ((data as unknown as PickRow[]) ?? []).filter((r) => passtZurSuche(r, q));
+            }
+          }
+        }
+
+        if (cancelled) return;
+        if (fehler) setError(fehler);
+        setRows(fensterAktiv ? naechstliegendZuerst(ergebnis, new Date()) : ergebnis);
+        setSuchRueckfall(rueckfall);
+        setLoading(false);
+      })();
+    }, verzoegerung);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [fensterAktiv, tageZurueck, tageVoraus, serverSuche]);
 
   const filtered = useMemo(() => {
+    // Mit Zeitfenster filtert der Server; ein einzelnes Zeichen filtert
+    // die Standardliste noch im Browser (die Server-Suche braucht 2).
+    if (fensterAktiv && serverSuche) return rows;
     const q = search.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((r) => {
-      const fahrerName = displayName(r.fahrer?.user ?? null).toLowerCase();
-      const hay = [
-        r.tour_id ?? '',
-        r.start_stadt, r.ziel_stadt, r.rueckfuehrung_stadt ?? '',
-        ...(r.kennzeichen ?? []),
-        r.auftraggeber?.name ?? '',
-        fahrerName,
-      ].join(' ').toLowerCase();
-      return hay.includes(q);
-    });
-  }, [rows, search]);
+    return rows.filter((r) => passtZurSuche(r, q));
+  }, [rows, search, fensterAktiv, serverSuche]);
 
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
       <div className="card w-full max-w-2xl p-6">
         <div className="mb-4 flex items-start justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-maja-navy">Tour öffnen</h2>
+            <h2 className="text-lg font-semibold text-maja-navy">{titel ?? 'Tour öffnen'}</h2>
             <p className="text-xs text-maja-muted">
-              Suche eine bestehende Tour aus, um Daten aus der E-Mail
-              einzutragen. Die Tour öffnet sich neben der Mail im
-              Bearbeiten-Modus.
+              {beschreibung ?? 'Suche eine bestehende Tour aus, um Daten aus der E-Mail '
+                + 'einzutragen. Die Tour öffnet sich neben der Mail im Bearbeiten-Modus.'}
             </p>
           </div>
           <button type="button" onClick={onClose}
@@ -137,23 +225,43 @@ export function TourPickerDialog({ onClose, onPick }: Props) {
                       </div>
                       <div className="mt-1 text-xs text-maja-muted">
                         {displayName(t.fahrer?.user ?? null) || '—'}
-                        {' · '}{formatDate(t.startdatum)}
+                        {' · '}{t.auf_eis && !t.startdatum ? 'ohne Termin' : formatDate(t.startdatum)}
+                        {t.enddatum && t.startdatum && t.enddatum.slice(0, 10) !== t.startdatum.slice(0, 10)
+                          && <> – {formatDate(t.enddatum)}</>}
                         {(t.kennzeichen ?? []).length > 0 && <> · {(t.kennzeichen ?? []).join(', ')}</>}
                         {t.auftraggeber?.name && <> · {t.auftraggeber.name}</>}
                       </div>
                     </div>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      status === 'aktiv' ? 'bg-emerald-100 text-emerald-700'
-                        : status === 'geplant' ? 'bg-blue-100 text-blue-700'
-                        : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {status === 'aktiv' ? 'Aktiv' : status === 'geplant' ? 'Geplant' : 'Abgeschlossen'}
-                    </span>
+                    {t.auf_eis ? (
+                      <span
+                        className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:!bg-amber-900 dark:!text-amber-100"
+                        title="Tour ohne festen Termin — erscheint unabhängig vom Zeitfenster"
+                      >
+                        Auf Eis
+                      </span>
+                    ) : (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        status === 'aktiv' ? 'bg-emerald-100 text-emerald-700'
+                          : status === 'geplant' ? 'bg-blue-100 text-blue-700'
+                          : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {status === 'aktiv' ? 'Aktiv' : status === 'geplant' ? 'Geplant' : 'Abgeschlossen'}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
             })}
           </ul>
+        )}
+        {fensterAktiv && !loading && (
+          <p className="mt-3 text-xs text-maja-muted">
+            {serverSuche
+              ? (suchRueckfall
+                  ? 'Gesucht wurde nur in den jüngsten 500 Touren (Suchfunktion der Datenbank fehlt noch — Migration 099).'
+                  : 'Suche über alle Touren, unabhängig vom Datum.')
+              : `Zeigt Touren der letzten ${tageZurueck} Tage und der nächsten ${tageVoraus} Tage. Für ältere Touren bitte suchen.`}
+          </p>
         )}
         <div className="mt-4 flex justify-end">
           <button type="button" className="btn-secondary" onClick={onClose}>Abbrechen</button>

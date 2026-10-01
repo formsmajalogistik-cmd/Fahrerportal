@@ -14,6 +14,7 @@ import { EmailMessageView, EmailMessageHeader } from './EmailMessageView';
 import { TourFromEmailPanel } from './TourFromEmailPanel';
 import { TourEditFromEmailPanel } from './TourEditFromEmailPanel';
 import { TourPickerDialog } from './TourPickerDialog';
+import { ZUSAETZE_ZEITFENSTER } from '../../lib/tourZeitfenster';
 import { ZusaetzeFromEmailPanel } from './ZusaetzeFromEmailPanel';
 
 // API-Seitengröße — wir laden mehr als angezeigt, damit nach dem
@@ -713,6 +714,13 @@ export function PosteingangPage() {
       )}
       {tourPicker && (
         <TourPickerDialog
+          // Zusätze und Belege kommen Tage NACH der Fahrt — dafür ein
+          // Zeitfenster um heute. „Tour öffnen" bleibt unverändert.
+          {...(tourPicker !== 'open' && {
+            zeitfenster: ZUSAETZE_ZEITFENSTER,
+            titel: tourPicker === 'zusaetze-belege' ? 'Tour für Zusätze + Belege wählen' : 'Tour für Zusätze wählen',
+            beschreibung: 'Wähle die Tour, zu der die Zusätze aus der E-Mail gehören.',
+          })}
           onClose={() => setTourPicker(null)}
           onPick={(tourId) => {
             const purpose = tourPicker;
