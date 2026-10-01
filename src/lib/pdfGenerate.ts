@@ -650,10 +650,15 @@ export async function fillPdf(
         // Diagramme nach dem PNG-Compose), Marker werden aber in PDF-
         // Punkten dimensioniert — sonst skalieren sie mit der Canvas-
         // Auflösung mit und werden unleserlich.
+        // Marker-Größe an die Box anpassen: 14 pt bei großen Diagrammen,
+        // bei kleinen bis auf 9 pt herunter. Mit festen 14 pt verdeckte
+        // in kleinen Boxen ein Schaden den benachbarten — im Protokoll
+        // war dann nur einer zu sehen.
+        const markerPt = Math.max(9, Math.min(14, Math.min(entry.width, entry.height) * 0.09));
         const png = await renderDamageDiagramWithMarkers(
           bg, markers, entry.width * 4, entry.height * 4,
           /* scale (canvas:pdf) */ 4,
-          /* markerDiameterPt */ 14,
+          markerPt,
         );
         if (!png) continue;
         const img = await pdf.embedPng(png);

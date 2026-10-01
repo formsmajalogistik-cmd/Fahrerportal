@@ -26,6 +26,7 @@ import { uploadToOneDrive } from '../lib/onedrive';
 import { supabase } from '../lib/supabase';
 import { runSubmissionEmails } from '../lib/submissionEmails';
 import { merkeAusFormular } from '../lib/feldVorschlaege';
+import { ersetzePendingFoto } from '../lib/pendingFoto';
 import type {
   AusgefuelltesFormular, FormularTemplate, PhotoValue,
 } from '../types/db';
@@ -153,11 +154,17 @@ async function processUploadQueue(): Promise<void> {
         mime_type: item.blob.type || 'image/jpeg',
         size_bytes: item.blob.size,
       };
-      await applyUploadSuccessToDraft(item.formularId, item.fieldId, newValue);
+      await applyUploadSuccessToDraft(item.formularId, item.fieldId, item.id, newValue);
       await removeFromUploadQueue(item.id);
-      // Page-Komponente (falls mounted) auf neuen Draft hinweisen.
+      // Page-Komponente (falls mounted) auf GENAU dieses Foto hinweisen —
+      // sie ersetzt nur den Platzhalter, nicht ihren ganzen Stand.
       window.dispatchEvent(new CustomEvent('maja:draft-updated', {
-        detail: { formularId: item.formularId },
+        detail: {
+          formularId: item.formularId,
+          fieldId: item.fieldId,
+          pendingId: item.id,
+          value: newValue,
+        },
       }));
     } catch (err) {
       const attempts = item.attempts + 1;
@@ -176,31 +183,45 @@ async function processUploadQueue(): Promise<void> {
   }
 }
 
+/**
+ * Trägt ein fertig hochgeladenes Foto ein — im Entwurf UND in einer
+ * eventuell wartenden Einreichung. Ersetzt wird nur der Platzhalter mit
+ * genau dieser pending_id (siehe lib/pendingFoto).
+ *
+ * Vorher: Die wartende Einreichung blieb unberührt. Wurde offline oder
+ * mit offenen Uploads eingereicht, ging das Formular später mit den
+ * Platzhaltern statt der Fotos raus — im PDF fehlten sie. Außerdem
+ * überschrieb ein Einzelfoto-Upload das Feld auch dann, wenn der Fahrer
+ * inzwischen neu fotografiert hatte, und in Zusatzbilder-Listen wurde
+ * nie etwas ersetzt (die Kennung passte nicht).
+ */
 async function applyUploadSuccessToDraft(
   formularId: string,
   fieldId: string,
+  pendingId: string,
   newValue: PhotoValue,
 ): Promise<void> {
   const draft = await getFormDraft(formularId);
-  if (!draft) return;
-  // Wenn das Feld ein dynamic_photos-Feld ist (Array), suchen wir
-  // den passenden Slot. Sonst direkter Setzen.
-  const current = (draft.data as Record<string, unknown>)[fieldId];
-  if (Array.isArray(current)) {
-    const next = current.map((slot) => {
-      if (slot && typeof slot === 'object'
-        && (slot as { pending_id?: string }).pending_id
-        && (slot as { pending_id?: string }).pending_id === `${formularId}:${fieldId}`) {
-        return newValue;
-      }
-      return slot;
-    });
-    draft.data[fieldId] = next;
-  } else {
-    draft.data[fieldId] = newValue;
+  if (draft) {
+    const ersetzt = ersetzePendingFoto((draft.data as Record<string, unknown>)[fieldId], pendingId, newValue);
+    if (ersetzt !== undefined) {
+      draft.data[fieldId] = ersetzt;
+      draft.savedAt = Date.now();
+      await saveFormDraft(draft);
+    }
   }
-  draft.savedAt = Date.now();
-  await saveFormDraft(draft);
+  try {
+    const wartend = (await getAllPendingSubmissions()).find((s) => s.formularId === formularId);
+    if (wartend) {
+      const ersetzt = ersetzePendingFoto(wartend.data[fieldId], pendingId, newValue);
+      if (ersetzt !== undefined) {
+        wartend.data = { ...wartend.data, [fieldId]: ersetzt };
+        await enqueueSubmission(wartend);
+      }
+    }
+  } catch (err) {
+    console.warn('[SyncDrain] Wartende Einreichung nicht aktualisierbar', err);
+  }
 }
 
 /**

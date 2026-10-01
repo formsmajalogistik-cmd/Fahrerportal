@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { compressImage, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/photo';
+import { getPhotoUrl } from '../../../lib/photo';
+import { getUploadQueue, removeFromUploadQueue } from '../../../lib/offlineDb';
+import { zusatzbildSpeichern } from '../../../lib/zusatzbildUpload';
+import { zusatzbilderAusWert } from '../../../lib/pendingFoto';
+import { useSync } from '../../../sync/SyncContext';
 import type { FormField, PhotoValue } from '../../../types/db';
+import type { FeldWert } from '../FormRenderer';
 
 interface Props {
   field: FormField;
@@ -9,15 +14,12 @@ interface Props {
   oneDriveFolder: string;
   /** Formular-Instanz-ID — für die Foto-Vorschau via Download-Proxy nötig. */
   formularId?: string;
-  onChange: (v: PhotoValue[]) => void;
+  onChange: (v: FeldWert) => void;
   disabled?: boolean;
 }
 
-function asArray(v: unknown): PhotoValue[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is PhotoValue =>
-    !!x && typeof x === 'object' && typeof (x as { storage_path?: unknown }).storage_path === 'string'
-  );
+function kennung(p: PhotoValue): string {
+  return p.storage_path ?? p.pending_id ?? '';
 }
 
 // Sehr hohes Limit — die einzelne PDF-Seite wird beim Export automatisch
@@ -26,23 +28,14 @@ function asArray(v: unknown): PhotoValue[] {
 // trotzdem vor versehentlichen Massen-Uploads.
 const MAX_DYNAMIC_PHOTOS = 100;
 
-/** Kurzer Zufalls-Suffix gegen Dateinamen-Kollisionen bei schnellen
- *  Aufnahmen (gleicher Millisekunden-Timestamp). */
-function randomSuffix(): string {
-  try {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-      return crypto.randomUUID().slice(0, 8);
-    }
-  } catch { /* ignore */ }
-  return Math.random().toString(36).slice(2, 10);
-}
-
 export function DynamicPhotosField({
   field, value, oneDriveFolder, formularId, onChange, disabled,
 }: Props) {
-  const items = asArray(value);
+  const { triggerSync } = useSync();
+  const items = zusatzbilderAusWert(value);
   const limitReached = items.length >= MAX_DYNAMIC_PHOTOS;
-  const [uploading, setUploading] = useState(false);
+  // Zähler statt Ja/Nein: mehrere Aufnahmen dürfen parallel laufen.
+  const [laufend, setLaufend] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -53,40 +46,34 @@ export function DynamicPhotosField({
       setError(`Maximum von ${MAX_DYNAMIC_PHOTOS} Fotos bereits erreicht.`);
       return;
     }
-    setUploading(true);
-    console.info('[Upload] Start:', {
-      feldName: field.id, slotIndex: items.length, dateiGroesse: file.size,
-      typ: file.type, name: file.name,
-    });
+    setLaufend((n) => n + 1);
     try {
-      const compressed = await compressImage(file);
-      const ext = compressed.type === 'image/jpeg' ? 'jpg' : 'png';
-      // GARANTIERT eindeutiger Dateiname: Index + Timestamp + Zufalls-
-      // Suffix. Bei schnellen Aufnahmen kann der Timestamp allein
-      // kollidieren (gleiche Millisekunde) und ein Upload den anderen
-      // überschreiben.
-      const filename = `${field.id}_${String(items.length + 1).padStart(3, '0')}_${Date.now()}_${randomSuffix()}.${ext}`;
-      const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
-      const next: PhotoValue = {
-        storage_path: path,
-        mime_type: compressed.type,
-        size_bytes: compressed.size,
-      };
-      onChange([...items, next]);
-      console.info('[Upload] Ende:', { feldName: field.id, slotIndex: items.length, status: 'ok' });
+      const { wert, inWarteschlange } = await zusatzbildSpeichern(file, {
+        feldId: field.id, oneDriveFolder, formularId, quelle: 'feld',
+      });
+      // Funktional anhängen: `items` ist der Stand vom Beginn des Uploads.
+      // Damit würde ein zweites, parallel fertig gewordenes Foto wieder
+      // verschwinden.
+      onChange((vorher: unknown) => [...zusatzbilderAusWert(vorher), wert]);
+      if (inWarteschlange) triggerSync();
     } catch (err) {
-      console.error('[Upload] Ende:', { feldName: field.id, slotIndex: items.length, status: 'fehler', fehler: err });
       setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen');
     } finally {
-      setUploading(false);
+      setLaufend((n) => Math.max(0, n - 1));
     }
   }
 
-  function removeAt(idx: number) {
-    // Eintrag aus dem State nehmen — die Datei in OneDrive bleibt liegen
-    // (Cleanup könnte später als Hintergrund-Job laufen).
-    onChange(items.filter((_, i) => i !== idx));
+  function remove(p: PhotoValue) {
+    // Nach Kennung entfernen, nicht nach Position — die Position kann sich
+    // durch einen parallel fertig gewordenen Upload verschoben haben.
+    // Die Datei in OneDrive bleibt liegen; ein wartender Upload wird
+    // abgebrochen.
+    const k = kennung(p);
+    onChange((vorher: unknown) => zusatzbilderAusWert(vorher).filter((x) => kennung(x) !== k));
+    if (p.pending_id) void removeFromUploadQueue(p.pending_id).catch(() => {});
   }
+
+  const uploading = laufend > 0;
 
   return (
     <div>
@@ -103,12 +90,12 @@ export function DynamicPhotosField({
       {items.length > 0 && (
         <ul className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
           {items.map((p, i) => (
-            <li key={`${p.storage_path}-${i}`}>
+            <li key={kennung(p)}>
               <DynamicPhotoTile
                 photo={p}
                 index={i}
                 formularId={formularId}
-                onRemove={() => removeAt(i)}
+                onRemove={() => remove(p)}
                 disabled={disabled}
               />
             </li>
@@ -118,9 +105,6 @@ export function DynamicPhotosField({
 
       <input
         ref={cameraRef}
-        // Stabile ID, damit das Schadensdiagramm-Modal die Kamera-
-        // Aufnahme dieses Feldes per .click() triggern kann (Aufgabe 4).
-        id={`dynphotos-${field.id}-camera`}
         type="file"
         accept="image/*"
         capture="environment"
@@ -133,7 +117,6 @@ export function DynamicPhotosField({
       />
       <input
         ref={galleryRef}
-        id={`dynphotos-${field.id}-gallery`}
         type="file"
         accept="image/*"
         className="hidden"
@@ -154,15 +137,15 @@ export function DynamicPhotosField({
             type="button"
             className="btn-primary"
             onClick={() => cameraRef.current?.click()}
-            disabled={disabled || uploading}
+            disabled={disabled}
           >
-            {uploading ? 'Hochladen …' : '+ Foto aufnehmen'}
+            {uploading ? `Hochladen … (${laufend})` : '+ Foto aufnehmen'}
           </button>
           <button
             type="button"
             className="btn-secondary"
             onClick={() => galleryRef.current?.click()}
-            disabled={disabled || uploading}
+            disabled={disabled}
           >
             Aus Galerie wählen
           </button>
@@ -189,25 +172,34 @@ function DynamicPhotoTile({
   disabled?: boolean;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const wartend = !photo.storage_path && !!photo.pending_id;
 
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
-    if (!photo.storage_path) { setUrl(null); return; }
-    getPhotoUrl(photo.storage_path, formularId).then((u) => {
-      if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
-      if (!u) {
-        console.warn('[Bild-Vorschau] dynamic photo Laden fehlgeschlagen', {
-          path: photo.storage_path, formularId,
-        });
+    void (async () => {
+      let u: string | null = null;
+      if (photo.storage_path) {
+        u = await getPhotoUrl(photo.storage_path, formularId);
+        if (!u) {
+          console.warn('[Bild-Vorschau] dynamic photo Laden fehlgeschlagen', {
+            path: photo.storage_path, formularId,
+          });
+        }
+      } else if (photo.pending_id) {
+        // Wartet noch auf den Upload: Vorschau direkt aus der Warteschlange.
+        const item = (await getUploadQueue().catch(() => [])).find((x) => x.id === photo.pending_id);
+        if (item) u = URL.createObjectURL(item.blob);
       }
-      createdUrl = u; setUrl(u);
-    });
+      if (cancelled) { if (u) URL.revokeObjectURL(u); return; }
+      createdUrl = u;
+      setUrl(u);
+    })();
     return () => {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [photo.storage_path, formularId]);
+  }, [photo.storage_path, photo.pending_id, formularId]);
 
   return (
     <div className="relative overflow-hidden rounded-lg border border-maja-navy/20 bg-maja-light">
@@ -223,6 +215,11 @@ function DynamicPhotoTile({
       <div className="absolute left-1 top-1 rounded bg-maja-navy/80 px-1.5 text-[10px] font-semibold text-white">
         #{index + 1}
       </div>
+      {wartend && (
+        <div className="absolute inset-x-0 bottom-0 bg-amber-500/90 px-1.5 py-0.5 text-center text-[10px] font-semibold text-white">
+          wartet auf Upload
+        </div>
+      )}
       {!disabled && (
         <button
           type="button"

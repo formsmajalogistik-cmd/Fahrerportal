@@ -12,6 +12,7 @@ const subNav: SubNavItem[] = [
   { to: '/einstellungen/manuelle-empfaenger', label: 'Manuelle Empfänger' },
   { to: '/einstellungen/brief-vorlagen', label: 'Brief-Vorlagen' },
   { to: '/einstellungen/auftrags-email', label: 'Auftrags-E-Mail' },
+  { to: '/einstellungen/diagnose', label: 'Diagnose' },
 ];
 
 export function EinstellungenPage() {

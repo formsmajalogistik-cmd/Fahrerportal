@@ -27,10 +27,13 @@ import { useAuth } from '../auth/AuthContext';
 import { useTestGuard, useTestMode } from '../auth/TestModeContext';
 import { merkeAusFormular } from '../lib/feldVorschlaege';
 import { tourRoute, tourZusatz } from '../lib/touren';
+import { diagnose, setzeDiagnoseKontext } from '../lib/diagnose';
+import { ersetzePendingFoto } from '../lib/pendingFoto';
+import type { FeldWert } from '../components/forms/FormRenderer';
 import { useSync } from '../sync/SyncContext';
 import { displayName } from '../lib/names';
 import type {
-  AusgefuelltesFormular, FormSchema, FormularTemplate,
+  AusgefuelltesFormular, FormSchema, FormularTemplate, PhotoValue,
 } from '../types/db';
 import type { Json } from '../types/supabase';
 
@@ -251,9 +254,22 @@ export function FormularPage() {
 
   const readonly = formular?.status === 'submitted';
 
-  const handleChange = useCallback((fieldId: string, value: unknown) => {
+  // Diagnose-Ereignisse (Schadensaufnahme u.a.) diesem Formular zuordnen.
+  const formularIdFuerDiagnose = formular?.id ?? null;
+  const fahrerIdFuerDiagnose = formular?.fahrer_id ?? null;
+  useEffect(() => {
+    setzeDiagnoseKontext({ formularId: formularIdFuerDiagnose, fahrerId: fahrerIdFuerDiagnose });
+    return () => setzeDiagnoseKontext({ formularId: null, fahrerId: null });
+  }, [formularIdFuerDiagnose, fahrerIdFuerDiagnose]);
+
+  // `value` darf auch eine Funktion (vorheriger Wert → neuer Wert) sein.
+  // Das brauchen Felder, die erst nach einem asynchronen Schritt (Upload)
+  // anhängen: Mit einem fertigen Wert würden sie den Stand vom Beginn
+  // des Uploads zurückschreiben und Zwischenänderungen verlieren.
+  const handleChange = useCallback((fieldId: string, value: FeldWert) => {
     setData((prev) => {
-      const next = { ...prev, [fieldId]: value };
+      const neuerWert = typeof value === 'function' ? value(prev[fieldId]) : value;
+      const next = { ...prev, [fieldId]: neuerWert };
       // Felder, die der Fahrer aktiv geändert hat, merken — damit
       // nachgelagerte Admin-Prefill-Updates sie nicht überschreiben.
       // Reserved-Keys (z.B. `_slider_0`, `_tour_id`, `_touched`) sind
@@ -298,13 +314,27 @@ export function FormularPage() {
   // Wenn der Sync-Drainer einen Upload abgeschlossen hat, ist der Entwurf
   // in IDB jetzt aktueller (Photo-Feld zeigt jetzt storage_path). Wir laden
   // den Stand neu und übernehmen ihn ins UI.
+  //
+  // WICHTIG: Nur den einen Platzhalter ersetzen, NIE den ganzen Stand.
+  // Früher stand hier `setData(entwurf.data)` — der Entwurf auf dem Gerät
+  // ist aber bis zu 2 s (beim Tippen länger) älter als der Bildschirm.
+  // Alles aus diesem Fenster ging verloren, z.B. gerade bestätigte
+  // Schadenpunkte.
   useEffect(() => {
     if (!formular) return;
     function handler(e: Event) {
-      const ev = e as CustomEvent<{ formularId: string }>;
-      if (ev.detail?.formularId !== formular?.id) return;
-      void getFormDraft(formular!.id).then((d) => {
-        if (d) setData(d.data);
+      const ev = e as CustomEvent<{
+        formularId: string; fieldId?: string; pendingId?: string; value?: PhotoValue;
+      }>;
+      const d = ev.detail;
+      if (d?.formularId !== formular?.id) return;
+      if (!d.fieldId || !d.pendingId || !d.value) return;
+      const { fieldId, pendingId, value } = d;
+      setData((prev) => {
+        const ersetzt = ersetzePendingFoto(prev[fieldId], pendingId, value);
+        if (ersetzt === undefined) return prev;
+        diagnose('foto_nachgeladen', { feld: fieldId });
+        return { ...prev, [fieldId]: ersetzt };
       });
     }
     window.addEventListener('maja:draft-updated', handler as EventListener);

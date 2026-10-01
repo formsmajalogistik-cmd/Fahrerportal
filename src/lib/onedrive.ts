@@ -1,7 +1,8 @@
 // Frontend-Client für die /api-Routen, die das OneDrive über Microsoft Graph
 // bedienen. Alle Calls laufen mit dem Supabase-Bearer-Token im Header.
 
-import { supabase, getValidToken } from './supabase';
+import { supabase, getValidToken, getValidTokenLage } from './supabase';
+import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { fetchWithRetry } from './fetchRetry';
 
 /**
@@ -15,8 +16,12 @@ import { fetchWithRetry } from './fetchRetry';
  * mit einem stillen 401-Loop landet.
  */
 async function authHeader(): Promise<Record<string, string>> {
-  const token = await getValidToken();
+  const { token, grund } = await getValidTokenLage();
   if (!token) {
+    // Nur Verbindung weg: NICHT zum Login umleiten (das warf Fahrer
+    // mitten im Formular raus). Der Aufruf scheitert normal — Fotos
+    // landen dann in der Upload-Warteschlange.
+    if (grund === 'netz') throw new Error('Keine Verbindung — Anmeldung kann gerade nicht erneuert werden.');
     redirectToLoginOnce();
     return {};
   }
@@ -61,7 +66,9 @@ async function fetchWithAuthRetry(
     // refreshSession durch getValidToken-Pfad — danach erneut fetchen.
     const refreshed = await supabase.auth.refreshSession();
     if (refreshed.error || !refreshed.data.session) {
-      redirectToLoginOnce();
+      // Refresh scheiterte nur an der Verbindung → kein Login-Wurf,
+      // der Aufrufer bekommt die 401 und reiht z.B. das Foto ein.
+      if (!(refreshed.error && isAuthRetryableFetchError(refreshed.error))) redirectToLoginOnce();
       return resp;
     }
     resp = await fetchWithRetry(url, await buildInit());

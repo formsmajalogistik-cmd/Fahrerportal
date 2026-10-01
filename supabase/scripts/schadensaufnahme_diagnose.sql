@@ -56,7 +56,9 @@ order by d.vorlage;
 --    (x/y fehlt oder außerhalb 0–100 — das PDF lässt sie still weg),
 --    Obergrenze 20 erreicht, und Punktpaare, die sich im PDF überdecken
 --    (Abstand < 14 pt in der gemappten Diagramm-Box — dann ist nur einer
---    zu sehen).
+--    zu sehen). 14 pt war die feste Markergröße bis zur Stabilisierung
+--    der Schadensaufnahme; neu erzeugte PDFs passen die Größe an die Box
+--    an (9–14 pt). Für bereits verschickte PDFs gilt die Zahl so.
 
 with diagramme as (
   select a.id as formular_id, a.created_at, t.name as vorlage, f->>'id' as feld_id,

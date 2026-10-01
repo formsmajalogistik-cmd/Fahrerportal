@@ -1839,6 +1839,41 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Diagnose-Protokoll technischer Ereignisse (Migration 100).
+      // Fahrer schreiben eigene Einträge, nur Admins lesen.
+      diagnose_log: {
+        Row: {
+          id: number;
+          created_at: string;
+          user_id: string;
+          fahrer_id: string | null;
+          formular_id: string | null;
+          bereich: string;
+          ereignis: string;
+          geraet: string | null;
+          details: Json;
+        };
+        Insert: {
+          id?: never;
+          created_at?: string;
+          user_id?: string;
+          fahrer_id?: string | null;
+          formular_id?: string | null;
+          bereich?: string;
+          ereignis: string;
+          geraet?: string | null;
+          details?: Json;
+        };
+        Update: {
+          fahrer_id?: string | null;
+          formular_id?: string | null;
+          bereich?: string;
+          ereignis?: string;
+          geraet?: string | null;
+          details?: Json;
+        };
+        Relationships: [];
+      };
       // Unterschrift + Firmenstempel des Absenders (Migration 092).
       // Die Spalten halten Pfade im privaten Bucket „absender", keine
       // Bilddaten.

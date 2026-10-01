@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { getDamageDiagramSignedUrl } from '../../../lib/damageDiagramStorage';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { ladeSchadenbild } from '../../../lib/damageDiagramStorage';
+import { diagnose } from '../../../lib/diagnose';
+import { istTipp, punktAusTipp } from '../../../lib/skizzeTipp';
 import { FullscreenOverlay } from '../FullscreenOverlay';
 import { XIcon } from '../../icons';
 import type { DamageKind, DamageMarker, FormField } from '../../../types/db';
@@ -31,18 +33,36 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [imgError, setImgError] = useState<string | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [ladeVersuch, setLadeVersuch] = useState(0);
+  const pfad = field.vehicleImage ?? null;
 
   useEffect(() => {
+    if (!pfad) return;
     let cancelled = false;
-    setImgError(null);
-    if (!field.vehicleImage) { setImgUrl(null); return; }
-    getDamageDiagramSignedUrl(field.vehicleImage).then((u) => {
+    const t0 = Date.now();
+    ladeSchadenbild(pfad).then(({ url, quelle }) => {
       if (cancelled) return;
-      if (u) setImgUrl(u);
-      else setImgError('Schadendiagramm konnte nicht geladen werden.');
+      setImgUrl(url);
+      setImgError(null);
+      diagnose('bild_geladen', { feld: field.id, quelle, ms: Date.now() - t0, versuch: ladeVersuch + 1 });
+    }).catch((err) => {
+      if (cancelled) return;
+      const text = err instanceof Error ? err.message : String(err);
+      setImgError(text);
+      diagnose('bild_fehler', { feld: field.id, fehler: text, versuch: ladeVersuch + 1, online: navigator.onLine });
     });
     return () => { cancelled = true; };
-  }, [field.vehicleImage]);
+  }, [pfad, ladeVersuch, field.id]);
+
+  // Kommt der Empfang zurück, ohne Zutun neu versuchen.
+  useEffect(() => {
+    if (!imgError) return;
+    const nochmal = () => setLadeVersuch((n) => n + 1);
+    window.addEventListener('online', nochmal);
+    return () => window.removeEventListener('online', nochmal);
+  }, [imgError]);
+
+  const bildFehlt = !imgUrl;
 
   return (
     <div>
@@ -56,15 +76,30 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
         </div>
       )}
       {imgError && (
-        <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-          {imgError}
+        <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+          <span className="flex-1">
+            Fahrzeugbild konnte nicht geladen werden{navigator.onLine ? '' : ' (kein Empfang)'}.
+            Schäden lassen sich erst setzen, wenn das Bild da ist.
+          </span>
+          <button type="button" className="font-semibold underline"
+                  onClick={() => setLadeVersuch((n) => n + 1)}>
+            Erneut laden
+          </button>
         </div>
       )}
 
       {field.vehicleImage && (
         <button
           type="button"
-          onClick={() => setOverlayOpen(true)}
+          onClick={() => {
+            if (bildFehlt) {
+              // Statt still nichts zu tun: neu laden und protokollieren.
+              diagnose('skizze_ohne_bild_angetippt', { feld: field.id, fehler: imgError });
+              setLadeVersuch((n) => n + 1);
+              return;
+            }
+            setOverlayOpen(true);
+          }}
           disabled={disabled}
           className="relative block w-full overflow-hidden rounded-lg border border-maja-navy/20 bg-maja-light text-left disabled:opacity-50"
         >
@@ -73,7 +108,7 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
                  style={{ pointerEvents: 'none' }} />
           ) : (
             <div className="flex aspect-[2/1] w-full items-center justify-center text-xs text-maja-muted">
-              Bild wird geladen …
+              {imgError ? 'Bild nicht verfügbar — antippen zum erneuten Laden' : 'Bild wird geladen …'}
             </div>
           )}
           {markers.map((m, i) => (
@@ -93,11 +128,16 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
 
       {overlayOpen && imgUrl && field.vehicleImage && (
         <DamageDiagramOverlay
+          feldId={field.id}
           title={field.label}
           imgUrl={imgUrl}
           initial={markers}
           onCancel={() => setOverlayOpen(false)}
-          onConfirm={(next) => { onChange(next); setOverlayOpen(false); }}
+          onConfirm={(next) => {
+            onChange(next);
+            setOverlayOpen(false);
+            diagnose('punkte_gespeichert', { feld: field.id, anzahl: next.length });
+          }}
         />
       )}
     </div>
@@ -107,6 +147,7 @@ export function DamageDiagramField({ field, value, onChange, disabled }: Props) 
 // ---------- Overlay ----------
 
 interface OverlayProps {
+  feldId: string;
   title: string;
   imgUrl: string;
   initial: DamageMarker[];
@@ -122,9 +163,8 @@ function distance(a: PointerInfo, b: PointerInfo): number {
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
-const TAP_THRESHOLD_PX = 8;
 
-function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: OverlayProps) {
+function DamageDiagramOverlay({ feldId, title, imgUrl, initial, onCancel, onConfirm }: OverlayProps) {
   const [markers, setMarkers] = useState<DamageMarker[]>(initial);
   const [pending, setPending] = useState<{ x: number; y: number } | null>(null);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
@@ -135,14 +175,65 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
   const imgRef = useRef<HTMLImageElement>(null);
   const pointers = useRef<Map<number, PointerInfo>>(new Map());
   const downStart = useRef<{ x: number; y: number; t: number } | null>(null);
-  const moveDist = useRef(0);
+  /** Größte Entfernung vom Aufsetzpunkt während der Geste. */
+  const maxEntfernung = useRef(0);
   const lastPinch = useRef<{ dist: number } | null>(null);
   const lastPan = useRef<PointerInfo | null>(null);
+  // Tipps erst annehmen, wenn das Bild geladen UND vermessen ist —
+  // vorher hat es die Höhe 0 und jeder Tipp ginge ins Leere.
+  const [bildBereit, setBildBereit] = useState(false);
+  const [hinweis, setHinweis] = useState<string | null>(null);
+  const [verwerfenFragen, setVerwerfenFragen] = useState(false);
+  // Zeitpunkt, an dem die Schadensart-Auswahl aufging. Nach einem Tipp
+  // schickt der Browser noch einen synthetischen Klick an dieselbe
+  // Stelle — die Auswahl liegt dann schon darüber. Ohne Sperre wählte
+  // dieser Geisterklick ungefragt die Schadensart unter dem Finger oder
+  // traf „Abbrechen" (Punkt weg, für den Fahrer passierte „nichts").
+  const auswahlOffenSeit = useRef(0);
+  const GEISTERKLICK_MS = 400;
+  function istGeisterklick(ziel: string): boolean {
+    if (Date.now() - auswahlOffenSeit.current >= GEISTERKLICK_MS) return false;
+    diagnose('geisterklick_ignoriert', { feld: feldId, ziel });
+    return true;
+  }
 
-  // Bei Mount: Bild laden, scale/tx/ty zurücksetzen.
+  function zeigeHinweis(text: string) {
+    setHinweis(text);
+    window.setTimeout(() => setHinweis((h) => (h === text ? null : h)), 2500);
+  }
+
+  function bildGeladen() {
+    const img = imgRef.current;
+    const r = img?.getBoundingClientRect();
+    const ok = !!img && img.naturalWidth > 0 && !!r && r.width > 0 && r.height > 0;
+    setBildBereit(ok);
+    diagnose(ok ? 'skizze_geoeffnet' : 'skizze_bild_ohne_groesse', {
+      feld: feldId, breite: r?.width ?? 0, hoehe: r?.height ?? 0,
+      punkte: initial.length, pointer: typeof window.PointerEvent === 'function',
+    });
+  }
+
+  // Drehen / Größenänderung: Zoom zurücksetzen. Die Verschiebe-Grenzen
+  // gelten sonst für die alte Größe. Punkte selbst sind Prozentwerte und
+  // bleiben an ihrer Stelle.
   useEffect(() => {
-    setTransform({ scale: 1, tx: 0, ty: 0 });
-  }, []);
+    let t: number | null = null;
+    function onResize() {
+      if (t) window.clearTimeout(t);
+      t = window.setTimeout(() => {
+        setTransform({ scale: 1, tx: 0, ty: 0 });
+        const r = imgRef.current?.getBoundingClientRect();
+        diagnose('skizze_groesse_geaendert', { feld: feldId, breite: r?.width ?? 0, hoehe: r?.height ?? 0 });
+      }, 250);
+    }
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      if (t) window.clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [feldId]);
 
   function clampPan(scale: number, tx: number, ty: number): { tx: number; ty: number } {
     const c = containerRef.current;
@@ -158,20 +249,27 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
 
   function placeMarker(clientX: number, clientY: number) {
     const img = imgRef.current;
-    if (!img) return;
-    const rect = img.getBoundingClientRect();
-    // getBoundingClientRect berücksichtigt CSS-Transforms (scale + translate)
-    // bereits — die % der Bildposition sind also direkt korrekt.
-    const px = ((clientX - rect.left) / rect.width) * 100;
-    const py = ((clientY - rect.top) / rect.height) * 100;
-    if (px < 0 || px > 100 || py < 0 || py > 100) return;
+    if (!img || !bildBereit) {
+      diagnose('tap_verworfen', { feld: feldId, grund: 'bild_nicht_geladen' });
+      zeigeHinweis('Bild wird noch geladen …');
+      return;
+    }
+    // getBoundingClientRect im Moment des Tipps — berücksichtigt Zoom,
+    // Verschiebung, Drehung und Seitenwechsel ohne gespeicherte Maße.
+    const ergebnis = punktAusTipp(clientX, clientY, img.getBoundingClientRect());
+    if (!ergebnis.ok) {
+      diagnose('tap_verworfen', { feld: feldId, grund: ergebnis.grund });
+      return;
+    }
     if (markers.length >= MAX_MARKERS) {
       setMaxedOut(true);
+      diagnose('tap_verworfen', { feld: feldId, grund: 'maximum' });
       window.setTimeout(() => setMaxedOut(false), 2000);
       return;
     }
     setSelectedIdx(null);
-    setPending({ x: px, y: py });
+    auswahlOffenSeit.current = Date.now();
+    setPending({ x: ergebnis.x, y: ergebnis.y });
   }
 
   function onPointerDown(e: RPointerEvent<HTMLDivElement>) {
@@ -179,7 +277,7 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.current.size === 1) {
       downStart.current = { x: e.clientX, y: e.clientY, t: Date.now() };
-      moveDist.current = 0;
+      maxEntfernung.current = 0;
       lastPan.current = { x: e.clientX, y: e.clientY };
     } else if (pointers.current.size === 2) {
       const arr = Array.from(pointers.current.values());
@@ -209,7 +307,11 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
     } else if (pointers.current.size === 1 && lastPan.current) {
       const dx = e.clientX - lastPan.current.x;
       const dy = e.clientY - lastPan.current.y;
-      moveDist.current += Math.hypot(dx, dy);
+      const start = downStart.current;
+      if (start) {
+        maxEntfernung.current = Math.max(maxEntfernung.current,
+          Math.hypot(e.clientX - start.x, e.clientY - start.y));
+      }
       if (transform.scale > 1) {
         setTransform((t) => {
           const next = clampPan(t.scale, t.tx + dx, t.ty + dy);
@@ -227,18 +329,52 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
     if (pointers.current.size < 2) lastPinch.current = null;
     if (pointers.current.size === 0) {
       lastPan.current = null;
-      // Tap-Erkennung: nur ein Pointer aktiv, wenig Bewegung, kein Pinch.
-      if (wasSinglePointer && start && moveDist.current < TAP_THRESHOLD_PX) {
-        placeMarker(e.clientX, e.clientY);
+      // Tipp: ein Finger, kaum vom Aufsetzpunkt entfernt (siehe istTipp).
+      if (wasSinglePointer && start) {
+        const ende = { x: e.clientX, y: e.clientY };
+        if (istTipp(start, ende, maxEntfernung.current)) {
+          placeMarker(e.clientX, e.clientY);
+        } else if (maxEntfernung.current < 40) {
+          // Knapp daneben — interessant, falls Tipps auf einem Gerät
+          // systematisch nicht erkannt werden.
+          diagnose('tap_verworfen', {
+            feld: feldId, grund: 'bewegung',
+            abstand: Math.hypot(ende.x - start.x, ende.y - start.y), max: maxEntfernung.current,
+          });
+        }
       }
       downStart.current = null;
-      moveDist.current = 0;
+      maxEntfernung.current = 0;
     }
   }
 
+  // Vom Browser abgebrochene Geste: aufräumen, aber KEINEN Punkt setzen.
+  // Vorher lief das über onPointerUp und konnte einen Punkt erzeugen.
+  function onPointerCancel(e: RPointerEvent<HTMLDivElement>) {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) lastPinch.current = null;
+    if (pointers.current.size === 0) {
+      lastPan.current = null;
+      downStart.current = null;
+      maxEntfernung.current = 0;
+    }
+    diagnose('tap_abgebrochen', { feld: feldId });
+  }
+
+  const geaendert = JSON.stringify(markers) !== JSON.stringify(initial);
+
+  // „Abbrechen", ESC: bei ungespeicherten Änderungen erst nachfragen.
+  const abbrechen = useCallback(() => {
+    if (geaendert) { setVerwerfenFragen(true); return; }
+    diagnose('skizze_abgebrochen', { feld: feldId, verworfen: 0 });
+    onCancel();
+  }, [geaendert, feldId, onCancel]);
+
   function placeKind(kind: DamageKind) {
     if (!pending) return;
+    // Funktional — nie mit einem veralteten Stand der Liste rechnen.
     setMarkers((m) => [...m, { ...pending, kind }]);
+    diagnose('punkt_gesetzt', { feld: feldId, x: pending.x, y: pending.y, art: kind, anzahl: markers.length + 1 });
     setPending(null);
   }
 
@@ -255,12 +391,13 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
     <FullscreenOverlay
       title={`Schäden — ${title}`}
       hint="Tippen platziert einen Marker. Mit zwei Fingern zoomen, mit einem Finger verschieben."
-      onCancel={onCancel}
+      onCancel={abbrechen}
       onConfirm={() => {
         // Foto-Aufforderung (Aufgabe 4): wenn neue Marker hinzugekommen
         // sind, signalisiert das Diagramm dem FormRenderer, wie viele
         // — der entscheidet dann, ob er den DynamicPhotos-Prompt zeigt.
         const newCount = Math.max(0, markers.length - initial.length);
+        diagnose('skizze_bestaetigt', { feld: feldId, punkte: markers.length, neu: newCount });
         if (newCount > 0) {
           window.dispatchEvent(new CustomEvent('maja:damage-points-added', {
             detail: { count: newCount },
@@ -300,7 +437,7 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
+            onPointerCancel={onPointerCancel}
             className="relative flex h-full w-full items-center justify-center select-none"
             style={{ touchAction: 'none' }}
           >
@@ -319,6 +456,12 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
                 className="block w-full"
                 draggable={false}
                 style={{ pointerEvents: 'none' }}
+                onLoad={bildGeladen}
+                onError={() => {
+                  setBildBereit(false);
+                  diagnose('skizze_bild_fehler', { feld: feldId });
+                  zeigeHinweis('Fahrzeugbild konnte nicht angezeigt werden.');
+                }}
               />
               {markers.map((m, i) => {
                 const isSelected = selectedIdx === i;
@@ -356,6 +499,12 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
           </div>
         </div>
 
+        {hinweis && (
+          <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-1.5 text-xs font-semibold text-white shadow">
+            {hinweis}
+          </div>
+        )}
+
         {/* Hinweis "Maximum erreicht" */}
         {maxedOut && (
           <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-full bg-red-600 px-4 py-1.5 text-xs font-semibold text-white shadow">
@@ -363,6 +512,37 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
           </div>
         )}
       </div>
+
+      {/* Rückfrage beim Verwerfen */}
+      {verwerfenFragen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-maja-ink/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-4 shadow-xl" role="alertdialog" aria-modal="true">
+            <h3 className="text-base font-semibold text-maja-navy">Änderungen verwerfen?</h3>
+            <p className="mt-1 text-sm text-maja-muted">
+              Die Markierungen dieser Bearbeitung werden nicht übernommen.
+              Zum Speichern unten auf „Bestätigen" tippen.
+            </p>
+            <div className="mt-4 grid gap-2">
+              <button type="button" className="btn-primary" onClick={() => setVerwerfenFragen(false)}>
+                Weiter bearbeiten
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                onClick={() => {
+                  diagnose('skizze_abgebrochen', {
+                    feld: feldId, verworfen: Math.abs(markers.length - initial.length),
+                  });
+                  setVerwerfenFragen(false);
+                  onCancel();
+                }}
+              >
+                Verwerfen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Schadensart-Picker */}
       {pending && (
@@ -374,7 +554,7 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
                 <button
                   key={k}
                   type="button"
-                  onClick={() => placeKind(k)}
+                  onClick={() => { if (!istGeisterklick(k)) placeKind(k); }}
                   className={`flex flex-col items-center gap-1 rounded-lg p-3 text-white transition hover:opacity-90 ${KIND_BG[k]}`}
                 >
                   <span className="text-2xl font-bold">{k}</span>
@@ -384,7 +564,7 @@ function DamageDiagramOverlay({ title, imgUrl, initial, onCancel, onConfirm }: O
             </div>
             <button
               type="button"
-              onClick={() => setPending(null)}
+              onClick={() => { if (!istGeisterklick('abbrechen')) setPending(null); }}
               className="btn-secondary mt-3 w-full"
             >
               Abbrechen

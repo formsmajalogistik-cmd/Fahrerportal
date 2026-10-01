@@ -24,6 +24,7 @@ import { EingaengePage } from './pages/admin/EingaengePage';
 import { PosteingangPage } from './pages/admin/PosteingangPage';
 import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
 import { FeldVorschlaegePage } from './pages/admin/FeldVorschlaegePage';
+import { DiagnoseLogPage } from './pages/admin/DiagnoseLogPage';
 import { ManuelleEmpfaengerPage } from './pages/admin/ManuelleEmpfaengerPage';
 import { BriefeListPage } from './pages/admin/briefe/BriefeListPage';
 import { BriefDetailPage } from './pages/admin/briefe/BriefDetailPage';
@@ -182,6 +183,7 @@ export default function App() {
             <Route path="manuelle-empfaenger" element={<ManuelleEmpfaengerPage />} />
             <Route path="brief-vorlagen" element={<BriefVorlagenPage />} />
             <Route path="auftrags-email" element={<AuftragsEmailSettingsPage />} />
+            <Route path="diagnose" element={<DiagnoseLogPage />} />
           </Route>
           {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
           <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />
