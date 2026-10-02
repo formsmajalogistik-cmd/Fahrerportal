@@ -42,7 +42,8 @@ export function EingaengeProvider({ children }: { children: ReactNode }) {
       .from('ausgefuellte_formulare')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'submitted')
-      .is('gesehen_am', null);
+      .is('gesehen_am', null)
+      .is('uebertragen_auf_id', null);
     if (error) {
       console.warn('[EingaengeContext] count failed', error);
       return;

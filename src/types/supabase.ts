@@ -983,6 +983,10 @@ export type Database = {
           pdf_fehler: string | null;
           email_send_log: Json;
           email_versendet_am: string | null;
+          uebertragen_auf_id: string | null;
+          uebertragen_am: string | null;
+          uebertragen_von: string | null;
+          uebertragen_von_id: string | null;
         };
         Insert: {
           id?: string;
@@ -1002,6 +1006,10 @@ export type Database = {
           pdf_fehler?: string | null;
           email_send_log?: Json;
           email_versendet_am?: string | null;
+          uebertragen_auf_id?: string | null;
+          uebertragen_am?: string | null;
+          uebertragen_von?: string | null;
+          uebertragen_von_id?: string | null;
         };
         Update: {
           id?: string;
@@ -1021,6 +1029,10 @@ export type Database = {
           pdf_fehler?: string | null;
           email_send_log?: Json;
           email_versendet_am?: string | null;
+          uebertragen_auf_id?: string | null;
+          uebertragen_am?: string | null;
+          uebertragen_von?: string | null;
+          uebertragen_von_id?: string | null;
         };
         Relationships: [
           {
@@ -1839,6 +1851,49 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Verlauf der Übertragungen auf ein anderes Template (Migration 101).
+      // Nur lesbar (Admin/Test); geschrieben wird über die RPCs.
+      formular_uebertragungen: {
+        Row: {
+          id: number;
+          quelle_id: string;
+          ziel_id: string | null;
+          quelle_template_id: string | null;
+          ziel_template_id: string | null;
+          quelle_template_name: string | null;
+          ziel_template_name: string | null;
+          von: string;
+          von_name: string | null;
+          am: string;
+          anzahl_uebernommen: number;
+          anzahl_verworfen: number;
+          verworfen: Json;
+          unterschriften: Json;
+          hinweise: Json;
+          zuordnung: Json;
+          daten_bei_uebertragung: Json | null;
+          status_bei_uebertragung: string | null;
+          umgestellt: Json;
+          rueckgaengig_am: string | null;
+          rueckgaengig_von: string | null;
+        };
+        Insert: { id?: never; quelle_id: string; von: string };
+        Update: { rueckgaengig_am?: string | null };
+        Relationships: [];
+      };
+      // Gemerkte Zuordnung Template A → B (Migration 101).
+      template_zuordnungen: {
+        Row: {
+          quelle_template_id: string;
+          ziel_template_id: string;
+          zuordnung: Json;
+          aktualisiert_am: string;
+          aktualisiert_von: string | null;
+        };
+        Insert: { quelle_template_id: string; ziel_template_id: string; zuordnung: Json };
+        Update: { zuordnung?: Json };
+        Relationships: [];
+      };
       // Diagnose-Protokoll technischer Ereignisse (Migration 100).
       // Fahrer schreiben eigene Einträge, nur Admins lesen.
       diagnose_log: {
@@ -2086,6 +2141,17 @@ export type Database = {
       expand_fahrer_with_subaccounts: {
         Args: { p_ids: string[] };
         Returns: string[];
+      };
+      formular_uebertragen: {
+        Args: {
+          p_quelle_id: string; p_ziel_template_id: string; p_daten: Json; p_protokoll: Json;
+          p_vorgefuellt?: Json | null; p_merken?: boolean;
+        };
+        Returns: string;
+      };
+      formular_uebertragung_rueckgaengig: {
+        Args: { p_ziel_id: string };
+        Returns: string;
       };
       touren_picker_suche: {
         Args: { p_suche: string; p_limit?: number };

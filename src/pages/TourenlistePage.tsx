@@ -140,6 +140,7 @@ export function TourenlistePage() {
         .eq('fahrer_id', fahrerRow.id)
         .eq('template_id', tplId)
         .eq('status', 'draft')
+        .is('uebertragen_auf_id', null)
         .eq('daten->>_tour_id', t.id)
         .order('created_at', { ascending: false })
         .limit(1)

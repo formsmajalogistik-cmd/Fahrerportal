@@ -62,6 +62,8 @@ export function FormularPage() {
 
   const [formular, setFormular] = useState<AusgefuelltesFormular | null>(null);
   const [template, setTemplate] = useState<FormularTemplate | null>(null);
+  /** Übertragenes Original, auf diesem Gerät lag noch ein ungespeicherter Stand. */
+  const [lokalNichtUebernommen, setLokalNichtUebernommen] = useState(false);
   /** Tour, aus der dieses Formular stammt — nur für die Kopfzeile. */
   const [tourBezug, setTourBezug] = useState<{
     tour_id: string | null; start_stadt: string | null;
@@ -158,6 +160,26 @@ export function FormularPage() {
       // den lokalen Stand — der Fahrer hat zuletzt daran gearbeitet.
       const serverData = (af.daten as unknown as Record<string, unknown>) ?? {};
       const serverTime = parseTime(af.created_at);
+
+      // Auf ein anderes Template übertragen (Migration 101): nur noch das
+      // unveränderte Original zeigen, KEINEN lokalen Entwurf einspielen —
+      // weiter geht es im neuen Formular. Lag auf diesem Gerät noch ein
+      // ungespeicherter Stand, wird das angezeigt und protokolliert.
+      if (af.uebertragen_auf_id) {
+        try {
+          const local = await getFormDraft(af.id);
+          if (local && JSON.stringify(local.data) !== JSON.stringify(serverData)) {
+            setLokalNichtUebernommen(true);
+            diagnose('uebertragen_lokaler_entwurf', { formular: af.id, neues_formular: af.uebertragen_auf_id }, 'formular');
+          }
+        } catch { /* IDB nicht verfügbar */ }
+        if (cancelled) return;
+        setData(serverData);
+        setSavedDataJson(JSON.stringify(serverData));
+        setLoading(false);
+        return;
+      }
+
       let nextData = serverData;
       let restoredFromLocal = false;
       try {
@@ -252,7 +274,10 @@ export function FormularPage() {
     return () => { cancelled = true; };
   }, [id]);
 
-  const readonly = formular?.status === 'submitted';
+  // Übertragene Originale sind schreibgeschützt (der Server lehnt
+  // Fahrer-Änderungen daran ohnehin ab).
+  const uebertragenAuf = formular?.uebertragen_auf_id ?? null;
+  const readonly = formular?.status === 'submitted' || !!uebertragenAuf;
 
   // Diagnose-Ereignisse (Schadensaufnahme u.a.) diesem Formular zuordnen.
   const formularIdFuerDiagnose = formular?.id ?? null;
@@ -764,12 +789,30 @@ export function FormularPage() {
         )}
         {formular && (
           <p className="text-sm text-maja-muted">
-            Status: {readonly ? 'eingereicht' : 'Entwurf'} · Erstellt am{' '}
+            Status: {uebertragenAuf ? 'übertragen' : formular.status === 'submitted' ? 'eingereicht' : 'Entwurf'} · Erstellt am{' '}
             {new Date(formular.created_at).toLocaleString('de-DE')}
           </p>
         )}
       </div>
       <button onClick={() => safeNavigate('/')} className="btn-secondary">← Zurück</button>
+      {uebertragenAuf && (
+        <div role="status" className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <p className="font-semibold">Dieses Formular wurde auf ein anderes Template übertragen.</p>
+          <p className="mt-0.5 text-xs">
+            Hier steht nur noch das unveränderte Original. Weiter geht es im neuen Formular.
+          </p>
+          {lokalNichtUebernommen && (
+            <p className="mt-1 text-xs font-medium text-red-700">
+              Auf diesem Gerät lagen noch nicht gespeicherte Änderungen. Sie wurden nicht
+              übernommen — bitte die Verwaltung informieren.
+            </p>
+          )}
+          <button type="button" className="btn-primary mt-2 text-sm"
+                  onClick={() => navigate(`/formular/${uebertragenAuf}`)}>
+            Zum neuen Formular
+          </button>
+        </div>
+      )}
     </div>
   );
 

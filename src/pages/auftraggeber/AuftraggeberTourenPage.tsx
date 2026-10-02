@@ -145,7 +145,8 @@ export function AuftraggeberTourenPage() {
         .from('ausgefuellte_formulare')
         .select('id, status, pdf_paths, template:template_id (name)')
         .in('id', eingangIds)
-        .eq('status', 'submitted');
+        .eq('status', 'submitted')
+        .is('uebertragen_auf_id', null);
       const m = new Map<string, EingangLite>();
       for (const e of (efs as unknown as EingangLite[]) ?? []) m.set(e.id, e);
       setEingaenge(m);

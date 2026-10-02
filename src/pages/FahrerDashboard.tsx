@@ -97,6 +97,9 @@ export function FahrerDashboard() {
           .select('*, template:template_id (id, name)')
           .eq('fahrer_id', fahrerRow.id)
           .eq('status', 'draft')
+          // Auf ein anderes Template übertragene Entwürfe nicht mehr
+          // anbieten — weiter geht es im neuen Formular (Migration 101).
+          .is('uebertragen_auf_id', null)
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
@@ -110,6 +113,7 @@ export function FahrerDashboard() {
           .select('id, template_id, tour_ref:daten->>_tour_id')
           .eq('fahrer_id', fahrerRow.id)
           .eq('status', 'submitted')
+          .is('uebertragen_auf_id', null)
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
     // Tour-Protokolle: alle Templates, die einer der Touren dieses Fahrers

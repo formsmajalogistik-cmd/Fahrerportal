@@ -21,6 +21,8 @@ import { EingangSendEmailDialog } from './EingangSendEmailDialog';
 import { BelegeErgaenzenDialog } from './BelegeErgaenzenDialog';
 import { belegFelder, belegeAusDaten, ergaenztNachVersand } from '../../lib/belegeErgaenzen';
 import { EingangFormularViewDialog } from './EingangFormularViewDialog';
+import { FormularUebertragenDialog } from './FormularUebertragenDialog';
+import { UebertragungVerlauf } from './UebertragungVerlauf';
 import type {
   AppUser, AusgefuelltesFormular, EmailSendLogEntry,
   FormularTemplate, TemplatePdf,
@@ -111,6 +113,7 @@ export function EingaengePage() {
       .from('ausgefuellte_formulare')
       .select(`
         id, fahrer_id, template_id, daten, status, created_at, gesehen_am,
+        uebertragen_von_id, uebertragen_auf_id,
         zwischenprotokoll_url, zwischenprotokoll_erstellt_am,
         pdf_paths, pdf_status, pdf_fehler, email_send_log, email_versendet_am,
         zwischenprotokoll_status, zwischenprotokoll_fehler,
@@ -118,6 +121,9 @@ export function EingaengePage() {
         fahrer:fahrer_id (user_id, user:user_id (email, vorname, nachname)),
         template:template_id (id, name, pdfs, schema, email_config, pdfs_zusammenfuehren)
       `)
+      // Auf ein anderes Template übertragene Originale nicht in der Liste —
+      // sie bleiben über das neue Formular einsehbar (Migration 101).
+      .is('uebertragen_auf_id', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
     if (statusFilter !== 'alle') q = q.eq('status', statusFilter);
@@ -168,7 +174,8 @@ export function EingaengePage() {
     const mk = () => {
       let q = supabase
         .from('ausgefuellte_formulare')
-        .select('id', { count: 'exact', head: true });
+        .select('id', { count: 'exact', head: true })
+        .is('uebertragen_auf_id', null);
       if (cutoffIso) q = q.gte('created_at', cutoffIso);
       if (testFahrerScope) {
         if (testFahrerScope.length === 0) return null;
@@ -340,6 +347,7 @@ export function EingaengePage() {
 
   /** Zeile, für die der Dialog „Belege ergänzen" offen ist. */
   const [belegeFuer, setBelegeFuer] = useState<Row | null>(null);
+  const [uebertragenFuer, setUebertragenFuer] = useState<Row | null>(null);
 
   async function patchRowInState(id: string, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -526,6 +534,13 @@ export function EingaengePage() {
               }}
               onDelete={() => setBulkConfirm({ ids: [r.id], mode: 'selected' })}
               onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
+              onUebertragen={() => { void handleSeen(r); setUebertragenFuer(r); }}
+              onOriginal={(id) => setViewing(id)}
+              onRueckgaengig={() => {
+                setLinkToast('Übertragung rückgängig gemacht — das Original ist wieder aktiv.');
+                window.setTimeout(() => setLinkToast(null), 5000);
+                reload();
+              }}
             />
           ))}
         </ul>
@@ -617,6 +632,29 @@ export function EingaengePage() {
         </div>
       )}
 
+      {uebertragenFuer && uebertragenFuer.template && (
+        <FormularUebertragenDialog
+          formular={{
+            id: uebertragenFuer.id,
+            template_id: uebertragenFuer.template_id,
+            status: uebertragenFuer.status,
+            daten: (uebertragenFuer.daten as Record<string, unknown>) ?? {},
+          }}
+          quellTemplate={{
+            id: uebertragenFuer.template_id,
+            name: uebertragenFuer.template.name ?? '',
+            schema: (uebertragenFuer.template.schema as FormularTemplate['schema']) ?? { sections: [] },
+          }}
+          onClose={() => setUebertragenFuer(null)}
+          onDone={() => {
+            setUebertragenFuer(null);
+            setLinkToast('Übertragen — das neue Formular steht in der Liste, das Original bleibt einsehbar.');
+            window.setTimeout(() => setLinkToast(null), 6000);
+            reload();
+          }}
+        />
+      )}
+
       {viewing && (
         <EingangFormularViewDialog
           formularId={viewing}
@@ -679,13 +717,18 @@ interface CardProps {
   onSendZwischen: () => void;
   onDelete: () => void;
   onZwischenChanged: (patch: Partial<Row>) => void;
+  /** Dialog „Auf anderes Template übertragen". */
+  onUebertragen: () => void;
+  /** Ursprüngliches (übertragenes) Formular ansehen. */
+  onOriginal: (id: string) => void;
+  onRueckgaengig: () => void;
 }
 
 function EingangCard({
   row, isAdmin, regenBusy,
   selectable, selected, onToggleSelected,
   onSeen, onView, onRegenerate, onBelege, onLink, onResendEmail, onSendZwischen,
-  onDelete, onZwischenChanged,
+  onDelete, onZwischenChanged, onUebertragen, onOriginal, onRueckgaengig,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   // Über ALLE Beleg-Sektionen des Templates prüfen — ein Template kann
@@ -817,6 +860,10 @@ function EingangCard({
             </div>
           )}
 
+          {isAdmin && row.uebertragen_von_id && (
+            <UebertragungVerlauf formular={row} onOriginal={onOriginal} onRueckgaengig={onRueckgaengig} />
+          )}
+
           {isAdmin && row.status === 'submitted' && (
             <EmailSendLog log={row.email_send_log as unknown as EmailSendLogEntry[] | null | undefined} />
           )}
@@ -842,6 +889,16 @@ function EingangCard({
               className="text-xs font-medium text-maja-accent hover:underline"
             >
               Formular ansehen
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onUebertragen}
+              className="text-xs font-medium text-maja-accent hover:underline"
+              title="Falsches Template ausgefüllt? Werte in ein anderes Template übernehmen."
+            >
+              Auf anderes Template übertragen
             </button>
           )}
           {isAdmin && row.status === 'draft' && (

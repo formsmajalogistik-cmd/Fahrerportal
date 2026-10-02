@@ -119,6 +119,15 @@ export function EingangFormularViewDialog({ formularId, onClose }: Props) {
             <p className="mb-3 rounded-md bg-maja-light/40 px-3 py-2 text-xs text-maja-muted">
               Nur-Lesen-Ansicht — Eingaben können nicht verändert werden.
             </p>
+            {formular?.uebertragen_auf_id && (
+              <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Dieses Formular wurde
+                {formular.uebertragen_am ? ` am ${new Date(formular.uebertragen_am).toLocaleString('de-DE')}` : ''}
+                {' '}auf ein anderes Template übertragen. Es ist das unveränderte
+                Original und erscheint nicht mehr in den Listen; gültig ist das
+                neue Formular.
+              </p>
+            )}
             <FormRenderer
               schema={template.schema}
               data={data}
