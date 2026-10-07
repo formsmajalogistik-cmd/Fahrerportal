@@ -7,9 +7,8 @@ import { useTestMode } from '../../auth/TestModeContext';
 import { useEingaengeNotifications } from '../../sync/EingaengeContext';
 import {
   asPdfPathList, deleteFormPdf, downloadFormPdf,
-  generateAndUploadFormPdfs, generateAndUploadZwischenprotokoll,
+  generateAndUploadZwischenprotokoll,
   previewFormPdf, zwischenprotokollFilename, zwischenprotokollPdfIds,
-  type PdfPathEntry,
 } from '../../lib/pdfGenerate';
 import {
   DownloadIcon, EyeIcon, FileTextIcon, MailIcon, RefreshIcon, XIcon,
@@ -23,6 +22,11 @@ import { belegFelder, belegeAusDaten, ergaenztNachVersand } from '../../lib/bele
 import { EingangFormularViewDialog } from './EingangFormularViewDialog';
 import { FormularUebertragenDialog } from './FormularUebertragenDialog';
 import { UebertragungVerlauf } from './UebertragungVerlauf';
+import { PdfJobHinweis } from './PdfJobHinweis';
+import {
+  AuftragBelegtError, automatischFortsetzen, ladeLetzteJobs, laeuftHier, pdfJobStarten,
+} from '../../lib/pdfJobs';
+import { beanspruchungAbgelaufen, type PdfJob } from '../../lib/pdfJobLogik';
 import type {
   AppUser, AusgefuelltesFormular, EmailSendLogEntry,
   FormularTemplate, TemplatePdf,
@@ -285,24 +289,40 @@ export function EingaengePage() {
     }
   }
 
-  async function regeneratePdfs(r: Row) {
+  // ---- PDF-Erzeugung als fortsetzbarer Auftrag (Migration 104) ----
+  // Je Formular der neueste Auftrag — für Fortschritt und
+  // „unvollständig — fortsetzen".
+  const [pdfJobs, setPdfJobs] = useState<Record<string, PdfJob>>({});
+  const [, setTick] = useState(0);
+  const sichtbareIds = useMemo(() => rows.map((r) => r.id).join(','), [rows]);
+  useEffect(() => {
+    if (!isAdmin || !sichtbareIds) return;
+    let aktiv = true;
+    void ladeLetzteJobs(sichtbareIds.split(',')).then((m) => {
+      if (aktiv) setPdfJobs((alt) => ({ ...m, ...Object.fromEntries(Object.entries(alt).filter(([id]) => laeuftHier(id))) }));
+    });
+    return () => { aktiv = false; };
+  }, [isAdmin, sichtbareIds]);
+
+  /**
+   * „PDFs neu erzeugen": setzt einen offenen Auftrag fort (nur die
+   * fehlenden Teile) oder beginnt einen neuen. `neu: true` verwirft einen
+   * offenen Auftrag und erzeugt alles von vorn.
+   */
+  async function regeneratePdfs(r: Row, neu = false) {
     if (!r.template) return;
     setRegen(r.id);
     try {
       // WICHTIG: `daten` FRISCH aus der Datenbank holen. Der Zeilen-State
       // stammt vom letzten Laden der Seite — wurden gerade Belege
-      // ergänzt, fehlen sie sonst in der neuen PDF. (Gleiche Lehre wie
-      // beim Rechnungs-PDF: vor der Generierung neu laden.)
+      // ergänzt, fehlen sie sonst in der neuen PDF.
       const { data: frisch, error: frischErr } = await supabase
         .from('ausgefuellte_formulare')
         .select('daten')
         .eq('id', r.id)
         .single();
       if (frischErr) throw new Error(frischErr.message);
-      const formularFrisch: Row = {
-        ...r,
-        daten: (frisch?.daten ?? r.daten) as Row['daten'],
-      };
+      const formularFrisch: Row = { ...r, daten: (frisch?.daten ?? r.daten) as Row['daten'] };
       const tpl: FormularTemplate = {
         id: r.template_id,
         name: r.template.name ?? '',
@@ -315,37 +335,52 @@ export function EingaengePage() {
         archiviert_am: null,
         pdfs_zusammenfuehren: r.template.pdfs_zusammenfuehren ?? false,
       };
-      const generated = await generateAndUploadFormPdfs(tpl, formularFrisch);
-      // pdf_paths wurde von generateAndUploadFormPdfs persistiert — wir
-      // patchen den lokalen State, damit die UI sofort die aktuelle
-      // Liste zeigt (übersprungene PDFs sind weg).
-      const paths: PdfPathEntry[] = generated.map((g) => ({
-        pdf_id: g.pdf.id, pdf_name: g.pdf.name,
-        filename: g.filename, onedrive_path: g.onedrive_path,
-      }));
-      // Manuelle Generierung war erfolgreich → eventuellen Fehlerstatus
-      // der Auto-Generierung zurücksetzen.
-      try {
-        await supabase.from('ausgefuellte_formulare')
-          .update({ pdf_status: 'ok', pdf_fehler: null })
-          .eq('id', r.id);
-      } catch { /* nicht kritisch */ }
-      await patchRowInState(r.id, {
-        // Auch die frischen `daten` in den State übernehmen — sonst
-        // zeigte die Ergänzt-Warnung weiter den alten Stand.
-        daten: formularFrisch.daten,
-        pdf_paths: paths as unknown as AusgefuelltesFormular['pdf_paths'],
-        pdf_status: 'ok',
-        pdf_fehler: null,
+      const job = await pdfJobStarten({
+        template: tpl, formular: formularFrisch, neu,
+        onUpdate: (j) => setPdfJobs((m) => ({ ...m, [r.id]: j })),
       });
+      if (job.status === 'fertig') {
+        // pdf_paths hat der Auftrag erst bei Vollständigkeit geschrieben —
+        // frisch holen statt nachzubauen.
+        const { data: neuZeile } = await supabase.from('ausgefuellte_formulare')
+          .select('pdf_paths, pdf_status, pdf_fehler').eq('id', r.id).maybeSingle();
+        await patchRowInState(r.id, {
+          daten: formularFrisch.daten,
+          pdf_paths: (neuZeile?.pdf_paths ?? r.pdf_paths) as AusgefuelltesFormular['pdf_paths'],
+          pdf_status: neuZeile?.pdf_status ?? 'ok',
+          pdf_fehler: neuZeile?.pdf_fehler ?? null,
+        });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'PDF-Generierung fehlgeschlagen');
+      setError(err instanceof AuftragBelegtError || err instanceof Error ? err.message : 'PDF-Generierung fehlgeschlagen');
     } finally {
       setRegen(null);
+      setTick((t) => t + 1);
     }
   }
 
-  /** Zeile, für die der Dialog „Belege ergänzen" offen ist. */
+  // Zurück im Tab (oder App wieder im Vordergrund): Aufträge, die in
+  // DIESEM Tab gestartet und durch die Drosselung im Hintergrund
+  // unterbrochen wurden, automatisch fortsetzen — nur die fehlenden Teile.
+  const rowsFuerFortsetzen = useRef<Row[]>([]);
+  useEffect(() => { rowsFuerFortsetzen.current = rows; }, [rows]);
+  useEffect(() => {
+    function onSichtbar() {
+      if (document.hidden) return;
+      for (const r of rowsFuerFortsetzen.current) {
+        if (automatischFortsetzen(r.id)) void regeneratePdfs(r, false);
+      }
+    }
+    document.addEventListener('visibilitychange', onSichtbar);
+    window.addEventListener('pageshow', onSichtbar);
+    return () => {
+      document.removeEventListener('visibilitychange', onSichtbar);
+      window.removeEventListener('pageshow', onSichtbar);
+    };
+  // regeneratePdfs liest nur Refs/Setter — bewusst nicht als Abhängigkeit.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [belegeFuer, setBelegeFuer] = useState<Row | null>(null);
   const [uebertragenFuer, setUebertragenFuer] = useState<Row | null>(null);
 
@@ -513,7 +548,10 @@ export function EingaengePage() {
               key={r.id}
               row={r}
               isAdmin={isAdmin}
-              regenBusy={regen === r.id}
+              regenBusy={regen === r.id || laeuftHier(r.id)
+                || (pdfJobs[r.id]?.status === 'laeuft' && !beanspruchungAbgelaufen(pdfJobs[r.id]))}
+              pdfJob={pdfJobs[r.id] ?? null}
+              onPdfFortsetzen={(neu) => { void handleSeen(r); void regeneratePdfs(r, neu); }}
               selectable={statusFilter === 'draft' && r.status === 'draft'}
               selected={selectedDrafts.has(r.id)}
               onToggleSelected={() => toggleDraftSelected(r.id)}
@@ -717,6 +755,10 @@ interface CardProps {
   onSendZwischen: () => void;
   onDelete: () => void;
   onZwischenChanged: (patch: Partial<Row>) => void;
+  /** Neuester PDF-Auftrag dieses Formulars (Migration 104). */
+  pdfJob: PdfJob | null;
+  /** Auftrag fortsetzen (neu = komplett von vorn). */
+  onPdfFortsetzen: (neu: boolean) => void;
   /** Dialog „Auf anderes Template übertragen". */
   onUebertragen: () => void;
   /** Ursprüngliches (übertragenes) Formular ansehen. */
@@ -729,6 +771,7 @@ function EingangCard({
   selectable, selected, onToggleSelected,
   onSeen, onView, onRegenerate, onBelege, onLink, onResendEmail, onSendZwischen,
   onDelete, onZwischenChanged, onUebertragen, onOriginal, onRueckgaengig,
+  pdfJob, onPdfFortsetzen,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
   // Über ALLE Beleg-Sektionen des Templates prüfen — ein Template kann
@@ -860,6 +903,10 @@ function EingangCard({
             </div>
           )}
 
+          {isAdmin && pdfJob && (
+            <PdfJobHinweis job={pdfJob} laeuftHier={laeuftHier(row.id)} onFortsetzen={onPdfFortsetzen} />
+          )}
+
           {isAdmin && row.uebertragen_von_id && (
             <UebertragungVerlauf formular={row} onOriginal={onOriginal} onRueckgaengig={onRueckgaengig} />
           )}
@@ -967,7 +1014,7 @@ function EingangCard({
               disabled={regenBusy}
               className="text-xs font-medium text-maja-accent hover:underline"
             >
-              {regenBusy ? 'Generiere …' : 'PDFs neu erzeugen'}
+              {regenBusy ? 'PDFs werden erzeugt …' : 'PDFs neu erzeugen'}
             </button>
           )}
         </div>

@@ -1851,6 +1851,44 @@ export type Database = {
         };
         Relationships: [];
       };
+      // PDF-Erzeugung als Auftrag mit Teilstatus (Migration 104).
+      pdf_jobs: {
+        Row: {
+          id: string;
+          formular_id: string;
+          gestartet_am: string;
+          aktualisiert_am: string;
+          gestartet_von: string | null;
+          status: string;
+          teile: Json;
+          zusammenfuehren: boolean;
+          gesamt: Json | null;
+          halter: string | null;
+          lease_bis: string | null;
+          fehler: string | null;
+        };
+        Insert: {
+          id?: string;
+          formular_id: string;
+          status?: string;
+          teile?: Json;
+          zusammenfuehren?: boolean;
+          gesamt?: Json | null;
+          halter?: string | null;
+          lease_bis?: string | null;
+          fehler?: string | null;
+        };
+        Update: {
+          status?: string;
+          teile?: Json;
+          gesamt?: Json | null;
+          halter?: string | null;
+          lease_bis?: string | null;
+          fehler?: string | null;
+          aktualisiert_am?: string;
+        };
+        Relationships: [];
+      };
       // Protokoll der E-Mail-Änderungen durch den Admin (Migration 102).
       konto_email_aenderungen: {
         Row: {
@@ -2169,6 +2207,14 @@ export type Database = {
       formular_uebertragung_rueckgaengig: {
         Args: { p_ziel_id: string };
         Returns: string;
+      };
+      pdf_job_beanspruchen: {
+        Args: { p_job: string; p_halter: string };
+        Returns: boolean;
+      };
+      pdf_job_puls: {
+        Args: { p_job: string; p_halter: string };
+        Returns: boolean;
       };
       touren_suche: {
         Args: { p_suche: string; p_fahrer_ids?: string[] | null; p_limit?: number; p_offset?: number };
