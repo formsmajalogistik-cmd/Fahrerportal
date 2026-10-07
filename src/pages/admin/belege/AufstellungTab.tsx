@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { fahrerName as resolveFahrerName, displayName } from '../../../lib/names';
 import { Spinner } from '../../../components/Spinner';
 import { flattenedFahrerOptions, type FahrerOptionRaw } from '../../touren/FahrerSelect';
@@ -156,7 +157,9 @@ export function AufstellungTab() {
     // Touren direkt mit Datums-Filter in der DB-Query holen — der client-
     // seitige Vergleich ist anfällig für Format-Mismatches und stieß ans
     // 1000-Row-Default-Limit von PostgREST.
-    const { data, error: err } = await supabase
+    // `.limit(10000)` half nicht: PostgREST kappt serverseitig bei 1000
+    // Zeilen. Deshalb blockweise nachladen.
+    const { data, error: err } = await ladeInBloecken((v, b) => supabase
       .from('touren')
       .select(`
         id, tour_id, enddatum, startdatum, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -171,8 +174,9 @@ export function AufstellungTab() {
       .gte('enddatum', von)
       .lte('enddatum', bis)
       .order('enddatum', { ascending: true })
-      .limit(10000);
-    if (err) { setError(err.message); setLoading(false); return; }
+      .order('id', { ascending: true })
+      .range(v, b));
+    if (err) { setError(err); setLoading(false); return; }
 
     const list = (data ?? []) as unknown as TourRow[];
     setRows(list);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
+import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate, formatEuro } from '../../../lib/touren';
@@ -61,8 +62,10 @@ export function RechnungenListPage() {
     setLoading(true);
     setError(null);
     // Beide Seiten parallel laden — Rechnungen + Auftraggeber-Optionen.
-    const [rRes, aRes] = await Promise.all([
-      supabase
+    // Alle Rechnungen in Blöcken — vorher `.limit(500)`: ältere Rechnungen
+    // tauchten in Liste und Filtern nicht mehr auf.
+    const [rBloecke, aRes] = await Promise.all([
+      ladeInBloecken((v, bis) => supabase
         .from('rechnungen')
         // Egress-Optimierung: nur die Spalten, die die Listen-Ansicht
         // tatsächlich anzeigt + Filter braucht. Notizen, Adress-
@@ -81,9 +84,11 @@ export function RechnungenListPage() {
         `)
         .order('datum', { ascending: false })
         .order('rechnungsnummer', { ascending: false })
-        .limit(500),
+        .order('id', { ascending: true })
+        .range(v, bis)),
       supabase.from('auftraggeber').select('id, name').order('name'),
     ]);
+    const rRes = { data: rBloecke.data, error: rBloecke.error ? { message: rBloecke.error } : null };
     if (rRes.error) { setError(rRes.error.message); setLoading(false); return; }
     if (aRes.error) { setError(aRes.error.message); setLoading(false); return; }
     type RawRow = Rechnung & {

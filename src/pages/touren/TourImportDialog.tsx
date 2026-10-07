@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
+import { ladeInBloecken } from '../../lib/ladeInBloecken';
 import { XIcon } from '../../components/icons';
 import { displayName } from '../../lib/names';
 import type {
@@ -321,12 +322,18 @@ export function TourImportDialog({ onClose, onImported }: Props) {
           .from('fahrer')
           .select('*, user:user_id (email, vorname, nachname)')
           .eq('aktiv', true),
-        supabase.from('touren').select('startdatum, start_stadt, ziel_stadt, auftraggeber_id'),
+        // Dubletten-Abgleich gegen ALLE Touren — in Blöcken, sonst prüfte
+        // der Import nur gegen die ersten 1000 (und ältere Dubletten
+        // rutschten durch).
+        ladeInBloecken((v, bis) => supabase.from('touren')
+          .select('id, startdatum, start_stadt, ziel_stadt, auftraggeber_id')
+          .order('id', { ascending: true })
+          .range(v, bis)),
       ]);
       setAuftraggeber(Array.isArray(agRes.data) ? (agRes.data as unknown as Auftraggeber[]) : []);
       setFahrer(Array.isArray(faRes.data) ? (faRes.data as unknown as FahrerWithUser[]) : []);
       const set = new Set<string>();
-      for (const t of tRes.data ?? []) {
+      for (const t of tRes.data) {
         const d = (t.startdatum ?? '').slice(0, 10);
         const key = `${d}|${(t.start_stadt ?? '').toLowerCase()}|${(t.ziel_stadt ?? '').toLowerCase()}|${t.auftraggeber_id ?? ''}`;
         set.add(key);

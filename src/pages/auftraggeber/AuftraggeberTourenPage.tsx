@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { ladeInBloecken } from '../../lib/ladeInBloecken';
 import { Spinner } from '../../components/Spinner';
 import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
 import { effektiveAdresse } from '../../lib/adresse';
@@ -95,7 +96,9 @@ export function AuftraggeberTourenPage() {
         setLoading(false);
         return;
       }
-      const res = await supabase
+      // Alle eigenen Touren — in Blöcken (sonst endete die Liste und damit
+      // auch die Suche bei 1000 Touren).
+      const res = await ladeInBloecken((v, b) => supabase
         .from('touren')
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -113,17 +116,21 @@ export function AuftraggeberTourenPage() {
         `)
         .eq('auftraggeber_id', effectiveAuftraggeberId)
         .order('startdatum', { ascending: false })
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(v, b));
       data = (res.data as unknown as TourKundensicht[]) ?? null;
-      err = res.error;
+      err = res.error ? { message: res.error } : null;
     } else {
-      const res = await supabase
+      const res = await ladeInBloecken((v, b) => supabase
         .from('touren_kundensicht')
         .select('*')
         .order('startdatum', { ascending: false })
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(v, b));
       data = (res.data as unknown as TourKundensicht[]) ?? null;
-      err = res.error;
+      err = res.error ? { message: res.error } : null;
     }
     if (err) {
       setError(err.message);

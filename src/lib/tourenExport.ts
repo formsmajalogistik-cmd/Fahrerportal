@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { supabase } from './supabase';
+import { ladeInBloecken } from './ladeInBloecken';
 import { fahrerName } from './names';
 import type { AppUser } from '../types/db';
 
@@ -115,23 +116,29 @@ function routeString(r: ExportRow): string {
  * Joins und erzeugt eine .xlsx-Datei, die direkt re-importierbar ist.
  */
 export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: ExportArgs): Promise<number> {
-  let query = supabase
-    .from('touren')
-    .select(`
-      *,
-      auftraggeber:auftraggeber_id (name),
-      fahrer:fahrer_id (vorname, nachname, user:user_id (email, vorname, nachname)),
-      zusaetze:tour_zusaetze (kategorie, anzahl, betrag, kennzeichen, notiz),
-      ansprechpartner:tour_ansprechpartner (station, name, telefon, email, sortierung)
-    `)
-    .gte('enddatum', dateFrom)
-    .lte('enddatum', dateTo)
-    .order('enddatum', { ascending: true })
-    .order('created_at', { ascending: true });
-  if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
+  // In Blöcken laden: eine einzelne Abfrage endet bei 1000 Zeilen — ein
+  // Jahres-Export war sonst still unvollständig.
+  const baue = () => {
+    let query = supabase
+      .from('touren')
+      .select(`
+        *,
+        auftraggeber:auftraggeber_id (name),
+        fahrer:fahrer_id (vorname, nachname, user:user_id (email, vorname, nachname)),
+        zusaetze:tour_zusaetze (kategorie, anzahl, betrag, kennzeichen, notiz),
+        ansprechpartner:tour_ansprechpartner (station, name, telefon, email, sortierung)
+      `)
+      .gte('enddatum', dateFrom)
+      .lte('enddatum', dateTo)
+      .order('enddatum', { ascending: true })
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
+    return query;
+  };
 
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  const { data, error } = await ladeInBloecken((v, b) => baue().range(v, b));
+  if (error) throw new Error(error);
   const rows = (data as unknown as ExportRow[]) ?? [];
 
   // ---- Blatt „Touren" --------------------------------------------------

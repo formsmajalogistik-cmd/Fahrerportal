@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { XIcon } from '../../../components/icons';
 import { Spinner } from '../../../components/Spinner';
 import { formatDate, formatEuro } from '../../../lib/touren';
@@ -127,23 +128,27 @@ export function AddTourPositionDialog({
       setError(null);
       // Ohne Auftraggeber wird über ALLE Touren gesucht — dann ist die
       // Textsuche das Filterkriterium.
-      let query = supabase
-        .from('touren')
-        .select(`
-          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-          startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
-          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
-        `);
-      if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
-      const { data, error: err } = await query
-        .gte('enddatum', dateFrom)
-        .lte('enddatum', dateTo)
-        .order('enddatum', { ascending: true })
-        .limit(500);
+      // Früher `.limit(500)` — über längere Zeiträume fehlten Touren still.
+      const { data, error: err } = await ladeInBloecken((v, b) => {
+        let query = supabase
+          .from('touren')
+          .select(`
+            id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+            startdatum, enddatum, tourenart, kennzeichen,
+            kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
+            zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
+          `);
+        if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
+        return query
+          .gte('enddatum', dateFrom)
+          .lte('enddatum', dateTo)
+          .order('enddatum', { ascending: true })
+          .order('id', { ascending: true })
+          .range(v, b);
+      });
       if (cancelled) return;
       if (err) {
-        setError(err.message);
+        setError(err);
         setTouren([]);
         setLoading(false);
         return;

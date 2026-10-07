@@ -9,6 +9,7 @@ import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
 import { TourImportDialog } from './touren/TourImportDialog';
 import { exportTourenExcel } from '../lib/tourenExport';
+import { effektivesDatumFilter, inStuecken, ladeInBloecken } from '../lib/ladeInBloecken';
 import { sendEmail } from '../lib/onedrive';
 import { loadMailboxes } from '../lib/mailboxSettings';
 import { bodyWithSignatureHtml, signatureFromProfile } from '../lib/emailSignature';
@@ -68,6 +69,16 @@ interface TourZusatzLite {
 }
 
 const PAGE_SIZE = 25;
+/** Treffer pro Nachlade-Schritt der Suche über alle Touren. */
+const SUCH_SEITE = 50;
+
+interface SuchStand {
+  begriff: string;
+  rows: TourRow[];
+  gesamt: number;
+  laedt: boolean;
+  fehler: string | null;
+}
 
 type StatusFilter = 'alle' | TourStatus;
 
@@ -82,6 +93,84 @@ const STATUS_BADGE: Record<TourStatus, string> = {
   aktiv:          'bg-emerald-100 text-emerald-700',
   abgeschlossen:  'bg-gray-100 text-gray-600',
 };
+
+// Spalten der Tour-Karten (schlanke Liste). Gilt für die Liste UND die
+// Suche — Details lädt erst das Tour-Detail-Panel.
+function listenSpalten(isAdmin: boolean): string {
+  const baseCols = `
+    id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+    kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
+    tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
+    greimel_zugang_id, ist_e_fahrzeug, fin,
+    eingang_id, eingang_id_bc, km_gesamt,
+    bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
+    abgelehnt, zurueckgestellt,
+    zeit_start, zeit_ziel,
+    auf_eis, auf_eis_notiz
+  `;
+  const adminCols = `${baseCols},
+    verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
+    rechnungsdatum_abweichend, rechnungsdatum`;
+  const cols = isAdmin
+    ? `
+      ${adminCols},
+      auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
+      fahrer:fahrer_id (
+        id, user_id, aktiv, vorname, nachname,
+        user:user_id (email, vorname, nachname)
+      ),
+      schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+      protokoll_zuweisungen:tour_protokoll_zuweisungen (
+        id, template:template_id (id, name)
+      ),
+      eingang:eingang_id (
+        id, status, pdf_paths,
+        template:template_id (id, name, pdfs)
+      ),
+      zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
+    `
+    : `
+      ${baseCols},
+      auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
+      fahrer:fahrer_id (
+        id, user_id, aktiv, vorname, nachname,
+        user:user_id (email, vorname, nachname)
+      ),
+      schriftliches_protokoll:schriftliches_protokoll_id (id, name),
+      protokoll_zuweisungen:tour_protokoll_zuweisungen (
+        id, template:template_id (id, name)
+      ),
+      eingang:eingang_id (
+        id, status, pdf_paths,
+        template:template_id (id, name, pdfs)
+      )
+    `;
+  return cols;
+}
+
+/** Defensive Normalisierung einer geladenen Tour-Zeile. */
+function normalisiereTour(r: unknown): TourRow {
+  const row = (r as Record<string, unknown>) ?? {};
+  const kz = row.kennzeichen;
+  return {
+    ...row,
+    kennzeichen: Array.isArray(kz) ? kz : [],
+    auftraggeber: (row.auftraggeber as TourRow['auftraggeber']) ?? null,
+    fahrer: (row.fahrer as TourRow['fahrer']) ?? null,
+    schriftliches_protokoll: (row.schriftliches_protokoll as TourRow['schriftliches_protokoll']) ?? null,
+    eingang: (row.eingang as TourRow['eingang']) ?? null,
+    zusaetze: Array.isArray(row.zusaetze)
+      ? (row.zusaetze as Array<Record<string, unknown>>).map((z) => ({
+          id: String(z.id ?? ''),
+          kategorie: String(z.kategorie ?? ''),
+          anzahl: Number.isFinite(Number(z.anzahl)) ? Math.max(0.01, Number(z.anzahl)) : 1,
+          betrag: Number(z.betrag ?? 0),
+          notiz: typeof z.notiz === 'string' ? z.notiz : null,
+          kennzeichen: typeof z.kennzeichen === 'string' ? z.kennzeichen : null,
+        }))
+      : [],
+  } as TourRow;
+}
 
 export function TourenlistePage() {
   const { profile, session } = useAuth();
@@ -231,102 +320,115 @@ export function TourenlistePage() {
     // (adresse_*, km_hin/rueck, app_notiz, info, sondervereinbarung,
     // protokoll_daten_felder*) werden NICHT mit geladen — sie kommen
     // erst beim Öffnen des Tour-Detail-Panels (das lädt explizit *).
-    const baseCols = `
-      id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-      kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
-      tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
-      greimel_zugang_id, ist_e_fahrzeug, fin,
-      eingang_id, eingang_id_bc, km_gesamt,
-      bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
-      abgelehnt, zurueckgestellt,
-      zeit_start, zeit_ziel,
-      auf_eis, auf_eis_notiz
-    `;
-    const adminCols = `${baseCols},
-      verguetung, barauslagen, fahrer_honorar, ist_sondervereinbarung,
-      rechnungsdatum_abweichend, rechnungsdatum`;
-    const cols = isAdmin
-      ? `
-        ${adminCols},
-        auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
-        fahrer:fahrer_id (
-          id, user_id, aktiv, vorname, nachname,
-          user:user_id (email, vorname, nachname)
-        ),
-        schriftliches_protokoll:schriftliches_protokoll_id (id, name),
-        protokoll_zuweisungen:tour_protokoll_zuweisungen (
-          id, template:template_id (id, name)
-        ),
-        eingang:eingang_id (
-          id, status, pdf_paths,
-          template:template_id (id, name, pdfs)
-        ),
-        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
-      `
-      : `
-        ${baseCols},
-        auftraggeber:auftraggeber_id (name, kontakt, externe_app_name, externe_app_url),
-        fahrer:fahrer_id (
-          id, user_id, aktiv, vorname, nachname,
-          user:user_id (email, vorname, nachname)
-        ),
-        schriftliches_protokoll:schriftliches_protokoll_id (id, name),
-        protokoll_zuweisungen:tour_protokoll_zuweisungen (
-          id, template:template_id (id, name)
-        ),
-        eingang:eingang_id (
-          id, status, pdf_paths,
-          template:template_id (id, name, pdfs)
-        )
-      `;
-    let query = supabase
-      .from('touren')
-      .select(cols);
-    // Nicht-Admins: nur Touren des aktiven Kontos (inkl. eigener Unterkonten,
-    // wenn aktives Konto ein Haupt-Konto ist).
-    if (!isAdmin && scopedFahrerIds.length > 0) {
-      query = query.in('fahrer_id', scopedFahrerIds);
+    const cols = listenSpalten(isAdmin);
+    // Früher: EINE Abfrage über alle Touren, gefiltert erst im Browser —
+    // PostgREST liefert aber höchstens 1000 Zeilen. Bei absteigender
+    // Sortierung kamen nur die jüngsten 1000 an (inkl. Zukunftstouren);
+    // Touren von vor ~2 Monaten waren weder in der Liste noch in der
+    // Suche zu finden. Jetzt filtert die Datenbank, und jede Teilmenge
+    // wird vollständig in Blöcken geladen:
+    //   * Touren im gewählten Zeitraum (effektives Datum = Enddatum,
+    //     sonst Startdatum — wie der Filter in der Liste)
+    //   * Einreichungen zur Bestätigung und Touren auf Eis (ohne Datum,
+    //     haben eigene Bereiche oben)
+    //   * Touren der letzten 7 Tage für die Abrechnungs-Hinweise
+    // Die Suche über ALLE Zeiträume läuft separat (touren_suche).
+    const basis = () => {
+      let q = supabase.from('touren').select(cols);
+      if (!isAdmin && scopedFahrerIds.length > 0) q = q.in('fahrer_id', scopedFahrerIds);
+      return q;
+    };
+    const sortiert = <Q extends { order: (c: string, o?: { ascending?: boolean; nullsFirst?: boolean }) => Q }>(q: Q) =>
+      q.order('startdatum', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true });
+    const heute = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const isoTag = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const vor7 = new Date(heute); vor7.setDate(heute.getDate() - 7);
+    const leer = Promise.resolve({ data: [], error: null, bloecke: 0 });
+    const [bereich, offen, eis, hinweis] = await Promise.all([
+      ladeInBloecken((v, b) => sortiert(basis().or(effektivesDatumFilter(dateFrom, dateTo))).range(v, b)),
+      isAdmin ? ladeInBloecken((v, b) => sortiert(basis().eq('bestaetigt', false)).range(v, b)) : leer,
+      ladeInBloecken((v, b) => sortiert(basis().eq('auf_eis', true)).range(v, b)),
+      isAdmin
+        ? ladeInBloecken((v, b) => sortiert(basis().gte('enddatum', isoTag(vor7)).lte('enddatum', isoTag(heute))).range(v, b))
+        : leer,
+    ]);
+    const err = bereich.error ?? offen.error ?? eis.error ?? hinweis.error;
+    const gesehen = new Set<string>();
+    const data: unknown[] = [];
+    for (const r of [...bereich.data, ...offen.data, ...eis.data, ...hinweis.data] as unknown as Array<{ id: string }>) {
+      if (gesehen.has(r.id)) continue;
+      gesehen.add(r.id);
+      data.push(r);
     }
-    const { data, error: err } = await query
-      .order('startdatum', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false });
     if (err) {
-      setError(err.message);
+      setError(err);
       setRows([]);
     } else {
       // Defensive Normalisierung: Supabase kann je nach Schema-Cache-Zustand
       // text[]-Spalten als null oder ein vergessener Default-Wert liefern.
       // Wir stellen sicher, dass kennzeichen IMMER ein Array ist und auch
       // die joined Relationen kein "undefined" einschleusen.
-      const list = Array.isArray(data) ? data : [];
-      const normalized = list.map((r: unknown) => {
-        const row = (r as Record<string, unknown>) ?? {};
-        const kz = row.kennzeichen;
-        return {
-          ...row,
-          kennzeichen: Array.isArray(kz) ? kz : [],
-          auftraggeber: (row.auftraggeber as TourRow['auftraggeber']) ?? null,
-          fahrer: (row.fahrer as TourRow['fahrer']) ?? null,
-          schriftliches_protokoll: (row.schriftliches_protokoll as TourRow['schriftliches_protokoll']) ?? null,
-          eingang: (row.eingang as TourRow['eingang']) ?? null,
-          zusaetze: Array.isArray(row.zusaetze)
-            ? (row.zusaetze as Array<Record<string, unknown>>).map((z) => ({
-                id: String(z.id ?? ''),
-                kategorie: String(z.kategorie ?? ''),
-                anzahl: Number.isFinite(Number(z.anzahl)) ? Math.max(0.01, Number(z.anzahl)) : 1,
-                betrag: Number(z.betrag ?? 0),
-                notiz: typeof z.notiz === 'string' ? z.notiz : null,
-                kennzeichen: typeof z.kennzeichen === 'string' ? z.kennzeichen : null,
-              }))
-            : [],
-        } as TourRow;
-      });
+      const normalized = data.map(normalisiereTour);
       setRows(normalized);
     }
     if (silent) setRefreshing(false); else setLoading(false);
-  }, [isAdmin, scopedFahrerIds]);
+  }, [isAdmin, scopedFahrerIds, dateFrom, dateTo]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ---- Suche über ALLE Touren (Migration 103) ----
+  // Sobald ein Suchbegriff (ab 2 Zeichen) da ist, sucht die Datenbank im
+  // gesamten Bestand — unabhängig vom eingestellten Zeitraum. Kurz
+  // verzögert, damit nicht jeder Tastendruck eine Abfrage wird.
+  const [suchBegriff, setSuchBegriff] = useState('');
+  useEffect(() => {
+    const t = window.setTimeout(() => setSuchBegriff(search.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [search]);
+  const [suche, setSuche] = useState<SuchStand | null>(null);
+  const ladeSuche = useCallback(async (begriff: string, offset: number) => {
+    setSuche((prev) => ({
+      begriff,
+      rows: prev?.begriff === begriff && offset > 0 ? prev.rows : [],
+      gesamt: prev?.begriff === begriff ? prev.gesamt : 0,
+      laedt: true,
+      fehler: null,
+    }));
+    const { data: treffer, error: rpcErr } = await supabase.rpc('touren_suche', {
+      p_suche: begriff,
+      p_fahrer_ids: !isAdmin && scopedFahrerIds.length > 0 ? scopedFahrerIds : null,
+      p_limit: SUCH_SEITE,
+      p_offset: offset,
+    });
+    const liste = ((treffer ?? []) as Array<{ id: string; gesamt: number }>);
+    let neu: TourRow[] = [];
+    let fehler: string | null = rpcErr?.message ?? null;
+    if (!fehler && liste.length > 0) {
+      const ids = liste.map((t) => t.id);
+      const { data, error: e2 } = await supabase.from('touren').select(listenSpalten(isAdmin)).in('id', ids);
+      if (e2) fehler = e2.message;
+      const byId = new Map((Array.isArray(data) ? data : []).map(normalisiereTour).map((r) => [r.id, r]));
+      neu = ids.map((id) => byId.get(id)).filter((r): r is TourRow => !!r);
+    }
+    // Nur übernehmen, wenn inzwischen nicht schon nach etwas anderem gesucht wird.
+    setSuche((prev) => (prev?.begriff !== begriff ? prev : {
+      begriff,
+      rows: offset > 0 ? [...prev.rows, ...neu] : neu,
+      gesamt: liste.length > 0 ? Number(liste[0].gesamt) : (offset > 0 ? prev.gesamt : 0),
+      laedt: false,
+      fehler,
+    }));
+  }, [isAdmin, scopedFahrerIds]);
+  useEffect(() => {
+    if (suchBegriff.length >= 2) { queueMicrotask(() => { void ladeSuche(suchBegriff, 0); }); return; }
+    queueMicrotask(() => setSuche(null));
+  }, [suchBegriff, ladeSuche]);
+  // Suchmodus nur, solange das Feld zum geladenen Ergebnis passt und die
+  // Datenbankfunktion verfügbar ist — sonst wie früher im Zeitraum filtern.
+  const suchModus = !!suche && !suche.fehler && search.trim().length >= 2;
 
   // Rechnungs-Referenzen pro Tour (read-only, nur Admin): aus welchen
   // Rechnungen die Tour als Position stammt. Separat geladen, damit das
@@ -346,12 +448,19 @@ export function TourenlistePage() {
     let cancelled = false;
     void (async () => {
       setRechnungInfoGeladen(false);
+      // In Stücken abfragen: mit allen IDs auf einmal wurde die URL zu
+      // lang, und bei vielen Positionen griff wieder die 1000er-Grenze.
       const ids = rows.map((r) => r.id);
-      const { data, error: posErr } = await supabase
-        .from('rechnungspositionen')
-        .select('tour_id, rechnung:rechnung_id (id, rechnungsnummer)')
-        .in('tour_id', ids);
+      const teile = await Promise.all(inStuecken(ids, 150).map((stueck) =>
+        ladeInBloecken((v, b) => supabase
+          .from('rechnungspositionen')
+          .select('id, tour_id, rechnung:rechnung_id (id, rechnungsnummer)')
+          .in('tour_id', stueck)
+          .order('id')
+          .range(v, b))));
       if (cancelled) return;
+      const data = teile.flatMap((t) => t.data);
+      const posErr = teile.find((t) => t.error)?.error ?? null;
       type PosRow = { tour_id: string | null; rechnung: { id: string; rechnungsnummer: string } | null };
       const map: Record<string, string[]> = {};
       const seen: Record<string, Set<string>> = {};
@@ -594,8 +703,9 @@ export function TourenlistePage() {
       const set = hinweisFilter === 'kein_preis' ? hinweise.keinPreis : hinweise.ohneRechnung;
       return (rows ?? []).filter((t) => set.has(t.id));
     }
-    const q = search.trim().toLowerCase();
-    return (rangeRows ?? []).filter((t) => {
+    const q = suchModus ? '' : search.trim().toLowerCase();
+    const quelle = suchModus ? (suche?.rows ?? []) : (rangeRows ?? []);
+    return quelle.filter((t) => {
       if (statusFilter !== 'alle' && computeTourStatus(t.startdatum, t.enddatum) !== statusFilter) return false;
       if (auftraggeberFilter && t.auftraggeber_id !== auftraggeberFilter) return false;
       if (fahrerFilter && t.fahrer_id !== fahrerFilter) return false;
@@ -613,7 +723,7 @@ export function TourenlistePage() {
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise]);
+  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise, suchModus, suche]);
 
   // ---- KPI-Daten ----
   // Alle KPIs respektieren Auftraggeber- und Fahrer-Filter (siehe Spec:
@@ -1095,6 +1205,17 @@ export function TourenlistePage() {
             const naechsterAktiv = dateFrom === naechsterYmd && dateTo === naechsterYmd;
             const monatAktiv = dateFrom === monthYmdFrom && dateTo === monthYmdTo;
             const jahrAktiv = dateFrom === yearYmdFrom && dateTo === yearYmdTo;
+            // Ältere Zeiträume — z.B. für Bußgeldanfragen, die Wochen
+            // später eintreffen. Geladen wird erst bei Klick.
+            const dreiMonateFrom = ymd(new Date(today.getFullYear(), today.getMonth() - 3, today.getDate()));
+            const dreiMonateTo = heuteYmd;
+            const vorjahrFrom = ymd(new Date(today.getFullYear() - 1, 0, 1));
+            const vorjahrTo = ymd(new Date(today.getFullYear() - 1, 11, 31));
+            const ALLE_VON = '2000-01-01';
+            const ALLE_BIS = '2099-12-31';
+            const dreiMonateAktiv = dateFrom === dreiMonateFrom && dateTo === dreiMonateTo;
+            const vorjahrAktiv = dateFrom === vorjahrFrom && dateTo === vorjahrTo;
+            const alleAktiv = dateFrom === ALLE_VON && dateTo === ALLE_BIS;
             // Identische Pill-Optik wie die Status-Pills weiter unten —
             // gleicher Radius, Padding, Border, Hover, Aktiv-Zustand.
             const pillCls = (active: boolean) => `inline-block rounded-full px-3 py-1.5 text-sm font-medium transition ${
@@ -1129,6 +1250,19 @@ export function TourenlistePage() {
                 <button type="button" className={pillCls(jahrAktiv)}
                         onClick={() => { setDateFrom(yearYmdFrom); setDateTo(yearYmdTo); }}>
                   Aktuelles Jahr
+                </button>
+                <button type="button" className={pillCls(dreiMonateAktiv)}
+                        onClick={() => { setDateFrom(dreiMonateFrom); setDateTo(dreiMonateTo); }}>
+                  Letzte 3 Monate
+                </button>
+                <button type="button" className={pillCls(vorjahrAktiv)}
+                        onClick={() => { setDateFrom(vorjahrFrom); setDateTo(vorjahrTo); }}>
+                  Letztes Jahr
+                </button>
+                <button type="button" className={pillCls(alleAktiv)}
+                        title="Alle Touren — kann bei großem Bestand etwas dauern"
+                        onClick={() => { setDateFrom(ALLE_VON); setDateTo(ALLE_BIS); }}>
+                  Alle
                 </button>
               </>
             );
@@ -1235,6 +1369,33 @@ export function TourenlistePage() {
           })}
         </div>
       </div>
+
+      {search.trim().length >= 2 && (
+        <div role="status" className={`flex flex-wrap items-center gap-3 rounded-lg px-3 py-2 text-sm ${
+          suche?.fehler ? 'bg-amber-50 text-amber-900' : 'bg-maja-light/70 text-maja-ink'}`}>
+          {suche?.fehler ? (
+            <span>
+              Suche nur im gewählten Zeitraum — die Suche über alle Touren ist noch nicht
+              eingerichtet (Migration 103). {suche.fehler}
+            </span>
+          ) : !suche || suche.laedt && suche.rows.length === 0 || search.trim() !== suche.begriff ? (
+            <span>Suche in allen Touren …</span>
+          ) : (
+            <span>
+              <strong>Suche in allen Touren</strong> — {suche.gesamt} {suche.gesamt === 1 ? 'Treffer' : 'Treffer'}
+              {(statusFilter !== 'alle' || auftraggeberFilter || fahrerFilter) && filteredRows.length !== suche.rows.length
+                && <> · mit den aktiven Filtern: {filteredRows.length}</>}
+              {' '}<span className="text-maja-muted">(unabhängig vom Zeitraum oben)</span>
+            </span>
+          )}
+          {suchModus && suche && suche.rows.length < suche.gesamt && (
+            <button type="button" className="btn-secondary px-3 py-1 text-sm" disabled={suche.laedt}
+                    onClick={() => void ladeSuche(suche.begriff, suche.rows.length)}>
+              {suche.laedt ? 'Lädt …' : `Weitere laden (${suche.rows.length} von ${suche.gesamt})`}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Auftraggeber + Fahrer Filter */}
       <div className="flex flex-wrap items-center gap-3">

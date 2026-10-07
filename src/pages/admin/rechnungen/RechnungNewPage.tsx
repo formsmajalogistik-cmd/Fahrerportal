@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
+import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate } from '../../../lib/touren';
@@ -400,24 +401,30 @@ export function RechnungNewPage() {
       `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${rechnungsdatum}),`
       + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${rechnungsdatum}),`
       + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${rechnungsdatum})`;
-    let query = supabase
-      .from('touren')
-      .select(`
-        id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-        startdatum, enddatum, tourenart, kennzeichen,
-        kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
-        rechnungsdatum, rechnungsdatum_abweichend, status,
-        zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
-      `)
-      .eq('auftraggeber_id', auftraggeber.id);
-    // Optionaler Filter auf einen konkreten Rechnungsempfänger — bei
-    // "Alle" bleibt das Verhalten wie bisher (kein zusätzlicher Filter).
-    if (rechnungsempfaengerId) {
-      query = query.eq('kontakt_id', rechnungsempfaengerId);
-    }
-    const { data, error: err } = await query
+    const baueTourQuery = () => {
+      let query = supabase
+        .from('touren')
+        .select(`
+          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
+          startdatum, enddatum, tourenart, kennzeichen,
+          kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
+          rechnungsdatum, rechnungsdatum_abweichend, status,
+          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
+        `)
+        .eq('auftraggeber_id', auftraggeber.id);
+      // Optionaler Filter auf einen konkreten Rechnungsempfänger — bei
+      // "Alle" bleibt das Verhalten wie bisher (kein zusätzlicher Filter).
+      if (rechnungsempfaengerId) {
+        query = query.eq('kontakt_id', rechnungsempfaengerId);
+      }
+      return query;
+    };
+    const { data, error: errText } = await ladeInBloecken((v, b) => baueTourQuery()
       .or(orFilter)
-      .order('enddatum', { ascending: true });
+      .order('enddatum', { ascending: true })
+      .order('id', { ascending: true })
+      .range(v, b));
+    const err = errText ? { message: errText } : null;
     setLoadingTouren(false);
     if (err) {
       console.error('[Rechnungen] Touren-Query Fehler', err);
@@ -540,7 +547,7 @@ export function RechnungNewPage() {
         `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${referenzDatum}),`
         + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${referenzDatum}),`
         + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${referenzDatum})`;
-      const { data, error: err } = await supabase
+      const { data, error: errText } = await ladeInBloecken((v, b) => supabase
         .from('touren')
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -551,8 +558,10 @@ export function RechnungNewPage() {
         `)
         .eq('auftraggeber_id', auftraggeber.id)
         .or(orFilter)
-        .order('enddatum', { ascending: true });
-      if (err) throw err;
+        .order('enddatum', { ascending: true })
+        .order('id', { ascending: true })
+        .range(v, b));
+      if (errText) throw new Error(errText);
       type RawTour = {
         id: string; tour_id: string | null;
         start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;

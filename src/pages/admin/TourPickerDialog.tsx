@@ -90,9 +90,11 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
   const tageZurueck = zeitfenster?.tageZurueck ?? 0;
   const tageVoraus = zeitfenster?.tageVoraus ?? 0;
   const suchbegriff = search.trim();
-  // Ohne Zeitfenster bleibt die Suche wie bisher rein clientseitig und
-  // löst kein Neuladen aus.
-  const serverSuche = fensterAktiv && suchbegriff.length >= 2 ? suchbegriff : '';
+  // Ab 2 Zeichen sucht die Datenbank über ALLE Touren — auch bei „Tour
+  // öffnen". Vorher wurde dort nur in den 150 jüngsten gesucht; ältere
+  // Touren (z.B. für Bußgeldanfragen) waren nicht zu finden. Die
+  // Standardliste ohne Suchbegriff bleibt je Modus unverändert.
+  const serverSuche = suchbegriff.length >= 2 ? suchbegriff : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +108,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
         let fehler: string | null = null;
         let rueckfall = false;
 
-        if (!fensterAktiv) {
+        if (!fensterAktiv && !serverSuche) {
           const { data, error: err } = await supabase
             .from('touren').select(SELECT)
             .order('startdatum', { ascending: false, nullsFirst: false })
@@ -124,10 +126,19 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
           if (err) fehler = err.message;
           else ergebnis = (data as unknown as PickRow[]) ?? [];
         } else {
-          const { data: ids, error: rpcErr } = await supabase
-            .rpc('touren_picker_suche', { p_suche: serverSuche, p_limit: 200 });
+          // Bevorzugt die tolerante Suche (Migration 103: „HHAB1234" findet
+          // „HH-AB 1234", auch FIN/Rück-Kennzeichen); sonst die aus 099.
+          let liste: string[] = [];
+          let rpcErr: { message: string } | null = null;
+          const neu = await supabase.rpc('touren_suche', { p_suche: serverSuche, p_fahrer_ids: null, p_limit: 200, p_offset: 0 });
+          if (!neu.error) {
+            liste = ((neu.data ?? []) as Array<{ id: string }>).map((x) => x.id);
+          } else {
+            const alt = await supabase.rpc('touren_picker_suche', { p_suche: serverSuche, p_limit: 200 });
+            rpcErr = alt.error;
+            liste = (alt.data as unknown as string[] | null) ?? [];
+          }
           if (!rpcErr) {
-            const liste = ((ids as unknown as string[] | null) ?? []);
             if (liste.length > 0) {
               const { data, error: err } = await supabase
                 .from('touren').select(SELECT).in('id', liste);
@@ -162,13 +173,13 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
   }, [fensterAktiv, tageZurueck, tageVoraus, serverSuche]);
 
   const filtered = useMemo(() => {
-    // Mit Zeitfenster filtert der Server; ein einzelnes Zeichen filtert
-    // die Standardliste noch im Browser (die Server-Suche braucht 2).
-    if (fensterAktiv && serverSuche) return rows;
+    // Ab 2 Zeichen filtert der Server; ein einzelnes Zeichen filtert die
+    // Standardliste noch im Browser.
+    if (serverSuche && !suchRueckfall) return rows;
     const q = search.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => passtZurSuche(r, q));
-  }, [rows, search, fensterAktiv, serverSuche]);
+  }, [rows, search, serverSuche, suchRueckfall]);
 
   return (
     <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">

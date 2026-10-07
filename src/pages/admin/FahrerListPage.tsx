@@ -7,6 +7,7 @@ import { FahrerEditDialog } from './FahrerEditDialog';
 import { useAuth } from '../../auth/AuthContext';
 import { useTestGuard } from '../../auth/TestModeContext';
 import { deleteAccount } from '../../lib/accountApi';
+import { EmailAendernDialog } from './EmailAendernDialog';
 import type { AppUser, Fahrer, UserRole } from '../../types/db';
 
 interface FahrerRow extends Fahrer {
@@ -40,6 +41,8 @@ export function FahrerListPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<FahrerRow | 'new' | null>(null);
   const [deleting, setDeleting] = useState<AccountRow | null>(null);
+  const [emailAendern, setEmailAendern] = useState<AccountRow | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [deletingSub, setDeletingSub] = useState<FahrerRow | null>(null);
   const [roleChange, setRoleChange] = useState<{ user: AppUser; next: UserRole } | null>(null);
   /** Bei Wechsel zur Rolle Auftraggeber: gewählter Auftraggeber (Pflicht). */
@@ -208,6 +211,12 @@ export function FahrerListPage() {
         </button>
       </div>
 
+      {info && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <span>{info}</span>
+          <button type="button" className="text-xs font-semibold underline" onClick={() => setInfo(null)}>OK</button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -259,7 +268,17 @@ export function FahrerListPage() {
                     <td className="px-4 py-3 font-medium text-maja-ink">
                       {displayName(u)}
                     </td>
-                    <td className="px-4 py-3 text-maja-muted">{u.email}</td>
+                    <td className="px-4 py-3 text-maja-muted">
+                      <div>{u.email}</div>
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-maja-accent hover:underline"
+                        onClick={() => setEmailAendern(acc)}
+                        title="Login- und Zustelladresse dieses Kontos ändern"
+                      >
+                        E-Mail-Adresse ändern
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <select
                         aria-label={`Rolle von ${displayName(u)}`}
@@ -430,6 +449,22 @@ export function FahrerListPage() {
           destructive
           onConfirm={() => handleDeleteSub(deletingSub)}
           onClose={() => setDeletingSub(null)}
+        />
+      )}
+
+      {emailAendern && (
+        <EmailAendernDialog
+          userId={emailAendern.user.id}
+          name={displayName(emailAendern.user)}
+          aktuelleEmail={emailAendern.user.email}
+          onClose={() => setEmailAendern(null)}
+          onGeaendert={(e) => {
+            setEmailAendern(null);
+            setInfo(e.infoMail === 'gesendet'
+              ? `E-Mail geändert: ${e.alteEmail} → ${e.neueEmail}. Info-Mail an die neue Adresse ist raus.`
+              : `E-Mail geändert: ${e.alteEmail} → ${e.neueEmail}. Die Info-Mail konnte nicht gesendet werden (${e.infoMail.replace(/^fehler: /, '')}).`);
+            void load();
+          }}
         />
       )}
 

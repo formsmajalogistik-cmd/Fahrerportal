@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
+import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate } from '../../../lib/touren';
@@ -36,9 +37,13 @@ export function BriefeListPage() {
 
   const laden = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('briefe').select('*').order('datum', { ascending: false });
-    if (error) setFehler(error.message);
+    // In Blöcken — sonst endete die Liste still bei 1000 Briefen.
+    const { data, error } = await ladeInBloecken((v, bis) => supabase
+      .from('briefe').select('*')
+      .order('datum', { ascending: false })
+      .order('id', { ascending: true })
+      .range(v, bis));
+    if (error) setFehler(error);
     setBriefe((data as Brief[]) ?? []);
     setLoading(false);
   }, []);

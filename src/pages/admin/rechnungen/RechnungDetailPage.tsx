@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
+import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate, formatEuro } from '../../../lib/touren';
@@ -414,7 +415,7 @@ export function RechnungDetailPage() {
 
       const von = rechnung.leistungszeitraum_von ?? '2000-01-01';
       const bis = rechnung.leistungszeitraum_bis ?? '2999-12-31';
-      const { data, error: tErr } = await supabase
+      const { data, error: tErr } = await ladeInBloecken((v, b) => supabase
         .from('touren')
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -422,11 +423,13 @@ export function RechnungDetailPage() {
           kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
-        .eq('auftraggeber_id', rechnung.auftraggeber_id)
+        .eq('auftraggeber_id', rechnung.auftraggeber_id!)
         .gte('enddatum', von)
         .lte('enddatum', bis)
-        .order('enddatum', { ascending: true });
-      if (tErr) throw new Error(tErr.message);
+        .order('enddatum', { ascending: true })
+        .order('id', { ascending: true })
+        .range(v, b));
+      if (tErr) throw new Error(tErr);
       type RawTour = {
         id: string; tour_id: string | null;
         start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;

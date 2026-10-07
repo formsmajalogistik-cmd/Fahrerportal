@@ -85,7 +85,21 @@ export function FormularPage() {
   const { isTestUser } = useTestMode();
   // E-Mail des aktuell eingeloggten Nutzers — bekommt automatisch eine
   // Kopie jeder Submission als CC.
-  const submitterEmail = session?.user?.email ?? null;
+  // Adresse für Bestätigungs-/Zwischenprotokoll-Mails: frisch aus dem
+  // Profil, nicht aus der Anmeldesitzung. Ändert der Admin die Adresse,
+  // trägt die laufende Sitzung bis zur nächsten Token-Erneuerung (bis zu
+  // 1 h) noch die alte — die Mail ginge sonst an die alte Adresse.
+  const sitzungsEmail = session?.user?.email ?? null;
+  const sitzungsUserId = session?.user?.id ?? null;
+  const [profilEmail, setProfilEmail] = useState<string | null>(null);
+  useEffect(() => {
+    if (!sitzungsUserId) return;
+    let aktiv = true;
+    void supabase.from('app_users').select('email').eq('id', sitzungsUserId).maybeSingle()
+      .then(({ data }) => { if (aktiv && data?.email) setProfilEmail(data.email); });
+    return () => { aktiv = false; };
+  }, [sitzungsUserId]);
+  const submitterEmail = profilEmail ?? sitzungsEmail;
 
   // ---- Dirty-Tracking + Unsaved-Warnung ----
   const [savedDataJson, setSavedDataJson] = useState<string>('{}');

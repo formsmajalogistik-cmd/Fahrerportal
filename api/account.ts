@@ -1,9 +1,11 @@
 // Konto-Verwaltung — Admin-only Endpunkte für das Löschen eines
 // Benutzerkontos (Auth-User + fahrer-Einträge), inklusive optionaler
-// Übertragung aller Referenzen an ein Ziel-Konto.
+// Übertragung aller Referenzen an ein Ziel-Konto, und für das Ändern der
+// E-Mail-Adresse (= Login + Zustelladresse) eines Kontos.
 //
 // Routing:
 //   delete-user   POST  body: { userId, transferToFahrerId?: string | null }
+//   change-email  POST  body: { userId, neueEmail, neueEmailWiederholung }
 //
 // Sicherheitsmodell:
 //   - Aufrufer muss Admin sein (Bearer-Token → getAuthedUser → role).
@@ -13,6 +15,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
+import { normalisiereEmail, pruefeNeueEmail } from '../server-lib/emailAendern.js';
+import { sendMail } from '../server-lib/graph.js';
 
 interface Req {
   method?: string;
@@ -63,6 +67,10 @@ export default async function handler(req: Req, res: Res) {
   try {
     const method = (req.method ?? 'GET').toUpperCase();
     const action = qString(req.query?.action) ?? '';
+    if (action === 'change-email' && method === 'POST') {
+      await emailAendern(req, res);
+      return;
+    }
     if (action !== 'delete-user' || method !== 'POST') {
       res.status(404).json({ error: 'Unknown action' });
       return;
@@ -199,4 +207,120 @@ export default async function handler(req: Req, res: Res) {
     console.error('[api/account]', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Interner Fehler' });
   }
+}
+
+// ---------------------------------------------------------------
+// change-email
+// ---------------------------------------------------------------
+//
+// Die Adresse steckt an genau zwei gepflegten Stellen:
+//   * auth.users.email     — der Login (Supabase Auth)
+//   * public.app_users.email — der Spiegel, aus dem die App ALLE
+//     Zustelladressen liest (Bestätigungsmail, Auftrags-E-Mail, Briefe,
+//     Führerscheinabfrage, Anzeigen). Keine Kopien in fahrer o.ä.
+// Zusätzlich wird ein Eintrag im Empfänger-Adressbuch (email_favoriten)
+// mitgezogen, falls der Fahrer dort mit der alten Adresse steht.
+// Historische Protokolle (versendete Mails, alte Rechnungsempfänger)
+// bleiben bewusst, wie sie waren.
+
+function likeExakt(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+async function emailAendern(req: Req, res: Res): Promise<void> {
+  const caller = await getAuthedUser(authHeader(req));
+  if (caller.role === 'test') throw new HttpError(403, 'Testmodus — E-Mail-Adressen werden nicht geändert.');
+  if (caller.role !== 'admin') throw new HttpError(403, 'Nur Admins dürfen E-Mail-Adressen ändern.');
+
+  const body = readBody(req.body);
+  const userId = asString(body.userId);
+  if (!userId) throw new HttpError(400, 'userId fehlt im Body.');
+
+  const admin = getServiceRoleClient();
+  const { data: ziel, error: zielErr } = await admin
+    .from('app_users').select('id, email, vorname, nachname').eq('id', userId).maybeSingle();
+  if (zielErr) throw new HttpError(500, `Konto-Lookup fehlgeschlagen: ${zielErr.message}`);
+  if (!ziel) throw new HttpError(404, 'Konto nicht gefunden.');
+  const alt = String(ziel.email ?? '');
+
+  const pruefung = pruefeNeueEmail(body.neueEmail, body.neueEmailWiederholung, alt);
+  if (!pruefung.ok) throw new HttpError(pruefung.status, pruefung.fehler);
+  const neu = pruefung.email;
+
+  // Schon vergeben? (Groß-/Kleinschreibung egal.) Erst prüfen, dann ändern.
+  const { data: belegt, error: belegtErr } = await admin
+    .from('app_users').select('id').ilike('email', likeExakt(neu)).neq('id', userId).limit(1);
+  if (belegtErr) throw new HttpError(500, `Prüfung fehlgeschlagen: ${belegtErr.message}`);
+  if ((belegt ?? []).length > 0) {
+    throw new HttpError(409, `Die Adresse ${neu} wird bereits von einem anderen Konto verwendet. Es wurde nichts geändert.`);
+  }
+
+  // 1) Login. email_confirm: der Admin bestätigt die Adresse — sonst
+  //    verschickte Supabase eine Bestätigungsmail und der Login stünde
+  //    bis zum Klick still.
+  const { error: authErr } = await admin.auth.admin.updateUserById(userId, { email: neu, email_confirm: true });
+  if (authErr) {
+    const m = authErr.message ?? '';
+    if (/already|exists|registered/i.test(m)) {
+      throw new HttpError(409, `Die Adresse ${neu} ist bereits für ein anderes Login registriert. Es wurde nichts geändert.`);
+    }
+    throw new HttpError(500, `Login-Adresse konnte nicht geändert werden: ${m}`);
+  }
+
+  // 2) Spiegel. Scheitert das, den Login zurückdrehen — sonst liefen
+  //    Login und Zustelladresse auseinander.
+  const { error: appErr } = await admin.from('app_users').update({ email: neu }).eq('id', userId);
+  if (appErr) {
+    await admin.auth.admin.updateUserById(userId, { email: alt, email_confirm: true });
+    throw new HttpError(500, `Profil-Adresse konnte nicht gespeichert werden (Login zurückgesetzt): ${appErr.message}`);
+  }
+
+  // 3) Empfänger-Adressbuch: alter Eintrag → neue Adresse (Duplikat vermeiden).
+  let adressbuch = 0;
+  try {
+    const { data: favAlt } = await admin.from('email_favoriten').select('id').ilike('email', likeExakt(normalisiereEmail(alt)));
+    if ((favAlt ?? []).length > 0) {
+      const { data: favNeu } = await admin.from('email_favoriten').select('id').ilike('email', likeExakt(neu)).limit(1);
+      if ((favNeu ?? []).length > 0) {
+        await admin.from('email_favoriten').delete().in('id', (favAlt ?? []).map((f) => f.id));
+      } else {
+        await admin.from('email_favoriten').update({ email: neu }).in('id', (favAlt ?? []).map((f) => f.id));
+      }
+      adressbuch = (favAlt ?? []).length;
+    }
+  } catch (e) {
+    console.warn('[api/account change-email] Adressbuch nicht aktualisiert', e);
+  }
+
+  // 4) Info-Mail an die NEUE Adresse — so fällt ein Tippfehler sofort auf.
+  //    Scheitert sie, bleibt die Änderung trotzdem gültig.
+  let infoMail = 'gesendet';
+  try {
+    const name = [ziel.vorname, ziel.nachname].filter(Boolean).join(' ').trim();
+    await sendMail({
+      to: [neu],
+      subject: 'Ihre Anmeldeadresse für das Maja-Logistik Fahrerportal wurde geändert',
+      bodyText:
+        `${name ? `Hallo ${name},` : 'Hallo,'}\n\n`
+        + 'Ihre Anmeldeadresse für das Maja-Logistik Fahrerportal wurde geändert.\n\n'
+        + `Neue Adresse: ${neu}\n`
+        + 'Ihr Passwort bleibt unverändert. Bitte melden Sie sich ab sofort mit der neuen Adresse an.\n\n'
+        + 'Falls Sie diese Änderung nicht erwartet haben, wenden Sie sich bitte an Maja-Logistik.\n',
+    });
+  } catch (e) {
+    infoMail = `fehler: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300);
+    console.warn('[api/account change-email] Info-Mail fehlgeschlagen', e);
+  }
+
+  // 5) Protokoll.
+  const { data: ich } = await admin.from('app_users').select('email, vorname, nachname').eq('id', caller.id).maybeSingle();
+  const ichName = ich ? ([ich.vorname, ich.nachname].filter(Boolean).join(' ').trim() || ich.email) : null;
+  const { error: logErr } = await admin.from('konto_email_aenderungen').insert({
+    user_id: userId, alte_email: alt, neue_email: neu,
+    geaendert_von: caller.id, geaendert_von_name: ichName,
+    info_mail: infoMail, adressbuch_eintraege: adressbuch,
+  });
+  if (logErr) console.warn('[api/account change-email] Protokoll nicht geschrieben', logErr.message);
+
+  res.status(200).json({ ok: true, alteEmail: alt, neueEmail: neu, infoMail, protokolliert: !logErr });
 }

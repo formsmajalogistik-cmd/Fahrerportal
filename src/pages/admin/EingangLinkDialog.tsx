@@ -54,6 +54,7 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
   const [touren, setTouren] = useState<TourRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [serverGesucht, setServerGesucht] = useState(false);
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Default-Zeitfenster: letzte 90 Tage. Wenn der Admin sucht, fällt
@@ -85,7 +86,8 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    // Beim Tippen kurz warten — sonst eine Datenbank-Suche pro Tastendruck.
+    const timer = window.setTimeout(() => void (async () => {
       // Touren laden, bei denen mindestens ein Protokoll-Slot frei ist:
       //   AB-Touren: eingang_id IS NULL
       //   ABA/ABC: AB-Slot ODER BC-Slot frei (2 Protokolle pro Tour)
@@ -97,6 +99,18 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
       // weg und es kommen ältere Touren mit.
       const hasSearch = search.trim().length >= 2;
       const showAll = includeAll || hasSearch;
+      // Mit Suchbegriff: Treffer kommen aus der Datenbank-Suche über ALLE
+      // Touren (Migration 103) — vorher wurde nur in den jüngsten 500
+      // gesucht, ältere Touren waren nicht verknüpfbar.
+      let trefferIds: string[] | null = null;
+      if (hasSearch) {
+        const { data: t, error: sErr } = await supabase.rpc('touren_suche', {
+          p_suche: search.trim(), p_fahrer_ids: null, p_limit: 200, p_offset: 0,
+        });
+        if (!sErr) trefferIds = ((t ?? []) as Array<{ id: string }>).map((x) => x.id);
+        else console.warn('[EingangLinkDialog] Datenbank-Suche nicht verfügbar — Rückfall', sErr.message);
+      }
+      if (cancelled) return;
       const cutoffDate = (() => {
         const d = new Date();
         d.setDate(d.getDate() - 90);
@@ -123,7 +137,9 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
         .or('eingang_id.is.null,and(tourenart.in.(ABA,ABC),eingang_id_bc.is.null)')
         .order('startdatum', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false });
-      if (!showAll) {
+      if (trefferIds) {
+        q = q.in('id', trefferIds.length ? trefferIds : ['00000000-0000-0000-0000-000000000000']);
+      } else if (!showAll) {
         q = q.gte('enddatum', cutoffDate).limit(200);
       } else {
         q = q.limit(500);
@@ -132,14 +148,17 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
       if (cancelled) return;
       if (err) setError(err.message);
       else setTouren(((data as unknown) as TourRow[]) ?? []);
+      setServerGesucht(trefferIds !== null);
       setLoading(false);
-    })();
-    return () => { cancelled = true; };
+    })(), search.trim().length >= 2 ? 300 : 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [search, includeAll]);
 
   const filteredTouren = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return touren;
+    // Hat die Datenbank gesucht, nicht noch einmal im Browser filtern —
+    // sie findet auch „HHAB1234" für „HH-AB 1234".
+    if (!q || serverGesucht) return touren;
     return touren.filter((t) => {
       const fahrerName = displayName(t.fahrer?.user ?? null).toLowerCase();
       return [
@@ -149,7 +168,7 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
         fahrerName,
       ].join(' ').toLowerCase().includes(q);
     });
-  }, [touren, search]);
+  }, [touren, search, serverGesucht]);
 
   /**
    * Verknüpfungs-Logik für eine bestehende Tour. Bei ABA/ABC mit zwei

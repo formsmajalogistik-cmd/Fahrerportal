@@ -1851,6 +1851,23 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Protokoll der E-Mail-Änderungen durch den Admin (Migration 102).
+      konto_email_aenderungen: {
+        Row: {
+          id: number;
+          user_id: string;
+          alte_email: string;
+          neue_email: string;
+          geaendert_von: string;
+          geaendert_von_name: string | null;
+          am: string;
+          info_mail: string | null;
+          adressbuch_eintraege: number;
+        };
+        Insert: { id?: never; user_id: string; alte_email: string; neue_email: string; geaendert_von: string };
+        Update: { info_mail?: string | null };
+        Relationships: [];
+      };
       // Verlauf der Übertragungen auf ein anderes Template (Migration 101).
       // Nur lesbar (Admin/Test); geschrieben wird über die RPCs.
       formular_uebertragungen: {
@@ -2152,6 +2169,10 @@ export type Database = {
       formular_uebertragung_rueckgaengig: {
         Args: { p_ziel_id: string };
         Returns: string;
+      };
+      touren_suche: {
+        Args: { p_suche: string; p_fahrer_ids?: string[] | null; p_limit?: number; p_offset?: number };
+        Returns: Array<{ id: string; gesamt: number }>;
       };
       touren_picker_suche: {
         Args: { p_suche: string; p_limit?: number };
