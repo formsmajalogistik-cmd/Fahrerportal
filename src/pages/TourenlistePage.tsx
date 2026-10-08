@@ -1003,9 +1003,9 @@ export function TourenlistePage() {
       {/* Änderungen durch Auftraggeber — eigener Bereich, bewusst
           getrennt von "Zur Bestätigung". */}
       {isAdmin && aenderungen.length > 0 && (
-        <section className="space-y-3 rounded-xl border border-sky-300 bg-sky-50 p-4">
+        <section className="space-y-3 rounded-xl border border-sky-300 bg-sky-50 p-4 dark:!border-sky-400/30 dark:!bg-sky-950/40">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-sky-900">
+            <h2 className="text-sm font-semibold text-sky-900 dark:!text-sky-200">
               Änderungen durch Auftraggeber ({aenderungen.length})
             </h2>
             <button
@@ -1017,7 +1017,7 @@ export function TourenlistePage() {
               {aenderungenBusy ? 'Wird quittiert …' : 'Alle als gesehen markieren'}
             </button>
           </div>
-          <p className="text-xs text-sky-800">
+          <p className="text-xs text-sky-800 dark:!text-sky-200/90">
             Nachträgliche Änderungen an bestehenden Touren. Bei bereits
             bestätigten Touren bitte prüfen, ob km oder Preis angepasst
             werden müssen — die Tour bleibt bestätigt.
@@ -1027,14 +1027,14 @@ export function TourenlistePage() {
               <li
                 key={g.tour_id}
                 className={`rounded-lg border bg-white p-3 ${
-                  g.bestaetigt ? 'border-amber-400' : 'border-sky-200'
+                  g.bestaetigt ? 'border-amber-400 dark:!border-amber-400/50' : 'border-sky-200 dark:!border-sky-400/30'
                 }`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {g.tour_nr && (
-                        <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                        <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy dark:!bg-slate-600 dark:!text-white">
                           {g.tour_nr}
                         </span>
                       )}
@@ -1059,7 +1059,7 @@ export function TourenlistePage() {
                     </button>
                     <button
                       type="button"
-                      className="rounded-full border border-sky-300 bg-white px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-50"
+                      className="rounded-full border border-sky-300 bg-white px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-50 dark:!border-sky-400/40 dark:!text-sky-200 dark:hover:!bg-sky-900/60"
                       disabled={aenderungenBusy}
                       onClick={() => void handleQuittieren([g.tour_id])}
                     >
@@ -1227,7 +1227,7 @@ export function TourenlistePage() {
               className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
                 hinweisFilter === 'ohne_rechnung'
                   ? 'bg-orange-600 text-white'
-                  : 'bg-orange-100 text-orange-700 hover:ring-1 hover:ring-orange-400'
+                  : 'bg-orange-100 text-orange-700 hover:ring-1 hover:ring-orange-400 dark:!bg-orange-900/50 dark:!text-orange-200'
               }`}
             >
               {hinweise.ohneRechnung.size} abgeschlossene ohne Rechnung
@@ -1302,7 +1302,12 @@ export function TourenlistePage() {
 
       {search.trim().length >= 2 && (
         <div role="status" className={`flex flex-wrap items-center gap-3 rounded-lg px-3 py-2 text-sm ${
-          suche?.fehler ? 'bg-amber-50 text-amber-900' : 'bg-maja-light/70 text-maja-ink'}`}>
+          suche?.fehler
+            ? 'bg-amber-50 text-amber-900'
+            // bg-maja-light/70 fehlt in der zentralen Dark-Umfärbung (index.css
+            // kennt nur /30–/60) — ohne die dark:-Klassen blieb der Grund hell
+            // und die (umgefärbte) Schrift hell: kaum lesbar.
+            : 'bg-maja-light/70 text-maja-ink dark:!border dark:!border-slate-600 dark:!bg-slate-800 dark:!text-slate-100'}`}>
           {suche?.fehler ? (
             <span>
               Suche nur im gewählten Zeitraum — die Suche über alle Touren ist noch nicht
@@ -1315,7 +1320,7 @@ export function TourenlistePage() {
               <strong>Suche in allen Touren</strong> — {suche.gesamt} {suche.gesamt === 1 ? 'Treffer' : 'Treffer'}
               {(statusFilter !== 'alle' || auftraggeberFilter || fahrerFilter) && filteredRows.length !== suche.rows.length
                 && <> · mit den aktiven Filtern: {filteredRows.length}</>}
-              {' '}<span className="text-maja-muted">(unabhängig vom Zeitraum oben)</span>
+              {' '}<span className="text-maja-muted dark:!text-slate-300">(unabhängig vom Zeitraum oben)</span>
             </span>
           )}
           {suchModus && suche && suche.rows.length < suche.gesamt && (
@@ -1488,7 +1493,7 @@ function EinreichungCard({
   onToggleSelected?: () => void;
 }) {
   return (
-    <li className="card flex flex-wrap items-center justify-between gap-3 p-4 ring-1 ring-amber-300">
+    <li className="card flex flex-wrap items-center justify-between gap-3 p-4 ring-1 ring-amber-300 dark:!ring-amber-400/40">
       {selectable && (
         <input
           type="checkbox"
@@ -1501,7 +1506,7 @@ function EinreichungCard({
       <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
         <div className="flex flex-wrap items-center gap-2">
           {tour.tour_id && (
-            <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+            <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy dark:!bg-slate-600 dark:!text-white">
               {tour.tour_id}
             </span>
           )}
@@ -1510,7 +1515,7 @@ function EinreichungCard({
             Unbestätigt
           </span>
           {tour.zurueckgestellt && (
-            <span className="inline-block rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-700">
+            <span className="inline-block rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-700 dark:!bg-slate-700 dark:!text-slate-200">
               Zurückgestellt
             </span>
           )}
@@ -1705,7 +1710,7 @@ function TourCard({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               {tour.tour_id && (
-                <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                <span className="inline-block rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy dark:!bg-slate-600 dark:!text-white">
                   {tour.tour_id}
                 </span>
               )}
@@ -1870,7 +1875,7 @@ function TourCard({
             {/* Abweichendes Rechnungsdatum — nur wenn wirklich gesetzt. */}
             {isAdmin && tour.rechnungsdatum_abweichend && tour.rechnungsdatum && (
               <span
-                className="inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-800"
+                className="inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-800 dark:!bg-sky-900 dark:!text-sky-100"
                 title="Abweichendes Rechnungsdatum — die Tour wird zu diesem Datum abgerechnet, nicht zum Enddatum."
               >
                 Rechnungsdatum {formatDate(tour.rechnungsdatum)}
@@ -1909,7 +1914,7 @@ function TourCard({
             )}
             {hinweisOhneRechnung && (
               <span
-                className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-orange-700"
+                className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-orange-700 dark:!bg-orange-900/50 dark:!text-orange-200"
                 title="Abgeschlossene Tour ohne Rechnungsposition — noch nicht berechnet."
               >
                 <span aria-hidden="true">⚠</span> Ohne Rechnung
