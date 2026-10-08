@@ -52,6 +52,16 @@ type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nac
   user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
 };
 
+/** Eintrag aus tour_aufteilungen (Migration 106), nur was die Anzeige braucht. */
+interface AufteilungInfo {
+  id: string;
+  tour_id: string | null;
+  neue_tour_id: string | null;
+  tour_nr: string | null;
+  neue_tour_nr: string | null;
+  aufgeteilt_am: string;
+}
+
 interface FullTour extends Tour {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kontakt' | 'externe_app_name' | 'externe_app_url'> | null;
   fahrer: FahrerWithUser | null;
@@ -71,6 +81,11 @@ interface Props {
   variant?: 'modal' | 'embedded';
   /** Bei true startet die Tour direkt im Edit-Modus (für Side-by-Side). */
   startInEditMode?: boolean;
+  /**
+   * Andere Tour im selben Dialog öffnen (z.B. nach dem Aufteilen die neue
+   * Tour). Ohne den Callback erscheinen die Tour-IDs nur als Text.
+   */
+  onOpenTour?: (tourId: string) => void;
 }
 
 const STATUS_LABEL: Record<TourStatus, string> = {
@@ -86,6 +101,8 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 };
 
 import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
+import { TourAufteilenDialog, type AufteilungsErgebnis } from './TourAufteilenDialog';
+import { istAufteilbar, istTour1GeaendertFehler, ohneFehlercode } from '../../lib/tourAufteilung';
 import { merkeTourAdressen } from '../../lib/feldVorschlaege';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
@@ -330,7 +347,7 @@ function draftFromTour(t: FullTour): EditDraft {
 
 export function TourDetailDialog({
   tourId, onClose, onChanged, onDeleted,
-  variant = 'modal', startInEditMode = false,
+  variant = 'modal', startInEditMode = false, onOpenTour,
 }: Props) {
   const { profile } = useAuth();
   const fahrerCtx = useFahrerContext();
@@ -363,6 +380,11 @@ export function TourDetailDialog({
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Aufteilen in zwei AB-Touren (Migration 106)
+  const [aufteilenOffen, setAufteilenOffen] = useState(false);
+  const [aufteilungErfolg, setAufteilungErfolg] = useState<AufteilungsErgebnis | null>(null);
+  const [aufteilung, setAufteilung] = useState<AufteilungInfo | null>(null);
+  const [rueckgaengigFrage, setRueckgaengigFrage] = useState<null | { tour1Geaendert: string | null }>(null);
   /**
    * Welcher Routen-Selector ist offen? null = keiner. "hin" berechnet
    * Start → Ziel und füllt km_hin (bzw. km_gesamt_aba bei ABA). "rueck"
@@ -484,6 +506,54 @@ export function TourDetailDialog({
   }, [tourId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Ist diese Tour aus einer Aufteilung entstanden bzw. aufgeteilt worden?
+  // (nur Admin — tour_aufteilungen ist Admin-only). `tour` als Abhängigkeit,
+  // damit der Hinweis nach jedem Neuladen stimmt.
+  useEffect(() => {
+    if (!isAdmin || !tour) return;
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('tour_aufteilungen')
+        .select('id, tour_id, neue_tour_id, tour_nr, neue_tour_nr, aufgeteilt_am')
+        .or(`tour_id.eq.${tour.id},neue_tour_id.eq.${tour.id}`)
+        .is('rueckgaengig_am', null)
+        .order('aufgeteilt_am', { ascending: false })
+        .limit(1);
+      if (!cancelled) setAufteilung(((data ?? [])[0] as AufteilungInfo | undefined) ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin, tour]);
+
+  /** Aufteilung rückgängig — bei geänderter Tour 1 erst nach Rückfrage. */
+  async function rueckgaengigMachen(tour1Verwerfen: boolean) {
+    if (!aufteilung || !tour) return;
+    if (guard()) return;
+    const { data, error: err } = await supabase.rpc('tour_aufteilung_rueckgaengig', {
+      p_aufteilung_id: aufteilung.id,
+      p_tour1_aenderungen_verwerfen: tour1Verwerfen,
+    });
+    if (err) {
+      if (!tour1Verwerfen && istTour1GeaendertFehler(err.message)) {
+        setRueckgaengigFrage({ tour1Geaendert: ohneFehlercode(err.message) });
+        return;
+      }
+      throw new Error(err.message);
+    }
+    const r = data as unknown as { tour_id: string; tour_nr: string | null; geloeschte_tour_nr: string | null };
+    setRueckgaengigFrage(null);
+    setAufteilungErfolg(null);
+    onChanged();
+    const text = `Aufteilung rückgängig gemacht: ${r.tour_nr ?? 'die Tour'} ist wieder vollständig, ${r.geloeschte_tour_nr ?? 'die neue Tour'} wurde gelöscht.`;
+    if (tour.id !== r.tour_id) {
+      // Wir stehen auf der gelöschten Tour 2 → zur wiederhergestellten wechseln.
+      if (onOpenTour) onOpenTour(r.tour_id); else onDeleted();
+      return;
+    }
+    await load();
+    setStatusMsg({ kind: 'ok', text });
+  }
 
   // ----- Edit-Modus -----
 
@@ -1183,6 +1253,48 @@ export function TourDetailDialog({
         </div>
       )}
 
+      {/* Aufteilen: Erfolg mit Links zu beiden Touren */}
+      {aufteilungErfolg && (
+        <div role="status" className="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700">
+          <strong>Tour aufgeteilt.</strong>{' '}
+          {aufteilungErfolg.tour_nr ?? 'Tour 1'} ist jetzt A → B, der Rück-Teil ist{' '}
+          {onOpenTour ? (
+            <button type="button" className="font-semibold underline hover:no-underline"
+                    onClick={() => onOpenTour(aufteilungErfolg.neue_tour_id)}>
+              {aufteilungErfolg.neue_tour_nr ?? 'die neue Tour'} öffnen
+            </button>
+          ) : <strong>{aufteilungErfolg.neue_tour_nr}</strong>}
+          . Beide Touren stehen in der Liste.
+          {aufteilungErfolg.notiz_hinweis && ' Die interne Notiz des Auftraggebers bleibt hier; die neue Tour hat einen Hinweis darauf.'}
+        </div>
+      )}
+
+      {/* Herkunft/Ergebnis einer Aufteilung — mit Rückgängig */}
+      {isAdmin && aufteilung && (() => {
+        const istNeu = aufteilung.neue_tour_id === tour.id;
+        const andereId = istNeu ? aufteilung.tour_id : aufteilung.neue_tour_id;
+        const andereNr = istNeu ? aufteilung.tour_nr : aufteilung.neue_tour_nr;
+        const datum = formatDate(aufteilung.aufgeteilt_am);
+        const link = andereId && onOpenTour
+          ? <button type="button" className="font-semibold underline hover:no-underline" onClick={() => onOpenTour(andereId)}>{andereNr ?? 'Tour'}</button>
+          : <strong>{andereNr ?? '—'}</strong>;
+        return (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:!border-sky-400/30 dark:!bg-sky-950/40 dark:!text-sky-100">
+            <span>
+              {istNeu
+                ? <>Aufgeteilt aus {link} am {datum}.</>
+                : <>Aufgeteilt am {datum} — der Rück-Teil ist jetzt {link}.</>}
+            </span>
+            {!editing && (
+              <button type="button" className="rounded-full border border-sky-400 px-3 py-1 text-xs font-semibold hover:bg-sky-100 dark:!border-sky-400/50 dark:hover:!bg-sky-900/60"
+                      onClick={() => setRueckgaengigFrage({ tour1Geaendert: null })}>
+                Aufteilung rückgängig machen
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Detail-Felder */}
       {!editing || !draft ? (
         <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
@@ -1465,6 +1577,12 @@ export function TourDetailDialog({
 
       {/* Footer */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-maja-navy/10 pt-4">
+        {isAdmin && editing && istAufteilbar(tour) && (
+          <button type="button" className="btn-secondary" disabled={saving}
+                  onClick={() => { if (!guard()) setAufteilenOffen(true); }}>
+            In zwei AB-Touren aufteilen
+          </button>
+        )}
         {isAdmin && !editing && (
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -1528,6 +1646,49 @@ export function TourDetailDialog({
           )}
         </div>
       </div>
+
+      {aufteilenOffen && (
+        <TourAufteilenDialog
+          tourId={tour.id}
+          fahrer={fahrer as FahrerOptionRaw[]}
+          zugaenge={zugaenge}
+          onClose={() => setAufteilenOffen(false)}
+          onDone={(e) => {
+            setAufteilenOffen(false);
+            setEditing(false);
+            setDraft(null);
+            setStatusMsg(null);
+            setAufteilungErfolg(e);
+            void load();
+            onChanged();
+          }}
+        />
+      )}
+
+      {rueckgaengigFrage && aufteilung && (
+        <ConfirmDialog
+          key={rueckgaengigFrage.tour1Geaendert ? 'rueckfrage' : 'erste-frage'}
+          title="Aufteilung rückgängig machen?"
+          message={rueckgaengigFrage.tour1Geaendert ? (
+            <>
+              <span className="block rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {rueckgaengigFrage.tour1Geaendert}
+              </span>
+              <span className="mt-2 block">Trotzdem die ursprüngliche Tour wiederherstellen?</span>
+            </>
+          ) : (
+            <>
+              {aufteilung.tour_nr ?? 'Die Tour'} wird wieder zur ursprünglichen ABA-/ABC-Tour,
+              {' '}{aufteilung.neue_tour_nr ?? 'die neue Tour'} wird gelöscht. Zusätze und Dokumente der
+              neuen Tour wandern zurück.
+            </>
+          )}
+          confirmLabel={rueckgaengigFrage.tour1Geaendert ? 'Trotzdem wiederherstellen' : 'Rückgängig machen'}
+          destructive
+          onConfirm={() => rueckgaengigMachen(!!rueckgaengigFrage.tour1Geaendert)}
+          onClose={() => setRueckgaengigFrage(null)}
+        />
+      )}
 
       {confirmDelete && (() => {
         // Eingangs-Verknüpfungs-Anzahl für die Warnung (Aufgabe 2):
@@ -2959,7 +3120,7 @@ function TourAenderungsProtokoll({ tourId, stand }: { tourId: string; stand: unk
                 ?? `${feldLabel(e.feld)}: ${wertLabel(e.feld, e.wert_alt)} → ${wertLabel(e.feld, e.wert_neu)}`}
             </span>
             <span className="text-maja-muted">
-              {e.quelle === 'verknuepfung' ? '(Verknüpfung)' : e.feld === 'fahrer_id' ? '(Weitergabe)' : '(Auftraggeber)'}
+              {e.quelle === 'verknuepfung' ? '(Verknüpfung)' : e.quelle === 'aufteilung' ? '(Aufteilung)' : e.feld === 'fahrer_id' ? '(Weitergabe)' : '(Auftraggeber)'}
             </span>
           </li>
         ))}

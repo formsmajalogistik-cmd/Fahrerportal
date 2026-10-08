@@ -69,6 +69,11 @@ export function feldLabel(feld: string): string {
 export function aenderungSatz(
   feld: string, wertNeu: string | null, wertAlt?: string | null, quelle?: string | null,
 ): string | null {
+  // Aufteilung in zwei AB-Touren (Migration 106): der Server schreibt den
+  // fertigen Satz, z.B. „Aufgeteilt aus T-2026-4419 am 08.10.2026".
+  if (quelle === 'aufteilung') {
+    return wertAlt ? `${wertNeu ?? ''} (vorher ${wertAlt})` : (wertNeu ?? 'Aufteilung');
+  }
   // Admin-Übernahme beim Verknüpfen eines Protokolls (Migration 105).
   if (quelle === 'verknuepfung') {
     // War das Feld vorher leer, gibt es kein „von".

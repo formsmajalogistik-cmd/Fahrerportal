@@ -264,6 +264,7 @@ export type Database = {
           auf_eis: boolean;
           auf_eis_notiz: string | null;
           auf_eis_seit: string | null;
+          aufgeteilt_von_id: string | null;
           kundenname: string | null;
           auftraggeber_id: string | null;
           fahrer_id: string | null;
@@ -337,6 +338,7 @@ export type Database = {
           auf_eis?: boolean;
           auf_eis_notiz?: string | null;
           auf_eis_seit?: string | null;
+          aufgeteilt_von_id?: string | null;
           kundenname?: string | null;
           auftraggeber_id?: string | null;
           fahrer_id?: string | null;
@@ -410,6 +412,7 @@ export type Database = {
           auf_eis?: boolean;
           auf_eis_notiz?: string | null;
           auf_eis_seit?: string | null;
+          aufgeteilt_von_id?: string | null;
           kundenname?: string | null;
           auftraggeber_id?: string | null;
           fahrer_id?: string | null;
@@ -1590,6 +1593,25 @@ export type Database = {
           },
         ];
       };
+      tour_aufteilungen: {
+        Row: {
+          id: string;
+          tour_id: string | null;
+          neue_tour_id: string | null;
+          tour_nr: string | null;
+          neue_tour_nr: string | null;
+          aufgeteilt_am: string;
+          aufgeteilt_von: string | null;
+          snapshot: Json;
+          stand_tour: Json;
+          stand_neue_tour: Json;
+          rueckgaengig_am: string | null;
+          rueckgaengig_von: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       tour_aenderungen: {
         Row: {
           id: string;
@@ -2165,6 +2187,18 @@ export type Database = {
       next_rechnungsnummer: {
         Args: { p_year?: number };
         Returns: string;
+      };
+      tour_aufteilen: {
+        Args: { p_tour_id: string; p_optionen: Json };
+        Returns: Json;
+      };
+      tour_aufteilung_rueckgaengig: {
+        Args: { p_aufteilung_id: string; p_tour1_aenderungen_verwerfen?: boolean };
+        Returns: Json;
+      };
+      tour_aufteilung_sperrgrund: {
+        Args: { p_tour_id: string };
+        Returns: string | null;
       };
       calculate_tour_price: {
         Args: {

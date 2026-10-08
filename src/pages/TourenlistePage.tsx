@@ -1448,7 +1448,9 @@ export function TourenlistePage() {
 
       {openTourId && (
         <TourDetailDialog
+          key={openTourId}
           tourId={openTourId}
+          onOpenTour={(id) => { setOpenTourId(id); void load(true); }}
           onClose={() => setOpenTourId(null)}
           onChanged={() => void load(true)}
           onDeleted={() => { setOpenTourId(null); void load(); }}
