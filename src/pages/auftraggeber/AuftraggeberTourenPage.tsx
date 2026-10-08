@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ZeitraumFilter } from '../../components/ZeitraumFilter';
+import { ALLE_BIS, ALLE_VON } from '../../lib/zeitraeume';
 import { supabase } from '../../lib/supabase';
 import { ladeInBloecken } from '../../lib/ladeInBloecken';
 import { Spinner } from '../../components/Spinner';
@@ -58,6 +60,11 @@ export function AuftraggeberTourenPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('alle');
+  // Zeitraum wie in der Tourenliste des Teams (ZeitraumFilter). Standard
+  // „Alle" — die Ansicht zeigte bisher immer alle Touren, das bleibt so,
+  // bis der Kunde selbst einen Zeitraum wählt.
+  const [dateFrom, setDateFrom] = useState<string>(ALLE_VON);
+  const [dateTo, setDateTo] = useState<string>(ALLE_BIS);
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notizTourIds, setNotizTourIds] = useState<Set<string>>(new Set());
@@ -183,6 +190,11 @@ export function AuftraggeberTourenPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((t) => {
+      // Effektives Datum wie in der Tourenliste: Enddatum, sonst Start.
+      // Touren auf Eis ohne Termin bleiben in jedem Zeitraum sichtbar.
+      const datum = (t.enddatum ?? t.startdatum ?? '').slice(0, 10);
+      if (datum && (datum < dateFrom || datum > dateTo)) return false;
+      if (!datum && !t.auf_eis && (dateFrom !== ALLE_VON || dateTo !== ALLE_BIS)) return false;
       if (statusFilter === 'pruefung') {
         if (t.bestaetigt) return false;
       } else if (statusFilter === 'auf_eis') {
@@ -203,7 +215,7 @@ export function AuftraggeberTourenPage() {
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rows, search, statusFilter]);
+  }, [rows, search, statusFilter, dateFrom, dateTo]);
 
   if (loading) return <Spinner label="Touren werden geladen …" />;
   if (error) {
@@ -235,6 +247,26 @@ export function AuftraggeberTourenPage() {
           {hinweis}
         </div>
       )}
+
+      <div className="card p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="ag-von" className="label">Startdatum</label>
+            <input id="ag-von" type="date" className="input"
+                   value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="ag-bis" className="label">Enddatum</label>
+            <input id="ag-bis" type="date" className="input"
+                   value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <ZeitraumFilter
+            von={dateFrom}
+            bis={dateTo}
+            onChange={(v, b) => { setDateFrom(v); setDateTo(b); }}
+          />
+        </div>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <input

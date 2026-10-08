@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { ART_BADGE, DIALOG_HINTERGRUND, ERGEBNIS_ZEILE, TOUR_ID_CHIP, HINWEIS_BADGE, UNTERDIALOG_HINTERGRUND, WAHL_KNOPF } from '../../components/tourAuswahlStil';
 import { displayName } from '../../lib/names';
 import { XIcon } from '../../components/icons';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
@@ -16,6 +17,13 @@ import type {
   AppUser, Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../../types/db';
 import type { Database } from '../../types/supabase';
+import {
+  abgleichAnwenden, fahrzeugAbgleich, type AbgleichZeile, type FahrzeugFeld,
+} from '../../lib/fahrzeugAbgleich';
+import {
+  berechneTourPreis, kmUebernahmeMeldung, preisEntscheidung, rechnungsHinweis,
+} from '../../lib/tourPreis';
+import { protokolliereVerknuepfung } from '../../lib/tourAenderungen';
 
 interface RouteQueueItem {
   tourId: string;
@@ -23,6 +31,16 @@ interface RouteQueueItem {
   destination: string;
   field: 'km_hin' | 'km_rueck';
   title: string;
+  /** Steht die Tour schon auf einer Rechnung? Dann bleibt der Preis. */
+  rechnungsnummer: string | null;
+}
+
+/** Offener Abgleich der Fahrzeugdaten vor dem Verknüpfen. */
+interface Abgleich {
+  tour: TourRow;
+  abschnitt: ProtokollAbschnitt;
+  zeilen: AbgleichZeile[];
+  rechnungsnummer: string | null;
 }
 
 type TourInsert = Database['public']['Tables']['touren']['Insert'];
@@ -42,9 +60,10 @@ interface Props {
   /**
    * Wird nach erfolgreicher Verknüpfung aufgerufen. `filledFields` enthält
    * die Tour-Spalten, die aus dem Eingang übernommen wurden — der
-   * Aufrufer kann daraus eine Toast-Meldung bauen.
+   * Aufrufer kann daraus eine Toast-Meldung bauen. `hinweise` sind
+   * zusätzliche Meldungen (km/Preis, Rechnung, Protokoll-Fehler).
    */
-  onLinked: (filledFields: string[]) => void;
+  onLinked: (filledFields: string[], hinweise: string[]) => void;
 }
 
 type Tab = 'existing' | 'new';
@@ -70,6 +89,10 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
    */
   const [routeQueue, setRouteQueue] = useState<RouteQueueItem[]>([]);
   const pendingFilledRef = useRef<string[] | null>(null);
+  /** Meldungen aus Verknüpfung und km-Übernahme — gehen mit onLinked raus. */
+  const hinweiseRef = useRef<string[]>([]);
+  /** Abweichende Fahrzeugdaten, über die der Admin vor dem Verknüpfen entscheidet. */
+  const [abgleich, setAbgleich] = useState<Abgleich | null>(null);
 
   const summary = useMemo(() => summarizeEingang(formular), [formular]);
 
@@ -80,7 +103,7 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
     if (routeQueue.length === 0 && pendingFilledRef.current !== null) {
       const filled = pendingFilledRef.current;
       pendingFilledRef.current = null;
-      onLinked(filled);
+      onLinked(filled, hinweiseRef.current);
     }
   }, [routeQueue, onLinked]);
 
@@ -181,11 +204,16 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
    *     adresse_rueckfuehrung + kontakt_rueckfuehrung. adresse_start/ziel
    *     bleibt unberührt — der AB-Teil ist bereits gefüllt.
    */
-  async function linkExisting(tour: TourRow, abschnitt: ProtokollAbschnitt = 'ab') {
+  async function linkExisting(
+    tour: TourRow,
+    abschnitt: ProtokollAbschnitt,
+    auswahl: { zeilen: AbgleichZeile[]; gewaehlt: ReadonlySet<FahrzeugFeld>; rechnungsnummer: string | null },
+  ) {
     setLinking(true);
     setError(null);
-    // Bei einer bestehenden Tour: nur leere Felder aus dem Eingang nachfüllen.
-    // Bereits eingetragene Tour-Werte werden NICHT überschrieben.
+    hinweiseRef.current = [];
+    // Bei einer bestehenden Tour: Adressen, Kontakte und Kundenname nur in
+    // leere Felder nachfüllen. Ausnahme Fahrzeugdaten — siehe Abgleich unten.
     const patch: TourUpdate = abschnitt === 'bc'
       ? { eingang_id_bc: formular.id }
       : { eingang_id: formular.id };
@@ -210,51 +238,23 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
         if (track) fieldKeys.push(key as string);
       }
     }
-    /**
-     * Kennzeichen liegt als Array auf der Tour: Index 0 = Hinfahrt,
-     * Index 1 = Rückführung (so lesen es Rechnungs-Platzhalter,
-     * Tour-Maske und Export). Deshalb kein `maybe` — der Slot muss
-     * gezielt getroffen werden, ohne den anderen zu verschieben.
-     */
-    function kennzeichenUebernehmen(slot: 0 | 1, label: string) {
-      const neu = summary.kennzeichen?.trim().toUpperCase();
-      if (!neu) return;
-      const alt = Array.isArray(tour.kennzeichen) ? [...tour.kennzeichen] : [];
-      if ((alt[slot] ?? '').trim()) return;   // schon gefüllt — nicht überschreiben
-      // Fehlt die Hinfahrt noch, bleibt an Index 0 ein leerer
-      // Platzhalter stehen. Sonst rutschte das Rück-Kennzeichen auf
-      // Index 0 und würde überall als Hin-Kennzeichen gelesen.
-      while (alt.length < slot) alt.push('');
-      alt[slot] = neu;
-      (patch as Record<string, unknown>).kennzeichen = alt;
-      filled.push(label);
-      fieldKeys.push('kennzeichen');
-    }
-
     // Kundenname gilt für die ganze Tour, unabhängig vom Abschnitt.
     maybe('kundenname', 'Kundenname', tour.kundenname, summary.kundenname);
 
-    // Fahrzeugdaten dagegen gehören zum jeweiligen Abschnitt: Bei
-    // ABA/ABC ist das Rückfahrzeug ein anderes als das Hinfahrzeug.
-    // Vorher landeten sie immer in den Hin-Spalten — dort waren sie
-    // durch das erste Protokoll längst gefüllt, weshalb die Übernahme
-    // beim Rück-Teil wirkungslos blieb.
-    if (abschnitt === 'bc') {
-      maybe('fin_rueck', 'FIN Rück', tour.fin_rueck, summary.fin);
-      kennzeichenUebernehmen(1, 'Kennzeichen Rück');
-      maybe('fahrzeugmodell_rueck', 'Fahrzeugmodell Rück',
-            tour.fahrzeugmodell_rueck, summary.fahrzeugmodell);
-    } else {
-      maybe('fin', 'FIN', tour.fin, summary.fin);
-      kennzeichenUebernehmen(0, 'Kennzeichen');
-      maybe('fahrzeugmodell', 'Fahrzeugmodell',
-            tour.fahrzeugmodell, summary.fahrzeugmodell);
-    }
+    // Fahrzeugdaten (Kennzeichen, FIN, Modell) gehören zum jeweiligen
+    // Abschnitt — bei ABA/ABC ist das Rückfahrzeug ein anderes. Was
+    // übernommen wird, hat der Admin im Abgleich entschieden (abweichende
+    // UND leere Tour-Felder, Default: übernehmen). Ein schon vorhandener
+    // Tour-Wert wird dabei bewusst überschrieben; der Altwert landet im
+    // Änderungsprotokoll. Regeln: lib/fahrzeugAbgleich.ts.
+    const fahrzeug = abgleichAnwenden(auswahl.zeilen, auswahl.gewaehlt, abschnitt, tour.kennzeichen);
+    Object.assign(patch as Record<string, unknown>, fahrzeug.patch);
+    filled.push(...fahrzeug.labels);
+    fieldKeys.push(...fahrzeug.trackKeys);
 
-    // Kilometer werden bewusst NICHT übernommen — weder km_hin noch
-    // km_rueck. Sie gehen über km_gesamt in die Preisstufe ein; eine
-    // stille Übernahme könnte den Preis einer bestehenden Tour ändern.
-    // Das bleibt eine bewusste Eingabe des Admins.
+    // Kilometer kommen NICHT aus dem Protokoll, sondern aus der
+    // Routenberechnung im Anschluss (RouteSelectorDialog). Dort wird
+    // danach auch der Preis neu berechnet — siehe kmUebernehmen().
 
     const kontaktPayload = (summary.kontaktName || summary.kontaktTelefon || summary.kontaktEmail) ? {
       name: summary.kontaktName ?? '',
@@ -349,6 +349,20 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
       .eq('id', tour.id);
     setLinking(false);
     if (err) { setError(err.message); return; }
+    if (fahrzeug.protokoll.length > 0) {
+      try {
+        await protokolliereVerknuepfung(tour.id, fahrzeug.protokoll);
+      } catch (e) {
+        hinweiseRef.current.push(`Änderungsprotokoll konnte nicht geschrieben werden: ${(e as Error).message}`);
+      }
+      // Überschrieben wurde nur etwas, das vorher schon auf der Tour stand.
+      if (auswahl.rechnungsnummer && fahrzeug.protokoll.some((e) => e.alt)) {
+        hinweiseRef.current.push(rechnungsHinweis(
+          auswahl.rechnungsnummer,
+          fahrzeug.protokoll.some((e) => e.feld.startsWith('kennzeichen')) ? 'Kennzeichen' : 'Fahrzeugdaten',
+        ));
+      }
+    }
     // Resultierende Adressen nach dem Update bestimmen — entweder
     // war der Wert schon auf der Tour, oder er kam gerade aus dem
     // Patch. Auto-Routenberechnung nur, wenn beide Enden für die
@@ -366,6 +380,7 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
           destination: finalRueck,
           field: 'km_rueck',
           title: 'Routen für Rück-Strecke',
+          rechnungsnummer: auswahl.rechnungsnummer,
         });
       }
     } else {
@@ -376,11 +391,12 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
           destination: finalZiel,
           field: 'km_hin',
           title: 'Routen für Hin-Strecke',
+          rechnungsnummer: auswahl.rechnungsnummer,
         });
       }
     }
     if (queue.length === 0) {
-      onLinked(filled);
+      onLinked(filled, hinweiseRef.current);
     } else {
       pendingFilledRef.current = filled;
       setRouteQueue(queue);
@@ -394,20 +410,109 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
    */
   function handleTourClick(tour: TourRow) {
     if (!hasTwoProtokollSlots(tour.tourenart)) {
-      void linkExisting(tour, 'ab');
+      void vorbereiten(tour, 'ab');
       return;
     }
     const abFree = !tour.eingang_id;
     const bcFree = !tour.eingang_id_bc;
-    if (abFree && !bcFree) { void linkExisting(tour, 'ab'); return; }
-    if (!abFree && bcFree) { void linkExisting(tour, 'bc'); return; }
+    if (abFree && !bcFree) { void vorbereiten(tour, 'ab'); return; }
+    if (!abFree && bcFree) { void vorbereiten(tour, 'bc'); return; }
     // Beide Slots noch frei → Dialog.
     setAbschnittPick(tour);
+  }
+
+  /**
+   * Vor dem Verknüpfen: Rechnung der Tour nachsehen und Fahrzeugdaten
+   * abgleichen. Weichen sie ab (oder ist das Tour-Feld leer), entscheidet
+   * der Admin im Abgleich-Dialog; sonst wird direkt verknüpft.
+   */
+  async function vorbereiten(tour: TourRow, abschnitt: ProtokollAbschnitt) {
+    setLinking(true);
+    setError(null);
+    const { data: rp, error: rErr } = await supabase
+      .from('rechnungspositionen')
+      .select('rechnung:rechnung_id (rechnungsnummer)')
+      .eq('tour_id', tour.id)
+      .limit(1);
+    setLinking(false);
+    if (rErr) console.warn('[EingangLinkDialog] Rechnungs-Abfrage fehlgeschlagen', rErr.message);
+    const rechnung = ((rp ?? [])[0] as { rechnung: { rechnungsnummer: string | null } | null } | undefined)?.rechnung;
+    const rechnungsnummer = rechnung ? (rechnung.rechnungsnummer || 'ohne Nummer (Entwurf)') : null;
+    const zeilen = fahrzeugAbgleich({
+      abschnitt,
+      tour,
+      protokoll: { kennzeichen: summary.kennzeichen, fin: summary.fin, fahrzeugmodell: summary.fahrzeugmodell },
+    });
+    if (zeilen.length === 0) {
+      void linkExisting(tour, abschnitt, { zeilen, gewaehlt: new Set(), rechnungsnummer });
+      return;
+    }
+    setAbgleich({ tour, abschnitt, zeilen, rechnungsnummer });
+  }
+
+  /**
+   * km aus der Routenberechnung auf die Tour schreiben — und danach den
+   * Preis mit denselben Regeln wie beim Speichern der Tour neu berechnen
+   * (lib/tourPreis.ts). Ausnahmen: Sondervereinbarung und Touren, die
+   * schon auf einer Rechnung stehen — dort bleibt der Preis.
+   */
+  async function kmUebernehmen(item: RouteQueueItem, km: number) {
+    const { data: t, error: lErr } = await supabase
+      .from('touren')
+      .select('km_hin, km_rueck, km_gesamt, rueckfuehrung_stadt, tourenart, aba_gesamt_km_berechnen, ist_e_fahrzeug, ist_sondervereinbarung, auftraggeber_id, verguetung')
+      .eq('id', item.tourId)
+      .single();
+    if (lErr || !t) {
+      hinweiseRef.current.push(`km konnten nicht übernommen werden: ${lErr?.message ?? 'Tour nicht gefunden'}`);
+      return;
+    }
+    const kmHin = item.field === 'km_hin' ? km : t.km_hin;
+    const kmRueck = item.field === 'km_rueck' ? km : t.km_rueck;
+    const entscheidung = preisEntscheidung({
+      istSondervereinbarung: t.ist_sondervereinbarung,
+      rechnungsnummer: item.rechnungsnummer,
+    });
+    const { kmGesamt, breakdown } = await berechneTourPreis({
+      auftraggeberId: t.auftraggeber_id,
+      tourenart: t.tourenart,
+      kmHin,
+      kmRueck,
+      hatRueckfuehrung: !!t.rueckfuehrung_stadt,
+      abaGesamtKmBerechnen: t.aba_gesamt_km_berechnen,
+      istEFahrzeug: t.ist_e_fahrzeug,
+    });
+    const updatePatch: TourUpdate = { [item.field]: km, km_gesamt: kmGesamt };
+    const neuerPreis = entscheidung.art === 'berechnen' ? (breakdown?.total ?? null) : null;
+    if (neuerPreis != null) updatePatch.verguetung = neuerPreis;
+    const { error: updErr } = await supabase
+      .from('touren')
+      .update(updatePatch)
+      .eq('id', item.tourId);
+    if (updErr) {
+      console.warn('[EingangLinkDialog] km-Update fehlgeschlagen', updErr);
+      hinweiseRef.current.push(`km konnten nicht gespeichert werden: ${updErr.message}`);
+      return;
+    }
+    const alt = item.field === 'km_hin' ? t.km_hin : t.km_rueck;
+    const eintraege: Array<{ feld: string; alt: string | null; neu: string | null }> = [];
+    if (alt !== km) eintraege.push({ feld: item.field, alt: alt == null ? null : String(alt), neu: String(km) });
+    if (neuerPreis != null && Number(t.verguetung ?? NaN) !== neuerPreis) {
+      eintraege.push({ feld: 'verguetung', alt: t.verguetung == null ? null : String(t.verguetung), neu: String(neuerPreis) });
+    }
+    try {
+      await protokolliereVerknuepfung(item.tourId, eintraege);
+    } catch (e) {
+      hinweiseRef.current.push(`Änderungsprotokoll konnte nicht geschrieben werden: ${(e as Error).message}`);
+    }
+    hinweiseRef.current.push(t.auftraggeber_id || entscheidung.art !== 'berechnen'
+      ? kmUebernahmeMeldung({ km, entscheidung, preis: neuerPreis })
+      : `km ${km.toLocaleString('de-DE')} übernommen — kein Auftraggeber an der Tour, Preis nicht berechnet.`);
   }
 
   async function createAndLink() {
     setLinking(true);
     setError(null);
+    hinweiseRef.current = [];
     const payload = buildTourPayload(summary, formular.id);
     // id zurückholen, damit wir bei vorhandenen Adressen anschließend
     // die Auto-Routenberechnung starten können.
@@ -433,10 +538,11 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
         destination: summary.adresseUebergabe,
         field: 'km_hin',
         title: 'Routen für Hin-Strecke',
+        rechnungsnummer: null,
       });
     }
     if (queue.length === 0) {
-      onLinked(filled);
+      onLinked(filled, hinweiseRef.current);
     } else {
       pendingFilledRef.current = filled;
       setRouteQueue(queue);
@@ -444,7 +550,7 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
+    <div className={DIALOG_HINTERGRUND}>
       <div className="card w-full max-w-3xl p-6">
         <div className="mb-4 flex items-start justify-between">
           <div>
@@ -526,23 +632,23 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
                         type="button"
                         onClick={() => handleTourClick(t)}
                         disabled={linking}
-                        className="flex w-full flex-wrap items-start justify-between gap-2 rounded-lg border border-maja-navy/10 bg-white p-3 text-left text-sm hover:bg-maja-light disabled:opacity-50"
+                        className={ERGEBNIS_ZEILE}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             {t.tour_id && (
-                              <span className="rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                              <span className={TOUR_ID_CHIP}>
                                 {t.tour_id}
                               </span>
                             )}
                             <span className="font-medium text-maja-ink">{tourTitel(t)}</span>
                             {t.tourenart && (
-                              <span className="rounded-full bg-maja-navy/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-maja-navy">
+                              <span className={ART_BADGE}>
                                 {t.tourenart}
                               </span>
                             )}
                             {slotBadge && (
-                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+                              <span className={HINWEIS_BADGE}>
                                 {slotBadge}
                               </span>
                             )}
@@ -608,7 +714,21 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
           onChoose={(abschnitt) => {
             const t = abschnittPick;
             setAbschnittPick(null);
-            void linkExisting(t, abschnitt);
+            void vorbereiten(t, abschnitt);
+          }}
+        />
+      )}
+
+      {abgleich && (
+        <FahrzeugAbgleichDialog
+          abgleich={abgleich}
+          onCancel={() => setAbgleich(null)}
+          onConfirm={(gewaehlt) => {
+            const a = abgleich;
+            setAbgleich(null);
+            void linkExisting(a.tour, a.abschnitt, {
+              zeilen: a.zeilen, gewaehlt, rechnungsnummer: a.rechnungsnummer,
+            });
           }}
         />
       )}
@@ -623,21 +743,105 @@ export function EingangLinkDialog({ formular, onClose, onLinked }: Props) {
             destination={item.destination}
             onClose={advance}
             onApply={async (km) => {
-              const updatePatch: TourUpdate = item.field === 'km_rueck'
-                ? { km_rueck: km }
-                : { km_hin: km };
-              const { error: updErr } = await supabase
-                .from('touren')
-                .update(updatePatch)
-                .eq('id', item.tourId);
-              if (updErr) {
-                console.warn('[EingangLinkDialog] km-Update fehlgeschlagen', updErr);
-              }
+              await kmUebernehmen(item, km);
               advance();
             }}
           />
         );
       })()}
+    </div>
+  );
+}
+
+/**
+ * Protokoll und Tour weichen bei Kennzeichen/FIN/Modell ab (oder das
+ * Tour-Feld ist leer): beide Werte nebeneinander, je Feld ein Haken
+ * „übernehmen" — Default an.
+ */
+function FahrzeugAbgleichDialog({
+  abgleich, onCancel, onConfirm,
+}: {
+  abgleich: Abgleich;
+  onCancel: () => void;
+  onConfirm: (gewaehlt: ReadonlySet<FahrzeugFeld>) => void;
+}) {
+  const { tour, abschnitt, zeilen, rechnungsnummer } = abgleich;
+  const [gewaehlt, setGewaehlt] = useState<Set<FahrzeugFeld>>(() => new Set(zeilen.map((z) => z.feld)));
+  const umschalten = (f: FahrzeugFeld) => setGewaehlt((alt) => {
+    const neu = new Set(alt);
+    if (neu.has(f)) neu.delete(f); else neu.add(f);
+    return neu;
+  });
+  const ueberschreibtEtwas = zeilen.some((z) => z.tourWert && gewaehlt.has(z.feld));
+  const zweiSlots = hasTwoProtokollSlots(tour.tourenart);
+  return (
+    <div className={UNTERDIALOG_HINTERGRUND}>
+      <div role="dialog" aria-modal="true" aria-labelledby="abgleich-titel" className="card w-full max-w-xl p-5">
+        <h3 id="abgleich-titel" className="text-base font-semibold text-maja-navy">Fahrzeugdaten abgleichen</h3>
+        <p className="mt-1 text-xs text-maja-muted">
+          {tour.tour_id ? <><span className="font-medium">{tour.tour_id}</span> — </> : null}
+          {tourTitel(tour)}
+          {zweiSlots ? ` · ${abschnittLabels(tour)[abschnitt].short}-Abschnitt` : ''}
+        </p>
+        <p className="mt-3 text-sm text-maja-ink">
+          Das Protokoll weicht von der Tour ab. Angehakte Werte werden aus dem Protokoll übernommen.
+        </p>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-maja-navy/10 text-left text-[11px] uppercase tracking-wider text-maja-muted dark:!border-slate-600">
+                <th className="py-1.5 pr-2 font-semibold">Feld</th>
+                <th className="py-1.5 pr-2 font-semibold">Tour</th>
+                <th className="py-1.5 pr-2 font-semibold">Protokoll</th>
+                <th className="py-1.5 text-center font-semibold">Übernehmen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {zeilen.map((z) => {
+                const an = gewaehlt.has(z.feld);
+                const id = `abgleich-${z.feld}`;
+                return (
+                  <tr key={z.feld} className="border-b border-maja-navy/5 align-top last:border-0 dark:!border-slate-700">
+                    <td className="py-2 pr-2 font-medium text-maja-ink">
+                      <label htmlFor={id}>{z.label}</label>
+                    </td>
+                    <td className="py-2 pr-2 font-mono text-xs">
+                      {z.tourWert
+                        ? <span className={an ? 'text-red-700 line-through dark:!text-red-300' : 'text-maja-ink'}>{z.tourWert}</span>
+                        : <span className="italic text-maja-muted">leer</span>}
+                    </td>
+                    <td className="py-2 pr-2 font-mono text-xs">
+                      <span className={an ? 'font-semibold text-emerald-700 dark:!text-emerald-300' : 'text-maja-muted'}>
+                        {z.protokollWert}
+                      </span>
+                    </td>
+                    <td className="py-2 text-center">
+                      <input
+                        id={id}
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
+                        checked={an}
+                        onChange={() => umschalten(z.feld)}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {rechnungsnummer && ueberschreibtEtwas && (
+          <div role="note" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:!border-amber-700 dark:!bg-amber-950/60 dark:!text-amber-100">
+            {rechnungsHinweis(rechnungsnummer, zeilen.some((z) => z.feld === 'kennzeichen' && gewaehlt.has('kennzeichen') && z.tourWert) ? 'Kennzeichen' : 'Fahrzeugdaten')}
+          </div>
+        )}
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onCancel}>Zurück</button>
+          <button type="button" className="btn-primary" onClick={() => onConfirm(gewaehlt)}>
+            {gewaehlt.size > 0 ? 'Übernehmen + verknüpfen' : 'Nur verknüpfen'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -651,7 +855,7 @@ function AbschnittPickerDialog({
 }) {
   const labels = abschnittLabels(tour);
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-maja-ink/50 px-4">
+    <div className={UNTERDIALOG_HINTERGRUND}>
       <div className="card w-full max-w-md p-5">
         <h3 className="text-base font-semibold text-maja-navy">Welcher Streckenabschnitt?</h3>
         <p className="mt-1 text-xs text-maja-muted">
@@ -661,7 +865,7 @@ function AbschnittPickerDialog({
         <div className="mt-4 grid gap-2">
           <button
             type="button"
-            className="rounded-lg border border-maja-navy/15 bg-white px-4 py-3 text-left text-sm hover:bg-maja-light"
+            className={WAHL_KNOPF}
             onClick={() => onChoose('ab')}
           >
             <div className="font-medium text-maja-ink">{labels.ab.short}: {labels.ab.route}</div>
@@ -669,7 +873,7 @@ function AbschnittPickerDialog({
           </button>
           <button
             type="button"
-            className="rounded-lg border border-maja-navy/15 bg-white px-4 py-3 text-left text-sm hover:bg-maja-light"
+            className={WAHL_KNOPF}
             onClick={() => onChoose('bc')}
           >
             <div className="font-medium text-maja-ink">{labels.bc.short}: {labels.bc.route}</div>

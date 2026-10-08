@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { DIALOG_HINTERGRUND, ERGEBNIS_ZEILE, LEER_HINWEIS, TOUR_ID_CHIP } from '../../components/tourAuswahlStil';
 import { displayName } from '../../lib/names';
 import { XIcon } from '../../components/icons';
 import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
@@ -182,7 +183,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
   }, [rows, search, serverSuche, suchRueckfall]);
 
   return (
-    <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
+    <div className={DIALOG_HINTERGRUND}>
       <div className="card w-full max-w-2xl p-6">
         <div className="mb-4 flex items-start justify-between">
           <div>
@@ -213,7 +214,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
         {loading ? (
           <p className="mt-4 text-sm text-maja-muted">Touren werden geladen …</p>
         ) : filtered.length === 0 ? (
-          <p className="mt-4 text-sm text-maja-muted">Keine Treffer.</p>
+          <p className={LEER_HINWEIS}>Keine Treffer.</p>
         ) : (
           <ul className="mt-3 max-h-[60vh] space-y-1 overflow-auto">
             {filtered.map((t) => {
@@ -223,12 +224,12 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
                   <button
                     type="button"
                     onClick={() => onPick(t.id)}
-                    className="flex w-full flex-wrap items-start justify-between gap-2 rounded-lg border border-maja-navy/10 bg-white p-3 text-left text-sm hover:bg-maja-light"
+                    className={ERGEBNIS_ZEILE}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         {t.tour_id && (
-                          <span className="rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                          <span className={TOUR_ID_CHIP}>
                             {t.tour_id}
                           </span>
                         )}

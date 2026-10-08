@@ -3,9 +3,9 @@ import { supabase } from '../../lib/supabase';
 import { CheckIcon, XIcon } from '../../components/icons';
 import { RouteSelectorDialog } from '../../components/RouteSelectorDialog';
 import {
-  abrechnungsKm, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
-  formatEuro, formatKm, type TourPriceBreakdown,
+  computeTourStatus, formatEuro, formatKm, type TourPriceBreakdown,
 } from '../../lib/touren';
+import { berechneTourPreis, tourKm, type PreisEingabe } from '../../lib/tourPreis';
 import { useScrollLock } from '../../lib/useScrollLock';
 import { assignFahrerToZugang, isGreimelAuftraggeber } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
@@ -222,22 +222,21 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     { strasse: strasseRueck, plz: plzRueck, stadt: rueckfuehrungStadt }, null,
   ), [strasseRueck, plzRueck, rueckfuehrungStadt]);
 
-  const kmGesamt = useMemo(() => computeKmGesamt({
-    km_hin: parseInteger(kmHin),
-    km_rueck: parseInteger(kmRueck),
-    hatRueckfuehrung,
-  }), [kmHin, kmRueck, hatRueckfuehrung]);
-
   /**
-   * Kilometer für die Preisstufen-Suche. Bei ABA ist das die Hinfahrt,
-   * nicht die Summe — außer die Ausnahme-Checkbox ist gesetzt.
+   * Gemeinsame Preisberechnung (lib/tourPreis.ts). Bei ABA zählt für
+   * die Preisstufe die Hinfahrt, nicht die Summe — außer die Ausnahme-
+   * Checkbox ist gesetzt.
    */
-  const preisKm = useMemo(() => abrechnungsKm({
+  const preisEingabe = useMemo<PreisEingabe>(() => ({
+    auftraggeberId,
     tourenart: tourenart || 'AB',
-    km_hin: parseInteger(kmHin),
-    km_gesamt: kmGesamt,
+    kmHin: parseInteger(kmHin),
+    kmRueck: parseInteger(kmRueck),
+    hatRueckfuehrung,
     abaGesamtKmBerechnen: abaGesamtKm,
-  }), [tourenart, kmHin, kmGesamt, abaGesamtKm]);
+    istEFahrzeug,
+  }), [auftraggeberId, tourenart, kmHin, kmRueck, hatRueckfuehrung, abaGesamtKm, istEFahrzeug]);
+  const { kmGesamt, preisKm } = useMemo(() => tourKm(preisEingabe), [preisEingabe]);
 
   // Auto-Preis berechnen, sobald Auftraggeber + km + tourenart + ist_e_fahrzeug sich ändern
   useEffect(() => {
@@ -245,18 +244,13 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
     if (!auftraggeberId || preisKm == null) { setBreakdown(null); return; }
     let cancelled = false;
     setPricing(true);
-    void fetchTourPriceBreakdown({
-      auftraggeberId,
-      km: preisKm,
-      tourenart: (tourenart || 'AB') as TourenArt,
-      istEFahrzeug,
-    }).then((b) => {
+    void berechneTourPreis(preisEingabe).then(({ breakdown: b }) => {
       if (cancelled) return;
       setBreakdown(b);
       setPricing(false);
     });
     return () => { cancelled = true; };
-  }, [auftraggeberId, preisKm, tourenart, istSondervereinbarung, istEFahrzeug]);
+  }, [auftraggeberId, preisKm, istSondervereinbarung, preisEingabe]);
 
   // Kontakte des ausgewählten Auftraggebers laden
   useEffect(() => {

@@ -78,7 +78,10 @@ export function EingaengePage() {
   /** Welche Vorlage der Versand-Dialog nutzt (final vs. Zwischenprotokoll). */
   const [resendModus, setResendModus] = useState<'final' | 'zwischenprotokoll'>('final');
   const [hideLinked, setHideLinked] = useState(true);
-  const [linkToast, setLinkToast] = useState<string | null>(null);
+  /** Kurzmeldung unten; mit `hinweise` als Kasten mit Schließen-Knopf. */
+  const [linkToastRoh, setLinkToast] = useState<string | { kopf: string; hinweise: string[] } | null>(null);
+  const linkToast = typeof linkToastRoh === 'string' ? { kopf: linkToastRoh, hinweise: [] } : linkToastRoh;
+  const linkToastTimer = useRef<number | null>(null);
   /** Status-Filter (Aufgabe 2B). Default "submitted" = wie bisher. */
   const [statusFilter, setStatusFilter] = useState<'submitted' | 'draft' | 'alle'>('submitted');
   /** Zeitfenster: standardmäßig die letzten 90 Tage; "all" = ohne Limit. */
@@ -618,15 +621,19 @@ export function EingaengePage() {
             name: linking.template.name,
           } : null}
           onClose={() => setLinking(null)}
-          onLinked={(filled) => {
+          onLinked={(filled, hinweise) => {
             setLinking(null);
             reload();
-            if (filled.length > 0) {
-              setLinkToast(`${filled.join(' & ')} aus Protokoll übernommen.`);
-            } else {
-              setLinkToast('Tour verknüpft.');
-            }
-            window.setTimeout(() => setLinkToast(null), 4000);
+            const kopf = filled.length > 0
+              ? `${filled.join(' & ')} aus Protokoll übernommen.`
+              : 'Tour verknüpft.';
+            setLinkToast({ kopf, hinweise });
+            // Mit km-/Preis-/Rechnungs-Hinweisen länger stehen lassen —
+            // die muss man lesen können. Schließen geht jederzeit per ×.
+            if (linkToastTimer.current) window.clearTimeout(linkToastTimer.current);
+            linkToastTimer.current = window.setTimeout(
+              () => setLinkToast(null), hinweise.length > 0 ? 15000 : 4000,
+            );
           }}
         />
       )}
@@ -664,11 +671,23 @@ export function EingaengePage() {
         );
       })()}
 
-      {linkToast && (
-        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
-          {linkToast}
+      {linkToast && (linkToast.hinweise.length === 0 ? (
+        <div role="status" className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-maja-navy px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {linkToast.kopf}
         </div>
-      )}
+      ) : (
+        <div role="status" className="fixed bottom-6 left-1/2 z-40 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl bg-maja-navy px-4 py-3 text-sm text-white shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <div className="font-medium">{linkToast.kopf}</div>
+            <button type="button" aria-label="Meldung schließen" className="-mr-1 rounded p-0.5 text-white/70 hover:text-white" onClick={() => setLinkToast(null)}>
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+          <ul className="mt-1 space-y-1 text-white/90">
+            {linkToast.hinweise.map((h, i) => <li key={i}>{h}</li>)}
+          </ul>
+        </div>
+      ))}
 
       {uebertragenFuer && uebertragenFuer.template && (
         <FormularUebertragenDialog

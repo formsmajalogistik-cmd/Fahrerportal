@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { ART_BADGE, DIALOG_HINTERGRUND, ERGEBNIS_ZEILE, HINWEIS_BADGE, TOUR_ID_CHIP } from '../../../components/tourAuswahlStil';
 import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { XIcon } from '../../../components/icons';
 import { Spinner } from '../../../components/Spinner';
@@ -237,7 +238,7 @@ export function AddTourPositionDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-30 flex items-start justify-center overflow-auto bg-maja-ink/40 px-4 py-8">
+    <div className={DIALOG_HINTERGRUND}>
       <div className="card w-full max-w-3xl p-6">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -302,7 +303,7 @@ export function AddTourPositionDialog({
         {loading ? (
           <div className="py-6"><Spinner label="Touren werden geladen …" /></div>
         ) : filtered.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-maja-navy/15 p-6 text-center text-sm text-maja-muted">
+          <p className="rounded-lg border border-dashed border-maja-navy/15 p-6 text-center text-sm text-maja-muted dark:!border-slate-600 dark:!text-slate-300">
             Keine Touren im gewählten Zeitraum gefunden.
           </p>
         ) : (
@@ -315,12 +316,12 @@ export function AddTourPositionDialog({
                     type="button"
                     onClick={() => handlePick(t)}
                     disabled={!format}
-                    className="flex w-full flex-wrap items-start justify-between gap-2 rounded-lg border border-maja-navy/10 bg-white p-3 text-left text-sm hover:bg-maja-light disabled:opacity-50"
+                    className={ERGEBNIS_ZEILE}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         {t.tour_id && (
-                          <span className="rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
+                          <span className={TOUR_ID_CHIP}>
                             {t.tour_id}
                           </span>
                         )}
@@ -329,13 +330,13 @@ export function AddTourPositionDialog({
                           {t.rueckfuehrung_stadt ? ` → ${t.rueckfuehrung_stadt}` : ''}
                         </span>
                         {t.tourenart && (
-                          <span className="rounded-full bg-maja-navy/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-maja-navy">
+                          <span className={ART_BADGE}>
                             {t.tourenart}
                           </span>
                         )}
                         {used && (
                           <span
-                            className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900"
+                            className={HINWEIS_BADGE}
                             title={`Bereits auf Rechnung ${used.rechnungsnummer ?? used.rechnungId.slice(0, 8)}`}
                           >
                             Bereits auf Rechnung{used.rechnungsnummer ? ` ${used.rechnungsnummer}` : ''}

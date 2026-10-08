@@ -1601,6 +1601,7 @@ export type Database = {
           wert_neu: string | null;
           gesehen_am: string | null;
           gesehen_von: string | null;
+          quelle: string;
         };
         Insert: {
           id?: string;
@@ -1612,6 +1613,7 @@ export type Database = {
           wert_neu?: string | null;
           gesehen_am?: string | null;
           gesehen_von?: string | null;
+          quelle?: string;
         };
         Update: {
           id?: string;
@@ -1623,6 +1625,7 @@ export type Database = {
           wert_neu?: string | null;
           gesehen_am?: string | null;
           gesehen_von?: string | null;
+          quelle?: string;
         };
         Relationships: [
           {

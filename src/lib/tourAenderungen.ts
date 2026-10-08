@@ -22,6 +22,9 @@ const FELD_LABEL: Record<string, string> = {
   kontakt_ziel: 'Kontakt Ziel',
   kontakt_rueckfuehrung: 'Kontakt Rückführung',
   kennzeichen: 'Kennzeichen',
+  // Migration 105 — Rück-Kennzeichen steht im selben Array (Index 1).
+  kennzeichen_rueck: 'Kennzeichen Rück',
+  verguetung: 'Preis',
   fin: 'FIN',
   fin_rueck: 'FIN Rückführung',
   kundenname: 'Kundenname',
@@ -64,8 +67,17 @@ export function feldLabel(feld: string): string {
  * Gibt null zurück, wenn die normale Feld/Alt/Neu-Darstellung reicht.
  */
 export function aenderungSatz(
-  feld: string, wertNeu: string | null, wertAlt?: string | null,
+  feld: string, wertNeu: string | null, wertAlt?: string | null, quelle?: string | null,
 ): string | null {
+  // Admin-Übernahme beim Verknüpfen eines Protokolls (Migration 105).
+  if (quelle === 'verknuepfung') {
+    // War das Feld vorher leer, gibt es kein „von".
+    const vonNach = wertAlt
+      ? `${wertLabel(feld, wertAlt)} → ${wertLabel(feld, wertNeu)}`
+      : wertLabel(feld, wertNeu);
+    if (feld === 'verguetung') return `Preis ${vonNach} nach km-Übernahme berechnet`;
+    return `${feldLabel(feld)} ${vonNach} beim Verknüpfen ${wertAlt ? 'übernommen' : 'eingetragen'}`;
+  }
   if (feld === 'auf_eis') {
     return wertNeu === 'ja'
       ? 'Tour auf Eis gelegt (Termin offen)'
@@ -83,6 +95,10 @@ export function wertLabel(feld: string, wert: string | null): string {
   if (wert == null || wert === '') return '—';
   // "ja/nein" bei der Terminierung ist für sich genommen nichtssagend.
   if (feld === 'auf_eis') return wert === 'ja' ? 'auf Eis' : 'terminiert';
+  if (feld === 'verguetung') {
+    const n = Number(wert);
+    if (Number.isFinite(n)) return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+  }
   if (feld === 'startdatum' || feld === 'enddatum') {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(wert);
     if (m) return `${m[3]}.${m[2]}.${m[1]}`;
@@ -188,6 +204,49 @@ export async function quittiereAenderungen(
     .update({ gesehen_am: new Date().toISOString(), gesehen_von: userId })
     .in('tour_id', tourIds)
     .is('gesehen_am', null);
+  if (error) throw new Error(error.message);
+}
+
+/** Alle Einträge einer Tour, neueste zuerst — für das Änderungsprotokoll in der Tour. */
+export async function ladeTourAenderungen(tourId: string): Promise<TourAenderung[]> {
+  const { data, error } = await supabase
+    .from('tour_aenderungen')
+    .select('*')
+    .eq('tour_id', tourId)
+    .order('geaendert_am', { ascending: false })
+    .limit(200);
+  if (error) {
+    console.warn('[tourAenderungen] Laden fehlgeschlagen', error.message);
+    return [];
+  }
+  return (data as TourAenderung[]) ?? [];
+}
+
+/**
+ * Hält Admin-Übernahmen beim Verknüpfen im Änderungsprotokoll fest
+ * (Migration 105). Direkt als gesehen markiert — sonst erschiene die
+ * eigene Änderung als „vom Auftraggeber geändert".
+ * Wirft bei Fehler; der Aufrufer entscheidet, ob er das meldet.
+ */
+export async function protokolliereVerknuepfung(
+  tourId: string,
+  eintraege: Array<{ feld: string; alt: string | null; neu: string | null }>,
+): Promise<void> {
+  if (eintraege.length === 0) return;
+  // Lokale Sitzung — kein Netz-Aufruf; app_users.id = auth.uid().
+  const { data: { session } } = await supabase.auth.getSession();
+  const userId = session?.user.id ?? null;
+  const jetzt = new Date().toISOString();
+  const { error } = await supabase.from('tour_aenderungen').insert(eintraege.map((e) => ({
+    tour_id: tourId,
+    geaendert_von: userId,
+    feld: e.feld,
+    wert_alt: e.alt,
+    wert_neu: e.neu,
+    quelle: 'verknuepfung',
+    gesehen_am: jetzt,
+    gesehen_von: userId,
+  })));
   if (error) throw new Error(error.message);
 }
 

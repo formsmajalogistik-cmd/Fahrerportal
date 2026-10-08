@@ -24,11 +24,15 @@ function fahrerNameOf(f: { vorname: string | null; nachname: string | null; user
   return fahrerName(f, f.user);
 }
 import {
-  abrechnungsKm, abschnittLabels, computeKmGesamt, computeTourStatus, fetchTourPriceBreakdown,
+  abrechnungsKm, abschnittLabels, computeTourStatus, fetchTourPriceBreakdown,
   formatAnzahl, formatDate, formatDateTime, formatEuro, formatKm,
   hasTwoProtokollSlots, tourTitel,
   type TourPriceBreakdown,
 } from '../../lib/touren';
+import { berechneTourPreis, tourKm, type PreisEingabe } from '../../lib/tourPreis';
+import {
+  aenderungSatz, feldLabel, ladeTourAenderungen, wertLabel, type TourAenderung,
+} from '../../lib/tourAenderungen';
 import {
   asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../../lib/pdfGenerate';
@@ -549,28 +553,27 @@ export function TourDetailDialog({
 
   const draftIsAba = draft?.tourenart === 'ABA';
 
-  const liveKmGesamt = useMemo(() => {
-    if (!draft) return null;
-    return computeKmGesamt({
-      km_hin: parseInteger(draft.kmHin),
-      km_rueck: parseInteger(draft.kmRueck),
-      hatRueckfuehrung: draft.hatRueckfuehrung,
-    });
-  }, [draft]);
-
   /**
-   * Kilometer für die Preisstufen-Suche. Bei ABA zählt ausschließlich
-   * die Hinfahrt — außer die Ausnahme-Checkbox ist gesetzt.
+   * Eingabe für die gemeinsame Preisberechnung (lib/tourPreis.ts) —
+   * dieselbe Rechnung läuft auch bei der km-Übernahme beim Verknüpfen.
+   * Bei ABA zählt für die Preisstufe ausschließlich die Hinfahrt —
+   * außer die Ausnahme-Checkbox ist gesetzt.
    */
-  const livePreisKm = useMemo(() => {
+  const livePreisEingabe = useMemo<PreisEingabe | null>(() => {
     if (!draft) return null;
-    return abrechnungsKm({
+    return {
+      auftraggeberId: draft.auftraggeberId,
       tourenart: draft.tourenart || 'AB',
-      km_hin: parseInteger(draft.kmHin),
-      km_gesamt: liveKmGesamt,
+      kmHin: parseInteger(draft.kmHin),
+      kmRueck: parseInteger(draft.kmRueck),
+      hatRueckfuehrung: draft.hatRueckfuehrung,
       abaGesamtKmBerechnen: draft.abaGesamtKm,
-    });
-  }, [draft, liveKmGesamt]);
+      istEFahrzeug: draft.istEFahrzeug,
+    };
+  }, [draft]);
+  const liveKm = useMemo(() => (livePreisEingabe ? tourKm(livePreisEingabe) : null), [livePreisEingabe]);
+  const liveKmGesamt = liveKm?.kmGesamt ?? null;
+  const livePreisKm = liveKm?.preisKm ?? null;
 
   const draftSelectedAg = useMemo(
     () => (draft ? (auftraggeber ?? []).find((a) => a.id === draft.auftraggeberId) ?? null : null),
@@ -584,21 +587,16 @@ export function TourDetailDialog({
   useEffect(() => {
     if (!editing || !draft) { setBreakdown(null); return; }
     if (draft.istSondervereinbarung) { setBreakdown(null); return; }
-    if (!draft.auftraggeberId || livePreisKm == null) { setBreakdown(null); return; }
+    if (!draft.auftraggeberId || livePreisKm == null || !livePreisEingabe) { setBreakdown(null); return; }
     let cancelled = false;
     setPricing(true);
-    void fetchTourPriceBreakdown({
-      auftraggeberId: draft.auftraggeberId,
-      km: livePreisKm,
-      tourenart: (draft.tourenart || 'AB') as TourenArt,
-      istEFahrzeug: draft.istEFahrzeug,
-    }).then((b) => {
+    void berechneTourPreis(livePreisEingabe).then(({ breakdown: b }) => {
       if (cancelled) return;
       setBreakdown(b);
       setPricing(false);
     });
     return () => { cancelled = true; };
-  }, [editing, draft, livePreisKm]);
+  }, [editing, draft, livePreisKm, livePreisEingabe]);
 
   // Breakdown für die View-Anzeige (Aufschlüsselung zum gespeicherten Preis).
   const [viewBreakdown, setViewBreakdown] = useState<TourPriceBreakdown | null>(null);
@@ -1941,6 +1939,7 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewB
         )}
       </div>
 
+      {isAdmin && <TourAenderungsProtokoll tourId={tour.id} stand={tour} />}
     </div>
   );
 }
@@ -2929,6 +2928,43 @@ function ViewModeRechnungsRef({ tourId }: { tourId: string }) {
     <DetailItem label={nummern.length > 1 ? 'Auf Rechnungen' : 'Auf Rechnung'} full>
       <span className="font-medium">{nummern.join(', ')}</span>
     </DetailItem>
+  );
+}
+
+/**
+ * Änderungsprotokoll der Tour (Admin): Auftraggeber-Änderungen und
+ * Übernahmen beim Verknüpfen eines Protokolls (Migration 105), z.B.
+ * „Kennzeichen HH-XX 999 → HH-AB 1234 beim Verknüpfen übernommen".
+ * `stand` lädt nach jedem Neuladen der Tour neu.
+ */
+function TourAenderungsProtokoll({ tourId, stand }: { tourId: string; stand: unknown }) {
+  const [eintraege, setEintraege] = useState<TourAenderung[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void ladeTourAenderungen(tourId).then((l) => { if (!cancelled) setEintraege(l); });
+    return () => { cancelled = true; };
+  }, [tourId, stand]);
+  if (!eintraege || eintraege.length === 0) return null;
+  return (
+    <details className="mt-4 rounded-lg border border-maja-navy/10 px-3 py-2 dark:!border-slate-600">
+      <summary className="cursor-pointer text-sm font-semibold text-maja-navy">
+        Änderungsprotokoll ({eintraege.length})
+      </summary>
+      <ul className="mt-2 space-y-1.5 text-xs">
+        {eintraege.map((e) => (
+          <li key={e.id} className="flex flex-wrap gap-x-2">
+            <span className="text-maja-muted">{formatDateTime(e.geaendert_am)}</span>
+            <span className="text-maja-ink">
+              {aenderungSatz(e.feld, e.wert_neu, e.wert_alt, e.quelle)
+                ?? `${feldLabel(e.feld)}: ${wertLabel(e.feld, e.wert_alt)} → ${wertLabel(e.feld, e.wert_neu)}`}
+            </span>
+            <span className="text-maja-muted">
+              {e.quelle === 'verknuepfung' ? '(Verknüpfung)' : e.feld === 'fahrer_id' ? '(Weitergabe)' : '(Auftraggeber)'}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

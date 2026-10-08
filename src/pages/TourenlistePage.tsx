@@ -19,7 +19,7 @@ import {
   computeTourStatus, formatAnzahl, formatDate, formatDateTime, formatEuro,
   formatKm, tourTitel,
 } from '../lib/touren';
-import { letzterWerktagVor, naechsterWerktagNach } from '../lib/rechnungsformat';
+import { ZeitraumFilter } from '../components/ZeitraumFilter';
 import {
   asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../lib/pdfGenerate';
@@ -1071,7 +1071,7 @@ export function TourenlistePage() {
                   {g.eintraege.map((e) => {
                     // Manche Änderungen liest man als Satz besser als
                     // im Schema "Feld: alt → neu" (z.B. auf Eis).
-                    const satz = aenderungSatz(e.feld, e.wert_neu, e.wert_alt);
+                    const satz = aenderungSatz(e.feld, e.wert_neu, e.wert_alt, e.quelle);
                     return (
                       <li key={e.id} className="text-sm text-maja-ink">
                         {satz ? (
@@ -1190,83 +1190,13 @@ export function TourenlistePage() {
             <input id="t-to" type="date" className="input"
                    value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
-          {(() => {
-            const heuteYmd = ymd(today);
-            const vortagYmd = ymd(letzterWerktagVor(today));
-            const naechsterYmd = ymd(naechsterWerktagNach(today));
-            const monthYmdFrom = ymd(monthStart);
-            const monthYmdTo = ymd(monthEnd);
-            const yearStart = new Date(today.getFullYear(), 0, 1);
-            const yearEnd = new Date(today.getFullYear(), 11, 31);
-            const yearYmdFrom = ymd(yearStart);
-            const yearYmdTo = ymd(yearEnd);
-            const heuteAktiv = dateFrom === heuteYmd && dateTo === heuteYmd;
-            const vortagAktiv = dateFrom === vortagYmd && dateTo === vortagYmd;
-            const naechsterAktiv = dateFrom === naechsterYmd && dateTo === naechsterYmd;
-            const monatAktiv = dateFrom === monthYmdFrom && dateTo === monthYmdTo;
-            const jahrAktiv = dateFrom === yearYmdFrom && dateTo === yearYmdTo;
-            // Ältere Zeiträume — z.B. für Bußgeldanfragen, die Wochen
-            // später eintreffen. Geladen wird erst bei Klick.
-            const dreiMonateFrom = ymd(new Date(today.getFullYear(), today.getMonth() - 3, today.getDate()));
-            const dreiMonateTo = heuteYmd;
-            const vorjahrFrom = ymd(new Date(today.getFullYear() - 1, 0, 1));
-            const vorjahrTo = ymd(new Date(today.getFullYear() - 1, 11, 31));
-            const ALLE_VON = '2000-01-01';
-            const ALLE_BIS = '2099-12-31';
-            const dreiMonateAktiv = dateFrom === dreiMonateFrom && dateTo === dreiMonateTo;
-            const vorjahrAktiv = dateFrom === vorjahrFrom && dateTo === vorjahrTo;
-            const alleAktiv = dateFrom === ALLE_VON && dateTo === ALLE_BIS;
-            // Identische Pill-Optik wie die Status-Pills weiter unten —
-            // gleicher Radius, Padding, Border, Hover, Aktiv-Zustand.
-            const pillCls = (active: boolean) => `inline-block rounded-full px-3 py-1.5 text-sm font-medium transition ${
-              active ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light border border-maja-navy/15'
-            }`;
-            // Tages-Toggle: zweiter Klick stellt den Monats-Standard
-            // wieder her. Monat/Jahr setzen den Bereich direkt — der
-            // Aktiv-Zustand fällt automatisch zurück, sobald ein anderer
-            // Bereich gewählt wird.
-            const toggleDay = (active: boolean, target: string) => {
-              if (active) { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }
-              else { setDateFrom(target); setDateTo(target); }
-            };
-            return (
-              <>
-                <button type="button" className={pillCls(heuteAktiv)}
-                        onClick={() => toggleDay(heuteAktiv, heuteYmd)}>
-                  Heute
-                </button>
-                <button type="button" className={pillCls(vortagAktiv)}
-                        onClick={() => toggleDay(vortagAktiv, vortagYmd)}>
-                  Vortag
-                </button>
-                <button type="button" className={pillCls(naechsterAktiv)}
-                        onClick={() => toggleDay(naechsterAktiv, naechsterYmd)}>
-                  Nächster Tag
-                </button>
-                <button type="button" className={pillCls(monatAktiv)}
-                        onClick={() => { setDateFrom(monthYmdFrom); setDateTo(monthYmdTo); }}>
-                  Aktueller Monat
-                </button>
-                <button type="button" className={pillCls(jahrAktiv)}
-                        onClick={() => { setDateFrom(yearYmdFrom); setDateTo(yearYmdTo); }}>
-                  Aktuelles Jahr
-                </button>
-                <button type="button" className={pillCls(dreiMonateAktiv)}
-                        onClick={() => { setDateFrom(dreiMonateFrom); setDateTo(dreiMonateTo); }}>
-                  Letzte 3 Monate
-                </button>
-                <button type="button" className={pillCls(vorjahrAktiv)}
-                        onClick={() => { setDateFrom(vorjahrFrom); setDateTo(vorjahrTo); }}>
-                  Letztes Jahr
-                </button>
-                <button type="button" className={pillCls(alleAktiv)}
-                        title="Alle Touren — kann bei großem Bestand etwas dauern"
-                        onClick={() => { setDateFrom(ALLE_VON); setDateTo(ALLE_BIS); }}>
-                  Alle
-                </button>
-              </>
-            );
-          })()}
+          {/* Schnellwahl: Vortag · Nächster Tag · Diese Woche · Aktueller
+              Monat, der Rest unter „Weitere Zeiträume ▾" (ZeitraumFilter). */}
+          <ZeitraumFilter
+            von={dateFrom}
+            bis={dateTo}
+            onChange={(v, b) => { setDateFrom(v); setDateTo(b); }}
+          />
         </div>
       </div>
 
