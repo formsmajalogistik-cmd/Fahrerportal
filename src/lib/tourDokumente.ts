@@ -11,6 +11,7 @@ import {
   deleteFromOneDrive, downloadFromOneDrive, previewOneDrivePdf,
   triggerOneDriveDownload, uploadToOneDrive,
 } from './onedrive';
+import { sichererDateiname } from './onedrivePaths';
 
 export interface TourDokument {
   id: string;
@@ -26,7 +27,7 @@ const ROOT = 'Maja-Logistik/Tour-Dokumente';
 
 /** Dateinamen für OneDrive entschärfen (keine Pfad-Trenner o.ä.). */
 function safeName(name: string): string {
-  return name.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120) || 'dokument';
+  return sichererDateiname(name, 'dokument');
 }
 
 export async function listTourDokumente(tourId: string): Promise<TourDokument[]> {

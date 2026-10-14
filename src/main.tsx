@@ -14,7 +14,25 @@ import { applyTheme, watchSystemTheme } from './lib/theme';
 
 // PWA-Service-Worker registrieren (autoUpdate, siehe vite.config.ts).
 // Der SW wird im Production-Build erzeugt; im Dev-Modus ist er deaktiviert.
-registerSW({ immediate: true });
+//
+// Zusätzlich stündlich nach einer neuen Version fragen — iOS-PWAs bleiben
+// oft tagelang geöffnet und prüfen sonst nur beim Start. Die neue Version
+// lädt die Seite einmal neu; Entwürfe, Upload-Warteschlange und wartende
+// Einreichungen liegen in IndexedDB und bleiben erhalten (kein Löschen
+// von Browserdaten nötig). Bewusst NICHT beim Zurückkehren in die App
+// (visibilitychange): das fiele genau auf die Rückkehr aus der Kamera,
+// während ein Foto verarbeitet wird.
+registerSW({
+  immediate: true,
+  onRegisteredSW(_url, registrierung) {
+    if (!registrierung) return;
+    window.setInterval(() => {
+      if (navigator.onLine && document.visibilityState === 'visible') {
+        void registrierung.update().catch(() => { /* nächster Versuch in einer Stunde */ });
+      }
+    }, 60 * 60 * 1000);
+  },
+});
 
 // Dark-Mode: Inline-Script in index.html setzt die Klasse bereits
 // SYNCHRON vor dem Bundle. Hier reapplizieren wir (deckt Edge-Case ab,

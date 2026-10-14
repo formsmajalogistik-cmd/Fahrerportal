@@ -29,6 +29,7 @@ import { merkeAusFormular } from '../lib/feldVorschlaege';
 import { tourRoute, tourZusatz } from '../lib/touren';
 import { diagnose, setzeDiagnoseKontext } from '../lib/diagnose';
 import { ersetzePendingFoto } from '../lib/pendingFoto';
+import { entfernePendingAusDaten, istFehlgeschlagen } from '../lib/uploadQueue';
 import type { FeldWert } from '../components/forms/FormRenderer';
 import { useSync } from '../sync/SyncContext';
 import { displayName } from '../lib/names';
@@ -77,8 +78,10 @@ export function FormularPage() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   // Kurzer Auto-Save-Hinweis ("Automatisch gespeichert"), verschwindet nach 3s.
   const [autoSaveHint, setAutoSaveHint] = useState<string | null>(null);
-  const { triggerSync } = useSync();
+  const { triggerSync, pruefen } = useSync();
   const { session, profile } = useAuth();
+  /** „X Bilder konnten nicht hochgeladen werden. Trotzdem abschließen?" */
+  const [fehlendeBilderFrage, setFehlendeBilderFrage] = useState<string[] | null>(null);
   const guard = useTestGuard();
   // Testmodus schreibt nichts in den Vorschlags-Pool (zusätzlich zur
   // Rollenprüfung in der RPC).
@@ -380,6 +383,33 @@ export function FormularPage() {
     return () => window.removeEventListener('maja:draft-updated', handler as EventListener);
   }, [formular]);
 
+  // Bild wurde in der Warteschlangen-Ansicht entfernt → auch vom Bildschirm.
+  useEffect(() => {
+    if (!formular) return;
+    function handler(e: Event) {
+      const d = (e as CustomEvent<{ formularId: string; pendingId: string }>).detail;
+      if (d?.formularId !== formular?.id || !d.pendingId) return;
+      setData((prev) => {
+        const r = entfernePendingAusDaten(prev, [d.pendingId]);
+        return r.geaendert ? r.daten : prev;
+      });
+    }
+    window.addEventListener('maja:foto-entfernt', handler as EventListener);
+    return () => window.removeEventListener('maja:foto-entfernt', handler as EventListener);
+  }, [formular]);
+
+  // Beim Öffnen: Warteschlange dieses Formulars abgleichen. Löst hängende
+  // Einträge auf (z.B. Bilder vom alten, ungültigen Kennzeichen-Pfad, die
+  // längst neu hochgeladen sind) — ohne Formulardaten anzufassen.
+  const abgleichFuerRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!formular || loading || readonly) return;
+    if (abgleichFuerRef.current === formular.id) return;
+    abgleichFuerRef.current = formular.id;
+    void pruefen({ formularId: formular.id, aktuelleDaten: data, anlass: 'formular_offen' })
+      .catch((err) => console.warn('[FormularPage] Abgleich fehlgeschlagen', err));
+  }, [formular, loading, readonly, data, pruefen]);
+
   async function clearLocalDraft() {
     if (!id) return;
     try { await deleteFormDraft(id); } catch { /* ignore */ }
@@ -414,7 +444,10 @@ export function FormularPage() {
     // (1) Uploads prüfen — läuft die Generierung los, während Fotos noch
     // in der Offline-Queue liegen, fehlen sie in der PDF und der Lauf
     // dauert unnötig lange. Klare Meldung statt Fehler.
-    const pending = await getUploadsForFormular(formular.id).catch(() => []);
+    // Nur wartende Bilder sperren — fehlgeschlagene würden sonst das
+    // Zwischenprotokoll für immer blockieren (sie stehen in der Leiste oben).
+    const pending = (await getUploadsForFormular(formular.id).catch(() => []))
+      .filter((i) => !istFehlgeschlagen(i));
     if (pending.length > 0) {
       setError(
         `${pending.length} ${pending.length === 1 ? 'Bild wird' : 'Bilder werden'} noch hochgeladen. `
@@ -564,13 +597,54 @@ export function FormularPage() {
     }
     setSaving('submit');
     setError(null);
+    // Erst abgleichen: veraltete Einträge (z.B. ersetzte Fotos, alter
+    // Kennzeichen-Pfad) dürfen das Abschließen nicht mehr sperren.
+    // Fehlgeschlagene bleiben fehlgeschlagen — darüber entscheidet gleich
+    // der Fahrer.
+    await pruefen({
+      formularId: formular.id, aktuelleDaten: data, anlass: 'abschliessen', fehlgeschlageneNeuStarten: false,
+    }).catch(() => null);
+    const eigene = await getUploadsForFormular(formular.id).catch(() => []);
+    const fehlgeschlagen = eigene.filter(istFehlgeschlagen).map((i) => i.id);
+    if (fehlgeschlagen.length > 0) {
+      setSaving('idle');
+      setFehlendeBilderFrage(fehlgeschlagen);
+      return;
+    }
+    await abschliessen(data, false, eigene.length);
+  }
 
+  /** Fahrer hat bestätigt: ohne die fehlgeschlagenen Bilder abschließen. */
+  async function trotzdemAbschliessen() {
+    if (!formular || !template || !fehlendeBilderFrage) return;
+    const ids = fehlendeBilderFrage;
+    setFehlendeBilderFrage(null);
+    const bereinigt = entfernePendingAusDaten(data, ids).daten;
+    // Pflichtbilder werden wie bisher angemahnt.
+    const { valid, missing } = validateForm(template.schema, bereinigt);
+    if (!valid) {
+      setError(
+        `Diese Pflichtfelder fehlen, weil Bilder nicht hochgeladen werden konnten: ${missing.join(', ')}. `
+        + 'Bitte die Bilder neu aufnehmen.',
+      );
+      return;
+    }
+    diagnose('abschliessen_ohne_bilder', { anzahl: ids.length }, 'upload', formular.id);
+    setData(bereinigt);
+    setSaving('submit');
+    setError(null);
+    const wartend = (await getUploadsForFormular(formular.id).catch(() => []))
+      .filter((i) => !istFehlgeschlagen(i)).length;
+    await abschliessen(bereinigt, true, wartend);
+  }
+
+  async function abschliessen(data: Record<string, unknown>, fehlendeBilderAkzeptiert: boolean, wartendeUploads: number) {
+    if (!formular || !template) return;
     // Wenn offline ODER noch Photo-Uploads anhängig sind: in IDB als
     // pending-submission ablegen und User informieren. Der Sync-Drainer
     // reicht das Formular nach, sobald wieder Empfang da ist und die
     // Upload-Queue für dieses Formular leer ist.
-    const pendingUploads = await getUploadsForFormular(formular.id).catch(() => []);
-    if (!navigator.onLine || pendingUploads.length > 0) {
+    if (!navigator.onLine || wartendeUploads > 0) {
       await enqueueSubmission({
         formularId: formular.id,
         data,
@@ -578,6 +652,7 @@ export function FormularPage() {
         attempts: 0,
         lastError: null,
         submitterEmail,
+        fehlendeBilderAkzeptiert,
       });
       // Den Entwurf NICHT löschen — falls noch Edits nötig werden.
       await saveFormDraft({
@@ -587,7 +662,7 @@ export function FormularPage() {
       });
       setSaving('idle');
       triggerSync();
-      const n = pendingUploads.length;
+      const n = wartendeUploads;
       setSubmittedSummary(
         navigator.onLine
           ? (n > 0
@@ -609,7 +684,7 @@ export function FormularPage() {
       // Netzwerk-Fehler trotz online=true → wie Offline behandeln.
       await enqueueSubmission({
         formularId: formular.id, data, queuedAt: Date.now(), attempts: 0,
-        lastError: err.message, submitterEmail,
+        lastError: err.message, submitterEmail, fehlendeBilderAkzeptiert,
       });
       await saveFormDraft({
         id: formular.id, data,
@@ -1037,6 +1112,27 @@ export function FormularPage() {
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </div>
+      )}
+      {fehlendeBilderFrage && (
+        <div role="alertdialog" aria-labelledby="fehlende-bilder-titel" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <p id="fehlende-bilder-titel" className="font-semibold">
+            {fehlendeBilderFrage.length === 1
+              ? '1 Bild konnte nicht hochgeladen werden.'
+              : `${fehlendeBilderFrage.length} Bilder konnten nicht hochgeladen werden.`}
+            {' '}Trotzdem abschließen?
+          </p>
+          <p className="mt-1 text-xs">
+            Diese Bilder fehlen dann im Protokoll. Alternativ oben in der Leiste „Details" öffnen und erneut versuchen.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" className="btn-primary" onClick={() => void trotzdemAbschliessen()}>
+              Trotzdem abschließen
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => setFehlendeBilderFrage(null)}>
+              Zurück
+            </button>
+          </div>
         </div>
       )}
       {statusMsg && (

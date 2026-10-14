@@ -24,7 +24,7 @@
 
 import { supabase } from './supabase';
 import { uploadToOneDrive } from './onedrive';
-import { buildFormularFolder } from './onedrivePaths';
+import { buildFormularFolder, sicheresPfadSegment } from './onedrivePaths';
 import { brenneKennzeichenEin, pdfToJpegPages } from './pdfSeiten';
 import type {
   AusgefuelltesFormular, PhotoValue,
@@ -113,7 +113,7 @@ export async function ladeBelegHoch(args: {
     // Eindeutiger Name — sonst überschreibt ein zweiter Upload mit
     // gleichem Dateinamen den ersten.
     const endung = (f.name.match(/\.[^.]+$/)?.[0] ?? '.jpg').toLowerCase();
-    const basis = f.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]/g, '_');
+    const basis = sicheresPfadSegment(f.name.replace(/\.[^.]+$/, ''), 'beleg');
     const name = `Ergaenzt-${Date.now().toString(36)}-${i}-${basis}${endung}`;
     const pfad = `${ordner.replace(/\/+$/, '')}/Fotos/${name}`;
     args.onFortschritt?.(`Lade hoch: ${f.name} …`);

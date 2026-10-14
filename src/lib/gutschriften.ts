@@ -9,6 +9,7 @@ import { supabase } from './supabase';
 import { berechneSummenProUst } from './rechnungsformat';
 import type { Database, Json } from '../types/supabase';
 import type { EditorPosition } from '../pages/admin/rechnungen/positionUtils';
+import { sicheresPfadSegment } from './onedrivePaths';
 
 export type Gutschrift = Database['public']['Tables']['gutschriften']['Row'];
 export type GutschriftStatus = Gutschrift['status'];
@@ -152,7 +153,7 @@ export async function naechsteGutschriftNr(jahr: number): Promise<string | null>
 export function gutschriftPdfFilename(
   dokumentbezeichnung: string, gutschriftNr: string,
 ): string {
-  const safe = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_').trim();
+  const safe = (s: string) => sicheresPfadSegment(s, 'Gutschrift');
   return `${safe(dokumentbezeichnung)}_${safe(gutschriftNr)}.pdf`;
 }
 

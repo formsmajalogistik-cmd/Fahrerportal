@@ -87,6 +87,7 @@ export async function zusatzbildSpeichern(
     id, formularId, fieldId: feldId,
     folder: oneDriveFolder, filename: dateiname, blob: komprimiert,
     attempts: 0, nextRetryAt: 0, lastError: null,
+    status: 'wartet', angelegtAm: Date.now(),
   };
   try {
     await enqueueUpload(item);

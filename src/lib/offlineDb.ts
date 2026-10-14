@@ -40,6 +40,16 @@ export interface UploadQueueItem {
   nextRetryAt: number;
   /** Letzte Fehlermeldung (informativ). */
   lastError: string | null;
+  /**
+   * 'fehlgeschlagen' = dauerhafter Fehler (z.B. 400), wird nicht mehr
+   * automatisch versucht und blockiert weder Anzeige noch Einreichung.
+   * Fehlt bei Einträgen älterer App-Versionen (dort: nextRetryAt = MAX).
+   */
+  status?: 'wartet' | 'fehlgeschlagen';
+  /** ms epoch der Aufnahme (ältere Einträge: steckt in der id). */
+  angelegtAm?: number;
+  /** Pfad des letzten Versuchs — nur zur Anzeige/Diagnose. */
+  letzterPfad?: string;
 }
 
 export interface PendingSubmissionRecord {
@@ -55,6 +65,11 @@ export interface PendingSubmissionRecord {
   lastError: string | null;
   /** E-Mail des einreichenden Nutzers — wird beim Sync als CC ergänzt. */
   submitterEmail?: string | null;
+  /**
+   * Der Fahrer hat „Trotzdem abschließen" bestätigt: fehlgeschlagene
+   * Bilder blockieren diese Einreichung nicht mehr.
+   */
+  fehlendeBilderAkzeptiert?: boolean;
 }
 
 interface OfflineDbSchema extends DBSchema {
@@ -151,6 +166,26 @@ export async function getUploadsForFormular(formularId: string): Promise<UploadQ
 export async function updateUploadQueueItem(item: UploadQueueItem): Promise<void> {
   const db = await getDb();
   await db.put('upload-queue', item);
+}
+
+/**
+ * Ändert einen Eintrag NUR, wenn er noch existiert — in einer Transaktion.
+ *
+ * Vorher schrieb der Drainer nach einem Fehlversuch den (vorher gelesenen)
+ * Eintrag per put() zurück. Hatte der Fahrer das Bild währenddessen
+ * entfernt, tauchte der Eintrag wieder auf — Bilder ließen sich so nicht
+ * dauerhaft entfernen.
+ */
+export async function aktualisiereUploadWennVorhanden(
+  id: string, patch: Partial<UploadQueueItem>,
+): Promise<boolean> {
+  const db = await getDb();
+  const tx = db.transaction('upload-queue', 'readwrite');
+  const vorhanden = await tx.store.get(id);
+  if (!vorhanden) { await tx.done; return false; }
+  await tx.store.put({ ...vorhanden, ...patch, id });
+  await tx.done;
+  return true;
 }
 
 export async function removeFromUploadQueue(id: string): Promise<void> {

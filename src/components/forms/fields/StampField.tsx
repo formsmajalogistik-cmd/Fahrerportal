@@ -9,6 +9,7 @@ import {
 import { useSync } from '../../../sync/SyncContext';
 import { ConfirmDialog } from '../../ConfirmDialog';
 import type { FormField, PhotoValue } from '../../../types/db';
+import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 
 interface Props {
   field: FormField;
@@ -111,6 +112,8 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
     setError(null);
     setHint(null);
     setBusy(true);
+    // Ersetzter, noch wartender Stempel → alten Queue-Eintrag aufräumen.
+    const vorherPending = current?.pending_id ?? null;
     try {
       const result = await processStampImage(file);
       if (!result.processed) {
@@ -124,7 +127,7 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
       const localUrl = URL.createObjectURL(blob);
       setLocalPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return localUrl; });
 
-      const path = `${oneDriveFolder.replace(/\/+$/, '')}/Fotos/${filename}`;
+      const path = `${oneDriveFolder.replace(/\/+$/, '')}/Fotos/${sicheresPfadSegment(filename, 'stempel.png')}`;
 
       if (navigator.onLine) {
         try {
@@ -134,6 +137,7 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
             mime_type: blob.type,
             size_bytes: blob.size,
           });
+          if (vorherPending) void removeFromUploadQueue(vorherPending).catch(() => {});
           return;
         } catch (err) {
           console.warn('[StampField] Direkter Upload fehlgeschlagen — gehe in Queue', err);
@@ -146,8 +150,10 @@ export function StampField({ field, value, oneDriveFolder, formularId, onChange,
           id, formularId, fieldId: field.id,
           folder: oneDriveFolder, filename, blob,
           attempts: 0, nextRetryAt: 0, lastError: null,
+          status: 'wartet', angelegtAm: Date.now(),
         };
         await enqueueUpload(item);
+        if (vorherPending) void removeFromUploadQueue(vorherPending).catch(() => {});
         onChange({
           pending_id: id,
           mime_type: blob.type,

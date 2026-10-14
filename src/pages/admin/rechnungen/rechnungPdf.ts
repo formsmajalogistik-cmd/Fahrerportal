@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { berechneSummenProUst, type UstGroup } from '../../../lib/rechnungsformat';
+import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 
 // ============================================================
 // Maja-Logistik Rechnungs-PDF
@@ -739,6 +740,6 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
 
 /** Erzeugt einen sauberen Dateinamen aus der Rechnungsnummer ("Re-2026/349" → "Re-2026_349.pdf"). */
 export function rechnungPdfFilename(rechnungsnummer: string): string {
-  const safe = rechnungsnummer.replace(/[\\/:*?"<>|]/g, '_');
+  const safe = sicheresPfadSegment(rechnungsnummer, 'Rechnung');
   return `${safe}.pdf`;
 }

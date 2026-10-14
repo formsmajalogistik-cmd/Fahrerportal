@@ -19,6 +19,7 @@ import { assertCanAccessPdfPath, assertCanAccessTourDokument } from '../server-l
 import {
   createUploadSession, deleteFile, downloadFile, listChildren, uploadFile,
 } from '../server-lib/graph.js';
+import { contentDisposition, istUnsichererPfad } from '../server-lib/paths.js';
 
 interface Req {
   method?: string;
@@ -87,7 +88,7 @@ export default async function handler(req: Req, res: Res) {
     // ---- DOWNLOAD ---------------------------------------------------
     if (method === 'GET' && action === 'download') {
       const path = qString(req.query?.path);
-      if (!path || path.includes('..')) {
+      if (!path || istUnsichererPfad(path)) {
         throw new HttpError(400, 'Ungültiger oder fehlender Pfad');
       }
       const filename = qString(req.query?.filename) || path.split('/').pop() || 'download';
@@ -121,10 +122,7 @@ export default async function handler(req: Req, res: Res) {
       }
       const { bytes, contentType } = await downloadFile(path);
       res.setHeader('Content-Type', contentType);
-      res.setHeader(
-        'Content-Disposition',
-        `${inline ? 'inline' : 'attachment'}; filename="${filename.replace(/"/g, '')}"`,
-      );
+      res.setHeader('Content-Disposition', contentDisposition(inline ? 'inline' : 'attachment', filename));
       // Kein Browser-Caching: PDFs werden unter GLEICHBLEIBENDEM Pfad
       // regeneriert (Rechnungen "PDF neu generieren", Protokolle "PDFs
       // erzeugen"). Mit max-age lieferte der HTTP-Cache nach einer
@@ -145,7 +143,7 @@ export default async function handler(req: Req, res: Res) {
         throw new HttpError(403, 'Kein Zugriff für Auftraggeber-Profile');
       }
       const folder = qString(req.query?.folder) ?? '';
-      if (folder.includes('..')) throw new HttpError(400, 'Ungültiger Pfad');
+      if (folder && istUnsichererPfad(folder)) throw new HttpError(400, 'Ungültiger Pfad');
       const items = await listChildren(folder);
       res.status(200).json({
         items: items.map((i) => ({
@@ -177,8 +175,8 @@ export default async function handler(req: Req, res: Res) {
       if (!path || !contentType || !contentB64) {
         throw new HttpError(400, 'path / contentType / content_base64 erforderlich');
       }
-      if (path.includes('..') || path.startsWith('/')) {
-        throw new HttpError(400, 'Ungültiger Pfad');
+      if (istUnsichererPfad(path)) {
+        throw new HttpError(400, `Ungültiger Pfad: ${path.slice(0, 160)}`);
       }
       assertUploadPathAllowed(user.role, path);
       const bytes = base64ToBytes(contentB64);
@@ -194,8 +192,8 @@ export default async function handler(req: Req, res: Res) {
     // ---- UPLOAD-SESSION --------------------------------------------
     if (action === 'upload-session') {
       const path = (asString(body.path) ?? '').trim();
-      if (!path || path.includes('..')) {
-        throw new HttpError(400, 'Pfad ungültig');
+      if (!path || istUnsichererPfad(path)) {
+        throw new HttpError(400, `Ungültiger Pfad: ${path.slice(0, 160)}`);
       }
       assertUploadPathAllowed(user.role, path);
       const { uploadUrl } = await createUploadSession(path);
@@ -215,7 +213,7 @@ export default async function handler(req: Req, res: Res) {
       const path = asString(body.path);
       const formularId = asString(body.formular_id);
       const tourDokumentId = asString(body.tour_dokument_id);
-      if (!path || path.includes('..') || (!formularId && !tourDokumentId)) {
+      if (!path || istUnsichererPfad(path) || (!formularId && !tourDokumentId)) {
         throw new HttpError(400, 'path und formular_id bzw. tour_dokument_id sind Pflicht');
       }
       if (tourDokumentId) {

@@ -15,6 +15,7 @@ import {
   fetchLogoBytes, newPage, winAnsi,
   type Fonts, type PageCtx,
 } from '../rechnungen/rechnungPdf';
+import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 
 export interface BriefPdfInput {
   briefNr: string;
@@ -178,7 +179,7 @@ async function drawUnterschrift(
 }
 
 export function briefPdfFilename(briefNr: string): string {
-  const sicher = briefNr.replace(/[\\/:*?"<>|]/g, '-');
+  const sicher = sicheresPfadSegment(briefNr, 'ohne-Nummer');
   return `Brief_${sicher}.pdf`;
 }
 

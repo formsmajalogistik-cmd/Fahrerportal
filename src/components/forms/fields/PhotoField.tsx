@@ -3,9 +3,10 @@ import { compressImage, getPhotoUrl, uploadPhotoToOneDrive } from '../../../lib/
 import { ActionSheet } from '../../ActionSheet';
 import { useLongPress } from '../../../lib/useLongPress';
 import {
-  enqueueUpload, getUploadQueue, removeFromUploadQueue, updateUploadQueueItem,
+  aktualisiereUploadWennVorhanden, enqueueUpload, getUploadQueue, removeFromUploadQueue,
   type UploadQueueItem,
 } from '../../../lib/offlineDb';
+import { istFehlgeschlagen } from '../../../lib/uploadQueue';
 import { useSync } from '../../../sync/SyncContext';
 import type { FormField, PhotoValue } from '../../../types/db';
 
@@ -48,6 +49,9 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
   const [sheetOpen, setSheetOpen] = useState<'add' | 'edit' | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+  // Zählt jede Aufnahme/Löschung. Ein Upload, der erst NACH einer Löschung
+  // oder neuen Aufnahme fertig wird, darf das Feld nicht mehr überschreiben.
+  const generationRef = useRef(0);
 
   // Online-Bild laden, wenn storage_path gesetzt ist. formularId wird
   // zwingend an den Proxy durchgereicht — sonst 403 für Fahrer.
@@ -118,10 +122,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
     void getUploadQueue().then((items) => {
       if (cancelled) return;
       const item = items.find((i) => i.id === pendingId);
-      const failed = !!item && (
-        item.nextRetryAt === Number.MAX_SAFE_INTEGER
-        || (item.attempts >= 3 && !!item.lastError)
-      );
+      const failed = !!item && (istFehlgeschlagen(item) || (item.attempts >= 3 && !!item.lastError));
       setQueueFailed(failed);
     });
     return () => { cancelled = true; };
@@ -140,6 +141,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
       id, formularId, fieldId: field.id,
       folder: oneDriveFolder, filename, blob: compressed,
       attempts: 0, nextRetryAt: 0, lastError: null,
+      status: 'wartet', angelegtAm: Date.now(),
     };
     await enqueueUpload(item);
     onChange({
@@ -154,6 +156,11 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
   async function handleFile(file: File) {
     setError(null);
     setQueueFailed(false);
+    const gen = ++generationRef.current;
+    // Ersetzt dieses Foto ein noch wartendes? Dann dessen Queue-Eintrag
+    // entfernen — sonst bliebe er als Waise liegen und hielte den Zähler
+    // „Synchronisiere …" und die Einreichung für immer fest.
+    const vorherPending = current?.pending_id ?? null;
     // Sofortige lokale Vorschau aus dem Original.
     const localUrl = URL.createObjectURL(file);
     setLocalPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return localUrl; });
@@ -178,7 +185,9 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
       if (navigator.onLine) {
         try {
           const path = await uploadPhotoToOneDrive(compressed, oneDriveFolder, filename);
+          if (gen !== generationRef.current) return;  // inzwischen gelöscht/ersetzt
           onChange({ storage_path: path, mime_type: compressed.type, size_bytes: compressed.size });
+          if (vorherPending) void removeFromUploadQueue(vorherPending).catch(() => {});
           console.info('[Upload] Ende:', { feldName: field.id, status: 'ok-direkt' });
           return;
         } catch (err) {
@@ -188,7 +197,9 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
 
       // Offline oder Direkt-Upload fehlgeschlagen → in IDB-Queue legen.
       try {
+        if (gen !== generationRef.current) return;
         await enqueueForUpload(compressed, filename);
+        if (vorherPending) void removeFromUploadQueue(vorherPending).catch(() => {});
         console.info('[Upload] Ende:', { feldName: field.id, status: 'queued' });
       } catch (err) {
         console.error('[Upload] Ende:', { feldName: field.id, status: 'fehler', fehler: err });
@@ -212,7 +223,7 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
       const items = await getUploadQueue();
       const item = items.find((i) => i.id === pendingId);
       if (!item) { setQueueFailed(false); return; }
-      await updateUploadQueueItem({ ...item, attempts: 0, nextRetryAt: 0, lastError: null });
+      await aktualisiereUploadWennVorhanden(pendingId, { status: 'wartet', attempts: 0, nextRetryAt: 0, lastError: null });
       setQueueFailed(false);
       console.info('[Upload] Retry:', { feldName: field.id, id: pendingId });
       triggerSync();
@@ -221,7 +232,11 @@ export function PhotoField({ field, value, oneDriveFolder, formularId, onChange,
     }
   }
 
+  /** Jederzeit möglich — auch während der Upload läuft, wartet oder fehlschlug. */
   async function handleDelete() {
+    generationRef.current += 1;
+    setUploading(false);
+    setQueueFailed(false);
     if (localPreviewUrl) { URL.revokeObjectURL(localPreviewUrl); setLocalPreviewUrl(null); }
     if (current?.pending_id) {
       try { await removeFromUploadQueue(current.pending_id); } catch { /* ignore */ }

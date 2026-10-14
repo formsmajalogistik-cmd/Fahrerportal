@@ -21,6 +21,7 @@
 // die Anhänge aus OneDrive.
 
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
+import { contentDisposition, istUnsichererPfad } from '../server-lib/paths.js';
 import { assertMailboxAllowed } from '../server-lib/mailboxAuth.js';
 import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
 import { buildTourAenderungMail } from '../server-lib/tourAenderungMail.js';
@@ -180,10 +181,7 @@ export default async function handler(req: Req, res: Res) {
         const { name, contentType, bytes } = await getAttachmentBytes({ mailbox, messageId, attachmentId });
         res.setHeader('Content-Type', contentType);
         res.setHeader('Content-Length', String(bytes.byteLength));
-        res.setHeader(
-          'Content-Disposition',
-          `${disposition}; filename="${name.replace(/[\r\n"]/g, '')}"`,
-        );
+        res.setHeader('Content-Disposition', contentDisposition(disposition, name));
         if (res.send) res.send(Buffer.from(bytes));
         else res.end(Buffer.from(bytes));
         return;
@@ -354,7 +352,9 @@ export default async function handler(req: Req, res: Res) {
         ? (body.attachments as RawAtt[]).filter((a) =>
             typeof a.onedrive_path === 'string'
             && (a.onedrive_path as string).trim() !== ''
-            && !(a.onedrive_path as string).includes('..'),
+            // Segmentweise Traversal-Prüfung (siehe server-lib/paths) — vorher
+            // fiel ein Anhang mit „…" im Kennzeichen hier STILL weg.
+            && !istUnsichererPfad(a.onedrive_path as string),
           )
         : [];
       // Nicht-Admins (Fahrer beim Submit): jeder Anhang-Pfad muss zu einem

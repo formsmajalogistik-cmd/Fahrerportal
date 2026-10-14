@@ -79,6 +79,21 @@ async function fetchWithAuthRetry(
   return resp;
 }
 
+/**
+ * Fehler eines OneDrive-Uploads mit HTTP-Status. Die Upload-Warteschlange
+ * unterscheidet damit vorübergehende (Netz, 5xx, 429, Timeout) von
+ * dauerhaften Fehlern (400, 403, 404 …) — siehe lib/uploadQueue.
+ * Die Meldung bleibt im bisherigen Format „Upload (400): …".
+ */
+export class UploadFehler extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'UploadFehler';
+    this.status = status;
+  }
+}
+
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
   // Browser: kein Buffer. atob/btoa arbeiten mit binary strings.
   let bin = '';
@@ -121,7 +136,7 @@ export async function uploadToOneDrive(
       console.warn('[uploadToOneDrive] /api/onedrive?action=upload 413 → Session-Fallback');
       return await uploadViaSession(path, file);
     }
-    throw new Error(`Upload (${resp.status}): ${txt.slice(0, 200)}`);
+    throw new UploadFehler(resp.status, `Upload (${resp.status}): ${txt.slice(0, 200)}`);
   }
   return await resp.json();
 }
@@ -142,7 +157,7 @@ async function uploadViaSession(
     timeoutMs: 30_000,
   });
   if (!sess.ok) {
-    throw new Error(`upload-session (${sess.status}): ${(await sess.text()).slice(0, 200)}`);
+    throw new UploadFehler(sess.status, `upload-session (${sess.status}): ${(await sess.text()).slice(0, 200)}`);
   }
   const { uploadUrl } = (await sess.json()) as { uploadUrl: string };
 
@@ -168,7 +183,7 @@ async function uploadViaSession(
       body: slice,
     }, 60_000);
     if (!r.ok && r.status !== 202) {
-      throw new Error(`Chunk-Upload (${r.status}): ${(await r.text()).slice(0, 200)}`);
+      throw new UploadFehler(r.status, `Chunk-Upload (${r.status}): ${(await r.text()).slice(0, 200)}`);
     }
     if (r.status === 200 || r.status === 201) {
       last = await r.json() as { id?: string; webUrl?: string };

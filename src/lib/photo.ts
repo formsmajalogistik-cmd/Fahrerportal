@@ -1,6 +1,7 @@
 import imageCompression from 'browser-image-compression';
 import { uploadToOneDrive, getOneDriveObjectUrl } from './onedrive';
 import { heicToJpeg } from './heic';
+import { sicheresPfadSegment } from './onedrivePaths';
 
 // Client-seitige Komprimierung: max. 1200px Kante, JPEG ~80%
 const COMPRESSION_OPTIONS = {
@@ -65,7 +66,7 @@ export async function uploadPhotoToOneDrive(
 ): Promise<string> {
   const compressed = await compressImage(file);
   // Pfad: <folder>/Fotos/<filename>
-  const path = `${folder.replace(/\/+$/, '')}/Fotos/${filename}`;
+  const path = `${folder.replace(/\/+$/, '')}/Fotos/${sicheresPfadSegment(filename, 'foto.jpg')}`;
   await uploadToOneDrive(path, compressed);
   return path;
 }

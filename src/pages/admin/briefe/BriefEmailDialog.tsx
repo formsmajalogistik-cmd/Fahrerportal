@@ -16,6 +16,7 @@ import { XIcon } from '../../../components/icons';
 import { loadMailboxes, type MailboxConfig } from '../../../lib/mailboxSettings';
 import { briefPdfFilename } from './briefPdf';
 import { empfaengerAnzeige, parseBriefAdresse, type Brief } from '../../../lib/briefe';
+import { sichererDateiname } from '../../../lib/onedrivePaths';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -77,7 +78,7 @@ export function BriefEmailDialog({ brief, onClose, onSent }: Props) {
       }];
       // Eigene Dateien zuerst nach OneDrive, dann als Anhang referenzieren.
       for (const datei of extraDateien) {
-        const pfad = `Maja-Logistik/Briefe/Anhaenge/${Date.now()}-${datei.name}`;
+        const pfad = `Maja-Logistik/Briefe/Anhaenge/${Date.now()}-${sichererDateiname(datei.name, 'anhang')}`;
         await uploadToOneDrive(pfad, datei);
         anhaenge.push({
           name: datei.name,

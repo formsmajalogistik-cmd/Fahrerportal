@@ -11,6 +11,7 @@ import { ImageCropDialog } from './ImageCropDialog';
 import { RechnungAssignDialog } from './RechnungAssignDialog';
 import { downloadBlob, generateBelegePdf, type Layout } from './belegPdf';
 import { useTestGuard } from '../../../auth/TestModeContext';
+import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 
 interface BelegItem {
   id: string;
@@ -272,7 +273,7 @@ export function BelegeUploadTab() {
         })),
         layout,
       });
-      const onedrivePath = `Maja-Logistik/Belege/${rechnung.rechnungsnummer}_${todayIso()}.pdf`;
+      const onedrivePath = `Maja-Logistik/Belege/${sicheresPfadSegment(rechnung.rechnungsnummer, 'Rechnung')}_${todayIso()}.pdf`;
       await uploadToOneDrive(onedrivePath, pdf);
       const { error: err } = await supabase
         .from('rechnungen')

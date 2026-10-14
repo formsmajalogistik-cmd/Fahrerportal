@@ -18,7 +18,7 @@ import {
 } from './onedrive';
 import { supabase } from './supabase';
 import type { Json } from '../types/supabase';
-import { buildFormularFolder, pathForPdf } from './onedrivePaths';
+import { buildFormularFolder, pathForPdf, sicheresPfadSegment } from './onedrivePaths';
 import type {
   AusgefuelltesFormular, FieldMapping, FormSchema, FormularTemplate,
   PhotoValue, TemplatePdf,
@@ -1318,13 +1318,14 @@ export function resolvePattern(pattern: string, data: Record<string, unknown>): 
  * Macht aus einer Zeichenkette einen Datei-System-tauglichen Namen:
  * Slashes/Doppelpunkte/Sterne/etc. raus, mehrfache Whitespaces zu „_".
  */
+/**
+ * Dateiname aus Benutzereingaben (Kennzeichen, Kunde …). Gleiche Regeln
+ * wie für Pfadsegmente (sicheresPfadSegment) — der Dateiname landet im
+ * OneDrive-Pfad, als E-Mail-Anhang und im Download. Leer bleibt leer, die
+ * Aufrufer haben eigene Ersatzwerte.
+ */
 export function sanitizeFilename(s: string): string {
-  return s
-    .replace(/[\\/:*?"<>|]+/g, '_')
-    .replace(/\s+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .trim();
+  return sicheresPfadSegment(s, '');
 }
 
 /**

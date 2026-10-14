@@ -134,12 +134,14 @@ export function diagnose(
   ereignis: string,
   details: DiagnoseDetails = {},
   bereich = 'schadensaufnahme',
+  /** Abweichendes Formular (z.B. Upload-Warteschlange im Hintergrund). */
+  formularId?: string | null,
 ): void {
   try {
     const eintrag: Eintrag = {
       ereignis: ereignis.slice(0, 80),
       details: bereinige(details),
-      formular_id: kontext.formularId,
+      formular_id: formularId !== undefined ? formularId : kontext.formularId,
       fahrer_id: kontext.fahrerId,
       bereich,
       geraet: geraet(),
