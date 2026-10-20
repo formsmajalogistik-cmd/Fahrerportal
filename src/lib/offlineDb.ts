@@ -19,6 +19,15 @@ export interface FormDraftRecord {
   serverUpdatedAt: string | null;
   /** Lokaler Speicher-Zeitstempel (ms epoch). */
   savedAt: number;
+  /**
+   * daten_geaendert_am des Servers nach dem letzten erfolgreichen
+   * Server-Save von diesem Gerät. Stimmt er beim Öffnen noch mit dem
+   * Server überein, hat seitdem niemand anders geschrieben → der lokale
+   * Stand ist der neuere.
+   */
+  serverStand?: string | null;
+  /** Lokale Änderungen, die noch nicht auf dem Server sind. */
+  serverOffen?: boolean;
 }
 
 export interface UploadQueueItem {

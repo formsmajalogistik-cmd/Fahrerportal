@@ -29,6 +29,9 @@ import {
   entfernePendingAusDaten, fehlerArt, istFehlgeschlagen, uploadPfad, wartezeitMs,
 } from '../lib/uploadQueue';
 import { uploadAbgleich, type AbgleichErgebnis } from '../lib/uploadAbgleich';
+import { getAllFormDrafts } from '../lib/offlineDb';
+import { entwurfKennzahlen, entwurfZumServer } from '../lib/entwurfSync';
+import { entwurfWaehlen } from '../lib/entwurfStand';
 import { diagnose } from '../lib/diagnose';
 import { supabase } from '../lib/supabase';
 import { runSubmissionEmails } from '../lib/submissionEmails';
@@ -125,6 +128,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     try {
       await processUploadQueue();
       await processPendingSubmissions();
+      await entwuerfeNachholen();
     } finally {
       runningRef.current = false;
       setSyncing(false);
@@ -395,6 +399,49 @@ async function applyUploadSuccessToDraft(
     }
   } catch (err) {
     console.warn('[SyncDrain] Wartende Einreichung nicht aktualisierbar', err);
+  }
+}
+
+/**
+ * Lokale Formularstände, die noch nicht auf dem Server sind (offline
+ * ausgefüllt, Formular inzwischen verlassen), nachträglich hochladen.
+ * Gleiche Regel wie beim Öffnen (lib/entwurfStand): ein kleinerer Stand
+ * überschreibt nie einen volleren, im Zweifel entscheidet der Fahrer beim
+ * nächsten Öffnen. Gerade bearbeitete Formulare (< 2 min) überlässt der
+ * Drainer der offenen Formularseite.
+ */
+async function entwuerfeNachholen(): Promise<void> {
+  let entwuerfe;
+  try { entwuerfe = await getAllFormDrafts(); } catch { return; }
+  const jetzt = Date.now();
+  for (const d of entwuerfe) {
+    if (!d.serverOffen) continue;
+    if (jetzt - d.savedAt < 2 * 60_000) continue;
+    if (await getPendingSubmission(d.id).catch(() => null)) continue;
+    let erwartet = d.serverStand ?? null;
+    if (!erwartet) {
+      const { data } = await supabase.from('ausgefuellte_formulare')
+        .select('daten, daten_geaendert_am, status').eq('id', d.id).maybeSingle();
+      const srv = data as { daten: Record<string, unknown>; daten_geaendert_am: string | null; status: string } | null;
+      if (!srv || srv.status !== 'draft') {
+        await saveFormDraft({ ...d, serverOffen: false }).catch(() => {});
+        continue;
+      }
+      const e = entwurfWaehlen({ daten: srv.daten ?? {}, geaendertAm: srv.daten_geaendert_am }, { daten: d.data, savedAt: d.savedAt, serverStand: null });
+      if (e.quelle !== 'lokal') continue;
+      erwartet = srv.daten_geaendert_am;
+    }
+    const r = await entwurfZumServer({ formularId: d.id, daten: d.data, vorgang: 'nachgeholt', erwarteterStand: erwartet });
+    diagnose('entwurf_server_gespeichert', {
+      ok: r.ok, vorgang: 'nachgeholt', grund: r.ok ? null : r.grund, ...entwurfKennzahlen(d.data),
+    }, 'entwurf', d.id);
+    if (r.ok || r.grund === 'eingereicht') {
+      const aktuell = await getFormDraft(d.id).catch(() => null);
+      // Nur zurücksetzen, wenn inzwischen nicht weiter bearbeitet wurde.
+      if (aktuell && aktuell.savedAt === d.savedAt) {
+        await saveFormDraft({ ...aktuell, serverOffen: false, serverStand: r.ok ? (r.stand ?? aktuell.serverStand ?? null) : aktuell.serverStand }).catch(() => {});
+      }
+    }
   }
 }
 

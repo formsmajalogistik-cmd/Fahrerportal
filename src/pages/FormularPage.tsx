@@ -30,6 +30,10 @@ import { tourRoute, tourZusatz } from '../lib/touren';
 import { diagnose, setzeDiagnoseKontext } from '../lib/diagnose';
 import { ersetzePendingFoto } from '../lib/pendingFoto';
 import { entfernePendingAusDaten, istFehlgeschlagen } from '../lib/uploadQueue';
+import { appModus, entwurfWaehlen, felderAnzahl, istIos, type ServerStand } from '../lib/entwurfStand';
+import { saveFormDraft as lokalenEntwurfSetzen } from '../lib/offlineDb';
+import { useEntwurfSync } from '../lib/useEntwurfSync';
+import { EntwurfKonfliktDialog, InstallHinweis, SpeicherStatusZeile } from '../components/forms/EntwurfStatus';
 import type { FeldWert } from '../components/forms/FormRenderer';
 import { useSync } from '../sync/SyncContext';
 import { displayName } from '../lib/names';
@@ -38,11 +42,6 @@ import type {
 } from '../types/db';
 import type { Json } from '../types/supabase';
 
-function parseTime(s: string | null | undefined): number {
-  if (!s) return 0;
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? t : 0;
-}
 
 function parseSchema(raw: unknown): FormSchema {
   let value: unknown = raw;
@@ -113,6 +112,23 @@ export function FormularPage() {
   // pendingExit: gewünschtes Ziel für die Navigation, das auf Bestätigung wartet.
   const [pendingExit, setPendingExit] = useState<string | null>(null);
 
+  // ---- Sicheres Speichern: lokal UND Server (lib/useEntwurfSync) ----
+  // Server und Gerät haben beim Öffnen unterschiedliche Stände → der
+  // Fahrer wählt (bis dahin wird nichts zum Server geschrieben).
+  const [konflikt, setKonflikt] = useState<null | {
+    server: ServerStand;
+    lokal: { daten: Record<string, unknown>; savedAt: number };
+  }>(null);
+  const entwurfSync = useEntwurfSync({
+    formularId: formular?.id ?? null,
+    aktiv: !!formular && !loading && formular.status === 'draft' && !formular.uebertragen_auf_id
+      && !konflikt && saving !== 'submit',
+    data,
+    dirty,
+    onGespeichert: setSavedDataJson,
+  });
+  const { setServerStand, seitenwechsel: beiSeitenwechsel } = entwurfSync;
+
   // ---- Submit-Erfolg + Auto-Redirect ----
   const [submittedSummary, setSubmittedSummary] = useState<string | null>(null);
   const [redirectIn, setRedirectIn] = useState<number>(0);
@@ -176,7 +192,6 @@ export function FormularPage() {
       // Server-Stand (oder der Server gar kein updated_at hat), nehmen wir
       // den lokalen Stand — der Fahrer hat zuletzt daran gearbeitet.
       const serverData = (af.daten as unknown as Record<string, unknown>) ?? {};
-      const serverTime = parseTime(af.created_at);
 
       // Auf ein anderes Template übertragen (Migration 101): nur noch das
       // unveränderte Original zeigen, KEINEN lokalen Entwurf einspielen —
@@ -197,16 +212,45 @@ export function FormularPage() {
         return;
       }
 
+      // Beide Quellen laden und nach lib/entwurfStand entscheiden: ein
+      // leerer oder deutlich kleinerer Stand überschreibt NIE einen
+      // volleren; echte Konflikte entscheidet der Fahrer. Vorher gewann
+      // der lokale Entwurf, sobald er existierte (verglichen wurde nur mit
+      // dem Anlagedatum) — und fehlte er (iOS hatte den Speicher geleert),
+      // blieb nur der Server-Stand vom Anlegen: leeres Protokoll.
       let nextData = serverData;
       let restoredFromLocal = false;
+      const serverStand: ServerStand = {
+        daten: serverData,
+        geaendertAm: (af as { daten_geaendert_am?: string | null }).daten_geaendert_am ?? null,
+      };
+      setServerStand(serverStand.geaendertAm);
+      let local: Awaited<ReturnType<typeof getFormDraft>> = null;
       try {
-        const local = await getFormDraft(af.id);
-        if (local && local.savedAt > serverTime) {
-          nextData = local.data;
-          restoredFromLocal = true;
-        }
+        local = await getFormDraft(af.id);
       } catch (err) {
         console.warn('[FormularPage] IDB-Lesen fehlgeschlagen', err);
+      }
+      if (cancelled) return;
+      const entscheidung = entwurfWaehlen(serverStand, local
+        ? { daten: local.data, savedAt: local.savedAt, serverStand: local.serverStand ?? null }
+        : null);
+      diagnose('entwurf_geladen', {
+        quelle: local ? 'beide' : 'server',
+        felder_server: felderAnzahl(serverData),
+        felder_lokal: local ? felderAnzahl(local.data) : null,
+        stand_server: serverStand.geaendertAm,
+        stand_lokal: local ? new Date(local.savedAt).toISOString() : null,
+        lokal_server_offen: local?.serverOffen ?? null,
+        gewinner: entscheidung.quelle,
+        grund: entscheidung.grund,
+        app_modus: appModus(),
+      }, 'entwurf', af.id);
+      if (entscheidung.quelle === 'lokal' && local) {
+        nextData = local.data;
+        restoredFromLocal = true;
+      } else if (entscheidung.quelle === 'konflikt' && local) {
+        setKonflikt({ server: serverStand, lokal: { daten: local.data, savedAt: local.savedAt } });
       }
       // Legacy: alten sessionStorage-Eintrag — falls vorhanden — räumen.
       try { sessionStorage.removeItem(`formular-draft-${af.id}`); } catch { /* ignore */ }
@@ -289,7 +333,7 @@ export function FormularPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, setServerStand]);
 
   // Übertragene Originale sind schreibgeschützt (der Server lehnt
   // Fahrer-Änderungen daran ohnehin ab).
@@ -325,33 +369,6 @@ export function FormularPage() {
       return next;
     });
   }, []);
-
-  // Auto-Save: debounced 2 s nach der letzten Änderung in IndexedDB.
-  // Damit gehen Daten bei App-Wechsel / schwarzem Bildschirm nicht verloren.
-  const autoSaveTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!formular || readonly) return;
-    if (!dirty) return; // nichts zu sichern
-    if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = window.setTimeout(() => {
-      void saveFormDraft({
-        id: formular.id,
-        data,
-        serverUpdatedAt: formular.created_at ?? null,
-        savedAt: Date.now(),
-      }).then(() => {
-        setAutoSaveHint('Automatisch gespeichert');
-        window.setTimeout(() => setAutoSaveHint((h) => h === 'Automatisch gespeichert' ? null : h), 3000);
-      }).catch((err) => {
-        console.warn('[FormularPage] Auto-Save fehlgeschlagen', err);
-      });
-    }, 2000);
-    return () => {
-      if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
-    };
-  // formular?.updated_at sich zu merken ist OK — verhindert Stale-Closure.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, dirty, readonly, formular?.id]);
 
   // Wenn der Sync-Drainer einen Upload abgeschlossen hat, ist der Entwurf
   // in IDB jetzt aktueller (Photo-Feld zeigt jetzt storage_path). Wir laden
@@ -420,15 +437,14 @@ export function FormularPage() {
     if (guard()) return;
     setSaving('draft');
     setStatusMsg(null);
-    const { error: err } = await supabase
-      .from('ausgefuellte_formulare')
-      .update({ daten: data as Json })
-      .eq('id', formular.id);
+    const ok = await entwurfSync.serverSichern('entwurf');
     setSaving('idle');
-    if (err) { setError(err.message); throw new Error(err.message); }
-    await clearLocalDraft();
+    if (!ok) {
+      const msg = 'Entwurf konnte nicht auf dem Server gespeichert werden — er ist auf diesem Gerät gesichert und wird übertragen, sobald es geht.';
+      setError(msg);
+      throw new Error(msg);
+    }
     setStatusMsg('Entwurf gespeichert.');
-    setSavedDataJson(JSON.stringify(data));
   }
 
   /**
@@ -471,7 +487,9 @@ export function FormularPage() {
         .update({ daten: data as Json })
         .eq('id', formular.id);
       if (saveErr) throw new Error(saveErr.message);
-      await clearLocalDraft();
+      // Eigener Schreibvorgang ohne neuen Stand → beim nächsten Autosave
+      // nicht als „anderer Stand auf dem Server" missverstehen.
+      entwurfSync.merkeGesendet(data);
       setSavedDataJson(JSON.stringify(data));
       // Übernahme-Teil ist abgeschlossen → Werte in den Vorschlags-Pool.
       void merkeAusFormular(template.schema, data, isTestUser);
@@ -804,6 +822,81 @@ export function FormularPage() {
     if (!currentPageId && pages.length > 0) setCurrentPageId(pages[0].id);
   }, [pages, currentPageId]);
   const currentPage = pages.find((p) => p.id === currentPageId) ?? pages[0] ?? null;
+
+  // Seitenwechsel im Formular → sofort zum Server speichern.
+  const vorherigeSeiteRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (vorherigeSeiteRef.current && vorherigeSeiteRef.current !== currentPageId) beiSeitenwechsel();
+    vorherigeSeiteRef.current = currentPageId;
+  }, [currentPageId, beiSeitenwechsel]);
+
+  // Beim ersten Öffnen eines Formulars: dauerhaften Speicher anfordern
+  // (Safari/iOS löscht ihn dann seltener) und den Modus protokollieren.
+  const speicherAngefragtRef = useRef(false);
+  useEffect(() => {
+    if (!formular || readonly || speicherAngefragtRef.current) return;
+    speicherAngefragtRef.current = true;
+    const fid = formular.id;
+    diagnose('app_modus', { modus: appModus(), ios: istIos() }, 'entwurf', fid);
+    void (async () => {
+      try {
+        const sm = navigator.storage;
+        if (!sm?.persist) { diagnose('speicher_persist', { ergebnis: 'nicht_unterstuetzt' }, 'entwurf', fid); return; }
+        const bereits = sm.persisted ? await sm.persisted() : false;
+        const ergebnis = bereits ? true : await sm.persist();
+        diagnose('speicher_persist', { ergebnis, bereits }, 'entwurf', fid);
+      } catch (err) {
+        diagnose('speicher_persist', { ergebnis: 'fehler', fehler: err instanceof Error ? err.message : String(err) }, 'entwurf', fid);
+      }
+    })();
+  }, [formular, readonly]);
+
+  /** Konflikt beim Öffnen: Fahrer wählt Server- oder Gerätestand. */
+  async function konfliktBeimLadenLoesen(wahl: 'server' | 'geraet') {
+    if (!formular || !konflikt) return;
+    const { server, lokal } = konflikt;
+    // Der verworfene Stand wird als Version auf dem Server gesichert.
+    const verworfen = wahl === 'server' ? lokal.daten : server.daten;
+    void supabase.rpc('formular_version_sichern', {
+      p_formular_id: formular.id, p_daten: verworfen as Json,
+      p_vorgang: wahl === 'server' ? 'verworfen_geraet' : 'verworfen_server', p_app_modus: appModus(),
+    }).then(({ error: e }) => { if (e) console.warn('[FormularPage] Version sichern fehlgeschlagen', e.message); });
+    diagnose('entwurf_konflikt', {
+      wahl, felder_server: felderAnzahl(server.daten), felder_lokal: felderAnzahl(lokal.daten),
+    }, 'entwurf', formular.id);
+    setKonflikt(null);
+    if (wahl === 'geraet') {
+      setData(lokal.daten);   // → dirty → wird zum Server gespeichert
+    } else {
+      setData(server.daten);
+      await lokalenEntwurfSetzen({
+        id: formular.id, data: server.daten, serverUpdatedAt: null, savedAt: Date.now(),
+        serverStand: server.geaendertAm, serverOffen: false,
+      }).catch(() => {});
+    }
+  }
+
+  /** Konflikt beim Speichern (anderer Stand kam inzwischen auf den Server). */
+  async function konfliktBeimSpeichernLoesen(wahl: 'meiner' | 'server') {
+    if (!formular) return;
+    diagnose('entwurf_konflikt', { wahl, zeitpunkt: 'speichern' }, 'entwurf', formular.id);
+    if (wahl === 'meiner') {
+      await entwurfSync.serverSichern('konflikt_aufgeloest', true);
+      return;
+    }
+    const { data: akt } = await supabase.from('ausgefuellte_formulare')
+      .select('daten, daten_geaendert_am').eq('id', formular.id).maybeSingle();
+    const a = akt as { daten: Record<string, unknown>; daten_geaendert_am: string | null } | null;
+    if (!a) return;
+    await supabase.rpc('formular_version_sichern', {
+      p_formular_id: formular.id, p_daten: data as Json, p_vorgang: 'verworfen_geraet', p_app_modus: appModus(),
+    });
+    await lokalenEntwurfSetzen({
+      id: formular.id, data: a.daten ?? {}, serverUpdatedAt: null, savedAt: Date.now(),
+      serverStand: a.daten_geaendert_am, serverOffen: false,
+    }).catch(() => {});
+    window.location.reload();
+  }
   const visibleSections = useMemo(
     () => (template && currentPage ? sectionsForPage(template.schema, currentPage) : []),
     [template, currentPage],
@@ -882,6 +975,9 @@ export function FormularPage() {
             {new Date(formular.created_at).toLocaleString('de-DE')}
           </p>
         )}
+        {!readonly && (
+          <SpeicherStatusZeile status={entwurfSync.status} onKonfliktLoesen={(w) => void konfliktBeimSpeichernLoesen(w)} />
+        )}
       </div>
       <button onClick={() => safeNavigate('/')} className="btn-secondary">← Zurück</button>
       {uebertragenAuf && (
@@ -954,6 +1050,18 @@ export function FormularPage() {
   return (
     <div className="space-y-6">
       {header}
+
+      {!readonly && formular && appModus() === 'browser' && <InstallHinweis />}
+      {konflikt && (
+        <EntwurfKonfliktDialog
+          server={{
+            felder: felderAnzahl(konflikt.server.daten),
+            zeit: konflikt.server.geaendertAm ? new Date(konflikt.server.geaendertAm).toLocaleString('de-DE') : null,
+          }}
+          geraet={{ felder: felderAnzahl(konflikt.lokal.daten), zeit: new Date(konflikt.lokal.savedAt).toLocaleString('de-DE') }}
+          onWahl={(w) => void konfliktBeimLadenLoesen(w)}
+        />
+      )}
 
       {/* Submit-Erfolgsbanner mit Auto-Redirect-Countdown */}
       {submittedSummary && (

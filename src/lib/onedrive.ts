@@ -210,6 +210,16 @@ async function fetchWithTimeout(
   }
 }
 
+/** Inhalt eines OneDrive-Ordners (Admin/Fahrer; Auftraggeber nicht). */
+export async function listeOneDriveOrdner(folder: string): Promise<Array<{ name: string; isFolder: boolean; size?: number }>> {
+  const qs = new URLSearchParams({ action: 'files', folder });
+  const resp = await fetchWithAuthRetry(`/api/onedrive?${qs.toString()}`, { timeoutMs: 30_000 });
+  if (resp.status === 404) return [];
+  if (!resp.ok) throw new Error(`Ordner nicht lesbar (${resp.status})`);
+  const j = await resp.json() as { items?: Array<{ name: string; isFolder: boolean; size?: number }> };
+  return j.items ?? [];
+}
+
 export async function downloadFromOneDrive(
   path: string, opts?: { formularId?: string | null; tourDokumentId?: string | null },
 ): Promise<Blob> {

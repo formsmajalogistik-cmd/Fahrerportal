@@ -990,6 +990,10 @@ export type Database = {
           uebertragen_am: string | null;
           uebertragen_von: string | null;
           uebertragen_von_id: string | null;
+          daten_geaendert_am: string | null;
+          daten_vorgang: string | null;
+          daten_app_modus: string | null;
+          daten_client_stand: string | null;
         };
         Insert: {
           id?: string;
@@ -1013,6 +1017,10 @@ export type Database = {
           uebertragen_am?: string | null;
           uebertragen_von?: string | null;
           uebertragen_von_id?: string | null;
+          daten_geaendert_am?: string | null;
+          daten_vorgang?: string | null;
+          daten_app_modus?: string | null;
+          daten_client_stand?: string | null;
         };
         Update: {
           id?: string;
@@ -1036,6 +1044,10 @@ export type Database = {
           uebertragen_am?: string | null;
           uebertragen_von?: string | null;
           uebertragen_von_id?: string | null;
+          daten_geaendert_am?: string | null;
+          daten_vorgang?: string | null;
+          daten_app_modus?: string | null;
+          daten_client_stand?: string | null;
         };
         Relationships: [
           {
@@ -1592,6 +1604,22 @@ export type Database = {
             referencedColumns: ['id'];
           },
         ];
+      };
+      formular_entwurf_versionen: {
+        Row: {
+          id: string;
+          formular_id: string;
+          erstellt_am: string;
+          aktualisiert_am: string;
+          erstellt_von: string | null;
+          vorgang: string | null;
+          app_modus: string | null;
+          felder_anzahl: number;
+          daten: Json;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
       };
       tour_aufteilungen: {
         Row: {
@@ -2187,6 +2215,14 @@ export type Database = {
       next_rechnungsnummer: {
         Args: { p_year?: number };
         Returns: string;
+      };
+      formular_version_sichern: {
+        Args: { p_formular_id: string; p_daten: Json; p_vorgang: string; p_app_modus?: string | null };
+        Returns: undefined;
+      };
+      formular_daten_admin_setzen: {
+        Args: { p_formular_id: string; p_daten: Json; p_vorgang: string; p_als_entwurf?: boolean };
+        Returns: Json;
       };
       tour_aufteilen: {
         Args: { p_tour_id: string; p_optionen: Json };

@@ -13,6 +13,10 @@ if (!url || !anon) {
 
 const STORAGE_KEY = 'maja-logistik-auth';
 
+/** Für Aufrufe ohne supabase-js (fetch mit keepalive beim Verlassen der Seite). */
+export const SUPABASE_URL: string = url;
+export const SUPABASE_ANON_KEY: string = anon;
+
 export const supabase = createClient<Database>(url, anon, {
   auth: {
     persistSession: true,

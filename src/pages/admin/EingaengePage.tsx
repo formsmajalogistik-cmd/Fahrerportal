@@ -16,6 +16,7 @@ import {
 import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { formatDateTime } from '../../lib/touren';
 import { EingangLinkDialog } from './EingangLinkDialog';
+import { FormularVersionenDialog } from './FormularVersionenDialog';
 import { EingangSendEmailDialog } from './EingangSendEmailDialog';
 import { BelegeErgaenzenDialog } from './BelegeErgaenzenDialog';
 import { belegFelder, belegeAusDaten, ergaenztNachVersand } from '../../lib/belegeErgaenzen';
@@ -386,6 +387,8 @@ export function EingaengePage() {
 
   const [belegeFuer, setBelegeFuer] = useState<Row | null>(null);
   const [uebertragenFuer, setUebertragenFuer] = useState<Row | null>(null);
+  /** „Versionen / Wiederherstellen" (Migration 107). */
+  const [versionenFuer, setVersionenFuer] = useState<Row | null>(null);
 
   async function patchRowInState(id: string, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -576,6 +579,7 @@ export function EingaengePage() {
               onDelete={() => setBulkConfirm({ ids: [r.id], mode: 'selected' })}
               onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
               onUebertragen={() => { void handleSeen(r); setUebertragenFuer(r); }}
+              onVersionen={() => setVersionenFuer(r)}
               onOriginal={(id) => setViewing(id)}
               onRueckgaengig={() => {
                 setLinkToast('Übertragung rückgängig gemacht — das Original ist wieder aktiv.');
@@ -712,6 +716,26 @@ export function EingaengePage() {
         />
       )}
 
+      {versionenFuer && versionenFuer.template && (
+        <FormularVersionenDialog
+          formular={{
+            id: versionenFuer.id,
+            status: versionenFuer.status,
+            created_at: versionenFuer.created_at,
+            daten: (versionenFuer.daten as Record<string, unknown>) ?? {},
+            templateName: versionenFuer.template.name ?? '',
+            schema: (versionenFuer.template.schema as FormularTemplate['schema']) ?? { sections: [] },
+          }}
+          onClose={() => setVersionenFuer(null)}
+          onDone={(text) => {
+            setVersionenFuer(null);
+            setLinkToast(text);
+            window.setTimeout(() => setLinkToast(null), 8000);
+            reload();
+          }}
+        />
+      )}
+
       {viewing && (
         <EingangFormularViewDialog
           formularId={viewing}
@@ -780,6 +804,8 @@ interface CardProps {
   onPdfFortsetzen: (neu: boolean) => void;
   /** Dialog „Auf anderes Template übertragen". */
   onUebertragen: () => void;
+  /** Dialog „Versionen / Wiederherstellen". */
+  onVersionen: () => void;
   /** Ursprüngliches (übertragenes) Formular ansehen. */
   onOriginal: (id: string) => void;
   onRueckgaengig: () => void;
@@ -789,7 +815,7 @@ function EingangCard({
   row, isAdmin, regenBusy,
   selectable, selected, onToggleSelected,
   onSeen, onView, onRegenerate, onBelege, onLink, onResendEmail, onSendZwischen,
-  onDelete, onZwischenChanged, onUebertragen, onOriginal, onRueckgaengig,
+  onDelete, onZwischenChanged, onUebertragen, onVersionen, onOriginal, onRueckgaengig,
   pdfJob, onPdfFortsetzen,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
@@ -965,6 +991,16 @@ function EingangCard({
               title="Falsches Template ausgefüllt? Werte in ein anderes Template übernehmen."
             >
               Auf anderes Template übertragen
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onVersionen}
+              className="text-xs font-medium text-maja-accent hover:underline"
+              title="Gespeicherte Stände ansehen und wiederherstellen; Fotos aus OneDrive zuordnen."
+            >
+              Versionen / Wiederherstellen
             </button>
           )}
           {isAdmin && row.status === 'draft' && (
