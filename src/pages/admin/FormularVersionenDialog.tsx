@@ -185,6 +185,9 @@ function FotosAusOneDrive({ formular, onDone }: Pick<Props, 'formular' | 'onDone
   const [manuell, setManuell] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+  // Schon (leer) eingereicht? Dann wieder freigeben, damit der Fahrer die
+  // Textfelder neu ausfüllen kann.
+  const [alsEntwurf, setAlsEntwurf] = useState(formular.status !== 'draft');
   const datum = formular.created_at.slice(0, 10);
   const monat = `Maja-Logistik/Formulare/${datum.slice(0, 7)}`;
   const bildfelder = (formular.schema.sections ?? []).flatMap((s) => s.fields ?? [])
@@ -230,7 +233,7 @@ function FotosAusOneDrive({ formular, onDone }: Pick<Props, 'formular' | 'onDone
     if (r.gesetzt === 0) { setFehler('Nichts zu übernehmen — die Felder sind schon belegt.'); return; }
     setBusy(true); setFehler(null);
     const { error } = await supabase.rpc('formular_daten_admin_setzen', {
-      p_formular_id: formular.id, p_daten: r.daten as Json, p_vorgang: 'fotos_zugeordnet', p_als_entwurf: false,
+      p_formular_id: formular.id, p_daten: r.daten as Json, p_vorgang: 'fotos_zugeordnet', p_als_entwurf: alsEntwurf,
     });
     setBusy(false);
     if (error) { setFehler(error.message); return; }
@@ -289,6 +292,12 @@ function FotosAusOneDrive({ formular, onDone }: Pick<Props, 'formular' | 'onDone
                     ))}
                   </ul>
                 </div>
+              )}
+              {formular.status !== 'draft' && (
+                <label className="flex items-start gap-2 text-xs text-maja-ink">
+                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={alsEntwurf} onChange={(e) => setAlsEntwurf(e.target.checked)} />
+                  Formular wieder als Entwurf freigeben, damit der Fahrer die übrigen Felder neu ausfüllen kann
+                </label>
               )}
               <button type="button" className="btn-primary px-3 py-1 text-xs" disabled={busy} onClick={() => void uebernehmen()}>
                 {busy ? 'Übernehme …' : 'Zuordnung übernehmen'}
