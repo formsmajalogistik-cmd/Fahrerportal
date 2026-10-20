@@ -20,7 +20,9 @@ export type SpeicherStatus =
   | { art: 'server'; zeit: number }
   | { art: 'lokal'; zeit: number; grund: 'offline' | 'fehler'; fehler?: string }
   | { art: 'konflikt' }
-  | { art: 'eingereicht' };
+  | { art: 'eingereicht' }
+  /** Einem anderen Fahrer zugewiesen (Migration 108) — Stand wurde als Snapshot abgeliefert. */
+  | { art: 'zugewiesen' };
 
 const LOKAL_MS = 1500;
 const SERVER_MS = 3000;
@@ -34,8 +36,18 @@ export function useEntwurfSync(args: {
   dirty: boolean;
   /** Nach erfolgreichem Server-Save: Stand gilt als gespeichert. */
   onGespeichert: (datenJson: string) => void;
+  /** Bearbeiter-Kennung beim Laden (Migration 108); null = unbekannt/alt. */
+  bearbeiterVersion?: number | null;
+  /** Server lehnt ab: Formular gehört inzwischen einem anderen Fahrer. */
+  onZugewiesen?: () => void;
 }) {
   const { formularId, aktiv, data, dirty, onGespeichert } = args;
+  const bearbeiterRef = useRef<number | null>(args.bearbeiterVersion ?? null);
+  const onZugewiesenRef = useRef(args.onZugewiesen);
+  useEffect(() => {
+    bearbeiterRef.current = args.bearbeiterVersion ?? null;
+    onZugewiesenRef.current = args.onZugewiesen;
+  }, [args.bearbeiterVersion, args.onZugewiesen]);
   const [status, setStatus] = useState<SpeicherStatus>({ art: 'unbekannt' });
   const serverStandRef = useRef<string | null>(null);
   const zuletztGesendetRef = useRef<Record<string, unknown> | null>(null);
@@ -59,7 +71,7 @@ export function useEntwurfSync(args: {
     try {
       await saveFormDraft({
         id: formularId, data: daten, serverUpdatedAt: null, savedAt: Date.now(),
-        serverStand: serverStandRef.current, serverOffen,
+        serverStand: serverStandRef.current, serverOffen, bearbeiterVersion: bearbeiterRef.current,
       });
       const jetzt = Date.now();
       if (jetzt - logRef.current.lokal > LOG_TAKT_MS) {
@@ -81,6 +93,7 @@ export function useEntwurfSync(args: {
       formularId, daten, vorgang,
       erwarteterStand: ohnePruefung ? null : serverStandRef.current,
       zuletztGesendet: zuletztGesendetRef.current,
+      bearbeiterVersion: bearbeiterRef.current,
     });
     laeuftRef.current = false;
     const k = entwurfKennzahlen(daten);
@@ -98,6 +111,7 @@ export function useEntwurfSync(args: {
         await saveFormDraft({
           id: formularId, data: nochOffen ? dataRef.current : daten, serverUpdatedAt: null,
           savedAt: lokal?.savedAt ?? jetzt, serverStand: serverStandRef.current, serverOffen: nochOffen,
+          bearbeiterVersion: bearbeiterRef.current,
         });
       } catch { /* lokal egal — der Server hat den Stand */ }
       if (vorgang !== 'autosave' || jetzt - logRef.current.server > LOG_TAKT_MS) {
@@ -105,7 +119,11 @@ export function useEntwurfSync(args: {
         diagnose('entwurf_server_gespeichert', { ok: true, vorgang, ...k }, 'entwurf', formularId);
       }
     } else {
-      if (r.grund === 'eingereicht') setStatus({ art: 'eingereicht' });
+      if (r.grund === 'nicht_bearbeiter') {
+        setStatus({ art: 'zugewiesen' });
+        aktivRef.current = false;
+        onZugewiesenRef.current?.();
+      } else if (r.grund === 'eingereicht') setStatus({ art: 'eingereicht' });
       else if (r.grund === 'konflikt') setStatus({ art: 'konflikt' });
       else setStatus({ art: 'lokal', zeit: jetzt, grund: r.grund === 'offline' ? 'offline' : 'fehler', fehler: r.fehler });
       const sig = `${r.grund}:${r.fehler ?? ''}`;
@@ -137,7 +155,9 @@ export function useEntwurfSync(args: {
       if (!dirtyRef.current || !formularId) return;
       void lokalSichern(true);
       const daten = dataRef.current;
-      const keepalive = entwurfZumServerBeimVerlassen({ formularId, daten, erwarteterStand: serverStandRef.current });
+      const keepalive = entwurfZumServerBeimVerlassen({
+        formularId, daten, erwarteterStand: serverStandRef.current, bearbeiterVersion: bearbeiterRef.current,
+      });
       if (keepalive) zuletztGesendetRef.current = daten;
       else void serverSichern('hintergrund');
       diagnose('entwurf_hintergrund', { grund, keepalive, ...entwurfKennzahlen(daten) }, 'entwurf', formularId);

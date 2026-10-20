@@ -18,7 +18,8 @@ export function SpeicherStatusZeile({ status, onKonfliktLoesen }: {
   status: SpeicherStatus;
   onKonfliktLoesen?: (wahl: 'meiner' | 'server') => void;
 }) {
-  if (status.art === 'unbekannt' || status.art === 'eingereicht') return null;
+  // 'zugewiesen' zeigt die Formularseite als eigenen Hinweis an.
+  if (status.art === 'unbekannt' || status.art === 'eingereicht' || status.art === 'zugewiesen') return null;
   if (status.art === 'konflikt') {
     return (
       <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">

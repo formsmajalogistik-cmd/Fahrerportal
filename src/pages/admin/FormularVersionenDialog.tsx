@@ -49,6 +49,7 @@ const VORGANG: Record<string, string> = {
   verworfen_geraet: 'Gerätestand (verworfen)', verworfen_server: 'Serverstand (verworfen)', bestand: 'Stand vor Einführung',
   admin_wiederherstellung: 'Admin: wiederhergestellt', vor_wiederherstellung: 'vor Wiederherstellung',
   admin_fotos_zugeordnet: 'Admin: Fotos zugeordnet', vor_fotos_zugeordnet: 'vor Foto-Zuordnung',
+  vor_zuweisung: 'vor Zuweisung an anderen Fahrer', nach_zuweisung_geraet: 'nach Zuweisung vom Gerät des früheren Fahrers eingegangen',
 };
 const vorgangText = (v: string | null) => (v ? (VORGANG[v] ?? v) : 'unbekannt');
 
@@ -63,6 +64,7 @@ export function FormularVersionenDialog({ formular, onClose, onDone }: Props) {
   const [frage, setFrage] = useState<Version | null>(null);
   const [alsEntwurf, setAlsEntwurf] = useState(formular.status !== 'draft');
   const [busy, setBusy] = useState(false);
+  const [zuweisungen, setZuweisungen] = useState<Array<{ id: string; zugewiesen_am: string; von_name: string | null; an_name: string | null; notiz: string | null; tour_mitgenommen: boolean }>>([]);
   const felder = useMemo(() => (formular.schema.sections ?? []).flatMap((s) => s.fields ?? []), [formular.schema]);
 
   useEffect(() => {
@@ -76,6 +78,10 @@ export function FormularVersionenDialog({ formular, onClose, onDone }: Props) {
         if (error) setFehler(error.message);
         setVersionen((data as unknown as Version[]) ?? []);
       });
+    void supabase.from('formular_zuweisungen')
+      .select('id, zugewiesen_am, von_name, an_name, notiz, tour_mitgenommen')
+      .eq('formular_id', formular.id).order('zugewiesen_am', { ascending: false })
+      .then(({ data }) => { if (!weg) setZuweisungen((data as never) ?? []); });
     return () => { weg = true; };
   }, [formular.id]);
 
@@ -105,6 +111,20 @@ export function FormularVersionenDialog({ formular, onClose, onDone }: Props) {
         </div>
 
         {fehler && <div role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{fehler}</div>}
+
+        {zuweisungen.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-maja-navy">Zuweisungen</h3>
+            <ul className="mt-1 space-y-0.5 text-xs text-maja-ink">
+              {zuweisungen.map((z) => (
+                <li key={z.id}>
+                  {formatDateTime(z.zugewiesen_am)}: von {z.von_name ?? '—'} an {z.an_name ?? '—'}
+                  {z.tour_mitgenommen ? ' (Tour mitgenommen)' : ''}{z.notiz ? ` — „${z.notiz}"` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <h3 className="text-sm font-semibold text-maja-navy">Gespeicherte Stände</h3>
         {versionen == null ? (
@@ -221,6 +241,13 @@ function FotosAusOneDrive({ formular, onDone }: Pick<Props, 'formular' | 'onDone
     }
   }
   const plan = useMemo(() => (dateien ? fotosZuordnen(formular.schema, dateien) : null), [dateien, formular.schema]);
+  // Dateien im Ordner, auf die das Formular nicht verweist — z.B. Fotos,
+  // die nach einer Zuweisung noch vom Gerät des früheren Fahrers kamen.
+  const nichtImFormular = useMemo(() => {
+    if (!dateien || !ordner) return [] as string[];
+    const json = JSON.stringify(formular.daten);
+    return dateien.filter((n) => /\.(jpe?g|png|webp|heic)$/i.test(n) && !json.includes(`/${ordner}/Fotos/${n}`));
+  }, [dateien, ordner, formular.daten]);
 
   async function uebernehmen() {
     if (!plan || !ordner) return;
@@ -269,6 +296,12 @@ function FotosAusOneDrive({ formular, onDone }: Pick<Props, 'formular' | 'onDone
           {ordner && dateien == null && <p className="text-xs text-maja-muted">Lade Fotos aus {ordner} …</p>}
           {plan && (
             <>
+              {nichtImFormular.length > 0 && (
+                <p className="text-xs text-amber-800 dark:!text-amber-300">
+                  {nichtImFormular.length} {nichtImFormular.length === 1 ? 'Datei liegt' : 'Dateien liegen'} im Ordner, {nichtImFormular.length === 1 ? 'ist' : 'sind'} aber nicht im Formular
+                  (z.B. nachträglich eingegangen). Übernommen wird nur in leere Felder — belegte Felder bleiben.
+                </p>
+              )}
               <ul className="space-y-0.5 text-xs">
                 {bildfelder.map((f) => (
                   <li key={f.id}><span className="font-medium text-maja-ink">{f.label}</span>: <span className="text-maja-muted">

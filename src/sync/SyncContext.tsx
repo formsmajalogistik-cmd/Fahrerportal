@@ -30,7 +30,9 @@ import {
 } from '../lib/uploadQueue';
 import { uploadAbgleich, type AbgleichErgebnis } from '../lib/uploadAbgleich';
 import { getAllFormDrafts } from '../lib/offlineDb';
-import { entwurfKennzahlen, entwurfZumServer } from '../lib/entwurfSync';
+import {
+  entwurfKennzahlen, entwurfZumServer, istNichtBearbeiter, mitBearbeiter, spalteFehlt, standNachZuweisungAbliefern,
+} from '../lib/entwurfSync';
 import { entwurfWaehlen } from '../lib/entwurfStand';
 import { diagnose } from '../lib/diagnose';
 import { supabase } from '../lib/supabase';
@@ -431,11 +433,14 @@ async function entwuerfeNachholen(): Promise<void> {
       if (e.quelle !== 'lokal') continue;
       erwartet = srv.daten_geaendert_am;
     }
-    const r = await entwurfZumServer({ formularId: d.id, daten: d.data, vorgang: 'nachgeholt', erwarteterStand: erwartet });
+    const r = await entwurfZumServer({
+      formularId: d.id, daten: d.data, vorgang: 'nachgeholt', erwarteterStand: erwartet,
+      bearbeiterVersion: d.bearbeiterVersion ?? null,
+    });
     diagnose('entwurf_server_gespeichert', {
       ok: r.ok, vorgang: 'nachgeholt', grund: r.ok ? null : r.grund, ...entwurfKennzahlen(d.data),
     }, 'entwurf', d.id);
-    if (r.ok || r.grund === 'eingereicht') {
+    if (r.ok || r.grund === 'eingereicht' || r.grund === 'nicht_bearbeiter') {
       const aktuell = await getFormDraft(d.id).catch(() => null);
       // Nur zurücksetzen, wenn inzwischen nicht weiter bearbeitet wurde.
       if (aktuell && aktuell.savedAt === d.savedAt) {
@@ -474,12 +479,26 @@ async function processPendingSubmissions(): Promise<void> {
     }
 
     try {
-      const { data: tplLink, error: linkErr } = await supabase
+      const abschluss = { daten: sub.data as never, status: 'submitted' as const };
+      let { data: tplLink, error: linkErr } = await supabase
         .from('ausgefuellte_formulare')
-        .update({ daten: sub.data as never, status: 'submitted' })
+        .update(mitBearbeiter(abschluss, sub.bearbeiterVersion) as never)
         .eq('id', sub.formularId)
         .select('template_id, zwischenprotokoll_url, created_at')
-        .single();
+        .maybeSingle();
+      if (linkErr && spalteFehlt(linkErr)) {
+        ({ data: tplLink, error: linkErr } = await supabase.from('ausgefuellte_formulare')
+          .update(abschluss).eq('id', sub.formularId)
+          .select('template_id, zwischenprotokoll_url, created_at').maybeSingle());
+      }
+      // Inzwischen einem anderen Fahrer zugewiesen (Migration 108): nicht
+      // endlos wiederholen — Stand als Snapshot abliefern, Einreichung weg.
+      if ((linkErr && istNichtBearbeiter(linkErr.message)) || (!linkErr && !tplLink)) {
+        if (await standNachZuweisungAbliefern(sub.formularId, sub.data, 'abschliessen_warteschlange')) {
+          await removePendingSubmission(sub.formularId);
+          continue;
+        }
+      }
       if (linkErr || !tplLink) throw linkErr ?? new Error('Submit fehlgeschlagen');
 
       const { data: tpl, error: tplErr } = await supabase

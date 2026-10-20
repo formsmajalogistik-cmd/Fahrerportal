@@ -317,7 +317,9 @@ export function FahrerDashboard() {
   const claimedDraftIds = new Set(
     tourProtokolle.map((tp) => tp.draftId).filter((x): x is string => !!x),
   );
-  const visibleDrafts = drafts.filter((d) => !claimedDraftIds.has(d.id));
+  // Zugewiesene Formulare immer als eigene Karte zeigen (Badge + Notiz),
+  // auch wenn sie zusätzlich als Tour-Protokoll erscheinen.
+  const visibleDrafts = drafts.filter((d) => !claimedDraftIds.has(d.id) || !!d.zugewiesen_am);
 
   return (
     <div className="space-y-6">
@@ -446,8 +448,15 @@ function DraftCard({
   return (
     <li className="card flex flex-col p-5">
       <div className="flex items-start justify-between gap-2">
-        <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-          In Bearbeitung
+        <span className="flex flex-wrap gap-1">
+          <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+            In Bearbeitung
+          </span>
+          {draft.zugewiesen_am && (
+            <span className="inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-800 dark:!bg-sky-900 dark:!text-sky-100">
+              Von Admin zugewiesen
+            </span>
+          )}
         </span>
         <span className="text-xs text-maja-muted">
           {formatDate(draft.created_at)}
@@ -462,6 +471,11 @@ function DraftCard({
           {summary.adresseUebernahme && <div>Übernahme: {summary.adresseUebernahme}</div>}
           {summary.adresseUebergabe && <div>Übergabe: {summary.adresseUebergabe}</div>}
         </div>
+      )}
+      {draft.zugewiesen_am && draft.zugewiesen_notiz && (
+        <p className="mt-2 rounded-md bg-sky-50 px-2 py-1 text-xs text-sky-900 dark:!bg-sky-950/40 dark:!text-sky-100">
+          <span className="font-medium">Notiz:</span> {draft.zugewiesen_notiz}
+        </p>
       )}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button onClick={onOpen} disabled={opening} className="btn-primary flex-1">

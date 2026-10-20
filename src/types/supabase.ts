@@ -994,6 +994,11 @@ export type Database = {
           daten_vorgang: string | null;
           daten_app_modus: string | null;
           daten_client_stand: string | null;
+          bearbeiter_version: number;
+          zugewiesen_am: string | null;
+          zugewiesen_von: string | null;
+          zugewiesen_von_fahrer_id: string | null;
+          zugewiesen_notiz: string | null;
         };
         Insert: {
           id?: string;
@@ -1021,6 +1026,11 @@ export type Database = {
           daten_vorgang?: string | null;
           daten_app_modus?: string | null;
           daten_client_stand?: string | null;
+          bearbeiter_version?: number;
+          zugewiesen_am?: string | null;
+          zugewiesen_von?: string | null;
+          zugewiesen_von_fahrer_id?: string | null;
+          zugewiesen_notiz?: string | null;
         };
         Update: {
           id?: string;
@@ -1048,6 +1058,11 @@ export type Database = {
           daten_vorgang?: string | null;
           daten_app_modus?: string | null;
           daten_client_stand?: string | null;
+          bearbeiter_version?: number;
+          zugewiesen_am?: string | null;
+          zugewiesen_von?: string | null;
+          zugewiesen_von_fahrer_id?: string | null;
+          zugewiesen_notiz?: string | null;
         };
         Relationships: [
           {
@@ -1604,6 +1619,26 @@ export type Database = {
             referencedColumns: ['id'];
           },
         ];
+      };
+      formular_zuweisungen: {
+        Row: {
+          id: string;
+          formular_id: string;
+          von_fahrer_id: string | null;
+          an_fahrer_id: string | null;
+          von_name: string | null;
+          an_name: string | null;
+          zugewiesen_am: string;
+          zugewiesen_von: string | null;
+          notiz: string | null;
+          felder_anzahl: number | null;
+          tour_id: string | null;
+          tour_mitgenommen: boolean;
+          bearbeiter_version: number;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
       };
       formular_entwurf_versionen: {
         Row: {
@@ -2215,6 +2250,18 @@ export type Database = {
       next_rechnungsnummer: {
         Args: { p_year?: number };
         Returns: string;
+      };
+      formular_zuweisen: {
+        Args: { p_formular_id: string; p_an_fahrer_id: string; p_tour_mitnehmen?: boolean; p_notiz?: string | null };
+        Returns: Json;
+      };
+      formular_eingang_nach_zuweisung: {
+        Args: { p_formular_id: string; p_daten: Json };
+        Returns: Json;
+      };
+      formular_zuweisung_hinweis: {
+        Args: { p_formular_id: string };
+        Returns: Json;
       };
       formular_version_sichern: {
         Args: { p_formular_id: string; p_daten: Json; p_vorgang: string; p_app_modus?: string | null };

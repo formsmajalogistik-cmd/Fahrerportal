@@ -33,6 +33,10 @@ import { entfernePendingAusDaten, istFehlgeschlagen } from '../lib/uploadQueue';
 import { appModus, entwurfWaehlen, felderAnzahl, istIos, type ServerStand } from '../lib/entwurfStand';
 import { saveFormDraft as lokalenEntwurfSetzen } from '../lib/offlineDb';
 import { useEntwurfSync } from '../lib/useEntwurfSync';
+import { istNichtBearbeiter, mitBearbeiter, spalteFehlt, standNachZuweisungAbliefern } from '../lib/entwurfSync';
+import { useFahrerContext } from '../auth/FahrerContext';
+import { fahrernameVorbelegen } from '../lib/formularZuweisung';
+import { fahrerName as fahrerAnzeigename } from '../lib/names';
 import { EntwurfKonfliktDialog, InstallHinweis, SpeicherStatusZeile } from '../components/forms/EntwurfStatus';
 import type { FeldWert } from '../components/forms/FormRenderer';
 import { useSync } from '../sync/SyncContext';
@@ -115,6 +119,15 @@ export function FormularPage() {
   // ---- Sicheres Speichern: lokal UND Server (lib/useEntwurfSync) ----
   // Server und Gerät haben beim Öffnen unterschiedliche Stände → der
   // Fahrer wählt (bis dahin wird nichts zum Server geschrieben).
+  // Einem anderen Fahrer zugewiesen (Migration 108): beim Öffnen ohne
+  // Zugriff ('ohne_zugriff') oder beim Speichern abgelehnt ('abgelehnt').
+  const [weggegeben, setWeggegeben] = useState<null | 'ohne_zugriff' | 'abgelehnt'>(null);
+  const { activeFahrer } = useFahrerContext();
+  const istAdminProfil = profile?.role === 'admin';
+  // Konto-Familie (Haupt/Unterkonto, gleicher Login): zugewiesen an ein
+  // anderes Konto der Familie → nur lesbar, solange dieses Konto aktiv ist.
+  const fremdZugewiesen = !!formular?.zugewiesen_am && !istAdminProfil
+    && !!activeFahrer && formular.fahrer_id !== activeFahrer.id;
   const [konflikt, setKonflikt] = useState<null | {
     server: ServerStand;
     lokal: { daten: Record<string, unknown>; savedAt: number };
@@ -122,10 +135,12 @@ export function FormularPage() {
   const entwurfSync = useEntwurfSync({
     formularId: formular?.id ?? null,
     aktiv: !!formular && !loading && formular.status === 'draft' && !formular.uebertragen_auf_id
-      && !konflikt && saving !== 'submit',
+      && !konflikt && saving !== 'submit' && !weggegeben && !fremdZugewiesen,
     data,
     dirty,
     onGespeichert: setSavedDataJson,
+    bearbeiterVersion: formular?.bearbeiter_version ?? null,
+    onZugewiesen: () => setWeggegeben('abgelehnt'),
   });
   const { setServerStand, seitenwechsel: beiSeitenwechsel } = entwurfSync;
 
@@ -168,7 +183,21 @@ export function FormularPage() {
         .maybeSingle();
       if (cancelled) return;
       if (afErr) { setError(`Formular konnte nicht geladen werden: ${afErr.message}`); setLoading(false); return; }
-      if (!af) { setError('Formular nicht gefunden oder du hast keinen Zugriff darauf.'); setLoading(false); return; }
+      if (!af) {
+        // Einem anderen Fahrer zugewiesen? Dann den Stand auf diesem Gerät
+        // als Snapshot abliefern (nicht verwerfen) und das sagen.
+        const { data: hinweis } = await supabase.rpc('formular_zuweisung_hinweis', { p_formular_id: id });
+        if ((hinweis as { zugewiesen?: boolean } | null)?.zugewiesen) {
+          const lokal = await getFormDraft(id).catch(() => null);
+          const abgeliefert = await standNachZuweisungAbliefern(id, lokal?.data ?? null, 'oeffnen');
+          if (abgeliefert && lokal) await deleteFormDraft(id).catch(() => {});
+          if (cancelled) return;
+          setWeggegeben('ohne_zugriff');
+          setLoading(false);
+          return;
+        }
+        setError('Formular nicht gefunden oder du hast keinen Zugriff darauf.'); setLoading(false); return;
+      }
 
       const { data: tpl, error: tplErr } = await supabase
         .from('formular_templates')
@@ -338,7 +367,7 @@ export function FormularPage() {
   // Übertragene Originale sind schreibgeschützt (der Server lehnt
   // Fahrer-Änderungen daran ohnehin ab).
   const uebertragenAuf = formular?.uebertragen_auf_id ?? null;
-  const readonly = formular?.status === 'submitted' || !!uebertragenAuf;
+  const readonly = formular?.status === 'submitted' || !!uebertragenAuf || !!weggegeben || fremdZugewiesen;
 
   // Diagnose-Ereignisse (Schadensaufnahme u.a.) diesem Formular zuordnen.
   const formularIdFuerDiagnose = formular?.id ?? null;
@@ -671,6 +700,7 @@ export function FormularPage() {
         lastError: null,
         submitterEmail,
         fehlendeBilderAkzeptiert,
+        bearbeiterVersion: formular.bearbeiter_version ?? null,
       });
       // Den Entwurf NICHT löschen — falls noch Edits nötig werden.
       await saveFormDraft({
@@ -694,15 +724,29 @@ export function FormularPage() {
       return;
     }
 
-    const { error: err } = await supabase
+    const abschlussPatch = { daten: data as Json, status: 'submitted' as const };
+    let { data: abgeschlossen, error: err } = await supabase
       .from('ausgefuellte_formulare')
-      .update({ daten: data as Json, status: 'submitted' })
-      .eq('id', formular.id);
+      .update(mitBearbeiter(abschlussPatch, formular.bearbeiter_version) as never)
+      .eq('id', formular.id).select('id');
+    if (err && spalteFehlt(err)) {
+      ({ data: abgeschlossen, error: err } = await supabase.from('ausgefuellte_formulare')
+        .update(abschlussPatch).eq('id', formular.id).select('id'));
+    }
+    // Einem anderen Fahrer zugewiesen: abgelehnt (Kennung) bzw. keine Zeile
+    // mehr sichtbar (RLS) → Stand als Snapshot abliefern, nicht einreichen.
+    if ((err && istNichtBearbeiter(err.message)) || (!err && (abgeschlossen ?? []).length === 0)) {
+      const weg = await standNachZuweisungAbliefern(formular.id, data, 'abschliessen');
+      setSaving('idle');
+      if (weg) { setWeggegeben('abgelehnt'); return; }
+      if (!err) { setError('Formular konnte nicht eingereicht werden (keine Berechtigung mehr).'); return; }
+    }
     if (err) {
       // Netzwerk-Fehler trotz online=true → wie Offline behandeln.
       await enqueueSubmission({
         formularId: formular.id, data, queuedAt: Date.now(), attempts: 0,
         lastError: err.message, submitterEmail, fehlendeBilderAkzeptiert,
+        bearbeiterVersion: formular.bearbeiter_version ?? null,
       });
       await saveFormDraft({
         id: formular.id, data,
@@ -822,6 +866,20 @@ export function FormularPage() {
     if (!currentPageId && pages.length > 0) setCurrentPageId(pages[0].id);
   }, [pages, currentPageId]);
   const currentPage = pages.find((p) => p.id === currentPageId) ?? pages[0] ?? null;
+
+  // Zugewiesenes Formular (Migration 108): leere Fahrername-Felder einmal
+  // mit dem neuen Fahrer vorbelegen; Einträge von Fahrer A bleiben.
+  const vorbelegtRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!formular || !template || loading || readonly || !formular.zugewiesen_am || !activeFahrer) return;
+    if (formular.fahrer_id !== activeFahrer.id || vorbelegtRef.current === formular.id) return;
+    vorbelegtRef.current = formular.id;
+    const name = fahrerAnzeigename(activeFahrer, profile);
+    setData((prev) => {
+      const r = fahrernameVorbelegen(template.schema, prev, name);
+      return r.gesetzt.length ? r.daten : prev;
+    });
+  }, [formular, template, loading, readonly, activeFahrer, profile]);
 
   // Seitenwechsel im Formular → sofort zum Server speichern.
   const vorherigeSeiteRef = useRef<string | null>(null);
@@ -1010,6 +1068,21 @@ export function FormularPage() {
     );
   }
 
+  if (weggegeben === 'ohne_zugriff') {
+    return (
+      <div className="space-y-6">
+        {header}
+        <div role="status" className="card space-y-2 p-6">
+          <h2 className="text-lg font-semibold text-maja-navy">Dieses Formular wurde einem anderen Fahrer zugewiesen</h2>
+          <p className="text-sm text-maja-ink">
+            Das Büro hat das Formular einem anderen Fahrer übergeben, der es fortsetzt. Falls auf diesem Gerät
+            noch Eingaben lagen, wurden sie dem Büro übermittelt — es geht nichts verloren.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (error && (!formular || !template)) {
     return (
       <div className="space-y-6">
@@ -1051,6 +1124,24 @@ export function FormularPage() {
     <div className="space-y-6">
       {header}
 
+      {weggegeben === 'abgelehnt' && (
+        <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Dieses Formular wurde einem anderen Fahrer zugewiesen.</p>
+          <p className="mt-0.5 text-xs">Deine Eingaben auf diesem Gerät wurden dem Büro übermittelt. Das Formular ist hier nur noch lesbar.</p>
+        </div>
+      )}
+      {fremdZugewiesen && !weggegeben && (
+        <div role="note" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Dieses Formular ist einem anderen Fahrerkonto zugewiesen und hier nur lesbar. Zum Bearbeiten das zugewiesene Konto wählen.
+        </div>
+      )}
+      {formular?.zugewiesen_am && activeFahrer && formular.fahrer_id === activeFahrer.id && !readonly && (
+        <div role="note" className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:!border-sky-400/30 dark:!bg-sky-950/40 dark:!text-sky-100">
+          <p className="font-semibold">Von Admin zugewiesen</p>
+          <p className="text-xs">Dieses Formular wurde begonnen und dir zum Fortsetzen übergeben. Bereits ausgefüllte Teile bleiben, wie sie sind.</p>
+          {formular.zugewiesen_notiz && <p className="mt-1 text-xs"><span className="font-medium">Notiz:</span> {formular.zugewiesen_notiz}</p>}
+        </div>
+      )}
       {!readonly && formular && appModus() === 'browser' && <InstallHinweis />}
       {konflikt && (
         <EntwurfKonfliktDialog

@@ -17,6 +17,7 @@ import { formatGermanDate, summarizeEingang } from '../../lib/eingangData';
 import { formatDateTime } from '../../lib/touren';
 import { EingangLinkDialog } from './EingangLinkDialog';
 import { FormularVersionenDialog } from './FormularVersionenDialog';
+import { FormularZuweisenDialog } from './FormularZuweisenDialog';
 import { EingangSendEmailDialog } from './EingangSendEmailDialog';
 import { BelegeErgaenzenDialog } from './BelegeErgaenzenDialog';
 import { belegFelder, belegeAusDaten, ergaenztNachVersand } from '../../lib/belegeErgaenzen';
@@ -389,6 +390,8 @@ export function EingaengePage() {
   const [uebertragenFuer, setUebertragenFuer] = useState<Row | null>(null);
   /** „Versionen / Wiederherstellen" (Migration 107). */
   const [versionenFuer, setVersionenFuer] = useState<Row | null>(null);
+  /** „Anderem Fahrer zuweisen" (Migration 108). */
+  const [zuweisenFuer, setZuweisenFuer] = useState<Row | null>(null);
 
   async function patchRowInState(id: string, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -580,6 +583,7 @@ export function EingaengePage() {
               onZwischenChanged={(patch) => void patchRowInState(r.id, patch)}
               onUebertragen={() => { void handleSeen(r); setUebertragenFuer(r); }}
               onVersionen={() => setVersionenFuer(r)}
+              onZuweisen={() => setZuweisenFuer(r)}
               onOriginal={(id) => setViewing(id)}
               onRueckgaengig={() => {
                 setLinkToast('Übertragung rückgängig gemacht — das Original ist wieder aktiv.');
@@ -716,6 +720,26 @@ export function EingaengePage() {
         />
       )}
 
+      {zuweisenFuer && zuweisenFuer.template && (
+        <FormularZuweisenDialog
+          formular={{
+            id: zuweisenFuer.id,
+            created_at: zuweisenFuer.created_at,
+            daten: (zuweisenFuer.daten as Record<string, unknown>) ?? {},
+            templateName: zuweisenFuer.template.name ?? '',
+            schema: (zuweisenFuer.template.schema as FormularTemplate['schema']) ?? { sections: [] },
+            fahrerName: displayName(zuweisenFuer.fahrer?.user ?? null) || 'dem bisherigen Fahrer',
+          }}
+          onClose={() => setZuweisenFuer(null)}
+          onDone={(text) => {
+            setZuweisenFuer(null);
+            setLinkToast(text);
+            window.setTimeout(() => setLinkToast(null), 8000);
+            reload();
+          }}
+        />
+      )}
+
       {versionenFuer && versionenFuer.template && (
         <FormularVersionenDialog
           formular={{
@@ -806,6 +830,8 @@ interface CardProps {
   onUebertragen: () => void;
   /** Dialog „Versionen / Wiederherstellen". */
   onVersionen: () => void;
+  /** Dialog „Anderem Fahrer zuweisen" (nur offene Entwürfe). */
+  onZuweisen: () => void;
   /** Ursprüngliches (übertragenes) Formular ansehen. */
   onOriginal: (id: string) => void;
   onRueckgaengig: () => void;
@@ -815,7 +841,7 @@ function EingangCard({
   row, isAdmin, regenBusy,
   selectable, selected, onToggleSelected,
   onSeen, onView, onRegenerate, onBelege, onLink, onResendEmail, onSendZwischen,
-  onDelete, onZwischenChanged, onUebertragen, onVersionen, onOriginal, onRueckgaengig,
+  onDelete, onZwischenChanged, onUebertragen, onVersionen, onZuweisen, onOriginal, onRueckgaengig,
   pdfJob, onPdfFortsetzen,
 }: CardProps) {
   const summary = useMemo(() => summarizeEingang(row), [row]);
@@ -1001,6 +1027,16 @@ function EingangCard({
               title="Gespeicherte Stände ansehen und wiederherstellen; Fotos aus OneDrive zuordnen."
             >
               Versionen / Wiederherstellen
+            </button>
+          )}
+          {isAdmin && row.status === 'draft' && !row.uebertragen_auf_id && (
+            <button
+              type="button"
+              onClick={onZuweisen}
+              className="text-xs font-medium text-maja-accent hover:underline"
+              title="Begonnenes Formular an einen anderen Fahrer übergeben, der es fortsetzt."
+            >
+              Anderem Fahrer zuweisen
             </button>
           )}
           {isAdmin && row.status === 'draft' && (

@@ -28,6 +28,8 @@ export interface FormDraftRecord {
   serverStand?: string | null;
   /** Lokale Änderungen, die noch nicht auf dem Server sind. */
   serverOffen?: boolean;
+  /** Bearbeiter-Kennung beim Laden (Migration 108) — für das Nachholen. */
+  bearbeiterVersion?: number | null;
 }
 
 export interface UploadQueueItem {
@@ -79,6 +81,8 @@ export interface PendingSubmissionRecord {
    * Bilder blockieren diese Einreichung nicht mehr.
    */
   fehlendeBilderAkzeptiert?: boolean;
+  /** Bearbeiter-Kennung beim Abschließen (Migration 108). */
+  bearbeiterVersion?: number | null;
 }
 
 interface OfflineDbSchema extends DBSchema {
