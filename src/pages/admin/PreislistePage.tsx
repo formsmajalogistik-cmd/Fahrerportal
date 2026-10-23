@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { XIcon } from '../../components/icons';
 import { triggerOneDriveDownload, uploadToOneDrive } from '../../lib/onedrive';
 import { sanitizeSegment } from '../../lib/onedrivePaths';
+import { ABRECHNUNG_LABEL, ABRECHNUNGEN, istZeitbasiert, type Abrechnung } from '../../lib/auslagenPreis';
+import { auslagenPreiseVergessen } from '../../lib/useAuslagenAutomatik';
+import { ZUSATZ_KATEGORIEN } from '../../lib/zusatzKategorien';
 import type { Auftraggeber, Preisstufe, Sonderverguetung } from '../../types/db';
 
 const DEFAULT_RANGES: Array<[number, number]> = [
@@ -18,11 +22,11 @@ const DEFAULT_RANGES: Array<[number, number]> = [
   [1801, 1850], [1851, 1900], [1901, 1948], [1949, 2000],
 ];
 
-const DEFAULT_SV: Array<{ bezeichnung: string; einheit: string }> = [
+const DEFAULT_SV: Array<{ bezeichnung: string; einheit: string; kategorie?: string; abrechnung?: Abrechnung }> = [
   { bezeichnung: 'Reifenhandling',  einheit: 'pro Vorgang' },
-  { bezeichnung: 'Rote Kennzeichen', einheit: 'pauschal' },
-  { bezeichnung: 'Wartezeit',        einheit: 'pro Stunde' },
-  { bezeichnung: 'Ladezeit',         einheit: 'pro Vorgang' },
+  { bezeichnung: 'Rote Kennzeichen', einheit: 'pauschal', kategorie: 'Rote Kennzeichen', abrechnung: 'pauschal' },
+  { bezeichnung: 'Wartezeit',        einheit: 'pro Stunde', kategorie: 'Wartezeit', abrechnung: 'angefangene_stunde' },
+  { bezeichnung: 'Ladezeit',         einheit: 'pro Vorgang', kategorie: 'Ladezeit', abrechnung: 'pauschal' },
 ];
 
 interface DraftRow {
@@ -42,6 +46,10 @@ interface SvDraftRow {
   bezeichnung: string;
   einheit: string;
   preis: string;
+  /** Zusatz-Kategorie für die Auslagen-Automatik (Migration 109); '' = keine. */
+  kategorie: string;
+  abrechnung: Abrechnung | '';
+  freiminuten: string;
 }
 
 function rowFromServer(p: Preisstufe): DraftRow {
@@ -73,17 +81,37 @@ function svRowFromServer(s: Sonderverguetung): SvDraftRow {
     bezeichnung: s.bezeichnung,
     einheit: s.einheit,
     preis: Number(s.preis).toFixed(2).replace('.', ','),
+    kategorie: s.zusatz_kategorie ?? '',
+    abrechnung: (s.abrechnung as Abrechnung | null) ?? '',
+    freiminuten: String(s.freiminuten ?? 0),
   };
 }
 
-function newSvDraftRow(bezeichnung = '', einheit = '', preis = '0,00'): SvDraftRow {
+function newSvDraftRow(bezeichnung = '', einheit = '', preis = '0,00', kategorie = '', abrechnung: Abrechnung | '' = ''): SvDraftRow {
   return {
     key: `sv-new-${Math.random().toString(36).slice(2, 10)}`,
     id: null,
     bezeichnung,
     einheit,
     preis,
+    kategorie,
+    abrechnung,
+    freiminuten: '0',
   };
+}
+
+/** Spalten der Auslagen-Automatik (Migration 109) für Insert/Update. */
+function auslagenSpalten(row: SvDraftRow) {
+  return {
+    zusatz_kategorie: row.kategorie.trim() || null,
+    abrechnung: row.kategorie.trim() ? (row.abrechnung || null) : null,
+    freiminuten: istZeitbasiert(row.abrechnung || null) ? Math.max(0, parseInt(row.freiminuten, 10) || 0) : 0,
+  };
+}
+
+/** Migration 109 noch nicht eingespielt? Dann ohne die neuen Spalten speichern. */
+function spalteFehlt(err: { code?: string; message?: string } | null): boolean {
+  return !!err && (err.code === 'PGRST204' || err.code === '42703' || /zusatz_kategorie|abrechnung|freiminuten/.test(err.message ?? ''));
 }
 
 function parsePreis(input: string): number | null {
@@ -115,7 +143,10 @@ export function PreislistePage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ?ag=<id> wählt den Auftraggeber direkt aus (Link aus dem Hinweis
+  // „kein Preis hinterlegt" bei den Zusätzen einer Tour).
+  const [searchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('ag'));
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -376,6 +407,9 @@ function PreislisteDetail({
         bezeichnung: s.bezeichnung,
         einheit: s.einheit,
         preis: s.preis,
+        zusatz_kategorie: s.zusatz_kategorie ?? null,
+        abrechnung: s.abrechnung ?? null,
+        freiminuten: s.freiminuten ?? 0,
       }));
       if (psInsert.length > 0) {
         const { error } = await supabase.from('preisstufen').insert(psInsert);
@@ -395,6 +429,7 @@ function PreislisteDetail({
       onPatched({ ...auftraggeber, aba_aufschlag_prozent: src.aba_aufschlag_prozent ?? null });
 
       // 5. Lokale Drafts neu laden, Sidebar-Counts auffrischen.
+      auslagenPreiseVergessen();
       await load();
       onCountChanged(psInsert.length);
       onSvCountsRefresh();
@@ -431,7 +466,7 @@ function PreislisteDetail({
     setDraftSv((rows) => [...rows, newSvDraftRow()]);
   }
   function loadSvDefaults() {
-    setDraftSv(DEFAULT_SV.map((d) => newSvDraftRow(d.bezeichnung, d.einheit, '0,00')));
+    setDraftSv(DEFAULT_SV.map((d) => newSvDraftRow(d.bezeichnung, d.einheit, '0,00', d.kategorie ?? '', d.abrechnung ?? '')));
     setStatusMsg(null);
   }
 
@@ -479,6 +514,7 @@ function PreislisteDetail({
     // --- Validate Sondervergütungen ---
     const parsedSv: Array<{ row: SvDraftRow; bezeichnung: string; einheit: string; preis: number }> = [];
     const seen = new Set<string>();
+    const kategorienGesehen = new Set<string>();
     for (const row of draftSv) {
       const bezeichnung = row.bezeichnung.trim();
       const einheit = row.einheit.trim();
@@ -501,6 +537,18 @@ function PreislisteDetail({
         return;
       }
       seen.add(lower);
+      if (row.kategorie.trim()) {
+        if (!row.abrechnung) {
+          setStatusMsg({ kind: 'err', text: `Sondervergütung „${bezeichnung}": Bitte die Abrechnung wählen (z.B. pauschal oder je angefangene Stunde).` });
+          return;
+        }
+        const k = row.kategorie.trim().toLowerCase();
+        if (kategorienGesehen.has(k)) {
+          setStatusMsg({ kind: 'err', text: `Für die Zusatz-Kategorie „${row.kategorie}" ist mehr als ein Preis hinterlegt.` });
+          return;
+        }
+        kategorienGesehen.add(k);
+      }
       parsedSv.push({ row, bezeichnung, einheit, preis });
     }
 
@@ -549,6 +597,7 @@ function PreislisteDetail({
           bezeichnung: p.bezeichnung,
           einheit: p.einheit,
           preis: p.preis,
+          ...auslagenSpalten(p.row),
         }));
       const svToUpdate = parsedSv.filter((p) => p.row.id !== null);
 
@@ -557,14 +606,23 @@ function PreislisteDetail({
         if (error) throw error;
       }
       if (svToInsert.length > 0) {
-        const { error } = await supabase.from('sonderverguetungen').insert(svToInsert);
+        let { error } = await supabase.from('sonderverguetungen').insert(svToInsert);
+        if (spalteFehlt(error)) {
+          ({ error } = await supabase.from('sonderverguetungen').insert(svToInsert.map((r) => ({
+            auftraggeber_id: r.auftraggeber_id, bezeichnung: r.bezeichnung, einheit: r.einheit, preis: r.preis,
+          }))));
+        }
         if (error) throw error;
       }
       for (const u of svToUpdate) {
-        const { error } = await supabase
+        const basis = { bezeichnung: u.bezeichnung, einheit: u.einheit, preis: u.preis };
+        let { error } = await supabase
           .from('sonderverguetungen')
-          .update({ bezeichnung: u.bezeichnung, einheit: u.einheit, preis: u.preis })
+          .update({ ...basis, ...auslagenSpalten(u.row) })
           .eq('id', u.row.id!);
+        if (spalteFehlt(error)) {
+          ({ error } = await supabase.from('sonderverguetungen').update(basis).eq('id', u.row.id!));
+        }
         if (error) throw error;
       }
 
@@ -579,6 +637,7 @@ function PreislisteDetail({
         onPatched({ ...auftraggeber, aba_aufschlag_prozent: abaValue });
       }
 
+      auslagenPreiseVergessen();
       await load();
       onCountChanged(parsedPs.length);
       setStatusMsg({ kind: 'ok', text: 'Preisstufen und Sondervergütungen gespeichert.' });
@@ -823,7 +882,12 @@ function PreislisteDetail({
       </div>
 
       <div className="card p-5 space-y-3">
-        <h3 className="text-base font-semibold text-maja-navy">Sondervergütungen</h3>
+        <h3 className="text-base font-semibold text-maja-navy">Sondervergütungen / Auslagen</h3>
+        <p className="text-xs text-maja-muted">
+          Mit Zusatz-Kategorie und Abrechnung wird der Preis bei Zusätzen dieses Auftraggebers automatisch
+          eingesetzt (z.B. Wartezeit 30 € je angefangene Stunde, erste 30 Min frei). Ohne Kategorie: keine Automatik.
+          Diese Preise sehen nur Admins.
+        </p>
 
         {loading ? (
           <Spinner label="Sondervergütungen werden geladen …" />
@@ -844,6 +908,9 @@ function PreislisteDetail({
                   <th className="px-3 py-2 font-semibold">Bezeichnung</th>
                   <th className="px-3 py-2 font-semibold">Einheit</th>
                   <th className="px-3 py-2 font-semibold">Preis (€)</th>
+                  <th className="px-3 py-2 font-semibold">Zusatz-Kategorie</th>
+                  <th className="px-3 py-2 font-semibold">Abrechnung</th>
+                  <th className="px-3 py-2 font-semibold">Freiminuten</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
@@ -873,6 +940,41 @@ function PreislisteDetail({
                         inputMode="decimal"
                         value={row.preis}
                         onChange={(e) => updateSvRow(row.key, { preis: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <select
+                        className="input py-1.5"
+                        aria-label={`Zusatz-Kategorie für ${row.bezeichnung || 'neue Zeile'}`}
+                        value={row.kategorie}
+                        onChange={(e) => updateSvRow(row.key, { kategorie: e.target.value })}
+                      >
+                        <option value="">— keine Automatik —</option>
+                        {ZUSATZ_KATEGORIEN.map((k) => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1">
+                      <select
+                        className="input py-1.5"
+                        aria-label={`Abrechnung für ${row.bezeichnung || 'neue Zeile'}`}
+                        value={row.abrechnung}
+                        disabled={!row.kategorie}
+                        onChange={(e) => updateSvRow(row.key, { abrechnung: e.target.value as Abrechnung | '' })}
+                      >
+                        <option value="">— wählen —</option>
+                        {ABRECHNUNGEN.map((a) => <option key={a} value={a}>{ABRECHNUNG_LABEL[a]}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="input w-20 py-1.5"
+                        type="text"
+                        inputMode="numeric"
+                        aria-label={`Freiminuten für ${row.bezeichnung || 'neue Zeile'}`}
+                        disabled={!istZeitbasiert(row.abrechnung || null)}
+                        value={istZeitbasiert(row.abrechnung || null) ? row.freiminuten : ''}
+                        placeholder={istZeitbasiert(row.abrechnung || null) ? '0' : '—'}
+                        onChange={(e) => updateSvRow(row.key, { freiminuten: e.target.value.replace(/\D/g, '') })}
                       />
                     </td>
                     <td className="px-2 py-1 text-right">

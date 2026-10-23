@@ -39,6 +39,13 @@ import {
 import { assignFahrerToZugang, isGreimelAuftraggeber, releaseZugangIfUnused } from '../../lib/greimel';
 import { FahrerSelect, type FahrerOptionRaw } from './FahrerSelect';
 import {
+  auslageZumSpeichern, ladeAuslagenPreise, rechnungsnummernDerTour, useAuslagenAutomatik, zusatzEinfuegen,
+} from '../../lib/useAuslagenAutomatik';
+import {
+  auslagenAnpassungVorschlagen, formatDauer, kategorieSchluessel, type AnpassungsVorschlag,
+} from '../../lib/auslagenPreis';
+import { AuslagenHinweis } from '../../components/AuslagenHinweis';
+import {
   loadTourProtokollZuweisungen, ProtokollSection,
   type TourProtokollZuweisung,
 } from './ProtokollSection';
@@ -410,10 +417,26 @@ export function TourDetailDialog({
   // Platzhalter verwendet.
   const [neueKategorie, setNeueKategorie] = useState('');
   const [neueAnzahl, setNeueAnzahl]       = useState<string>('1');
-  const [neuerBetrag, setNeuerBetrag]     = useState('');
   const [neueNotiz, setNeueNotiz]         = useState('');
   const [neuesKennzeichen, setNeuesKennzeichen] = useState('');
+  const [neueDauer, setNeueDauer]         = useState('');
   const [addingZusatz, setAddingZusatz] = useState(false);
+  // Auslagen-Preis aus der Preisliste des Auftraggebers (Migration 109).
+  const automatik = useAuslagenAutomatik({
+    auftraggeberId: isAdmin ? tour?.auftraggeber_id : null,
+    kategorie: neueKategorie, mengeText: neueAnzahl, dauerText: neueDauer,
+  });
+  const [tourRechnungen, setTourRechnungen] = useState<string[]>([]);
+  /** Auftraggeber gewechselt → Auslagen an neue Preisliste anpassen? */
+  const [agWechselFrage, setAgWechselFrage] = useState<null | {
+    agName: string; vorschlaege: AnpassungsVorschlag[]; manuellBleiben: number;
+  }>(null);
+  useEffect(() => {
+    if (!isAdmin) return;
+    let weg = false;
+    void rechnungsnummernDerTour(tourId).then((l) => { if (!weg) setTourRechnungen(l); });
+    return () => { weg = true; };
+  }, [isAdmin, tourId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -977,10 +1000,52 @@ export function TourDetailDialog({
       console.warn('Greimel-Zugang-Zuweisung konnte nicht synchronisiert werden', e);
     }
 
+    // Auftraggeber gewechselt → Auslagen-Preise nur nach Rückfrage an die
+    // neue Preisliste anpassen (nie still) — und nie bei einer Tour, die
+    // schon auf einer Rechnung steht.
+    const neuerAg = draft.auftraggeberId || null;
+    let agHinweis = '';
+    let frage: typeof agWechselFrage = null;
+    if (neuerAg && neuerAg !== (tour.auftraggeber_id ?? null) && zusaetze.length > 0) {
+      const rechnungen = await rechnungsnummernDerTour(tour.id);
+      if (rechnungen.length > 0) {
+        agHinweis = ` Die Tour steht bereits auf Rechnung ${rechnungen.join(', ')} — Auslagen-Preise wurden nicht angepasst.`;
+      } else {
+        const liste = await ladeAuslagenPreise(neuerAg);
+        const vorschlaege = auslagenAnpassungVorschlagen(zusaetze, liste.regeln);
+        const manuellBleiben = zusaetze.filter(
+          (z) => z.preis_quelle === 'manuell' && liste.regeln.has(kategorieSchluessel(z.kategorie)),
+        ).length;
+        if (vorschlaege.length > 0) frage = { agName: draftAg?.name ?? 'den neuen Auftraggeber', vorschlaege, manuellBleiben };
+      }
+    }
+
     setSaving(false);
     setEditing(false);
     setDraft(null);
-    setStatusMsg({ kind: 'ok', text: 'Tour gespeichert.' });
+    setStatusMsg({ kind: 'ok', text: `Tour gespeichert.${agHinweis}` });
+    await load();
+    onChanged();
+    if (frage) setAgWechselFrage(frage);
+  }
+
+  /** Bestätigte Anpassung nach Auftraggeber-Wechsel. */
+  async function agWechselAnwenden(vorschlaege: AnpassungsVorschlag[]) {
+    if (!tour || guard()) return;
+    // Zwischenzeitlich abgerechnet? Dann nichts ändern.
+    const rechnungen = await rechnungsnummernDerTour(tour.id);
+    if (rechnungen.length > 0) throw new Error(`Die Tour steht inzwischen auf Rechnung ${rechnungen.join(', ')} — keine Änderung.`);
+    for (const v of vorschlaege) {
+      const basis = { betrag: v.neu.betrag, anzahl: v.neu.anzahl };
+      let { error } = await supabase.from('tour_zusaetze')
+        .update({ ...basis, preis_quelle: 'preisliste' }).eq('id', v.id);
+      if (error && (error.code === 'PGRST204' || error.code === '42703' || /preis_quelle/.test(error.message))) {
+        ({ error } = await supabase.from('tour_zusaetze').update(basis).eq('id', v.id));
+      }
+      if (error) throw new Error(error.message);
+    }
+    setAgWechselFrage(null);
+    setStatusMsg({ kind: 'ok', text: `${vorschlaege.length} Auslagen-${vorschlaege.length === 1 ? 'Preis' : 'Preise'} an die neue Preisliste angepasst.` });
     await load();
     onChanged();
   }
@@ -1026,13 +1091,12 @@ export function TourDetailDialog({
       setStatusMsg({ kind: 'err', text: 'Kategorie darf nicht leer sein.' });
       return;
     }
-    const betrag = parseDecimal(neuerBetrag);
-    if (betrag === null) {
-      setStatusMsg({ kind: 'err', text: 'Betrag ist ungültig.' });
+    // Betrag/Anzahl inkl. Preisliste und Dauer (lib/useAuslagenAutomatik).
+    const werte = auslageZumSpeichern(automatik, neueAnzahl);
+    if (!werte.ok) {
+      setStatusMsg({ kind: 'err', text: werte.text });
       return;
     }
-    const anzahlVal = parseDecimal(neueAnzahl);
-    const anzahl = anzahlVal !== null && anzahlVal >= 0.01 ? anzahlVal : 1;
     // Bei ABA/ABC-Touren ist das Kennzeichen-Feld sichtbar — und Pflicht,
     // damit der Admin nicht versehentlich ohne Zuordnung speichert. Bei
     // AB-Touren wird automatisch das einzige Kennzeichen genommen (oder
@@ -1051,24 +1115,23 @@ export function TourDetailDialog({
     }
     if (guard()) return;
     setAddingZusatz(true);
-    const { data, error: err } = await supabase
-      .from('tour_zusaetze')
-      .insert({
-        tour_id: tour.id,
-        kategorie,
-        anzahl,
-        betrag,
-        notiz: neueNotiz.trim() || null,
-        kennzeichen,
-      })
-      .select('*')
-      .single();
+    const { data, error: err } = await zusatzEinfuegen({
+      tour_id: tour.id,
+      kategorie,
+      anzahl: werte.anzahl,
+      betrag: werte.betrag,
+      notiz: neueNotiz.trim() || null,
+      kennzeichen,
+      dauer_min: werte.dauer_min,
+      preis_quelle: werte.preis_quelle,
+    });
     setAddingZusatz(false);
     if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setZusaetze((z) => [...z, data as TourZusatz]);
+    automatik.zuruecksetzen();
     setNeueKategorie('');
     setNeueAnzahl('1');
-    setNeuerBetrag('');
+    setNeueDauer('');
     setNeueNotiz('');
     setNeuesKennzeichen('');
     setStatusMsg(null);
@@ -1417,17 +1480,32 @@ export function TourDetailDialog({
                   ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="z-anzahl" className="label">Anzahl</label>
-                <input
-                  id="z-anzahl"
-                  className="input"
-                  type="text"
-                  inputMode="decimal"
-                  value={neueAnzahl}
-                  onChange={(e) => setNeueAnzahl(e.target.value)}
-                />
-              </div>
+              {automatik.zeitbasiert ? (
+                <div>
+                  <label htmlFor="z-dauer" className="label">Dauer</label>
+                  <input
+                    id="z-dauer"
+                    className="input"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="h:mm"
+                    value={neueDauer}
+                    onChange={(e) => setNeueDauer(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label htmlFor="z-anzahl" className="label">Anzahl</label>
+                  <input
+                    id="z-anzahl"
+                    className="input"
+                    type="text"
+                    inputMode="decimal"
+                    value={neueAnzahl}
+                    onChange={(e) => setNeueAnzahl(e.target.value)}
+                  />
+                </div>
+              )}
               <div>
                 <label htmlFor="z-betrag" className="label">Betrag (€)</label>
                 <input
@@ -1435,8 +1513,8 @@ export function TourDetailDialog({
                   className="input"
                   type="text"
                   inputMode="decimal"
-                  value={neuerBetrag}
-                  onChange={(e) => setNeuerBetrag(e.target.value)}
+                  value={automatik.betrag}
+                  onChange={(e) => automatik.setBetrag(e.target.value)}
                 />
               </div>
               <div>
@@ -1452,11 +1530,20 @@ export function TourDetailDialog({
                 type="button"
                 className="btn-primary"
                 onClick={() => void handleAddZusatz()}
-                disabled={addingZusatz || !neueKategorie || !neuerBetrag || (twoSlots && !neuesKennzeichen)}
+                disabled={addingZusatz || !neueKategorie || !automatik.betrag || (twoSlots && !neuesKennzeichen)}
               >
                 {addingZusatz ? '…' : '+ Hinzufügen'}
               </button>
             </div>
+
+            <AuslagenHinweis
+              automatik={automatik}
+              kategorie={neueKategorie}
+              auftraggeberId={tour.auftraggeber_id}
+              auftraggeberName={tour.auftraggeber?.name}
+              sondervereinbarung={!!tour.ist_sondervereinbarung}
+              rechnungen={tourRechnungen}
+            />
 
             <div className="flex flex-wrap gap-1.5">
               {(ZUSATZ_KATEGORIEN ?? []).map((k) => (
@@ -1500,6 +1587,7 @@ export function TourDetailDialog({
                           </>
                         )}
                         <span className="font-medium">{z.kategorie}</span>
+                        {z.dauer_min != null && <span className="text-maja-muted"> ({formatDauer(z.dauer_min)})</span>}
                         <span className="text-maja-muted">: </span>
                         {anzahl !== 1 ? (
                           <>
@@ -1510,6 +1598,11 @@ export function TourDetailDialog({
                         )}
                       </div>
                       {z.notiz && <div className="text-xs text-maja-muted">{z.notiz}</div>}
+                      {z.preis_quelle && (
+                        <div className="text-xs text-maja-muted">
+                          {z.preis_quelle === 'manuell' ? 'Preis manuell geändert' : 'Preis aus Preisliste'}
+                        </div>
+                      )}
                     </div>
                     {isAdmin && (
                       <button
@@ -1773,6 +1866,37 @@ export function TourDetailDialog({
             setStatusMsg({ kind: 'ok', text: 'Auftrag versendet.' });
             void load();
           }}
+        />
+      )}
+
+      {agWechselFrage && (
+        <ConfirmDialog
+          title="Auslagen-Preise an neue Preisliste anpassen?"
+          message={
+            <>
+              <span className="block">
+                Der Auftraggeber wurde geändert. Nach der Preisliste von {agWechselFrage.agName} ändern sich:
+              </span>
+              <ul className="mt-2 space-y-0.5 text-xs">
+                {agWechselFrage.vorschlaege.map((v) => (
+                  <li key={v.id}>
+                    <strong>{v.kategorie}</strong>: {formatAnzahl(v.alt.anzahl)} × {formatEuro(v.alt.betrag)}
+                    {' → '}{formatAnzahl(v.neu.anzahl)} × {formatEuro(v.neu.betrag)}
+                    {' '}(= {formatEuro(Math.round(v.neu.anzahl * v.neu.betrag * 100) / 100)})
+                  </li>
+                ))}
+              </ul>
+              {agWechselFrage.manuellBleiben > 0 && (
+                <span className="mt-2 block text-xs text-maja-muted">
+                  {agWechselFrage.manuellBleiben} manuell geänderte{agWechselFrage.manuellBleiben === 1 ? 'r Preis bleibt' : ' Preise bleiben'} unverändert.
+                </span>
+              )}
+            </>
+          }
+          confirmLabel="Anpassen"
+          cancelLabel="Preise behalten"
+          onConfirm={() => agWechselAnwenden(agWechselFrage.vorschlaege)}
+          onClose={() => setAgWechselFrage(null)}
         />
       )}
 
@@ -3065,23 +3189,7 @@ function ViewModeRechnungsRef({ tourId }: { tourId: string }) {
   const [nummern, setNummern] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      const { data } = await supabase
-        .from('rechnungspositionen')
-        .select('rechnung:rechnung_id (id, rechnungsnummer)')
-        .eq('tour_id', tourId);
-      if (cancelled) return;
-      type Row = { rechnung: { id: string; rechnungsnummer: string } | null };
-      const seen = new Set<string>();
-      const list: string[] = [];
-      for (const r of (data as unknown as Row[]) ?? []) {
-        const re = r.rechnung;
-        if (!re || seen.has(re.id)) continue;
-        seen.add(re.id);
-        list.push(re.rechnungsnummer);
-      }
-      setNummern(list);
-    })();
+    void rechnungsnummernDerTour(tourId).then((list) => { if (!cancelled) setNummern(list); });
     return () => { cancelled = true; };
   }, [tourId]);
   if (nummern.length === 0) return null;

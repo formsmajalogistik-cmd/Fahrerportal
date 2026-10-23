@@ -216,6 +216,9 @@ export type Database = {
           preis: number;
           einheit: string;
           created_at: string;
+          zusatz_kategorie: string | null;
+          abrechnung: string | null;
+          freiminuten: number;
         };
         Insert: {
           id?: string;
@@ -224,6 +227,9 @@ export type Database = {
           preis?: number;
           einheit: string;
           created_at?: string;
+          zusatz_kategorie?: string | null;
+          abrechnung?: string | null;
+          freiminuten?: number;
         };
         Update: {
           id?: string;
@@ -232,6 +238,9 @@ export type Database = {
           preis?: number;
           einheit?: string;
           created_at?: string;
+          zusatz_kategorie?: string | null;
+          abrechnung?: string | null;
+          freiminuten?: number;
         };
         Relationships: [
           {
@@ -811,6 +820,8 @@ export type Database = {
           betrag: number;
           notiz: string | null;
           kennzeichen: string | null;
+          dauer_min: number | null;
+          preis_quelle: string | null;
           created_at: string;
         };
         Insert: {
@@ -821,6 +832,8 @@ export type Database = {
           betrag: number;
           notiz?: string | null;
           kennzeichen?: string | null;
+          dauer_min?: number | null;
+          preis_quelle?: string | null;
           created_at?: string;
         };
         Update: {
@@ -831,6 +844,8 @@ export type Database = {
           betrag?: number;
           notiz?: string | null;
           kennzeichen?: string | null;
+          dauer_min?: number | null;
+          preis_quelle?: string | null;
           created_at?: string;
         };
         Relationships: [

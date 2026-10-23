@@ -13,6 +13,11 @@ import {
   fetchAttachmentBlob, type MailDetail,
 } from '../../lib/emails';
 import { EmailThreadView } from './EmailMessageView';
+import {
+  auslageZumSpeichern, rechnungsnummernDerTour, useAuslagenAutomatik, zusatzEinfuegen,
+} from '../../lib/useAuslagenAutomatik';
+import { formatDauer } from '../../lib/auslagenPreis';
+import { AuslagenHinweis } from '../../components/AuslagenHinweis';
 import type { TourZusatz } from '../../types/db';
 
 interface Props {
@@ -45,6 +50,9 @@ interface TourHead {
   kennzeichen: string[];
   barauslagen: number;
   fahrer_honorar: number;
+  auftraggeber_id: string | null;
+  ist_sondervereinbarung: boolean | null;
+  auftraggeber: { name: string } | null;
 }
 
 function parseDecimal(input: string): number | null {
@@ -75,9 +83,15 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
   // Zusatz-Eingabe-State
   const [neueKategorie, setNeueKategorie] = useState('');
   const [neueAnzahl, setNeueAnzahl] = useState('1');
-  const [neuerBetrag, setNeuerBetrag] = useState('');
   const [neueNotiz, setNeueNotiz] = useState('');
   const [neuesKennzeichen, setNeuesKennzeichen] = useState('');
+  const [neueDauer, setNeueDauer] = useState('');
+  // Auslagen-Preis aus der Preisliste des Auftraggebers (Migration 109) —
+  // dieselbe Automatik wie im Tour-Detail.
+  const automatik = useAuslagenAutomatik({
+    auftraggeberId: tour?.auftraggeber_id, kategorie: neueKategorie, mengeText: neueAnzahl, dauerText: neueDauer,
+  });
+  const [rechnungen, setRechnungen] = useState<string[]>([]);
 
   // Barauslagen + Honorar
   const [barauslagenInput, setBarauslagenInput] = useState('');
@@ -93,16 +107,17 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
     setLoading(true);
     const [tRes, zRes] = await Promise.all([
       supabase.from('touren')
-        .select('id, tour_id, tourenart, start_stadt, ziel_stadt, rueckfuehrung_stadt, startdatum, enddatum, kennzeichen, barauslagen, fahrer_honorar')
+        .select('id, tour_id, tourenart, start_stadt, ziel_stadt, rueckfuehrung_stadt, startdatum, enddatum, kennzeichen, barauslagen, fahrer_honorar, auftraggeber_id, ist_sondervereinbarung, auftraggeber:auftraggeber_id (name)')
         .eq('id', tourId).single(),
       supabase.from('tour_zusaetze').select('*').eq('tour_id', tourId).order('created_at'),
     ]);
+    setRechnungen(await rechnungsnummernDerTour(tourId));
     if (tRes.error) {
       setStatusMsg({ kind: 'err', text: tRes.error.message });
       setLoading(false);
       return;
     }
-    const t = tRes.data as TourHead;
+    const t = tRes.data as unknown as TourHead;
     setTour(t);
     setBarauslagenInput(decimalToInput(t.barauslagen));
     setHonorarInput(decimalToInput(t.fahrer_honorar));
@@ -187,13 +202,11 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
       setStatusMsg({ kind: 'err', text: 'Kategorie darf nicht leer sein.' });
       return;
     }
-    const betrag = parseDecimal(neuerBetrag);
-    if (betrag === null) {
-      setStatusMsg({ kind: 'err', text: 'Betrag ist ungültig.' });
+    const werte = auslageZumSpeichern(automatik, neueAnzahl);
+    if (!werte.ok) {
+      setStatusMsg({ kind: 'err', text: werte.text });
       return;
     }
-    const anzahlVal = parseDecimal(neueAnzahl);
-    const anzahl = anzahlVal !== null && anzahlVal >= 0.01 ? anzahlVal : 1;
     const twoSlots = tour.tourenart === 'ABA' || tour.tourenart === 'ABC';
     let kennzeichen: string | null = null;
     if (twoSlots) {
@@ -207,17 +220,18 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
       kennzeichen = (tour.kennzeichen?.[0]?.trim() || null);
     }
     setAdding(true);
-    const { data, error: err } = await supabase
-      .from('tour_zusaetze')
-      .insert({ tour_id: tour.id, kategorie, anzahl, betrag, notiz: neueNotiz.trim() || null, kennzeichen })
-      .select('*')
-      .single();
+    const { data, error: err } = await zusatzEinfuegen({
+      tour_id: tour.id, kategorie, anzahl: werte.anzahl, betrag: werte.betrag,
+      notiz: neueNotiz.trim() || null, kennzeichen,
+      dauer_min: werte.dauer_min, preis_quelle: werte.preis_quelle,
+    });
     setAdding(false);
     if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setZusaetze((z) => [...z, data as TourZusatz]);
+    automatik.zuruecksetzen();
     setNeueKategorie('');
     setNeueAnzahl('1');
-    setNeuerBetrag('');
+    setNeueDauer('');
     setNeueNotiz('');
     setNeuesKennzeichen('');
     setStatusMsg({ kind: 'ok', text: 'Zusatz hinzugefügt.' });
@@ -350,17 +364,26 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
                         ))}
                       </select>
                     </div>
-                    <div>
-                      <label htmlFor="z-anzahl" className="label">Anzahl</label>
-                      <input id="z-anzahl" className="input" type="text" inputMode="decimal"
-                             value={neueAnzahl}
-                             onChange={(e) => setNeueAnzahl(e.target.value)} />
-                    </div>
+                    {automatik.zeitbasiert ? (
+                      <div>
+                        <label htmlFor="z-dauer" className="label">Dauer *</label>
+                        <input id="z-dauer" className="input" type="text" inputMode="decimal" placeholder="h:mm"
+                               value={neueDauer}
+                               onChange={(e) => setNeueDauer(e.target.value)} />
+                      </div>
+                    ) : (
+                      <div>
+                        <label htmlFor="z-anzahl" className="label">Anzahl</label>
+                        <input id="z-anzahl" className="input" type="text" inputMode="decimal"
+                               value={neueAnzahl}
+                               onChange={(e) => setNeueAnzahl(e.target.value)} />
+                      </div>
+                    )}
                     <div>
                       <label htmlFor="z-betrag" className="label">Betrag (€) *</label>
                       <input id="z-betrag" className="input" type="text" inputMode="decimal"
-                             value={neuerBetrag}
-                             onChange={(e) => setNeuerBetrag(e.target.value)} />
+                             value={automatik.betrag}
+                             onChange={(e) => automatik.setBetrag(e.target.value)} />
                     </div>
                     <div className="sm:col-span-2">
                       <label htmlFor="z-notiz" className="label">Notiz (optional)</label>
@@ -369,6 +392,14 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
                              onChange={(e) => setNeueNotiz(e.target.value)} />
                     </div>
                   </div>
+                  <AuslagenHinweis
+                    automatik={automatik}
+                    kategorie={neueKategorie}
+                    auftraggeberId={tour.auftraggeber_id}
+                    auftraggeberName={tour.auftraggeber?.name}
+                    sondervereinbarung={!!tour.ist_sondervereinbarung}
+                    rechnungen={rechnungen}
+                  />
                   <button
                     type="button"
                     className="btn-primary text-sm"
@@ -400,6 +431,7 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
                                 </span>
                               )}
                               <span className="font-medium">{z.kategorie}</span>
+                              {z.dauer_min != null && <span className="text-maja-muted"> ({formatDauer(z.dauer_min)})</span>}
                               <span className="text-maja-muted">: </span>
                               {anzahl !== 1 ? (
                                 <span>{formatAnzahl(anzahl)} × {formatEuro(betrag)} = <span className="font-semibold">{formatEuro(gesamt)}</span></span>
