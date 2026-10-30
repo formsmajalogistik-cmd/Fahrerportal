@@ -29,6 +29,8 @@ import {
 } from '../../../lib/absenderSignatur';
 import { GutschriftStatusBadge } from './GutschriftStatusBadge';
 import { GutschriftEmailDialog } from './GutschriftEmailDialog';
+import { VersandAbschnitt } from '../../../components/versand/VersandAbschnitt';
+import { useZurueckZurListe } from '../../../lib/useListenZustand';
 import {
   gutschriftPdfFilename, gutschriftPdfPath, hatAdresse, ladeGutschriftPositionen,
   parseAdressSnapshot, speichereGutschriftPositionen,
@@ -80,6 +82,8 @@ function draftVon(g: GutschriftFull): KopfDraft {
 export function GutschriftDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  /** Zurück auf genau den Stand der Übersicht (Filter, Suche, Scroll). */
+  const zurueck = useZurueckZurListe('gutschriften', '/gutschriften');
   const [gutschrift, setGutschrift] = useState<GutschriftFull | null>(null);
   const [positionen, setPositionen] = useState<EditorPosition[]>([]);
   const [settings, setSettings] = useState<GutschriftSettings>(DEFAULT_GUTSCHRIFT_SETTINGS);
@@ -101,6 +105,8 @@ export function GutschriftDetailPage() {
   const [statusBusy, setStatusBusy] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  /** Zähler: nach einem Versandversuch den Versand-Abschnitt neu laden. */
+  const [versandStand, setVersandStand] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -396,7 +402,7 @@ export function GutschriftDetailPage() {
             </p>
           )}
         </div>
-        <button type="button" className="btn-secondary" onClick={() => navigate('/gutschriften')}>
+        <button type="button" className="btn-secondary" onClick={zurueck}>
           Zurück
         </button>
       </div>
@@ -641,6 +647,14 @@ export function GutschriftDetailPage() {
         )}
       </section>
 
+      {/* Versandstatus + Verlauf (Migration 111) */}
+      <VersandAbschnitt
+        typ="gutschrift"
+        belegId={gutschrift.id}
+        belegStatus={gutschrift.status}
+        stand={`${gutschrift.email_versendet_am ?? ''}|${versandStand}`}
+      />
+
       <section className="flex justify-start pt-2">
         <button
           type="button"
@@ -663,9 +677,10 @@ export function GutschriftDetailPage() {
             pdf_url: gutschrift.pdf_url,
           }}
           bezeichnung={bezeichnung}
-          onClose={() => setEmailOpen(false)}
+          onClose={() => { setEmailOpen(false); setVersandStand((n) => n + 1); }}
           onSent={() => {
             setEmailOpen(false);
+            setVersandStand((n) => n + 1);
             setGutschrift((g) => (g ? { ...g, email_versendet_am: new Date().toISOString() } : g));
           }}
         />

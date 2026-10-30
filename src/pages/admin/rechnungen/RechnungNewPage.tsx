@@ -120,6 +120,11 @@ export function RechnungNewPage() {
    *  externen System eine andere Nummer fortführen will. Leer
    *  lassen = Trigger vergibt automatisch beim INSERT. */
   const [rechnungsnummer, setRechnungsnummer] = useState<string>('');
+  /** Der zuletzt angezeigte Vorschlag. Bleibt das Feld unverändert, wird
+   *  die Nummer NICHT mitgeschickt, sondern beim Speichern von der
+   *  Datenbank vergeben (Migration 110) — so bekommen zwei gleichzeitig
+   *  angelegte Rechnungen nie dieselbe Nummer. */
+  const [nummerVorschlag, setNummerVorschlag] = useState<string | null>(null);
   const [nummerHint, setNummerHint] = useState<string | null>(null);
   const [anrede, setAnrede] = useState<string>('');
   const [ustSatz, setUstSatz] = useState<number>(19);
@@ -209,9 +214,10 @@ export function RechnungNewPage() {
         console.warn('[Rechnungen] next_rechnungsnummer fehlgeschlagen', err);
         return;
       }
-      if (typeof data === 'string' && !rechnungsnummer) {
+      if (typeof data === 'string' && (!rechnungsnummer || rechnungsnummer === nummerVorschlag)) {
         setRechnungsnummer(data);
-        setNummerHint('Vorgeschlagen — überschreibbar, falls eine andere fortlaufende Nummer gewünscht ist.');
+        setNummerVorschlag(data);
+        setNummerHint('Vorschlag — die Nummer wird beim Speichern endgültig vergeben. Überschreibbar, falls eine andere Nummer gewünscht ist.');
       }
     })();
     return () => { cancelled = true; };
@@ -671,7 +677,7 @@ export function RechnungNewPage() {
        *  Nummer ist reserviert. Eine leere AUSLAGEN-Rechnung wäre dagegen
        *  sinnlos und wird weiterhin übersprungen. */
       erlaubeLeer = false,
-    ): Promise<{ ok: boolean; id?: string; error?: string }> {
+    ): Promise<{ ok: boolean; id?: string; nummer?: string; error?: string }> {
       if (positionen.length === 0 && !erlaubeLeer) return { ok: true };
       // Brutto + USt-Summe mehrmonatig korrekt: pro USt-Satz aggregieren.
       const sum = berechneSummenProUst(positionen, ustSatz);
@@ -715,7 +721,7 @@ export function RechnungNewPage() {
       const { data: rRow, error: rErr } = await supabase
         .from('rechnungen')
         .insert(insertPayload)
-        .select('id')
+        .select('id, rechnungsnummer')
         .single();
       if (rErr || !rRow) {
         return { ok: false, error: rErr?.message ?? 'Rechnung konnte nicht angelegt werden.' };
@@ -735,7 +741,7 @@ export function RechnungNewPage() {
       }));
       const { error: pErr } = await supabase.from('rechnungspositionen').insert(rows);
       if (pErr) return { ok: false, error: pErr.message };
-      return { ok: true, id: rRow.id };
+      return { ok: true, id: rRow.id, nummer: rRow.rechnungsnummer };
     }
 
     try {
@@ -743,24 +749,26 @@ export function RechnungNewPage() {
       // angelegte Rechnung — bei getrennten Rechnungen würde sie sonst
       // den UNIQUE-Constraint verletzen. Die zweite Rechnung bekommt
       // ihre Nummer vom Trigger.
-      const manuelleNummer = rechnungsnummer.trim() || null;
+      const eingabeNummer = rechnungsnummer.trim();
+      const manuelleNummer = eingabeNummer && eingabeNummer !== nummerVorschlag ? eingabeNummer : null;
       let firstId: string | null = null;
+      let firstNummer: string | null = null;
       let nummerUsed = false;
       if (getrennt) {
         if (erstelleTouren) {
           const r = await insertOne(haupt, false, nummerUsed ? null : manuelleNummer, true);
           if (!r.ok) throw new Error(r.error);
-          if (r.id) { firstId = r.id; nummerUsed = true; }
+          if (r.id) { firstId = r.id; firstNummer = r.nummer ?? null; nummerUsed = true; }
         }
         if (erstelleAuslagen) {
           const r = await insertOne(auslagen, true, nummerUsed ? null : manuelleNummer);
           if (!r.ok) throw new Error(r.error);
-          if (!firstId && r.id) firstId = r.id;
+          if (!firstId && r.id) { firstId = r.id; firstNummer = r.nummer ?? null; }
         }
       } else {
         const r = await insertOne(haupt, false, manuelleNummer, true);
         if (!r.ok) throw new Error(r.error);
-        if (r.id) firstId = r.id;
+        if (r.id) { firstId = r.id; firstNummer = r.nummer ?? null; }
       }
 
       // Empfänger merken — rein optionale Eingabehilfe. Ein Fehler
@@ -777,7 +785,12 @@ export function RechnungNewPage() {
       if (status === 'offen') {
         alert('Rechnung erstellt. PDF-Generierung wird in Kürze verfügbar.');
       }
-      if (firstId) navigate(`/rechnungen/${firstId}`);
+      // Vorschlag zwischenzeitlich vergeben (z.B. parallel eine andere
+      // Rechnung angelegt)? Dann sagen, welche Nummer es geworden ist.
+      const hinweis = !manuelleNummer && nummerVorschlag && firstNummer && firstNummer !== nummerVorschlag
+        ? `Die vorgeschlagene Nummer ${nummerVorschlag} war inzwischen vergeben — die Rechnung hat die Nummer ${firstNummer} erhalten.`
+        : null;
+      if (firstId) navigate(`/rechnungen/${firstId}`, hinweis ? { state: { hinweis } } : undefined);
       else navigate('/rechnungen');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

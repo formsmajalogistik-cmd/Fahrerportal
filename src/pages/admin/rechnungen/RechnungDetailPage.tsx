@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
-import { ladeInBloecken } from '../../../lib/ladeInBloecken';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import {
   DEFAULT_GUTSCHRIFT_SETTINGS, loadGutschriftSettings,
 } from '../../../lib/gutschriftSettings';
-import {
-  berechneSummenProUst, generatePositionenFromTouren, parseRechnungsformat,
-  type TourForRechnung, type TourenartReal,
-} from '../../../lib/rechnungsformat';
+import { berechneSummenProUst, parseRechnungsformat } from '../../../lib/rechnungsformat';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
@@ -25,9 +21,15 @@ import {
   previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
 } from '../../../lib/onedrive';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
+import { VersandAbschnitt } from '../../../components/versand/VersandAbschnitt';
+import { useZurueckZurListe } from '../../../lib/useListenZustand';
+import { eintragZeit, type VersandStatus } from '../../../lib/belegVersand';
 import { empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition, newKey } from './positionUtils';
+import {
+  bilanzText, ladeTourenPerId, modusFuerRechnung, neuLadenBilanz, positionenNeuAufbauen,
+} from '../../../lib/rechnungNeuLaden';
 import type {
   Auftraggeber, Rechnung, Rechnungsadresse, Rechnungsposition, RechnungStatus,
 } from '../../../types/db';
@@ -93,6 +95,13 @@ function draftFromRechnung(r: RechnungFull): KopfDraft {
 export function RechnungDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  /** Zurück auf genau den Stand der Übersicht (Seite, Filter, Suche). */
+  const zurueck = useZurueckZurListe('rechnungen', '/rechnungen');
+  /** Hinweis aus dem Anlegen (z.B. „Vorschlag war inzwischen vergeben"). */
+  const [hinweis, setHinweis] = useState<string | null>(
+    () => (location.state as { hinweis?: string } | null)?.hinweis ?? null,
+  );
   const [rechnung, setRechnung] = useState<RechnungFull | null>(null);
   const [positionen, setPositionen] = useState<EditorPosition[]>([]);
   /** tour_id → info-Freitext. Für die Anzeige im Edit-Modus. */
@@ -108,6 +117,11 @@ export function RechnungDetailPage() {
   const [reloadConfirm, setReloadConfirm] = useState(false);
   const [keepManual, setKeepManual] = useState(true);
   const [reloadingTouren, setReloadingTouren] = useState(false);
+  /** Versandstatus (für die Warnung vor dem Neuladen nach Versand). */
+  const [versand, setVersand] = useState<VersandStatus | null>(null);
+  const [versandStand, setVersandStand] = useState(0);
+  /** Ergebnis des Neuladens („2 Positionen aktualisiert: Kennzeichen, Preis"). */
+  const [reloadInfo, setReloadInfo] = useState<string | null>(null);
 
   // Notizen: Auto-Save bei Blur.
   const [notizen, setNotizen] = useState('');
@@ -374,6 +388,7 @@ export function RechnungDetailPage() {
         .eq('id', rechnung.id);
       if (uErr) throw uErr;
       setEditingPos(false);
+      setReloadInfo(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -392,10 +407,12 @@ export function RechnungDetailPage() {
   }
 
   /**
-   * "Touren erneut laden" (Aufgabe 5): generiert die Positionen aus dem
-   * aktuellen Touren-Stand des Auftraggebers im Leistungszeitraum neu —
-   * gleiche Logik wie der Erstellen-Wizard. Manuelle Positionen
-   * (ist_manuell=true) bleiben optional erhalten.
+   * "Touren erneut laden": erzeugt die Positionen der Touren, die auf
+   * dieser Rechnung stehen, aus deren aktuellem Stand neu — die Touren
+   * werden über ihre IDs geladen, unabhängig von Rechnungsdatum oder
+   * Leistungszeitraum (lib/rechnungNeuLaden). Rechnungsdatum und -nummer
+   * bleiben unverändert; manuelle Positionen optional erhalten. Wirksam
+   * wird das Ergebnis erst mit „Speichern".
    */
   async function reloadTourenPositionen(keepManualRows: boolean) {
     if (!rechnung?.auftraggeber_id) {
@@ -404,6 +421,7 @@ export function RechnungDetailPage() {
     }
     setReloadingTouren(true);
     setError(null);
+    setReloadInfo(null);
     try {
       const { data: agData, error: agErr } = await supabase
         .from('auftraggeber')
@@ -413,58 +431,18 @@ export function RechnungDetailPage() {
       if (agErr) throw new Error(agErr.message);
       const format = parseRechnungsformat(agData?.rechnungsformat ?? null);
 
-      const von = rechnung.leistungszeitraum_von ?? '2000-01-01';
-      const bis = rechnung.leistungszeitraum_bis ?? '2999-12-31';
-      const { data, error: tErr } = await ladeInBloecken((v, b) => supabase
-        .from('touren')
-        .select(`
-          id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-          startdatum, enddatum, tourenart, kennzeichen,
-          kundenname, fin, fin_rueck, km_hin, km_rueck, km_gesamt, sondervereinbarung, verguetung, info,
-          zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
-        `)
-        .eq('auftraggeber_id', rechnung.auftraggeber_id!)
-        .gte('enddatum', von)
-        .lte('enddatum', bis)
-        .order('enddatum', { ascending: true })
-        .order('id', { ascending: true })
-        .range(v, b));
-      if (tErr) throw new Error(tErr);
-      type RawTour = {
-        id: string; tour_id: string | null;
-        start_stadt: string; ziel_stadt: string; rueckfuehrung_stadt: string | null;
-        startdatum: string | null; enddatum: string | null;
-        tourenart: TourenartReal; kennzeichen: string[] | null;
-        kundenname: string | null; fin: string | null; fin_rueck: string | null;
-        km_hin: number | null; km_rueck: number | null; km_gesamt: number | null;
-        sondervereinbarung: string | null; verguetung: number | null;
-        info: string | null;
-        zusaetze: Array<{ id: string; kategorie: string; anzahl: number; betrag: number; notiz: string | null; kennzeichen: string | null }>;
-      };
-      const list: TourForRechnung[] = ((data as unknown as RawTour[]) ?? []).map((t) => ({
-        id: t.id, tour_id: t.tour_id,
-        start_stadt: t.start_stadt, ziel_stadt: t.ziel_stadt,
-        rueckfuehrung_stadt: t.rueckfuehrung_stadt,
-        startdatum: t.startdatum, enddatum: t.enddatum,
-        tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [],
-        kundenname: t.kundenname, fin: t.fin,
-        fin_rueck: t.fin_rueck,
-      km_hin: t.km_hin,
-      km_rueck: t.km_rueck,
-      km_gesamt: t.km_gesamt,
-        sondervereinbarung: t.sondervereinbarung,
-        verguetung: t.verguetung,
-        info: t.info,
-        zusaetze: t.zusaetze ?? [],
-      }));
-
-      const modus = rechnung.ist_auslagen_rechnung ? 'auslagen' : 'beides';
-      const generated = generatePositionenFromTouren(list, format, { modus });
-      const manualRows = keepManualRows ? positionen.filter((p) => p.ist_manuell) : [];
-      setPositionen([
-        ...generated.map((p) => ({ ...p, key: newKey('tour') })),
-        ...manualRows,
-      ]);
+      const tourIds = positionen.map((p) => p.tour_id).filter((x): x is string => !!x);
+      if (tourIds.length === 0) {
+        setReloadInfo('Auf dieser Rechnung stehen keine Touren — nichts neu zu laden.');
+        return;
+      }
+      const list = await ladeTourenPerId(tourIds);
+      const modus = modusFuerRechnung(rechnung.ist_auslagen_rechnung, format);
+      const { positionen: neu } = positionenNeuAufbauen(positionen, list, format, modus, keepManualRows);
+      const bilanz = neuLadenBilanz(positionen, neu, list);
+      const nichtGefunden = new Set(tourIds).size - list.length;
+      setPositionen(neu.map((p) => ('key' in p ? p as EditorPosition : { ...p, key: newKey('tour') })));
+      setReloadInfo(`${bilanzText(bilanz, nichtGefunden)} Mit „Speichern" übernehmen.`);
 
       // Tour-Infos für die neue Positionsliste aktualisieren.
       const m = new Map<string, string>();
@@ -665,13 +643,19 @@ export function RechnungDetailPage() {
             {' · '}Rechnungsdatum {formatDate(rechnung.datum)}
           </p>
         </div>
-        <button type="button" className="btn-secondary" onClick={() => navigate('/rechnungen')}>
+        <button type="button" className="btn-secondary" onClick={zurueck}>
           Zurück
         </button>
       </div>
 
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      )}
+      {hinweis && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <span>{hinweis}</span>
+          <button type="button" className="text-xs font-semibold underline" onClick={() => setHinweis(null)}>OK</button>
+        </div>
       )}
 
       {/* Status-Aktionen — Flow: Entwurf → Offen → Bezahlt. */}
@@ -802,6 +786,12 @@ export function RechnungDetailPage() {
 
       {/* Positionen */}
       <section className="card space-y-3 p-5">
+        {reloadInfo && (
+          <div role="status" className="flex items-start justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <span>{reloadInfo}</span>
+            <button type="button" className="text-xs font-semibold underline" onClick={() => setReloadInfo(null)}>OK</button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-maja-navy">Positionen</h2>
           <div className="flex items-center gap-2">
@@ -833,7 +823,7 @@ export function RechnungDetailPage() {
                 >{savingPositions ? 'Speichert …' : 'Speichern'}</button>
                 <button
                   type="button" className="btn-secondary text-sm"
-                  onClick={() => { setEditingPos(false); void load(); }}
+                  onClick={() => { setEditingPos(false); setReloadInfo(null); void load(); }}
                   disabled={savingPositions}
                 >Abbrechen</button>
               </>
@@ -917,6 +907,15 @@ export function RechnungDetailPage() {
         )}
       </section>
 
+      {/* Versandstatus + Verlauf (Migration 111) */}
+      <VersandAbschnitt
+        typ="rechnung"
+        belegId={rechnung.id}
+        belegStatus={rechnung.status}
+        stand={`${rechnung.email_versendet_am ?? ''}|${versandStand}`}
+        onStatus={setVersand}
+      />
+
       {/* Gutschriften / Rechnungskorrekturen zu dieser Rechnung */}
       <section className="card space-y-2 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -987,12 +986,19 @@ export function RechnungDetailPage() {
       {/* Confirm-Dialoge */}
       {reloadConfirm && (
         <ConfirmDialog
-          title="Touren erneut laden?"
+          title={versand?.letzter ? 'Inhalte nach dem Versand ändern?' : 'Touren erneut laden?'}
           message={
             <>
-              Alle Positionen werden neu aus den Touren des
-              Leistungszeitraums generiert. Manuelle Änderungen an
-              generierten Positionen gehen verloren.
+              {versand?.letzter && (
+                <span role="alert" className="mb-2 block rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                  Diese Rechnung wurde am {eintragZeit(versand.letzter)} versendet
+                  {versand.letzter.art === 'manuell' ? ' (als versendet markiert)' : ''}. Inhalte nach dem Versand ändern?
+                </span>
+              )}
+              Die Positionen der Touren auf dieser Rechnung werden aus dem
+              aktuellen Stand der Touren neu erzeugt (unabhängig vom Datum).
+              Rechnungsdatum und Rechnungsnummer bleiben unverändert.
+              Manuelle Änderungen an erzeugten Positionen gehen verloren.
               <label className="mt-3 flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -1087,9 +1093,10 @@ export function RechnungDetailPage() {
             belege_pdf_url: rechnung.belege_pdf_url,
             status: rechnung.status,
           }}
-          onClose={() => setEmailOpen(false)}
+          onClose={() => { setEmailOpen(false); setVersandStand((n) => n + 1); }}
           onSent={({ newStatus }) => {
             setEmailOpen(false);
+            setVersandStand((n) => n + 1);
             setRechnung((r) => r ? {
               ...r,
               email_versendet_am: new Date().toISOString(),

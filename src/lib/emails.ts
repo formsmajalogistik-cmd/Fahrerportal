@@ -124,6 +124,15 @@ export async function listEmails(args: {
   return getAction('list', params);
 }
 
+/** Gesendete Mails (Betreff, Zeitpunkt, Empfänger, Anhang-Namen) seit
+ *  einem Datum — nur lesen, für den Versandstatus-Probelauf. */
+export async function listGesendeteMails(mailbox: string, seit: string): Promise<{
+  value: Array<{ subject: string; sentDateTime: string; to: string[]; attachments: string[] }>;
+  abgeschnitten: boolean;
+}> {
+  return getAction('gesendete-belege', new URLSearchParams({ mailbox, seit }), 180_000);
+}
+
 export async function listFolders(mailbox: string): Promise<MailFolder[]> {
   const j = await getAction<{ value: MailFolder[] }>('folders', new URLSearchParams({ mailbox }));
   return j.value;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { neuesteBelegeZuerst } from '../../../lib/belegNummer';
 import { XIcon } from '../../../components/icons';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import { RechnungStatusBadge } from '../rechnungen/RechnungStatusBadge';
@@ -45,7 +46,7 @@ export function RechnungAssignDialog({ onClose, onPick }: Props) {
         .limit(200);
       if (cancelled) return;
       if (err) setError(err.message);
-      else setRows((data as unknown as OpenRechnung[]) ?? []);
+      else setRows(neuesteBelegeZuerst((data as unknown as OpenRechnung[]) ?? [], (r) => r.rechnungsnummer, (r) => r.datum));
       setLoading(false);
     })();
     return () => { cancelled = true; };

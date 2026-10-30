@@ -811,6 +811,33 @@ export type Database = {
         };
         Relationships: [];
       };
+      beleg_versand: {
+        Row: {
+          id: string;
+          rechnung_id: string | null;
+          gutschrift_id: string | null;
+          art: 'app' | 'manuell' | 'fehlgeschlagen';
+          weg: 'app' | 'post' | 'email_eigen' | 'kundenportal' | 'persoenlich' | 'sonstiges' | 'rueckwirkend';
+          datum: string;
+          zeitpunkt: string | null;
+          empfaenger: string[];
+          cc: string[];
+          absender: string | null;
+          betreff: string | null;
+          notiz: string | null;
+          fehler: string | null;
+          quelle: 'app' | 'manuell' | 'rueckwirkend' | 'import_datenbank' | 'import_postfach';
+          erstellt_von: string | null;
+          erstellt_von_name: string | null;
+          created_at: string;
+          entfernt_am: string | null;
+          entfernt_von: string | null;
+          entfernt_von_name: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       tour_zusaetze: {
         Row: {
           id: string;
@@ -2265,6 +2292,30 @@ export type Database = {
       next_rechnungsnummer: {
         Args: { p_year?: number };
         Returns: string;
+      };
+      beleg_versand_eintragen: {
+        Args: {
+          p_typ: string; p_id: string; p_art: string; p_weg?: string | null; p_datum?: string | null;
+          p_empfaenger?: string[]; p_cc?: string[]; p_absender?: string | null; p_betreff?: string | null;
+          p_notiz?: string | null; p_fehler?: string | null;
+        };
+        Returns: string;
+      };
+      beleg_versand_markieren: {
+        Args: { p_typ: string; p_ids: string[]; p_weg: string; p_datum: string; p_notiz?: string | null };
+        Returns: Json;
+      };
+      beleg_versand_entfernen: {
+        Args: { p_versand_id: string };
+        Returns: undefined;
+      };
+      beleg_versand_rueckwirkend: {
+        Args: { p_typ: string; p_bis: string; p_ausfuehren?: boolean };
+        Returns: Array<{ beleg_id: string; nummer: string; datum: string; status: string }>;
+      };
+      beleg_versand_import: {
+        Args: { p_eintraege: Json };
+        Returns: Json;
       };
       formular_zuweisen: {
         Args: { p_formular_id: string; p_an_fahrer_id: string; p_tour_mitnehmen?: boolean; p_notiz?: string | null };

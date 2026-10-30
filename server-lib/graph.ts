@@ -496,6 +496,52 @@ function recipientList(rs: RawGraphRecipient[] | undefined) {
   return (rs ?? []).map((r) => recipient(r));
 }
 
+/** Gesendete Mail für den Versandstatus-Abgleich (nur lesen). */
+export interface GesendeteMail {
+  subject: string;
+  sentDateTime: string;
+  to: string[];
+  attachments: string[];
+}
+
+/**
+ * „Gesendete Elemente" seit einem Datum — Betreff, Zeitpunkt, Empfänger
+ * und Anhang-NAMEN (keine Inhalte). Für den Probelauf „Versandstatus
+ * übernehmen": die Rechnungsnummer wird im Client EXAKT abgeglichen.
+ */
+export async function listGesendeteMails(args: {
+  mailbox: string; seit: string; max?: number;
+}): Promise<{ value: GesendeteMail[]; abgeschnitten: boolean }> {
+  const max = Math.min(20000, Math.max(100, args.max ?? 10000));
+  const params = new URLSearchParams();
+  params.set('$top', '100');
+  params.set('$select', 'subject,sentDateTime,toRecipients,ccRecipients,hasAttachments');
+  params.set('$filter', `sentDateTime ge ${args.seit}T00:00:00Z`);
+  params.set('$orderby', 'sentDateTime desc');
+  params.set('$expand', 'attachments($select=name)');
+  let url: string | null = `${GRAPH}/users/${encodeURIComponent(args.mailbox)}/mailFolders/sentitems/messages?${params.toString()}`;
+  const value: GesendeteMail[] = [];
+  while (url && value.length < max) {
+    const resp = await graphFetch('GET', url);
+    if (!resp.ok) throw new Error(`listGesendeteMails: ${resp.status} ${await resp.text()}`);
+    const j = await resp.json() as {
+      value?: Array<RawMessage & { sentDateTime?: string; attachments?: Array<{ name?: string }> }>;
+      '@odata.nextLink'?: string;
+    };
+    for (const m of j.value ?? []) {
+      value.push({
+        subject: m.subject ?? '',
+        sentDateTime: m.sentDateTime ?? '',
+        to: [...(m.toRecipients ?? []), ...(m.ccRecipients ?? [])]
+          .map((r) => r.emailAddress?.address ?? '').filter(Boolean),
+        attachments: (m.attachments ?? []).map((a) => a.name ?? '').filter(Boolean),
+      });
+    }
+    url = j['@odata.nextLink'] ?? null;
+  }
+  return { value: value.slice(0, max), abgeschnitten: !!url };
+}
+
 /** Listet Nachrichten eines Postfachs (Posteingang-Folder).
  *
  *  `inferenceClassification` (Focused Inbox: focused/other) wird IMMER

@@ -25,9 +25,10 @@ import { contentDisposition, istUnsichererPfad } from '../server-lib/paths.js';
 import { assertMailboxAllowed } from '../server-lib/mailboxAuth.js';
 import { assertCanAccessPdfPath } from '../server-lib/formularAuth.js';
 import { buildTourAenderungMail } from '../server-lib/tourAenderungMail.js';
+import { parseVersandBeleg, versandProtokollieren } from '../server-lib/belegVersand.js';
 import {
   downloadFile, forwardMail, getAttachmentBase64, getAttachmentBytes, getMessage,
-  listConversationMessages, listFolders, listMessages, moveMessage, patchMessage,
+  listConversationMessages, listFolders, listGesendeteMails, listMessages, moveMessage, patchMessage,
   replyMail, sendMail, sendMailFrom,
 } from '../server-lib/graph.js';
 
@@ -136,6 +137,19 @@ export default async function handler(req: Req, res: Res) {
         const search = qString(req.query?.search);
         const folder = qString(req.query?.folder) ?? 'inbox';
         const result = await listMessages({ mailbox, folder, page, pageSize, search });
+        res.status(200).json(result);
+        return;
+      }
+      if (action === 'gesendete-belege') {
+        // Probelauf Versandstatus: nur lesen, nur Admin (s.o.), nur
+        // freigegebene Postfächer.
+        const mailbox = qString(req.query?.mailbox);
+        const seit = qString(req.query?.seit);
+        if (!mailbox || !seit || !/^\d{4}-\d{2}-\d{2}$/.test(seit)) {
+          throw new HttpError(400, 'mailbox und seit (YYYY-MM-DD) sind Pflicht');
+        }
+        await assertMailboxAllowed(token, mailbox);
+        const result = await listGesendeteMails({ mailbox, seit });
         res.status(200).json(result);
         return;
       }
@@ -347,84 +361,104 @@ export default async function handler(req: Req, res: Res) {
       if (!subject) throw new HttpError(400, 'Betreff fehlt');
       const fromMailbox = asString(body.from);
       if (fromMailbox) await assertMailboxAllowed(token, fromMailbox);
-      type RawAtt = { name?: unknown; contentType?: unknown; onedrive_path?: unknown };
-      const requested = Array.isArray(body.attachments)
-        ? (body.attachments as RawAtt[]).filter((a) =>
-            typeof a.onedrive_path === 'string'
-            && (a.onedrive_path as string).trim() !== ''
-            // Segmentweise Traversal-Prüfung (siehe server-lib/paths) — vorher
-            // fiel ein Anhang mit „…" im Kennzeichen hier STILL weg.
-            && !istUnsichererPfad(a.onedrive_path as string),
-          )
-        : [];
-      // Nicht-Admins (Fahrer beim Submit): jeder Anhang-Pfad muss zu einem
-      // per RLS sichtbaren EIGENEN Formular gehören — sonst könnte ein
-      // manipulierter Request beliebige OneDrive-PDFs exfiltrieren.
-      // Manuelle base64-Anhänge sind dem Admin-Dialog vorbehalten.
-      if (user.role !== 'admin') {
-        const formularId = asString(body.formular_id);
-        if (requested.length > 0) {
-          if (!formularId) {
-            throw new HttpError(400, 'formular_id fehlt (für Anhänge erforderlich)');
+      // Rechnung/Gutschrift: Versand nach der Graph-Antwort protokollieren
+      // (Migration 111) — Erfolg erst bei bestätigtem Versand, sonst Fehler.
+      const versandBeleg = user.role === 'admin' ? parseVersandBeleg(body.versand_beleg) : null;
+      const versandDaten = {
+        empfaenger: to, cc, betreff: subject,
+        absender: fromMailbox ?? process.env.ONEDRIVE_USER_EMAIL ?? null,
+      };
+      try {
+        type RawAtt = { name?: unknown; contentType?: unknown; onedrive_path?: unknown };
+        const requested = Array.isArray(body.attachments)
+          ? (body.attachments as RawAtt[]).filter((a) =>
+              typeof a.onedrive_path === 'string'
+              && (a.onedrive_path as string).trim() !== ''
+              // Segmentweise Traversal-Prüfung (siehe server-lib/paths) — vorher
+              // fiel ein Anhang mit „…" im Kennzeichen hier STILL weg.
+              && !istUnsichererPfad(a.onedrive_path as string),
+            )
+          : [];
+        // Nicht-Admins (Fahrer beim Submit): jeder Anhang-Pfad muss zu einem
+        // per RLS sichtbaren EIGENEN Formular gehören — sonst könnte ein
+        // manipulierter Request beliebige OneDrive-PDFs exfiltrieren.
+        // Manuelle base64-Anhänge sind dem Admin-Dialog vorbehalten.
+        if (user.role !== 'admin') {
+          const formularId = asString(body.formular_id);
+          if (requested.length > 0) {
+            if (!formularId) {
+              throw new HttpError(400, 'formular_id fehlt (für Anhänge erforderlich)');
+            }
+            for (const a of requested) {
+              await assertCanAccessPdfPath(user, token, formularId, a.onedrive_path as string);
+            }
           }
-          for (const a of requested) {
-            await assertCanAccessPdfPath(user, token, formularId, a.onedrive_path as string);
+          const manual = body.manualAttachments;
+          if (Array.isArray(manual) && manual.length > 0) {
+            throw new HttpError(403, 'Manuelle Anhänge nur für Admins');
           }
         }
-        const manual = body.manualAttachments;
-        if (Array.isArray(manual) && manual.length > 0) {
-          throw new HttpError(403, 'Manuelle Anhänge nur für Admins');
+        const attachments: Array<{ name: string; contentType: string; bytes: Uint8Array }> = [];
+        const failed: string[] = [];
+        for (const a of requested) {
+          const path = a.onedrive_path as string;
+          const name = typeof a.name === 'string' ? a.name : path.split('/').pop() ?? 'anhang';
+          const ctype = typeof a.contentType === 'string' ? a.contentType : 'application/octet-stream';
+          const bytes = await downloadWithRetry(path, 3);
+          if (!bytes) { failed.push(name); continue; }
+          attachments.push({ name, contentType: ctype, bytes });
         }
-      }
-      const attachments: Array<{ name: string; contentType: string; bytes: Uint8Array }> = [];
-      const failed: string[] = [];
-      for (const a of requested) {
-        const path = a.onedrive_path as string;
-        const name = typeof a.name === 'string' ? a.name : path.split('/').pop() ?? 'anhang';
-        const ctype = typeof a.contentType === 'string' ? a.contentType : 'application/octet-stream';
-        const bytes = await downloadWithRetry(path, 3);
-        if (!bytes) { failed.push(name); continue; }
-        attachments.push({ name, contentType: ctype, bytes });
-      }
-      // Manuell hinzugefügte Dateien (base64 inline) anhängen. Defense-in-
-      // depth-Größencheck: das clientseitige Limit wird hier gespiegelt,
-      // damit ein manipulierter Request Graph sendMail nicht sprengt.
-      const MAX_MANUAL_TOTAL = 3 * 1024 * 1024;
-      const manual = decodeAttachments(body.manualAttachments);
-      const manualTotal = manual.reduce((sum, m) => sum + m.bytes.byteLength, 0);
-      if (manualTotal > MAX_MANUAL_TOTAL) {
-        throw new HttpError(413, `Manuelle Anhänge zu groß (${manualTotal} Bytes, max. ${MAX_MANUAL_TOTAL}).`);
-      }
-      for (const m of manual) attachments.push(m);
-      let bodyText = asString(body.body) ?? '';
-      let bodyHtml = asString(body.bodyHtml);
-      if (failed.length > 0) {
-        const note = `\n\n---\nHinweis: ${failed.length} Anhang/Anhänge konnten nicht geladen werden `
-          + `(${failed.join(', ')}). Bitte beim Admin nachfragen oder "E-Mail versenden" nutzen.`;
-        bodyText = `${bodyText}${note}`;
-        if (bodyHtml) {
-          // HTML-Variante hängt den Hinweis als Absatz an — escape vom
-          // Client-seitig erzeugten HTML wäre falsch, der Note-Text ist
-          // jedoch literal & ASCII-only.
-          const noteHtml = `<p style="color:#b45309">${note.replace(/\n/g, '<br/>')}</p>`;
-          bodyHtml = `${bodyHtml}${noteHtml}`;
+        // Manuell hinzugefügte Dateien (base64 inline) anhängen. Defense-in-
+        // depth-Größencheck: das clientseitige Limit wird hier gespiegelt,
+        // damit ein manipulierter Request Graph sendMail nicht sprengt.
+        const MAX_MANUAL_TOTAL = 3 * 1024 * 1024;
+        const manual = decodeAttachments(body.manualAttachments);
+        const manualTotal = manual.reduce((sum, m) => sum + m.bytes.byteLength, 0);
+        if (manualTotal > MAX_MANUAL_TOTAL) {
+          throw new HttpError(413, `Manuelle Anhänge zu groß (${manualTotal} Bytes, max. ${MAX_MANUAL_TOTAL}).`);
         }
+        for (const m of manual) attachments.push(m);
+        let bodyText = asString(body.body) ?? '';
+        let bodyHtml = asString(body.bodyHtml);
+        if (failed.length > 0) {
+          const note = `\n\n---\nHinweis: ${failed.length} Anhang/Anhänge konnten nicht geladen werden `
+            + `(${failed.join(', ')}). Bitte beim Admin nachfragen oder "E-Mail versenden" nutzen.`;
+          bodyText = `${bodyText}${note}`;
+          if (bodyHtml) {
+            // HTML-Variante hängt den Hinweis als Absatz an — escape vom
+            // Client-seitig erzeugten HTML wäre falsch, der Note-Text ist
+            // jedoch literal & ASCII-only.
+            const noteHtml = `<p style="color:#b45309">${note.replace(/\n/g, '<br/>')}</p>`;
+            bodyHtml = `${bodyHtml}${noteHtml}`;
+          }
+        }
+        await sendMail({
+          to, cc: cc.length > 0 ? cc : undefined,
+          subject, bodyText,
+          bodyHtml: bodyHtml ?? undefined,
+          from: fromMailbox ?? undefined,
+          attachments,
+        });
+        const versandProtokolliert = versandBeleg
+          ? await versandProtokollieren(token, versandBeleg, 'app', versandDaten)
+          : false;
+        res.status(200).json({
+          ok: true,
+          sent_to: to,
+          cc,
+          attached: attachments.length,
+          missing: failed,
+          versand_protokolliert: versandProtokolliert,
+        });
+        return;
+      } catch (sendErr) {
+        if (versandBeleg) {
+          await versandProtokollieren(token, versandBeleg, 'fehlgeschlagen', {
+            ...versandDaten, fehler: sendErr instanceof Error ? sendErr.message : String(sendErr),
+          });
+        }
+        throw sendErr;
       }
-      await sendMail({
-        to, cc: cc.length > 0 ? cc : undefined,
-        subject, bodyText,
-        bodyHtml: bodyHtml ?? undefined,
-        from: fromMailbox ?? undefined,
-        attachments,
-      });
-      res.status(200).json({
-        ok: true,
-        sent_to: to,
-        cc,
-        attached: attachments.length,
-        missing: failed,
-      });
-      return;
     }
 
     throw new HttpError(400, `Unbekannte POST-Action: ${action}`);

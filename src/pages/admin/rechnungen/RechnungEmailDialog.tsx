@@ -173,6 +173,7 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
         subject, body, bodyHtml,
         from: from || undefined,
         attachments,
+        versand_beleg: { typ: 'rechnung', id: rechnung.id },
       });
       if (result.missing.length > 0) {
         setError(

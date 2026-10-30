@@ -226,6 +226,7 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, onClose, onSent
         from: from || undefined,
         attachments,
         manualAttachments: manualAttachments.length > 0 ? manualAttachments : undefined,
+        versand_beleg: { typ: 'gutschrift', id: gutschrift.id },
       });
       if (result.missing.length > 0) {
         setError(

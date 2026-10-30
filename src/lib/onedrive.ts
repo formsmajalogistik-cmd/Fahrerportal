@@ -468,6 +468,8 @@ export interface SendEmailResult {
    *  Die Mail wurde trotzdem versendet (mit Hinweis im Body). */
   missing: string[];
   attached: number;
+  /** Rechnung/Gutschrift: Versand serverseitig im Verlauf gespeichert. */
+  versand_protokolliert?: boolean;
 }
 
 /**
@@ -519,6 +521,9 @@ export async function sendEmail(args: {
    *  PFLICHT sobald Anhänge dabei sind — der Server autorisiert jeden
    *  Anhang-Pfad gegen dieses Formular (RLS). */
   formular_id?: string;
+  /** Rechnung/Gutschrift: der Server protokolliert den Versand nach der
+   *  Graph-Antwort im Versand-Verlauf (Migration 111). */
+  versand_beleg?: { typ: 'rechnung' | 'gutschrift'; id: string };
 }): Promise<SendEmailResult> {
   const resp = await fetchWithAuthRetry('/api/emails?action=eingang-send', {
     method: 'POST',
@@ -533,5 +538,6 @@ export async function sendEmail(args: {
   return {
     missing: Array.isArray(json.missing) ? json.missing : [],
     attached: typeof json.attached === 'number' ? json.attached : 0,
+    versand_protokolliert: json.versand_protokolliert === true,
   };
 }

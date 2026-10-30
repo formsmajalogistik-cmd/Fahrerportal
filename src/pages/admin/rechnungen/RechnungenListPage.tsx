@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { seiteBegrenzen, useListenZustand, useWiederherstellen } from '../../../lib/useListenZustand';
+import {
+  alsVersendetMarkieren, ladeVersand, versandStatus, type VersandEintrag, type VersandStatus,
+} from '../../../lib/belegVersand';
+import { VersandBadge } from '../../../components/versand/VersandBadge';
+import { VersendetMarkierenDialog } from '../../../components/versand/VersendetMarkierenDialog';
+import { VersandAltbestandDialog } from '../../../components/versand/VersandAltbestandDialog';
 import { supabase } from '../../../lib/supabase';
 import { ladeInBloecken } from '../../../lib/ladeInBloecken';
+import { neuesteBelegeZuerst } from '../../../lib/belegNummer';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { formatDate, formatEuro } from '../../../lib/touren';
@@ -35,17 +43,29 @@ export function RechnungenListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filter
-  const [yearFilter, setYearFilter] = useState<number | 'alle'>(new Date().getFullYear());
-  const [agFilter, setAgFilter] = useState<string>('');
+  // Filter, Suche und Seite stehen in der URL (?jahr=…&ag=…&status=…&
+  // versand=…&suche=…&seite=…) — so führt „Zurück" aus einer Rechnung
+  // genau auf diesen Stand (lib/useListenZustand).
+  const liste = useListenZustand('rechnungen');
+  const jahrParam = liste.wert('jahr', String(new Date().getFullYear()));
+  const yearFilter: number | 'alle' = jahrParam === 'alle' ? 'alle' : Number(jahrParam) || new Date().getFullYear();
+  const agFilter = liste.wert('ag');
   /** Optionaler Rechnungsempfänger-Filter, abhängig vom Auftraggeber-Filter:
    *  Auswahlmöglichkeiten kommen aus den Empfängern der Rechnungen des
    *  aktuell gefilterten Auftraggebers. Bei agFilter="" ist das Feld
    *  verborgen und der Filter wird ignoriert. */
-  const [empfaengerFilter, setEmpfaengerFilter] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<RechnungStatus | 'alle'>('alle');
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const empfaengerFilter = liste.wert('empf');
+  const statusFilter = liste.wert('status', 'alle') as RechnungStatus | 'alle';
+  /** '' = alle; 'nicht_versendet' = noch nicht (erfolgreich) versendet. */
+  const versandFilter = liste.wert('versand');
+  const search = liste.wert('suche');
+  const seiteParam = Number(liste.wert('seite', '1'));
+
+  // Versandstatus (Migration 111)
+  const [versandMap, setVersandMap] = useState<Map<string, VersandEintrag[]>>(new Map());
+  const [versandFehlt, setVersandFehlt] = useState(false);
+  const [markierenOffen, setMarkierenOffen] = useState(false);
+  const [altbestandOffen, setAltbestandOffen] = useState(false);
 
   // Mehrfach-Auswahl für Sammelaktionen (als bezahlt / offen markieren).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -64,7 +84,7 @@ export function RechnungenListPage() {
     // Beide Seiten parallel laden — Rechnungen + Auftraggeber-Optionen.
     // Alle Rechnungen in Blöcken — vorher `.limit(500)`: ältere Rechnungen
     // tauchten in Liste und Filtern nicht mehr auf.
-    const [rBloecke, aRes] = await Promise.all([
+    const [rBloecke, aRes, vRes] = await Promise.all([
       ladeInBloecken((v, bis) => supabase
         .from('rechnungen')
         // Egress-Optimierung: nur die Spalten, die die Listen-Ansicht
@@ -74,19 +94,22 @@ export function RechnungenListPage() {
         // email_versendet_am sind nur im Detail relevant — Detail-
         // Page lädt sich ihre Zeile separat mit *.
         .select(`
-          id, rechnungsnummer, auftraggeber_id, datum,
+          id, rechnungsnummer, auftraggeber_id, datum, created_at,
           empfaenger_typ, rechnungsadresse_firma, ansprechpartner,
           leistungszeitraum_von, leistungszeitraum_bis,
-          netto_summe, brutto_summe, status, ist_auslagen_rechnung,
+          netto_summe, brutto_summe, status, ist_auslagen_rechnung, email_versendet_am,
           auftraggeber:auftraggeber_id (id, name),
           rechnungsempfaenger:rechnungsempfaenger_id (id, name),
           positionen:rechnungspositionen(count)
         `)
+        // Nur für stabiles Blättern beim Laden; die angezeigte Reihenfolge
+        // (Nummer numerisch, Re_26/1000 vor Re_26/999) setzt
+        // neuesteBelegeZuerst unten.
         .order('datum', { ascending: false })
-        .order('rechnungsnummer', { ascending: false })
         .order('id', { ascending: true })
         .range(v, bis)),
       supabase.from('auftraggeber').select('id, name').order('name'),
+      ladeVersand('rechnung').catch(() => ({ map: new Map<string, VersandEintrag[]>(), fehlt: true })),
     ]);
     const rRes = { data: rBloecke.data, error: rBloecke.error ? { message: rBloecke.error } : null };
     if (rRes.error) { setError(rRes.error.message); setLoading(false); return; }
@@ -103,10 +126,37 @@ export function RechnungenListPage() {
       ...r,
       positionen_count: r.positionen?.[0]?.count ?? 0,
     }));
-    setRows(list);
+    setRows(neuesteBelegeZuerst(list, (r) => r.rechnungsnummer, (r) => r.datum, (r) => r.created_at));
     setAuftraggeber(aRes.data ?? []);
+    setVersandMap(vRes.map);
+    setVersandFehlt(vRes.fehlt);
     setLoading(false);
   }, []);
+
+  const versandById = useMemo(() => {
+    const m = new Map<string, VersandStatus>();
+    for (const r of rows) m.set(r.id, versandStatus('rechnung', r.status, versandMap.get(r.id) ?? []));
+    return m;
+  }, [rows, versandMap]);
+  const nichtVersendet = (id: string) => {
+    const a = versandById.get(id)?.art;
+    return a === 'nicht_versendet' || a === 'fehlgeschlagen';
+  };
+  const nichtVersendetZahl = useMemo(
+    () => rows.filter((r) => { const a = versandById.get(r.id)?.art; return a === 'nicht_versendet' || a === 'fehlgeschlagen'; }).length,
+    [rows, versandById],
+  );
+  const fehlgeschlagenZahl = useMemo(
+    () => rows.filter((r) => versandById.get(r.id)?.art === 'fehlgeschlagen').length,
+    [rows, versandById],
+  );
+
+  /** Filter setzen: URL (Seite 1) + Auswahl leeren — sonst könnten nicht
+   *  mehr sichtbare (ausgefilterte) Rechnungen in der Sammelaktion landen. */
+  function setFilter(patch: Record<string, string | number | null>) {
+    liste.setze(patch);
+    setSelected(new Set());
+  }
 
   useEffect(() => { void load(); }, [load]);
 
@@ -144,6 +194,7 @@ export function RechnungenListPage() {
       } else if (agFilter && r.auftraggeber_id !== agFilter) return false;
       if (agFilter && empfaengerFilter && r.rechnungsempfaenger?.id !== empfaengerFilter) return false;
       if (statusFilter !== 'alle' && r.status !== statusFilter) return false;
+      if (versandFilter === 'nicht_versendet' && !nichtVersendet(r.id)) return false;
       if (q) {
         const hay = [
           r.rechnungsnummer,
@@ -157,15 +208,8 @@ export function RechnungenListPage() {
       }
       return true;
     });
-  }, [rows, yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
-
-  // Reset Pagination + Auswahl bei Filter-Änderungen — sonst könnten
-  // nicht mehr sichtbare (ausgefilterte) Rechnungen in der Sammelaktion
-  // landen, ohne dass man sie sieht.
-  useEffect(() => {
-    setPage(1);
-    setSelected(new Set());
-  }, [yearFilter, agFilter, empfaengerFilter, statusFilter, search]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, yearFilter, agFilter, empfaengerFilter, statusFilter, versandFilter, versandById, search]);
 
   // Empfänger-Optionen aus den geladenen Rechnungen, sobald ein
   // Auftraggeber gefiltert wird — eine Map nach Id mit Name.
@@ -187,11 +231,14 @@ export function RechnungenListPage() {
   // onChange-Handler des Dropdowns auf — siehe weiter unten —
   // damit der React-Linter (set-state-in-effect) zufrieden ist.
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Gibt es die Seite (nach Filter) nicht mehr → letzte vorhandene.
+  const page = loading ? Math.max(1, seiteParam || 1) : seiteBegrenzen(seiteParam, pageCount);
   const pageRows = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [filtered, page],
   );
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useWiederherstellen(liste.wiederherstellen, !loading);
 
   // KPI berechnen aus filtered (das ist der relevante Zeitraum/Filter).
   const kpi = useMemo(() => {
@@ -291,12 +338,29 @@ export function RechnungenListPage() {
         </button>
       </div>
 
+      {/* Hinweis: Rechnungen ohne Versand (Entwürfe/stornierte zählen nicht) */}
+      {!loading && !versandFehlt && nichtVersendetZahl > 0 && versandFilter !== 'nicht_versendet' && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <button
+            type="button"
+            className="text-left font-semibold underline-offset-2 hover:underline"
+            onClick={() => setFilter({ versand: 'nicht_versendet', jahr: 'alle', status: null, ag: null, empf: null, suche: null })}
+          >
+            ⚠ {nichtVersendetZahl} Rechnung{nichtVersendetZahl === 1 ? ' ist' : 'en sind'} noch nicht versendet
+            {fehlgeschlagenZahl > 0 && ` (davon ${fehlgeschlagenZahl} Versand fehlgeschlagen)`} — anzeigen
+          </button>
+          <button type="button" className="text-xs font-medium underline" onClick={() => setAltbestandOffen(true)}>
+            Versandstatus für bestehende Rechnungen übernehmen …
+          </button>
+        </div>
+      )}
+
       {/* Jahres-Pills */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">Jahr</span>
         <button
           type="button"
-          onClick={() => setYearFilter('alle')}
+          onClick={() => setFilter({ jahr: 'alle' })}
           className={`rounded-full px-3 py-1 text-xs font-medium ${
             yearFilter === 'alle' ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light'
           }`}
@@ -307,7 +371,7 @@ export function RechnungenListPage() {
           <button
             key={y}
             type="button"
-            onClick={() => setYearFilter(y)}
+            onClick={() => setFilter({ jahr: y === new Date().getFullYear() ? null : y })}
             className={`rounded-full px-3 py-1 text-xs font-medium ${
               yearFilter === y ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light'
             }`}
@@ -329,7 +393,7 @@ export function RechnungenListPage() {
             id="ag-filter"
             className="input"
             value={agFilter}
-            onChange={(e) => { setAgFilter(e.target.value); setEmpfaengerFilter(''); }}
+            onChange={(e) => setFilter({ ag: e.target.value, empf: null })}
           >
             <option value="">Alle</option>
             <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
@@ -345,7 +409,7 @@ export function RechnungenListPage() {
               id="empf-filter"
               className="input"
               value={empfaengerFilter}
-              onChange={(e) => setEmpfaengerFilter(e.target.value)}
+              onChange={(e) => setFilter({ empf: e.target.value })}
             >
               <option value="">Alle</option>
               {empfaengerOptions.map((e) => (
@@ -361,7 +425,7 @@ export function RechnungenListPage() {
             className="input"
             placeholder="Rechnungsnummer, Auftraggeber, Empfänger …"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => setFilter({ suche: e.target.value })}
           />
         </div>
       </div>
@@ -377,7 +441,7 @@ export function RechnungenListPage() {
             <button
               key={s}
               type="button"
-              onClick={() => setStatusFilter(s)}
+              onClick={() => setFilter({ status: s === 'alle' ? null : s })}
               className={`rounded-full px-3 py-1 text-xs font-medium ${
                 active ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light'
               }`}
@@ -387,6 +451,25 @@ export function RechnungenListPage() {
           );
         })}
       </div>
+
+      {/* Versand-Filter */}
+      {!versandFehlt && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-maja-muted">Versand</span>
+          {([['', 'Alle'], ['nicht_versendet', `Nicht versendet (${nichtVersendetZahl})`]] as const).map(([v, label]) => (
+            <button
+              key={v || 'alle'}
+              type="button"
+              onClick={() => setFilter({ versand: v || null })}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${
+                versandFilter === v ? 'bg-maja-navy text-white' : 'bg-white text-maja-navy hover:bg-maja-light'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* KPI-Karten */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -422,6 +505,16 @@ export function RechnungenListPage() {
           >
             Als offen markieren
           </button>
+          {!versandFehlt && (
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={bulkBusy}
+              onClick={() => setMarkierenOffen(true)}
+            >
+              Ausgewählte als versendet markieren
+            </button>
+          )}
           <button
             type="button"
             className="text-sm font-medium text-maja-muted hover:text-maja-navy hover:underline"
@@ -459,14 +552,21 @@ export function RechnungenListPage() {
                 <th className="px-3 py-2 text-right font-semibold">Netto</th>
                 <th className="px-3 py-2 text-right font-semibold">Brutto</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
+                {!versandFehlt && <th className="px-3 py-2 font-semibold">Versand</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-maja-navy/10">
               {pageRows.map((r) => (
                 <tr
                   key={r.id}
-                  className="cursor-pointer hover:bg-maja-light/40"
-                  onClick={() => navigate(`/rechnungen/${r.id}`)}
+                  data-rechnung={r.id}
+                  className={`cursor-pointer hover:bg-maja-light/40 ${
+                    liste.hervorgehoben === r.id ? 'bg-amber-50 ring-2 ring-inset ring-amber-300 transition-colors' : ''
+                  }`}
+                  onClick={() => {
+                    liste.merkeAbsprung(r.id);
+                    navigate(`/rechnungen/${r.id}`, { state: { vonListe: true } });
+                  }}
                 >
                   <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                     <input
@@ -515,6 +615,11 @@ export function RechnungenListPage() {
                     {formatEuro(Number(r.brutto_summe))}
                   </td>
                   <td className="px-3 py-2"><RechnungStatusBadge status={r.status} /></td>
+                  {!versandFehlt && (
+                    <td className="px-3 py-2">
+                      {versandById.get(r.id) && <VersandBadge status={versandById.get(r.id)!} />}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -528,14 +633,14 @@ export function RechnungenListPage() {
             type="button"
             className="btn-secondary px-3 py-1"
             disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => liste.setze({ seite: page - 1 > 1 ? page - 1 : null })}
           >Zurück</button>
           <span className="text-maja-muted">Seite {page} / {pageCount}</span>
           <button
             type="button"
             className="btn-secondary px-3 py-1"
             disabled={page >= pageCount}
-            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            onClick={() => liste.setze({ seite: Math.min(pageCount, page + 1) })}
           >Weiter</button>
         </div>
       )}
@@ -560,6 +665,33 @@ export function RechnungenListPage() {
           confirmLabel="Als offen markieren"
           onConfirm={() => runBulkStatus('offen')}
           onClose={() => setBulkAction(null)}
+        />
+      )}
+
+      {markierenOffen && (
+        <VersendetMarkierenDialog
+          titel={`${selected.size} Rechnung${selected.size === 1 ? '' : 'en'} als versendet markieren`}
+          hinweis="Entwürfe werden übersprungen. Jede Markierung wird mit Benutzer und Zeitpunkt protokolliert."
+          onCancel={() => setMarkierenOffen(false)}
+          onConfirm={async (weg, datum, notiz) => {
+            const r = await alsVersendetMarkieren('rechnung', [...selected], weg, datum, notiz);
+            setMarkierenOffen(false);
+            setSelected(new Set());
+            await load();
+            showToast(`${r.markiert} Rechnung${r.markiert === 1 ? '' : 'en'} als versendet markiert`
+              + (r.uebersprungen.length ? ` (${r.uebersprungen.length} übersprungen: ${r.uebersprungen.map((u) => u.nummer).join(', ')})` : ''));
+          }}
+        />
+      )}
+      {altbestandOffen && (
+        <VersandAltbestandDialog
+          typ="rechnung"
+          belege={rows.map((r) => ({
+            id: r.id, nummer: r.rechnungsnummer, datum: r.datum, status: r.status, email_versendet_am: r.email_versendet_am,
+          }))}
+          versand={versandMap}
+          onClose={() => setAltbestandOffen(false)}
+          onDone={(text) => { setAltbestandOffen(false); void load(); showToast(text); }}
         />
       )}
 

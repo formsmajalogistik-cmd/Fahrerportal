@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
+import { neuesteBelegeZuerst } from '../../../lib/belegNummer';
 import { Spinner } from '../../../components/Spinner';
 import { formatDate, formatEuro } from '../../../lib/touren';
 import {
@@ -79,6 +80,9 @@ export function GutschriftNewPage() {
   const [rechnungId, setRechnungId] = useState(vorgabeRechnung ?? '');
   const [empfaengerId, setEmpfaengerId] = useState('');
   const [nummer, setNummer] = useState('');
+  /** Unveränderter Vorschlag wird nicht mitgeschickt — die Datenbank
+   *  vergibt die Nummer beim Speichern (keine Doppelvergabe). */
+  const [nummerVorschlag, setNummerVorschlag] = useState<string | null>(null);
   const [datum, setDatum] = useState(todayIso());
   const [zeitraumVon, setZeitraumVon] = useState('');
   const [zeitraumBis, setZeitraumBis] = useState('');
@@ -111,9 +115,9 @@ export function GutschriftNewPage() {
     setEinleitung(sCfg.einleitungstext);
     setSchluss(sCfg.schlusstext);
     setAuftraggeber(aRes.data ?? []);
-    setRechnungen((rRes.data as unknown as RechnungOption[]) ?? []);
+    setRechnungen(neuesteBelegeZuerst((rRes.data as unknown as RechnungOption[]) ?? [], (r) => r.rechnungsnummer, (r) => r.datum));
     const nr = await naechsteGutschriftNr(new Date().getFullYear());
-    if (nr) setNummer(nr);
+    if (nr) { setNummer(nr); setNummerVorschlag(nr); }
     setLoading(false);
   }, []);
 
@@ -296,7 +300,7 @@ export function GutschriftNewPage() {
         status: 'entwurf',
       };
       // Leeres Nummernfeld → der Trigger vergibt die nächste freie Nummer.
-      if (nummer.trim()) insertPayload.gutschrift_nr = nummer.trim();
+      if (nummer.trim() && nummer.trim() !== nummerVorschlag) insertPayload.gutschrift_nr = nummer.trim();
 
       const { data: row, error: err } = await supabase
         .from('gutschriften')
