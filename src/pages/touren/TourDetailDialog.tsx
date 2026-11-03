@@ -45,6 +45,7 @@ import {
   auslagenAnpassungVorschlagen, formatDauer, kategorieSchluessel, type AnpassungsVorschlag,
 } from '../../lib/auslagenPreis';
 import { AuslagenHinweis } from '../../components/AuslagenHinweis';
+import { AuslagenTourStatus } from '../../components/auslagen/AuslagenTourStatus';
 import {
   loadTourProtokollZuweisungen, ProtokollSection,
   type TourProtokollZuweisung,
@@ -427,6 +428,8 @@ export function TourDetailDialog({
     kategorie: neueKategorie, mengeText: neueAnzahl, dauerText: neueDauer,
   });
   const [tourRechnungen, setTourRechnungen] = useState<string[]>([]);
+  /** Zähler: Änderungsprotokoll neu laden (z.B. nach „Keine Auslagen"). */
+  const [aenderungenStand, setAenderungenStand] = useState(0);
   /** Auftraggeber gewechselt → Auslagen an neue Preisliste anpassen? */
   const [agWechselFrage, setAgWechselFrage] = useState<null | {
     agName: string; vorschlaege: AnpassungsVorschlag[]; manuellBleiben: number;
@@ -1128,6 +1131,9 @@ export function TourDetailDialog({
     setAddingZusatz(false);
     if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setZusaetze((z) => [...z, data as TourZusatz]);
+    // Ein evtl. gesetztes „Keine Auslagen" hat die Datenbank entfernt und
+    // protokolliert (Migration 112) — Protokoll neu laden.
+    setAenderungenStand((n) => n + 1);
     automatik.zuruecksetzen();
     setNeueKategorie('');
     setNeueAnzahl('1');
@@ -1360,7 +1366,7 @@ export function TourDetailDialog({
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} />
+        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} protokollStand={aenderungenStand} />
       ) : (
         <EditMode
           draft={draft}
@@ -1429,6 +1435,9 @@ export function TourDetailDialog({
             {zusaetze.length} {zusaetze.length === 1 ? 'Eintrag' : 'Einträge'}
           </span>
         </div>
+
+        {/* Auslagen-Status + „Keine Auslagen" (Migration 112, nur Admin) */}
+        <AuslagenTourStatus tour={tour} zusaetze={zusaetze} onChanged={() => { onChanged(); setAenderungenStand((n) => n + 1); }} />
 
         {isAdmin && (() => {
           // Bei ABA/ABC sind zwei Kennzeichen möglich; der Admin wählt
@@ -2067,9 +2076,11 @@ interface ViewModeProps {
   zugaenge: GreimelZugang[];
   isAdmin: boolean;
   viewBreakdown: TourPriceBreakdown | null;
+  /** Änderungsprotokoll neu laden, wenn sich der Zähler ändert. */
+  protokollStand?: number;
 }
 
-function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewBreakdown }: ViewModeProps) {
+function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewBreakdown, protokollStand }: ViewModeProps) {
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
 
@@ -2224,7 +2235,7 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewB
         )}
       </div>
 
-      {isAdmin && <TourAenderungsProtokoll tourId={tour.id} stand={tour} />}
+      {isAdmin && <TourAenderungsProtokoll key={protokollStand} tourId={tour.id} stand={tour} />}
     </div>
   );
 }

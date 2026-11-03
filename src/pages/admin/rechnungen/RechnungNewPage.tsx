@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { ladeInBloecken } from '../../../lib/ladeInBloecken';
@@ -18,6 +18,12 @@ import {
   snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../../../lib/manuelleEmpfaenger';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
+import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefDialog';
+import {
+  formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, pruefeRechnungAuslagen,
+  type Auffaelligkeit,
+} from '../../../lib/auslagenStatus';
+import { ladeTourenPerId } from '../../../lib/rechnungNeuLaden';
 import { SummenBlock } from './SummenBlock';
 import {
   emptyManuellePosition, newKey, type EditorPosition,
@@ -656,6 +662,71 @@ export function RechnungNewPage() {
     return { von: von ?? rechnungsdatum, bis: bis ?? rechnungsdatum };
   }, [touren, rechnungsdatum]);
 
+  // ---- Auslagen-Prüfung vor dem Speichern (nicht blockierend) ----------
+  // Aktueller Stand für „Erneut prüfen" nach Aktionen im Dialog (State-
+  // Updates sind dort noch nicht durchgerendert).
+  const editorRef = useRef({ haupt, auslagen, touren });
+  useEffect(() => { editorRef.current = { haupt, auslagen, touren }; }, [haupt, auslagen, touren]);
+  const [pruefung, setPruefung] = useState<null | { status: 'entwurf' | 'offen'; liste: Auffaelligkeit[] }>(null);
+
+  async function auslagenPruefen(): Promise<Auffaelligkeit[]> {
+    if (istManuell || !auftraggeber) return [];
+    const fmt = formatAusRechnungsformat(auftraggeber.rechnungsformat);
+    const { haupt: h, auslagen: a, touren: tl } = editorRef.current;
+    const pruefungen: Array<{ art: 'normal' | 'auslagen'; tourIds: string[]; positionen: EditorPosition[] }> = [];
+    const ids = (l: EditorPosition[]) => l.map((p) => p.tour_id).filter((x): x is string => !!x);
+    if (auslagenOnly) {
+      pruefungen.push({ art: 'auslagen', tourIds: [...tl.map((t) => t.id), ...ids(a)], positionen: a });
+    } else if (fmt.getrennt) {
+      if (erstelleAuslagen) pruefungen.push({ art: 'auslagen', tourIds: [...tl.map((t) => t.id), ...ids(a)], positionen: a });
+    } else {
+      pruefungen.push({ art: 'normal', tourIds: ids([...h, ...a]), positionen: [...h, ...a] });
+    }
+    const alleIds = [...new Set(pruefungen.flatMap((x) => x.tourIds))];
+    if (alleIds.length === 0) return [];
+    const [tourDaten, stand] = await Promise.all([ladeAuslagenTouren(alleIds), ladeAbrechnungsStand(alleIds)]);
+    const byId = new Map(tourDaten.map((t) => [t.id, t]));
+    return pruefungen.flatMap((x) => pruefeRechnungAuslagen({
+      art: x.art, fmt, stand, positionen: x.positionen,
+      touren: [...new Set(x.tourIds)].map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t),
+    }));
+  }
+
+  async function speichernMitPruefung(status: 'entwurf' | 'offen') {
+    setError(null);
+    try {
+      const liste = await auslagenPruefen();
+      if (liste.length > 0) { setPruefung({ status, liste }); return; }
+    } catch (e) {
+      // Die Prüfung ist eine Hilfe — scheitert sie, wird wie bisher gespeichert.
+      console.warn('[Rechnungen] Auslagen-Prüfung fehlgeschlagen', e);
+    }
+    await speichern(status);
+  }
+
+  /** Fehlende Zusätze einer Tour als Positionen übernehmen. */
+  async function auslagenUebernehmen(a: Auffaelligkeit): Promise<string> {
+    const [tour] = await ladeTourenPerId([a.tour.id]);
+    if (!tour) return 'Tour nicht gefunden.';
+    const zielAuslagen = auslagenOnly || getrennt;
+    // Ohne Zusatz-Positionen im Format (z.B. „zusammengefasst") einzeln stellen.
+    const fmtEinzeln = format.zusaetze_darstellung === 'einzeln' || format.getrennte_auslagen_rechnung
+      ? format : { ...format, zusaetze_darstellung: 'einzeln' as const };
+    const fehlend = new Set(a.fehlend.map((z) => z.id));
+    const neu = generatePositionenFromTouren([tour], fmtEinzeln, { modus: zielAuslagen ? 'auslagen' : 'beides' })
+      .filter((p) => p.zusatz_id && fehlend.has(p.zusatz_id))
+      .map((p) => ({ ...p, key: newKey(zielAuslagen ? 'aus' : 'p') }));
+    if (neu.length === 0) return 'Diese Auslagen gehören nicht auf diese Rechnung (z.B. auf die Touren-Rechnung) — bitte dort ergänzen.';
+    if (zielAuslagen) {
+      editorRef.current = { ...editorRef.current, auslagen: [...editorRef.current.auslagen, ...neu] };
+      setAuslagen((rows) => [...rows, ...neu]);
+    } else {
+      editorRef.current = { ...editorRef.current, haupt: [...editorRef.current.haupt, ...neu] };
+      setHaupt((rows) => [...rows, ...neu]);
+    }
+    return `${neu.length} ${neu.length === 1 ? 'Auslage' : 'Auslagen'} von ${a.tour.tour_nr ?? 'der Tour'} in die Rechnung übernommen.`;
+  }
+
   async function speichern(status: 'entwurf' | 'offen') {
     if (!istManuell && !auftraggeber) {
       setError('Bitte einen Auftraggeber wählen.'); return;
@@ -1218,7 +1289,7 @@ export function RechnungNewPage() {
         <button
           type="button"
           className="btn-secondary"
-          onClick={() => void speichern('entwurf')}
+          onClick={() => void speichernMitPruefung('entwurf')}
           disabled={saving !== null}
         >
           {saving === 'entwurf' ? 'Speichert …' : 'Als Entwurf speichern'}
@@ -1226,12 +1297,27 @@ export function RechnungNewPage() {
         <button
           type="button"
           className="btn-primary"
-          onClick={() => void speichern('offen')}
+          onClick={() => void speichernMitPruefung('offen')}
           disabled={saving !== null}
         >
           {saving === 'offen' ? 'Erstellt …' : 'Rechnung erstellen'}
         </button>
       </div>
+
+      {pruefung && (
+        <AuslagenPruefDialog
+          titel="Auslagen prüfen"
+          auffaelligkeiten={pruefung.liste}
+          fortfahrenLabel={pruefung.status === 'offen' ? 'Rechnung erstellen' : 'Als Entwurf speichern'}
+          onErneutPruefen={async () => {
+            const liste = await auslagenPruefen();
+            setPruefung((p) => (p ? { ...p, liste } : p));
+          }}
+          onAuslagenHinzufuegen={auslagenUebernehmen}
+          onAbbrechen={() => setPruefung(null)}
+          onFortfahren={() => { const s = pruefung.status; setPruefung(null); void speichern(s); }}
+        />
+      )}
 
       {reloadConfirm && (
         <ConfirmDialog

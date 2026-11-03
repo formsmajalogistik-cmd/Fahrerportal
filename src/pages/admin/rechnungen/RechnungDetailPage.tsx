@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
@@ -7,7 +7,14 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import {
   DEFAULT_GUTSCHRIFT_SETTINGS, loadGutschriftSettings,
 } from '../../../lib/gutschriftSettings';
-import { berechneSummenProUst, parseRechnungsformat } from '../../../lib/rechnungsformat';
+import {
+  berechneSummenProUst, generatePositionenFromTouren, parseRechnungsformat,
+} from '../../../lib/rechnungsformat';
+import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefDialog';
+import {
+  formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, ladeTourenZuRechnungstagen,
+  pruefeRechnungAuslagen, rechnungstageDerTouren, type Auffaelligkeit,
+} from '../../../lib/auslagenStatus';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
@@ -349,8 +356,8 @@ export function RechnungDetailPage() {
     }
   }
 
-  async function speicherePositionen() {
-    if (!rechnung) return;
+  async function speicherePositionen(liste: EditorPosition[] = positionen): Promise<boolean> {
+    if (!rechnung) return false;
     setSavingPositions(true);
     setError(null);
     try {
@@ -360,7 +367,7 @@ export function RechnungDetailPage() {
       const { error: delErr } = await supabase
         .from('rechnungspositionen').delete().eq('rechnung_id', rechnung.id);
       if (delErr) throw delErr;
-      const rows = positionen.map((p, idx) => ({
+      const rows = liste.map((p, idx) => ({
         rechnung_id: rechnung.id,
         position_nr: idx + 1,
         bezeichnung: p.bezeichnung,
@@ -377,7 +384,7 @@ export function RechnungDetailPage() {
         const { error: insErr } = await supabase.from('rechnungspositionen').insert(rows);
         if (insErr) throw insErr;
       }
-      const sum = berechneSummenProUst(positionen, Number(rechnung.ust_satz) || 0);
+      const sum = berechneSummenProUst(liste, Number(rechnung.ust_satz) || 0);
       const { error: uErr } = await supabase
         .from('rechnungen')
         .update({
@@ -390,8 +397,10 @@ export function RechnungDetailPage() {
       setEditingPos(false);
       setReloadInfo(null);
       await load();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
+      return false;
     } finally {
       setSavingPositions(false);
     }
@@ -404,6 +413,62 @@ export function RechnungDetailPage() {
       return;
     }
     setEditingPos(true);
+  }
+
+  // ---- Auslagen-Prüfung vor „Rechnung erstellen" / Versand (blockiert nie)
+  const positionenRef = useRef(positionen);
+  useEffect(() => { positionenRef.current = positionen; }, [positionen]);
+  const [pruefung, setPruefung] = useState<null | { anlass: 'erstellen' | 'versenden'; liste: Auffaelligkeit[]; weiter: () => void }>(null);
+
+  async function auslagenPruefen(): Promise<Auffaelligkeit[]> {
+    if (!rechnung?.auftraggeber_id) return [];
+    const { data: ag } = await supabase.from('auftraggeber').select('rechnungsformat').eq('id', rechnung.auftraggeber_id).maybeSingle();
+    const fmt = formatAusRechnungsformat(ag?.rechnungsformat ?? null);
+    const art = rechnung.ist_auslagen_rechnung ? 'auslagen' as const : 'normal' as const;
+    if (art === 'normal' && fmt.getrennt) return [];
+    const pos = positionenRef.current;
+    const posTouren = [...new Set(pos.map((p) => p.tour_id).filter((x): x is string => !!x))];
+    let ids = posTouren;
+    if (art === 'auslagen') {
+      // Auslagenrechnung: alle Touren des Auftraggebers am selben
+      // Rechnungstag wie die Touren dieser Rechnung (so entsteht sie heute).
+      const tage = posTouren.length ? await rechnungstageDerTouren(posTouren) : [rechnung.leistungszeitraum_bis];
+      const amTag = await ladeTourenZuRechnungstagen(rechnung.auftraggeber_id, tage.filter(Boolean) as string[]);
+      ids = [...new Set([...posTouren, ...amTag.map((t) => t.id)])];
+    }
+    if (ids.length === 0) return [];
+    const [touren, stand] = await Promise.all([ladeAuslagenTouren(ids), ladeAbrechnungsStand(ids)]);
+    return pruefeRechnungAuslagen({ art, fmt, touren, positionen: pos, stand, eigeneRechnungIds: [rechnung.id] });
+  }
+
+  async function mitAuslagenPruefung(anlass: 'erstellen' | 'versenden', weiter: () => void) {
+    try {
+      const liste = await auslagenPruefen();
+      if (liste.length > 0) { setPruefung({ anlass, liste, weiter }); return; }
+    } catch (e) {
+      console.warn('[Rechnungen] Auslagen-Prüfung fehlgeschlagen', e);
+    }
+    weiter();
+  }
+
+  /** Fehlende Zusätze als Positionen anhängen und die Rechnung speichern. */
+  async function auslagenUebernehmen(a: Auffaelligkeit): Promise<string> {
+    if (!rechnung?.auftraggeber_id) return 'Rechnung ohne Auftraggeber.';
+    const [tour] = await ladeTourenPerId([a.tour.id]);
+    if (!tour) return 'Tour nicht gefunden.';
+    const { data: ag } = await supabase.from('auftraggeber').select('rechnungsformat').eq('id', rechnung.auftraggeber_id).maybeSingle();
+    const format = parseRechnungsformat(ag?.rechnungsformat ?? null);
+    const fmtEinzeln = format.zusaetze_darstellung === 'einzeln' || format.getrennte_auslagen_rechnung
+      ? format : { ...format, zusaetze_darstellung: 'einzeln' as const };
+    const fehlend = new Set(a.fehlend.map((z) => z.id));
+    const neu = generatePositionenFromTouren([tour], fmtEinzeln, { modus: rechnung.ist_auslagen_rechnung ? 'auslagen' : 'beides' })
+      .filter((p) => p.zusatz_id && fehlend.has(p.zusatz_id))
+      .map((p) => ({ ...p, key: newKey('aus') }));
+    if (neu.length === 0) return 'Diese Auslagen gehören nicht auf diese Rechnung (z.B. auf die Touren-Rechnung) — bitte dort ergänzen.';
+    const liste = [...positionenRef.current, ...neu];
+    positionenRef.current = liste;
+    if (!(await speicherePositionen(liste))) throw new Error('Rechnung konnte nicht gespeichert werden.');
+    return `${neu.length} ${neu.length === 1 ? 'Auslage' : 'Auslagen'} von ${a.tour.tour_nr ?? 'der Tour'} übernommen und Rechnung gespeichert (PDF ggf. neu generieren).`;
   }
 
   /**
@@ -664,7 +729,7 @@ export function RechnungDetailPage() {
           <button
             type="button" className="btn-primary"
             disabled={statusBusy}
-            onClick={() => void patchStatus({ status: 'offen' })}
+            onClick={() => void mitAuslagenPruefung('erstellen', () => void patchStatus({ status: 'offen' }))}
           >Rechnung erstellen</button>
         )}
         {status === 'offen' && (
@@ -885,7 +950,7 @@ export function RechnungDetailPage() {
             <button
               type="button"
               className="btn-secondary text-sm"
-              onClick={() => setEmailOpen(true)}
+              onClick={() => void mitAuslagenPruefung('versenden', () => setEmailOpen(true))}
             >
               Rechnung per E-Mail versenden
             </button>
@@ -982,6 +1047,21 @@ export function RechnungDetailPage() {
           {deleting ? 'Lösche …' : 'Rechnung löschen'}
         </button>
       </section>
+
+      {pruefung && (
+        <AuslagenPruefDialog
+          titel="Auslagen prüfen"
+          auffaelligkeiten={pruefung.liste}
+          fortfahrenLabel={pruefung.anlass === 'erstellen' ? 'Rechnung erstellen' : 'E-Mail versenden'}
+          onErneutPruefen={async () => {
+            const liste = await auslagenPruefen();
+            setPruefung((p) => (p ? { ...p, liste } : p));
+          }}
+          onAuslagenHinzufuegen={editingPos ? undefined : auslagenUebernehmen}
+          onAbbrechen={() => setPruefung(null)}
+          onFortfahren={() => { const w = pruefung.weiter; setPruefung(null); w(); }}
+        />
+      )}
 
       {/* Confirm-Dialoge */}
       {reloadConfirm && (

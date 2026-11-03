@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  POS_SELECT, auslagenStatus, keineAuslagenSetzen, ladeAgFormate, ladeKeineAuslagen, ladeLetzteAuslagenRechnungen,
+  leererStand, standAusPositionen, FORMAT_STANDARD,
+  type AbrechnungsStand, type AgAuslagenFormat, type AuslagenStatus,
+} from '../lib/auslagenStatus';
+import { AuslagenBadge } from '../components/auslagen/AuslagenBadge';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
@@ -290,7 +296,16 @@ export function TourenlistePage() {
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [openTourId, setOpenTourId] = useState<string | null>(null);
+  // ?tour=<id> öffnet die Tour direkt (z.B. „Tour öffnen" aus dem
+  // Auslagen-Prüfdialog einer Rechnung, neuer Tab).
+  const [urlParams, setUrlParams] = useSearchParams();
+  const [openTourId, setOpenTourIdRoh] = useState<string | null>(() => urlParams.get('tour'));
+  const setOpenTourId = useCallback((id: string | null) => {
+    setOpenTourIdRoh(id);
+    if (!id && urlParams.has('tour')) {
+      const n = new URLSearchParams(urlParams); n.delete('tour'); setUrlParams(n, { replace: true });
+    }
+  }, [urlParams, setUrlParams]);
   const [rejecting, setRejecting] = useState<TourRow | null>(null);
   const [ablehnToast, setAblehnToastRaw] = useState<string | null>(null);
   function setAblehnToast(t: string) {
@@ -300,7 +315,7 @@ export function TourenlistePage() {
   const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
   /** Aktiver Abrechnungs-Warnungs-Filter (Banner-Klick): zeigt exklusiv
    *  die betroffenen Touren; zweiter Klick hebt ihn wieder auf. */
-  const [hinweisFilter, setHinweisFilter] = useState<null | 'kein_preis' | 'ohne_rechnung'>(null);
+  const [hinweisFilter, setHinweisFilter] = useState<null | 'kein_preis' | 'ohne_rechnung' | 'auslagen_offen' | 'auslagen_ungeklaert'>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -438,11 +453,16 @@ export function TourenlistePage() {
   // Hinweise erscheinen — sonst flackern sie an jeder Tour auf, solange
   // die Map noch leer ist.
   const [rechnungInfoGeladen, setRechnungInfoGeladen] = useState(false);
+  // Auslagen-Status (nur Admin): Zusätze ↔ Rechnungspositionen,
+  // „Keine Auslagen" (Migration 112), Rechnungsformat je Auftraggeber.
+  const [abrStand, setAbrStand] = useState<AbrechnungsStand>(() => leererStand());
+  const [agFormate, setAgFormate] = useState<Map<string, AgAuslagenFormat>>(new Map());
+  const [auslagenStand, setAuslagenStand] = useState(0);
   useEffect(() => {
     if (!isAdmin || rows.length === 0) {
       // Asynchron zurücksetzen, damit kein synchrones setState im Effect
       // läuft (react-hooks/set-state-in-effect).
-      queueMicrotask(() => { setRechnungByTour({}); setRechnungInfoGeladen(false); });
+      queueMicrotask(() => { setRechnungByTour({}); setRechnungInfoGeladen(false); setAbrStand(leererStand()); });
       return undefined;
     }
     let cancelled = false;
@@ -454,7 +474,7 @@ export function TourenlistePage() {
       const teile = await Promise.all(inStuecken(ids, 150).map((stueck) =>
         ladeInBloecken((v, b) => supabase
           .from('rechnungspositionen')
-          .select('id, tour_id, rechnung:rechnung_id (id, rechnungsnummer)')
+          .select(POS_SELECT)
           .in('tour_id', stueck)
           .order('id')
           .range(v, b))));
@@ -473,10 +493,44 @@ export function TourenlistePage() {
         map[tid].push(re.rechnungsnummer);
       }
       setRechnungByTour(map);
+      const stand = leererStand();
+      standAusPositionen(stand, data as never);
+      const [keine, formate] = await Promise.all([
+        ladeKeineAuslagen(ids),
+        ladeAgFormate(rows.map((r) => r.auftraggeber_id).filter((x): x is string => !!x)),
+        ladeLetzteAuslagenRechnungen(stand),
+      ]);
+      if (cancelled) return;
+      stand.keine = keine.keine;
+      stand.markierungFehlt = keine.fehlt;
+      setAbrStand(stand);
+      setAgFormate(formate);
       if (!posErr) setRechnungInfoGeladen(true);
     })();
     return () => { cancelled = true; };
-  }, [isAdmin, rows]);
+  }, [isAdmin, rows, auslagenStand]);
+
+  const auslagenById = useMemo(() => {
+    const m = new Map<string, AuslagenStatus>();
+    if (!isAdmin || !rechnungInfoGeladen) return m;
+    for (const t of rows) {
+      m.set(t.id, auslagenStatus({
+        id: t.id, tour_nr: t.tour_id, auftraggeber_id: t.auftraggeber_id, startdatum: t.startdatum, enddatum: t.enddatum,
+        kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [],
+      }, abrStand, (t.auftraggeber_id && agFormate.get(t.auftraggeber_id)) || FORMAT_STANDARD));
+    }
+    return m;
+  }, [isAdmin, rechnungInfoGeladen, rows, abrStand, agFormate]);
+
+  const keineAuslagenMarkieren = useCallback(async (tourId: string) => {
+    try {
+      const r = await keineAuslagenSetzen([tourId], true);
+      if (r.uebersprungen.length) setError(`${r.uebersprungen[0].tour_nr ?? 'Tour'}: ${r.uebersprungen[0].grund}`);
+      setAuslagenStand((n) => n + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '„Keine Auslagen" konnte nicht gesetzt werden.');
+    }
+  }, []);
 
   // Reset Pagination wenn Filter sich ändern
   useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter]);
@@ -508,7 +562,9 @@ export function TourenlistePage() {
   const hinweise = useMemo(() => {
     const keinPreis = new Set<string>();
     const ohneRechnung = new Set<string>();
-    if (!isAdmin) return { keinPreis, ohneRechnung };
+    const auslagenOffen = new Set<string>();
+    const auslagenUngeklaert = new Set<string>();
+    if (!isAdmin) return { keinPreis, ohneRechnung, auslagenOffen, auslagenUngeklaert };
     for (const t of rows) {
       // Touren auf Eis sind bewusst offen — kein Preis und keine
       // Rechnung sind dort der Normalfall, also keine Warnung.
@@ -522,9 +578,15 @@ export function TourenlistePage() {
           && (rechnungByTour[t.id]?.length ?? 0) === 0) {
         ohneRechnung.add(t.id);
       }
+      // Auslagen: nur abgeschlossene Touren im selben 7-Tage-Fenster.
+      const a = auslagenById.get(t.id);
+      if (s === 'abgeschlossen' && a) {
+        if (a.art === 'offen') auslagenOffen.add(t.id);
+        if (a.art === 'ungeklaert' && a.melden && !abrStand.markierungFehlt) auslagenUngeklaert.add(t.id);
+      }
     }
-    return { keinPreis, ohneRechnung };
-  }, [isAdmin, rows, hinweisCutoffYmd, rechnungInfoGeladen, rechnungByTour]);
+    return { keinPreis, ohneRechnung, auslagenOffen, auslagenUngeklaert };
+  }, [isAdmin, rows, hinweisCutoffYmd, rechnungInfoGeladen, rechnungByTour, auslagenById, abrStand.markierungFehlt]);
 
   const toggleBearbeitet = useCallback(async (tourId: string, current: string | null) => {
     if (!isAdmin) return;
@@ -700,7 +762,10 @@ export function TourenlistePage() {
     // Datums-/Status-/Such-Filtern, damit Zähler und Liste immer
     // übereinstimmen.
     if (hinweisFilter) {
-      const set = hinweisFilter === 'kein_preis' ? hinweise.keinPreis : hinweise.ohneRechnung;
+      const set = hinweisFilter === 'kein_preis' ? hinweise.keinPreis
+        : hinweisFilter === 'auslagen_offen' ? hinweise.auslagenOffen
+          : hinweisFilter === 'auslagen_ungeklaert' ? hinweise.auslagenUngeklaert
+            : hinweise.ohneRechnung;
       return (rows ?? []).filter((t) => set.has(t.id));
     }
     const q = suchModus ? '' : search.trim().toLowerCase();
@@ -1204,7 +1269,8 @@ export function TourenlistePage() {
           die Liste exklusiv auf die betroffenen Touren; zweiter Klick
           bzw. „Filter aufheben" stellt die normale Ansicht wieder her.
           Ohne Warnungen erscheint gar nichts. */}
-      {isAdmin && (hinweise.keinPreis.size > 0 || hinweise.ohneRechnung.size > 0 || hinweisFilter) && (
+      {isAdmin && (hinweise.keinPreis.size > 0 || hinweise.ohneRechnung.size > 0
+        || hinweise.auslagenOffen.size > 0 || hinweise.auslagenUngeklaert.size > 0 || hinweisFilter) && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-400/30">
           <span aria-hidden="true" className="text-amber-800">⚠</span>
           {hinweise.keinPreis.size > 0 && (
@@ -1231,6 +1297,32 @@ export function TourenlistePage() {
               }`}
             >
               {hinweise.ohneRechnung.size} abgeschlossene ohne Rechnung
+            </button>
+          )}
+          {hinweise.auslagenOffen.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHinweisFilter((cur) => (cur === 'auslagen_offen' ? null : 'auslagen_offen'))}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                hinweisFilter === 'auslagen_offen'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-amber-100 text-amber-800 hover:ring-1 hover:ring-amber-400'
+              }`}
+            >
+              {hinweise.auslagenOffen.size} {hinweise.auslagenOffen.size === 1 ? 'Tour' : 'Touren'} mit nicht abgerechneten Auslagen
+            </button>
+          )}
+          {hinweise.auslagenUngeklaert.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHinweisFilter((cur) => (cur === 'auslagen_ungeklaert' ? null : 'auslagen_ungeklaert'))}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                hinweisFilter === 'auslagen_ungeklaert'
+                  ? 'bg-orange-600 text-white'
+                  : 'bg-orange-100 text-orange-700 hover:ring-1 hover:ring-orange-400 dark:!bg-orange-900/50 dark:!text-orange-200'
+              }`}
+            >
+              {hinweise.auslagenUngeklaert.size} abgeschlossene {hinweise.auslagenUngeklaert.size === 1 ? 'Tour' : 'Touren'} mit ungeklärten Auslagen
             </button>
           )}
           {hinweisFilter && (
@@ -1399,6 +1491,9 @@ export function TourenlistePage() {
               rechnungsnummern={rechnungByTour[t.id]}
               hinweisKeinPreis={hinweise.keinPreis.has(t.id)}
               hinweisOhneRechnung={hinweise.ohneRechnung.has(t.id)}
+              auslagen={auslagenById.get(t.id)}
+              auslagenUngeklaertMelden={hinweise.auslagenUngeklaert.has(t.id)}
+              onKeineAuslagen={() => keineAuslagenMarkieren(t.id)}
               geaendert={geaenderteTourIds.has(t.id)}
             />
           ))}
@@ -1653,13 +1748,20 @@ interface CardProps {
    *  kein Preis berechnet bzw. abgeschlossen ohne Rechnungsposition. */
   hinweisKeinPreis?: boolean;
   hinweisOhneRechnung?: boolean;
+  /** Auslagen-Status (nur Admin, Migration 112). */
+  auslagen?: AuslagenStatus;
+  /** „Ungeklärt" wird gemeldet (abgeschlossen, 7-Tage-Fenster, …). */
+  auslagenUngeklaertMelden?: boolean;
+  onKeineAuslagen?: () => Promise<void>;
   /** Unquittierte Auftraggeber-Änderung an dieser Tour (Migration 079). */
   geaendert?: boolean;
 }
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
   rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung, geaendert,
+  auslagen, auslagenUngeklaertMelden, onKeineAuslagen,
 }: CardProps) {
+  const [auslagenBusy, setAuslagenBusy] = useState(false);
   // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
   // Zuweisung ein eigener Open-Button. Fallback auf die Legacy-Spalte,
   // wenn die Zuweisungen noch nicht geladen / migriert sind.
@@ -1920,6 +2022,38 @@ function TourCard({
                 title="Abgeschlossene Tour ohne Rechnungsposition — noch nicht berechnet."
               >
                 <span aria-hidden="true">⚠</span> Ohne Rechnung
+              </span>
+            )}
+            {/* Auslagen-Status (nur Admin): „ungeklärt" nur, wenn gemeldet;
+                „ohne Auslagen abgerechnet" (Altbestand) ohne Badge. */}
+            {isAdmin && auslagen && auslagen.art !== 'ohne_abgerechnet'
+              && (auslagen.art !== 'ungeklaert' || auslagenUngeklaertMelden) && (
+              <AuslagenBadge status={auslagen} />
+            )}
+            {isAdmin && auslagenUngeklaertMelden && onKeineAuslagen && (
+              // Wie die übrigen Karten-Aktionen als role="button" (die
+              // ganze Karte ist bereits ein Button).
+              <span
+                role="button"
+                tabIndex={0}
+                aria-disabled={auslagenBusy}
+                className="inline-flex cursor-pointer items-center rounded-full border border-maja-navy/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-maja-navy hover:bg-maja-light dark:!border-slate-500 dark:!text-slate-100"
+                onClick={(e) => {
+                  e.stopPropagation(); e.preventDefault();
+                  if (auslagenBusy) return;
+                  setAuslagenBusy(true);
+                  void onKeineAuslagen().finally(() => setAuslagenBusy(false));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.stopPropagation(); e.preventDefault();
+                  if (auslagenBusy) return;
+                  setAuslagenBusy(true);
+                  void onKeineAuslagen().finally(() => setAuslagenBusy(false));
+                }}
+                title={'Diese Tour als „Keine Auslagen" markieren'}
+              >
+                {auslagenBusy ? '…' : 'Keine Auslagen'}
               </span>
             )}
             {isAdmin && (

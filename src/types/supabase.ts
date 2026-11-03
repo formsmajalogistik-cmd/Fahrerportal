@@ -811,6 +811,17 @@ export type Database = {
         };
         Relationships: [];
       };
+      tour_keine_auslagen: {
+        Row: {
+          tour_id: string;
+          gesetzt_am: string;
+          gesetzt_von: string | null;
+          gesetzt_von_name: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       beleg_versand: {
         Row: {
           id: string;
@@ -2315,6 +2326,10 @@ export type Database = {
       };
       beleg_versand_import: {
         Args: { p_eintraege: Json };
+        Returns: Json;
+      };
+      tour_keine_auslagen_setzen: {
+        Args: { p_tour_ids: string[]; p_an: boolean };
         Returns: Json;
       };
       formular_zuweisen: {

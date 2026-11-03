@@ -71,6 +71,8 @@ export function aenderungSatz(
 ): string | null {
   // Aufteilung in zwei AB-Touren (Migration 106): der Server schreibt den
   // fertigen Satz, z.B. „Aufgeteilt aus T-2026-4419 am 08.10.2026".
+  // „Keine Auslagen" gesetzt/entfernt (Migration 112): fertiger Satz.
+  if (quelle === 'auslagen') return wertNeu ?? '„Keine Auslagen" geändert';
   if (quelle === 'aufteilung') {
     return wertAlt ? `${wertNeu ?? ''} (vorher ${wertAlt})` : (wertNeu ?? 'Aufteilung');
   }
