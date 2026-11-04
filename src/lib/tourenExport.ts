@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { istKeineAuslagen } from './zusatzArten';
 import { supabase } from './supabase';
 import { ladeInBloecken } from './ladeInBloecken';
 import { fahrerName } from './names';
@@ -237,8 +238,9 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       zRows.push([
         t.tour_id ?? '',
         z.kategorie ?? '',
-        z.anzahl ?? '',
-        z.betrag ?? '',
+        // „Keine Auslagen" (Migration 113) hat weder Anzahl noch Betrag.
+        istKeineAuslagen(z.kategorie) ? '' : (z.anzahl ?? ''),
+        istKeineAuslagen(z.kategorie) ? '' : (z.betrag ?? ''),
         z.kennzeichen ?? '',
         z.notiz ?? '',
       ]);

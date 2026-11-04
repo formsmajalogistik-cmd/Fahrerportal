@@ -11,6 +11,7 @@ import {
   berechneSummenProUst, generatePositionenFromTouren, parseRechnungsformat,
 } from '../../../lib/rechnungsformat';
 import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefDialog';
+import { ladeZusatzArten } from '../../../lib/zusatzArten';
 import {
   formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, ladeTourenZuRechnungstagen,
   pruefeRechnungAuslagen, rechnungstageDerTouren, type Auffaelligkeit,
@@ -437,8 +438,8 @@ export function RechnungDetailPage() {
       ids = [...new Set([...posTouren, ...amTag.map((t) => t.id)])];
     }
     if (ids.length === 0) return [];
-    const [touren, stand] = await Promise.all([ladeAuslagenTouren(ids), ladeAbrechnungsStand(ids)]);
-    return pruefeRechnungAuslagen({ art, fmt, touren, positionen: pos, stand, eigeneRechnungIds: [rechnung.id] });
+    const [touren, stand, arten] = await Promise.all([ladeAuslagenTouren(ids), ladeAbrechnungsStand(ids), ladeZusatzArten()]);
+    return pruefeRechnungAuslagen({ art, fmt, touren, positionen: pos, stand, arten, eigeneRechnungIds: [rechnung.id] });
   }
 
   async function mitAuslagenPruefung(anlass: 'erstellen' | 'versenden', weiter: () => void) {

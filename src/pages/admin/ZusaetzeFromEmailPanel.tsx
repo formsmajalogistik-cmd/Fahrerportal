@@ -5,7 +5,9 @@ import { supabase } from '../../lib/supabase';
 import { Spinner } from '../../components/Spinner';
 import { XIcon } from '../../components/icons';
 import { formatAnzahl, formatDate, formatEuro } from '../../lib/touren';
-import { ZUSATZ_KATEGORIEN } from '../../lib/zusatzKategorien';
+import { ZUSATZ_KATEGORIEN_ERFASSUNG as ZUSATZ_KATEGORIEN } from '../../lib/zusatzKategorien';
+import { KEINE_AUSLAGEN, istKeineAuslagen, ladeZusatzArten, standardZusatzArten, type ZusatzArten } from '../../lib/zusatzArten';
+import { konfliktBeimHinzufuegen, ungeklaerteSlots } from '../../lib/auslagenStatus';
 import { addBelege } from '../../lib/belegeStorage';
 import { pdfjsLib } from '../../lib/pdfjs';
 import { compressImage } from '../../lib/photo';
@@ -92,6 +94,8 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
     auftraggeberId: tour?.auftraggeber_id, kategorie: neueKategorie, mengeText: neueAnzahl, dauerText: neueDauer,
   });
   const [rechnungen, setRechnungen] = useState<string[]>([]);
+  const [zusatzArten, setZusatzArten] = useState<ZusatzArten>(() => standardZusatzArten());
+  useEffect(() => { void ladeZusatzArten().then(setZusatzArten); }, []);
 
   // Barauslagen + Honorar
   const [barauslagenInput, setBarauslagenInput] = useState('');
@@ -202,7 +206,11 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
       setStatusMsg({ kind: 'err', text: 'Kategorie darf nicht leer sein.' });
       return;
     }
-    const werte = auslageZumSpeichern(automatik, neueAnzahl);
+    // „Keine Auslagen" (Migration 113): ohne Anzahl/Betrag/Anhang.
+    const keineAuslagen = istKeineAuslagen(kategorie);
+    const werte = keineAuslagen
+      ? { ok: true as const, anzahl: 1, betrag: 0, dauer_min: null, preis_quelle: null }
+      : auslageZumSpeichern(automatik, neueAnzahl);
     if (!werte.ok) {
       setStatusMsg({ kind: 'err', text: werte.text });
       return;
@@ -219,9 +227,15 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
     } else {
       kennzeichen = (tour.kennzeichen?.[0]?.trim() || null);
     }
+    // Konflikt je Kennzeichen: Auslage und „Keine Auslagen" schließen sich
+    // aus — erst auflösen, dann speichern.
+    const konflikt = konfliktBeimHinzufuegen(
+      { tourenart: tour.tourenart, kennzeichen: tour.kennzeichen ?? [], zusaetze }, { kategorie, kennzeichen }, zusatzArten, true,
+    );
+    if (konflikt) { setStatusMsg({ kind: 'err', text: konflikt }); return; }
     setAdding(true);
     const { data, error: err } = await zusatzEinfuegen({
-      tour_id: tour.id, kategorie, anzahl: werte.anzahl, betrag: werte.betrag,
+      tour_id: tour.id, kategorie: keineAuslagen ? KEINE_AUSLAGEN : kategorie, anzahl: werte.anzahl, betrag: werte.betrag,
       notiz: neueNotiz.trim() || null, kennzeichen,
       dauer_min: werte.dauer_min, preis_quelle: werte.preis_quelle,
     });
@@ -234,7 +248,25 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
     setNeueDauer('');
     setNeueNotiz('');
     setNeuesKennzeichen('');
-    setStatusMsg({ kind: 'ok', text: 'Zusatz hinzugefügt.' });
+    setStatusMsg({ kind: 'ok', text: keineAuslagen ? '„Keine Auslagen" eingetragen.' : 'Zusatz hinzugefügt.' });
+  }
+
+  /** „Keine Auslagen" für alle noch ungeklärten Kennzeichen der Tour. */
+  async function keineAuslagenAlle() {
+    if (!tour) return;
+    const slots = ungeklaerteSlots({
+      id: tour.id, tour_nr: tour.tour_id, auftraggeber_id: tour.auftraggeber_id, startdatum: tour.startdatum,
+      enddatum: tour.enddatum, tourenart: tour.tourenart, kennzeichen: tour.kennzeichen ?? [], zusaetze,
+    }, zusatzArten);
+    if (slots.length === 0) { setStatusMsg({ kind: 'ok', text: 'Alle Kennzeichen sind bereits geklärt.' }); return; }
+    setAdding(true);
+    const { data, error: err } = await supabase.from('tour_zusaetze').insert(slots.map((s) => ({
+      tour_id: tour.id, kategorie: KEINE_AUSLAGEN, anzahl: 1, betrag: 0, kennzeichen: s.kennzeichen, notiz: null,
+    }))).select('*');
+    setAdding(false);
+    if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
+    setZusaetze((z) => [...z, ...((data ?? []) as TourZusatz[])]);
+    setStatusMsg({ kind: 'ok', text: `„Keine Auslagen" für ${slots.length} Kennzeichen eingetragen.` });
   }
 
   async function handleDelete(id: string) {
@@ -265,9 +297,11 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
     setStatusMsg({ kind: 'ok', text: 'Fahrer-Honorar gespeichert.' });
   }
 
-  const summe = useMemo(() => zusaetze.reduce(
+  // „Keine Auslagen" zählt weder in der Anzahl noch in der Summe.
+  const abrechenbar = useMemo(() => zusaetze.filter((z) => !istKeineAuslagen(z.kategorie)), [zusaetze]);
+  const summe = useMemo(() => abrechenbar.reduce(
     (acc, z) => acc + Number(z.betrag) * Math.max(0.01, Number(z.anzahl ?? 1)), 0,
-  ), [zusaetze]);
+  ), [abrechenbar]);
 
   const twoSlots = tour?.tourenart === 'ABA' || tour?.tourenart === 'ABC';
 
@@ -364,7 +398,9 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
                         ))}
                       </select>
                     </div>
-                    {automatik.zeitbasiert ? (
+                    {istKeineAuslagen(neueKategorie) ? (
+                      <p className="self-end text-xs text-maja-muted">Ohne Anzahl, Betrag und Anhang — erscheint nie auf einer Rechnung.</p>
+                    ) : automatik.zeitbasiert ? (
                       <div>
                         <label htmlFor="z-dauer" className="label">Dauer *</label>
                         <input id="z-dauer" className="input" type="text" inputMode="decimal" placeholder="h:mm"
@@ -379,12 +415,14 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
                                onChange={(e) => setNeueAnzahl(e.target.value)} />
                       </div>
                     )}
+                    {!istKeineAuslagen(neueKategorie) && (
                     <div>
                       <label htmlFor="z-betrag" className="label">Betrag (€) *</label>
                       <input id="z-betrag" className="input" type="text" inputMode="decimal"
                              value={automatik.betrag}
                              onChange={(e) => automatik.setBetrag(e.target.value)} />
                     </div>
+                    )}
                     <div className="sm:col-span-2">
                       <label htmlFor="z-notiz" className="label">Notiz (optional)</label>
                       <input id="z-notiz" className="input"
@@ -400,25 +438,50 @@ export function ZusaetzeFromEmailPanel({ mail, thread, ownAddresses, mailbox, to
                     sondervereinbarung={!!tour.ist_sondervereinbarung}
                     rechnungen={rechnungen}
                   />
-                  <button
-                    type="button"
-                    className="btn-primary text-sm"
-                    onClick={() => void handleAddZusatz()}
-                    disabled={adding}
-                  >
-                    {adding ? 'Hinzufügen …' : '+ Hinzufügen'}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-primary text-sm"
+                      onClick={() => void handleAddZusatz()}
+                      disabled={adding}
+                    >
+                      {adding ? 'Hinzufügen …' : '+ Hinzufügen'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-sm"
+                      onClick={() => void keineAuslagenAlle()}
+                      disabled={adding}
+                      title={'Legt für jedes Kennzeichen ohne Auslage einen Zusatz „Keine Auslagen" an.'}
+                    >
+                      Keine Auslagen für alle Kennzeichen dieser Tour
+                    </button>
+                  </div>
                 </section>
 
                 <section className="space-y-2">
                   <h3 className="text-sm font-semibold text-maja-navy">
-                    Eingetragene Zusätze ({zusaetze.length})
+                    Eingetragene Zusätze ({abrechenbar.length})
                   </h3>
                   {zusaetze.length === 0 ? (
                     <p className="text-xs text-maja-muted">Noch keine Zusätze.</p>
                   ) : (
                     <ul className="divide-y divide-maja-navy/10 rounded-lg border border-maja-navy/10">
                       {zusaetze.map((z) => {
+                        if (istKeineAuslagen(z.kategorie)) {
+                          return (
+                            <li key={z.id} data-keine-auslagen className="flex items-center gap-2 px-3 py-2 text-sm">
+                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:!bg-slate-600 dark:!text-slate-100">
+                                Keine Auslagen
+                              </span>
+                              <span className="flex-1 text-xs text-maja-muted">{z.kennzeichen ?? 'alle Kennzeichen'}</span>
+                              <button type="button" onClick={() => void handleDelete(z.id)}
+                                      className="rounded p-1 text-red-600 hover:bg-red-50" aria-label={'„Keine Auslagen" löschen'}>
+                                <XIcon className="h-4 w-4" />
+                              </button>
+                            </li>
+                          );
+                        }
                         const anzahl = Math.max(0.01, Number(z.anzahl ?? 1));
                         const betrag = Number(z.betrag);
                         const gesamt = Math.round(anzahl * betrag * 100) / 100;

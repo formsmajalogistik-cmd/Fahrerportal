@@ -1,7 +1,7 @@
 // Badge zum Auslagen-Status einer Tour (nur Admin) — Stil wie die
 // bestehenden Rechnungs-Hinweise in der Tourenliste.
 
-import { statusText, type AuslagenStatus } from '../../lib/auslagenStatus';
+import { slotLabel, statusText, ungeklaertText, type AuslagenStatus } from '../../lib/auslagenStatus';
 
 const STIL: Record<AuslagenStatus['art'], string> = {
   offen: 'bg-amber-100 text-amber-800',
@@ -12,23 +12,31 @@ const STIL: Record<AuslagenStatus['art'], string> = {
 };
 
 const TITEL: Record<AuslagenStatus['art'], string> = {
-  offen: 'Zusätze vorhanden, mindestens einer steht noch auf keiner Rechnung.',
+  offen: 'Mindestens ein abrechenbarer Zusatz steht noch auf keiner Rechnung.',
   abgerechnet: 'Alle Zusätze stehen auf einer Rechnung.',
   keine: '„Keine Auslagen" gesetzt — für diese Tour fallen keine Auslagen an.',
-  ungeklaert: 'Keine Zusätze erfasst und nicht als „Keine Auslagen" markiert.',
+  ungeklaert: 'Keine Auslage und kein „Keine Auslagen" erfasst.',
   ohne_abgerechnet: 'Tour ohne Zusätze bereits abgerechnet.',
 };
 
-export function AuslagenBadge({ status }: { status: AuslagenStatus }) {
-  const warn = status.art === 'offen' || status.art === 'ungeklaert';
+/**
+ * Status-Badge. `nurUngeklaert`: zweites Badge, wenn die Tour offen ist
+ * UND Kennzeichen ungeklärt sind.
+ */
+export function AuslagenBadge({ status, nurUngeklaert }: { status: AuslagenStatus; nurUngeklaert?: boolean }) {
+  const art = nurUngeklaert ? 'ungeklaert' : status.art;
+  const warn = art === 'offen' || art === 'ungeklaert';
+  const title = art === 'offen'
+    ? `${TITEL.offen} Offen: ${status.offen.map((z) => z.kategorie).join(', ')}`
+    : art === 'ungeklaert' ? `${status.ungeklaert.map(slotLabel).join(', ')}: ${TITEL.ungeklaert}` : TITEL[art];
   return (
     <span
-      data-auslagen={status.art}
-      title={status.art === 'offen' ? `${TITEL.offen} Offen: ${status.offen.map((z) => z.kategorie).join(', ')}` : TITEL[status.art]}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${STIL[status.art]}`}
+      data-auslagen={art}
+      title={title}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${STIL[art]}`}
     >
       {warn && <span aria-hidden="true">⚠</span>}
-      {statusText(status)}
+      {nurUngeklaert ? ungeklaertText(status.ungeklaert) : statusText(status)}
     </span>
   );
 }

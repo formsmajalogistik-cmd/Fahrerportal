@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { abrechenbareZusaetze } from '../../../lib/auslagenStatus';
 import { supabase } from '../../../lib/supabase';
 import { ART_BADGE, DIALOG_HINTERGRUND, ERGEBNIS_ZEILE, HINWEIS_BADGE, TOUR_ID_CHIP } from '../../../components/tourAuswahlStil';
 import { ladeInBloecken } from '../../../lib/ladeInBloecken';
@@ -348,8 +349,8 @@ export function AddTourPositionDialog({
                         {(t.kennzeichen ?? []).length > 0 && (
                           <span>{(t.kennzeichen ?? []).join(', ')}</span>
                         )}
-                        {t.zusaetze.length > 0 && (
-                          <span>{t.zusaetze.length} {t.zusaetze.length === 1 ? 'Zusatz' : 'Zusätze'}</span>
+                        {abrechenbareZusaetze(t.zusaetze).length > 0 && (
+                          <span>{abrechenbareZusaetze(t.zusaetze).length} {abrechenbareZusaetze(t.zusaetze).length === 1 ? 'Zusatz' : 'Zusätze'}</span>
                         )}
                       </div>
                     </div>

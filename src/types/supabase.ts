@@ -811,6 +811,12 @@ export type Database = {
         };
         Relationships: [];
       };
+      zusatz_arten: {
+        Row: { schluessel: string; bezeichnung: string; zaehlt_als_auslage: boolean };
+        Insert: { schluessel: string; bezeichnung: string; zaehlt_als_auslage?: boolean };
+        Update: { schluessel?: string; bezeichnung?: string; zaehlt_als_auslage?: boolean };
+        Relationships: [];
+      };
       tour_keine_auslagen: {
         Row: {
           tour_id: string;

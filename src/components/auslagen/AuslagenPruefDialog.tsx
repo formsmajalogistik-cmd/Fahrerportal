@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import {
-  auffaelligkeitText, keineAuslagenSetzen, pruefZusammenfassung, type Auffaelligkeit,
+  auffaelligkeitText, keineAuslagenFuerUngeklaerte, pruefZusammenfassung, slotKurz, type Auffaelligkeit,
 } from '../../lib/auslagenStatus';
 import { formatDate } from '../../lib/touren';
 
@@ -56,7 +56,7 @@ export function AuslagenPruefDialog({
         {!leer && (
           <ul className="divide-y divide-maja-navy/10 rounded-lg border border-maja-navy/10">
             {auffaelligkeiten.map((a) => (
-              <li key={a.tour.id} data-tour={a.tour.id} className="flex flex-col gap-2 px-3 py-2 text-sm sm:flex-row sm:items-start sm:justify-between">
+              <li key={`${a.tour.id}:${a.grund}`} data-tour={a.tour.id} data-grund={a.grund} className="flex flex-col gap-2 px-3 py-2 text-sm sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-maja-ink">
                     {a.tour.tour_nr ?? 'Tour'}
@@ -69,16 +69,27 @@ export function AuslagenPruefDialog({
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1.5">
-                  {a.grund === 'ungeklaert' && (
+                  {/* „Keine Auslagen" je ungeklärtem Kennzeichen; bei mehreren
+                      zusätzlich für alle (Zusatz je Kennzeichen, Migration 113). */}
+                  {a.grund === 'ungeklaert' && a.slots.length > 1 && (
                     <button type="button" className="btn-secondary px-2.5 py-1 text-xs" disabled={!!busy}
                             onClick={() => void aktion(`k${a.tour.id}`, async () => {
-                              const r = await keineAuslagenSetzen([a.tour.id], true);
-                              if (r.uebersprungen.length) return `${a.tour.tour_nr}: ${r.uebersprungen[0].grund} — nicht gesetzt.`;
-                              return `${a.tour.tour_nr ?? 'Tour'}: „Keine Auslagen" gesetzt.`;
+                              const n = await keineAuslagenFuerUngeklaerte([a.tour.id]);
+                              return `${a.tour.tour_nr ?? 'Tour'}: „Keine Auslagen" für ${n} Kennzeichen eingetragen.`;
                             })}>
-                      {busy === `k${a.tour.id}` ? '…' : 'Keine Auslagen'}
+                      {busy === `k${a.tour.id}` ? '…' : 'Keine Auslagen (alle)'}
                     </button>
                   )}
+                  {a.grund === 'ungeklaert' && a.slots.map((s) => (
+                    <button key={s.rolle} type="button" className="btn-secondary px-2.5 py-1 text-xs" disabled={!!busy}
+                            onClick={() => void aktion(`k${a.tour.id}${s.rolle}`, async () => {
+                              const n = await keineAuslagenFuerUngeklaerte([a.tour.id], s);
+                              return n ? `${a.tour.tour_nr ?? 'Tour'}: „Keine Auslagen" für ${slotKurz(s) || 'die Tour'} eingetragen.`
+                                : `${a.tour.tour_nr ?? 'Tour'}: inzwischen schon geklärt.`;
+                            })}>
+                      {busy === `k${a.tour.id}${s.rolle}` ? '…' : `Keine Auslagen${s.rolle === 'einzig' ? '' : ` ${slotKurz(s)}`}`}
+                    </button>
+                  ))}
                   {a.grund === 'fehlen' && onAuslagenHinzufuegen && (
                     <button type="button" className="btn-secondary px-2.5 py-1 text-xs" disabled={!!busy}
                             onClick={() => void aktion(`a${a.tour.id}`, () => onAuslagenHinzufuegen(a))}>

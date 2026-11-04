@@ -108,7 +108,9 @@ const STATUS_BADGE: Record<TourStatus, string> = {
   abgeschlossen:  'bg-gray-100 text-gray-600',
 };
 
-import { ZUSATZ_KATEGORIEN as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
+import { ZUSATZ_KATEGORIEN_ERFASSUNG as ZUSATZ_KATEGORIEN_BASE } from '../../lib/zusatzKategorien';
+import { KEINE_AUSLAGEN, istKeineAuslagen, ladeZusatzArten, standardZusatzArten, type ZusatzArten } from '../../lib/zusatzArten';
+import { konfliktBeimHinzufuegen } from '../../lib/auslagenStatus';
 import { TourAufteilenDialog, type AufteilungsErgebnis } from './TourAufteilenDialog';
 import { istAufteilbar, istTour1GeaendertFehler, ohneFehlercode } from '../../lib/tourAufteilung';
 import { merkeTourAdressen } from '../../lib/feldVorschlaege';
@@ -364,6 +366,8 @@ export function TourDetailDialog({
 
   const [tour, setTour] = useState<FullTour | null>(null);
   const [zusaetze, setZusaetze] = useState<TourZusatz[]>([]);
+  /** Ohne „Keine Auslagen" (Migration 113) — für Zähler und Summe. */
+  const abrechenbar = useMemo(() => zusaetze.filter((z) => !istKeineAuslagen(z.kategorie)), [zusaetze]);
   const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
   const [fahrer, setFahrer] = useState<FahrerWithUser[]>([]);
   const [templates, setTemplates] = useState<Array<Pick<FormularTemplate, 'id' | 'name'>>>([]);
@@ -430,6 +434,19 @@ export function TourDetailDialog({
   const [tourRechnungen, setTourRechnungen] = useState<string[]>([]);
   /** Zähler: Änderungsprotokoll neu laden (z.B. nach „Keine Auslagen"). */
   const [aenderungenStand, setAenderungenStand] = useState(0);
+  // Zusatz-Arten (zählt als Auslage?) für die Konfliktprüfung „Keine Auslagen".
+  const [zusatzArten, setZusatzArten] = useState<ZusatzArten>(() => standardZusatzArten());
+  useEffect(() => {
+    if (!isAdmin) return;
+    void ladeZusatzArten().then(setZusatzArten);
+  }, [isAdmin]);
+  /** Zusätze neu laden — die Datenbank entfernt „Keine Auslagen" selbst,
+   *  wenn eine Auslage dazukommt (Migration 113). */
+  const zusaetzeNeuLaden = useCallback(async () => {
+    const { data } = await supabase.from('tour_zusaetze').select('*').eq('tour_id', tourId).order('created_at', { ascending: true });
+    if (Array.isArray(data)) setZusaetze(data as TourZusatz[]);
+    setAenderungenStand((n) => n + 1);
+  }, [tourId]);
   /** Auftraggeber gewechselt → Auslagen an neue Preisliste anpassen? */
   const [agWechselFrage, setAgWechselFrage] = useState<null | {
     agName: string; vorschlaege: AnpassungsVorschlag[]; manuellBleiben: number;
@@ -1094,8 +1111,12 @@ export function TourDetailDialog({
       setStatusMsg({ kind: 'err', text: 'Kategorie darf nicht leer sein.' });
       return;
     }
+    // „Keine Auslagen" (Migration 113): ohne Anzahl/Betrag, nie auf Rechnung.
+    const keineAuslagen = istKeineAuslagen(kategorie);
     // Betrag/Anzahl inkl. Preisliste und Dauer (lib/useAuslagenAutomatik).
-    const werte = auslageZumSpeichern(automatik, neueAnzahl);
+    const werte = keineAuslagen
+      ? { ok: true as const, anzahl: 1, betrag: 0, dauer_min: null, preis_quelle: null }
+      : auslageZumSpeichern(automatik, neueAnzahl);
     if (!werte.ok) {
       setStatusMsg({ kind: 'err', text: werte.text });
       return;
@@ -1116,11 +1137,17 @@ export function TourDetailDialog({
     } else {
       kennzeichen = (tour.kennzeichen?.[0]?.trim() || null);
     }
+    if (keineAuslagen) {
+      const konflikt = konfliktBeimHinzufuegen(
+        { tourenart: tour.tourenart, kennzeichen: tour.kennzeichen ?? [], zusaetze }, { kategorie, kennzeichen }, zusatzArten,
+      );
+      if (konflikt) { setStatusMsg({ kind: 'err', text: konflikt }); return; }
+    }
     if (guard()) return;
     setAddingZusatz(true);
     const { data, error: err } = await zusatzEinfuegen({
       tour_id: tour.id,
-      kategorie,
+      kategorie: keineAuslagen ? KEINE_AUSLAGEN : kategorie,
       anzahl: werte.anzahl,
       betrag: werte.betrag,
       notiz: neueNotiz.trim() || null,
@@ -1131,9 +1158,9 @@ export function TourDetailDialog({
     setAddingZusatz(false);
     if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
     setZusaetze((z) => [...z, data as TourZusatz]);
-    // Ein evtl. gesetztes „Keine Auslagen" hat die Datenbank entfernt und
-    // protokolliert (Migration 112) — Protokoll neu laden.
-    setAenderungenStand((n) => n + 1);
+    // Ein evtl. vorhandenes „Keine Auslagen" für dieses Kennzeichen hat die
+    // Datenbank entfernt und protokolliert (Migration 113) — neu laden.
+    void zusaetzeNeuLaden();
     automatik.zuruecksetzen();
     setNeueKategorie('');
     setNeueAnzahl('1');
@@ -1432,12 +1459,12 @@ export function TourDetailDialog({
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-base font-semibold text-maja-navy">Zusätze zur Tour</h3>
           <span className="inline-flex items-center justify-center rounded-full bg-maja-light px-2 py-0.5 text-xs font-semibold text-maja-navy">
-            {zusaetze.length} {zusaetze.length === 1 ? 'Eintrag' : 'Einträge'}
+            {abrechenbar.length} {abrechenbar.length === 1 ? 'Eintrag' : 'Einträge'}
           </span>
         </div>
 
         {/* Auslagen-Status + „Keine Auslagen" (Migration 112, nur Admin) */}
-        <AuslagenTourStatus tour={tour} zusaetze={zusaetze} onChanged={() => { onChanged(); setAenderungenStand((n) => n + 1); }} />
+        <AuslagenTourStatus tour={tour} zusaetze={zusaetze} onChanged={() => { onChanged(); void zusaetzeNeuLaden(); }} />
 
         {isAdmin && (() => {
           // Bei ABA/ABC sind zwei Kennzeichen möglich; der Admin wählt
@@ -1489,7 +1516,11 @@ export function TourDetailDialog({
                   ))}
                 </select>
               </div>
-              {automatik.zeitbasiert ? (
+              {istKeineAuslagen(neueKategorie) ? (
+                <p className="text-xs text-maja-muted sm:col-span-2">
+                  Ohne Anzahl und Betrag — erscheint nie auf einer Rechnung.
+                </p>
+              ) : automatik.zeitbasiert ? (
                 <div>
                   <label htmlFor="z-dauer" className="label">Dauer</label>
                   <input
@@ -1515,6 +1546,7 @@ export function TourDetailDialog({
                   />
                 </div>
               )}
+              {!istKeineAuslagen(neueKategorie) && (
               <div>
                 <label htmlFor="z-betrag" className="label">Betrag (€)</label>
                 <input
@@ -1526,6 +1558,7 @@ export function TourDetailDialog({
                   onChange={(e) => automatik.setBetrag(e.target.value)}
                 />
               </div>
+              )}
               <div>
                 <label htmlFor="z-notiz" className="label">Notiz (optional)</label>
                 <input
@@ -1539,7 +1572,7 @@ export function TourDetailDialog({
                 type="button"
                 className="btn-primary"
                 onClick={() => void handleAddZusatz()}
-                disabled={addingZusatz || !neueKategorie || !automatik.betrag || (twoSlots && !neuesKennzeichen)}
+                disabled={addingZusatz || !neueKategorie || (!automatik.betrag && !istKeineAuslagen(neueKategorie)) || (twoSlots && !neuesKennzeichen)}
               >
                 {addingZusatz ? '…' : '+ Hinzufügen'}
               </button>
@@ -1580,6 +1613,24 @@ export function TourDetailDialog({
           <div className="card overflow-hidden">
             <ul className="divide-y divide-maja-navy/10">
               {(zusaetze ?? []).map((z) => {
+                if (istKeineAuslagen(z.kategorie)) {
+                  return (
+                    <li key={z.id} data-keine-auslagen className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:!bg-slate-600 dark:!text-slate-100">
+                          Keine Auslagen
+                        </span>
+                        <span className="text-xs text-maja-muted">{z.kennzeichen ?? 'alle Kennzeichen'}</span>
+                      </span>
+                      {isAdmin && (
+                        <button type="button" onClick={() => void handleDeleteZusatz(z.id)} aria-label={'„Keine Auslagen" löschen'}
+                                className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50">
+                          <XIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </li>
+                  );
+                }
                 const anzahl = Math.max(0.01, Number(z.anzahl ?? 1));
                 const betrag = Number(z.betrag);
                 const gesamt = Math.round(betrag * anzahl * 100) / 100;
@@ -1631,7 +1682,7 @@ export function TourDetailDialog({
               <span className="font-medium text-maja-navy">Zusätze gesamt</span>
               <span className="font-semibold text-maja-navy">
                 {formatEuro(
-                  (zusaetze ?? []).reduce(
+                  abrechenbar.reduce(
                     (acc, z) => acc + Number(z.betrag) * Math.max(0.01, Number(z.anzahl ?? 1)),
                     0,
                   ),

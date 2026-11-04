@@ -19,6 +19,7 @@ import {
 } from '../../../lib/manuelleEmpfaenger';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefDialog';
+import { ladeZusatzArten } from '../../../lib/zusatzArten';
 import {
   formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, pruefeRechnungAuslagen,
   type Auffaelligkeit,
@@ -684,10 +685,10 @@ export function RechnungNewPage() {
     }
     const alleIds = [...new Set(pruefungen.flatMap((x) => x.tourIds))];
     if (alleIds.length === 0) return [];
-    const [tourDaten, stand] = await Promise.all([ladeAuslagenTouren(alleIds), ladeAbrechnungsStand(alleIds)]);
+    const [tourDaten, stand, arten] = await Promise.all([ladeAuslagenTouren(alleIds), ladeAbrechnungsStand(alleIds), ladeZusatzArten()]);
     const byId = new Map(tourDaten.map((t) => [t.id, t]));
     return pruefungen.flatMap((x) => pruefeRechnungAuslagen({
-      art: x.art, fmt, stand, positionen: x.positionen,
+      art: x.art, fmt, stand, arten, positionen: x.positionen,
       touren: [...new Set(x.tourIds)].map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t),
     }));
   }

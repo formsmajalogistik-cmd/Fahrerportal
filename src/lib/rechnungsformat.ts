@@ -3,6 +3,8 @@
 // Editor lädt Vorlagen aus den Konstanten unten und der Admin kann
 // sie nachträglich frei anpassen.
 
+import { istKeineAuslagen } from './zusatzArten';
+
 export type ZusaetzeDarstellung = 'einzeln' | 'zusammengefasst' | 'keine';
 export type DatumFormat = 'kurz' | 'lang' | 'enddatum_kurz' | 'enddatum_lang';
 
@@ -339,6 +341,8 @@ export function renderRechnungSections(
     if (f.zusaetze_darstellung === 'keine' && !f.getrennte_auslagen_rechnung) continue;
 
     for (const z of t.zusaetze) {
+      // „Keine Auslagen" (Migration 113) erscheint nie auf einer Rechnung.
+      if (istKeineAuslagen(z.kategorie)) continue;
       const zph = { ...ph, kategorie: z.kategorie };
       const targetTpl = f.getrennte_auslagen_rechnung
         ? { bezeichnung: f.auslagen_bezeichnung, unterzeilen: f.auslagen_unterzeilen }
@@ -628,6 +632,8 @@ export function generatePositionenFromTouren(
 
     if (!wantZusaetze) continue;
     for (const z of t.zusaetze) {
+      // „Keine Auslagen" (Migration 113) erscheint nie auf einer Rechnung.
+      if (istKeineAuslagen(z.kategorie)) continue;
       // Bei getrennter Auslagen-Rechnung den Zusatz dem richtigen
       // Modus zuordnen: konfigurierte Kategorien → Touren-Rechnung,
       // alle anderen → Auslagen-Rechnung.

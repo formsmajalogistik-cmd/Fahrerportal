@@ -6,3 +6,11 @@ export const ZUSATZ_KATEGORIEN = [
   'Wäsche', 'Tankauslagen', 'Ladeauslagen', 'Waschauslagen',
   'Tank und Waschauslagen', 'Lade und Waschauslagen', 'Taxiauslagen',
 ] as const;
+
+/**
+ * Auswahl beim Erfassen von Zusätzen (Tour-Detail, Posteingang): zusätzlich
+ * „Keine Auslagen" (Migration 113) — klärt den Auslagen-Status je
+ * Kennzeichen, erscheint nie auf einer Rechnung. Bewusst NICHT in
+ * ZUSATZ_KATEGORIEN (Rechnungsformat, Preisliste).
+ */
+export const ZUSATZ_KATEGORIEN_ERFASSUNG = [...ZUSATZ_KATEGORIEN, 'Keine Auslagen'] as const;

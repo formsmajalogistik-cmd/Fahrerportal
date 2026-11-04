@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  POS_SELECT, auslagenStatus, keineAuslagenSetzen, ladeAgFormate, ladeKeineAuslagen, ladeLetzteAuslagenRechnungen,
+  POS_SELECT, auslagenStatus, keineAuslagenFuerUngeklaerte, ladeAgFormate, ladeLetzteAuslagenRechnungen,
   leererStand, standAusPositionen, FORMAT_STANDARD,
   type AbrechnungsStand, type AgAuslagenFormat, type AuslagenStatus,
 } from '../lib/auslagenStatus';
 import { AuslagenBadge } from '../components/auslagen/AuslagenBadge';
+import { istKeineAuslagen, ladeZusatzArten, standardZusatzArten, type ZusatzArten } from '../lib/zusatzArten';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
@@ -457,6 +458,7 @@ export function TourenlistePage() {
   // „Keine Auslagen" (Migration 112), Rechnungsformat je Auftraggeber.
   const [abrStand, setAbrStand] = useState<AbrechnungsStand>(() => leererStand());
   const [agFormate, setAgFormate] = useState<Map<string, AgAuslagenFormat>>(new Map());
+  const [zusatzArten, setZusatzArten] = useState<ZusatzArten>(() => standardZusatzArten());
   const [auslagenStand, setAuslagenStand] = useState(0);
   useEffect(() => {
     if (!isAdmin || rows.length === 0) {
@@ -495,14 +497,13 @@ export function TourenlistePage() {
       setRechnungByTour(map);
       const stand = leererStand();
       standAusPositionen(stand, data as never);
-      const [keine, formate] = await Promise.all([
-        ladeKeineAuslagen(ids),
+      const [arten, formate] = await Promise.all([
+        ladeZusatzArten(),
         ladeAgFormate(rows.map((r) => r.auftraggeber_id).filter((x): x is string => !!x)),
         ladeLetzteAuslagenRechnungen(stand),
       ]);
       if (cancelled) return;
-      stand.keine = keine.keine;
-      stand.markierungFehlt = keine.fehlt;
+      setZusatzArten(arten);
       setAbrStand(stand);
       setAgFormate(formate);
       if (!posErr) setRechnungInfoGeladen(true);
@@ -516,21 +517,23 @@ export function TourenlistePage() {
     for (const t of rows) {
       m.set(t.id, auslagenStatus({
         id: t.id, tour_nr: t.tour_id, auftraggeber_id: t.auftraggeber_id, startdatum: t.startdatum, enddatum: t.enddatum,
-        kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [],
-      }, abrStand, (t.auftraggeber_id && agFormate.get(t.auftraggeber_id)) || FORMAT_STANDARD));
+        tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [],
+      }, abrStand, (t.auftraggeber_id && agFormate.get(t.auftraggeber_id)) || FORMAT_STANDARD, zusatzArten));
     }
     return m;
-  }, [isAdmin, rechnungInfoGeladen, rows, abrStand, agFormate]);
+  }, [isAdmin, rechnungInfoGeladen, rows, abrStand, agFormate, zusatzArten]);
 
   const keineAuslagenMarkieren = useCallback(async (tourId: string) => {
     try {
-      const r = await keineAuslagenSetzen([tourId], true);
-      if (r.uebersprungen.length) setError(`${r.uebersprungen[0].tour_nr ?? 'Tour'}: ${r.uebersprungen[0].grund}`);
+      // Je ungeklärtem Kennzeichen ein Zusatz „Keine Auslagen" (Migration 113);
+      // die Zusätze stehen an der Tour → Liste neu laden.
+      await keineAuslagenFuerUngeklaerte([tourId]);
       setAuslagenStand((n) => n + 1);
+      void load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : '„Keine Auslagen" konnte nicht gesetzt werden.');
     }
-  }, []);
+  }, [load]);
 
   // Reset Pagination wenn Filter sich ändern
   useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter]);
@@ -582,11 +585,11 @@ export function TourenlistePage() {
       const a = auslagenById.get(t.id);
       if (s === 'abgeschlossen' && a) {
         if (a.art === 'offen') auslagenOffen.add(t.id);
-        if (a.art === 'ungeklaert' && a.melden && !abrStand.markierungFehlt) auslagenUngeklaert.add(t.id);
+        if (a.ungeklaertMelden) auslagenUngeklaert.add(t.id);
       }
     }
     return { keinPreis, ohneRechnung, auslagenOffen, auslagenUngeklaert };
-  }, [isAdmin, rows, hinweisCutoffYmd, rechnungInfoGeladen, rechnungByTour, auslagenById, abrStand.markierungFehlt]);
+  }, [isAdmin, rows, hinweisCutoffYmd, rechnungInfoGeladen, rechnungByTour, auslagenById]);
 
   const toggleBearbeitet = useCallback(async (tourId: string, current: string | null) => {
     if (!isAdmin) return;
@@ -1793,8 +1796,12 @@ function TourCard({
     return start ?? ende;
   })();
 
-  const zusaetze = tour.zusaetze ?? [];
-  const hasZusaetze = zusaetze.length > 0;
+  // „Keine Auslagen" (Migration 113) wird nicht als Zusatz gezählt/summiert,
+  // aber abgesetzt angezeigt.
+  const alleZusaetze = tour.zusaetze ?? [];
+  const zusaetze = alleZusaetze.filter((z) => !istKeineAuslagen(z.kategorie));
+  const keineAuslagenKz = alleZusaetze.filter((z) => istKeineAuslagen(z.kategorie));
+  const hasZusaetze = alleZusaetze.length > 0;
   const zusaetzeSumme = zusaetze.reduce(
     (acc, z) => acc + (Number(z.anzahl) || 1) * Number(z.betrag ?? 0),
     0,
@@ -2030,6 +2037,9 @@ function TourCard({
               && (auslagen.art !== 'ungeklaert' || auslagenUngeklaertMelden) && (
               <AuslagenBadge status={auslagen} />
             )}
+            {isAdmin && auslagen && auslagen.art === 'offen' && auslagenUngeklaertMelden && (
+              <AuslagenBadge status={auslagen} nurUngeklaert />
+            )}
             {isAdmin && auslagenUngeklaertMelden && onKeineAuslagen && (
               // Wie die übrigen Karten-Aktionen als role="button" (die
               // ganze Karte ist bereits ein Button).
@@ -2085,6 +2095,7 @@ function TourCard({
           >
             <span>
               Zusätze ({zusaetze.length}) · {formatEuro(zusaetzeSumme)}
+              {keineAuslagenKz.length > 0 && <span className="ml-1 font-normal text-maja-muted">· Keine Auslagen ({keineAuslagenKz.length})</span>}
             </span>
             <span aria-hidden="true" className="text-xs">
               {zusaetzeOpen ? '▲' : '▼'}
@@ -2115,6 +2126,15 @@ function TourCard({
                   );
                 })}
               </ul>
+              {keineAuslagenKz.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {keineAuslagenKz.map((z) => (
+                    <span key={z.id} className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:!bg-slate-600 dark:!text-slate-100">
+                      Keine Auslagen{z.kennzeichen ? ` · ${z.kennzeichen}` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="mt-2 flex justify-between border-t border-maja-navy/10 pt-2 text-sm font-semibold text-maja-navy">
                 <span>Zusätze gesamt</span>
                 <span>{formatEuro(zusaetzeSumme)}</span>

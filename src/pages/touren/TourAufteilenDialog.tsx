@@ -5,6 +5,7 @@
 // mit „Aufteilen" — dann in EINER Transaktion durch die Datenbankfunktion
 // tour_aufteilen (Migration 106). Regeln: lib/tourAufteilung.ts.
 
+import { istKeineAuslagen } from '../../lib/zusatzArten';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { XIcon } from '../../components/icons';
@@ -313,7 +314,8 @@ export function TourAufteilenDialog({ tourId, fahrer, zugaenge, onClose, onDone 
                     return (
                       <li key={z.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                         <span className="text-maja-ink">
-                          {z.kategorie} · {formatEuro(Number(z.betrag) * Number(z.anzahl ?? 1))}
+                          {/* „Keine Auslagen" wandert wie jeder Zusatz über das Kennzeichen mit, hat aber keinen Betrag. */}
+                          {istKeineAuslagen(z.kategorie) ? z.kategorie : `${z.kategorie} · ${formatEuro(Number(z.betrag) * Number(z.anzahl ?? 1))}`}
                           {z.kennzeichen ? <span className="text-maja-muted"> · {z.kennzeichen}</span> : null}
                           {z.notiz ? <span className="text-maja-muted"> · {z.notiz}</span> : null}
                         </span>
