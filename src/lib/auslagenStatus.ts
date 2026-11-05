@@ -454,11 +454,19 @@ export async function rechnungstageDerTouren(ids: string[]): Promise<string[]> {
   return [...new Set(tage)];
 }
 
-/** Zusatz „Keine Auslagen" je Kennzeichen anlegen (anzahl 1, betrag 0). */
-export async function keineAuslagenAnlegen(eintraege: Array<{ tourId: string; kennzeichen: string | null }>): Promise<number> {
+/**
+ * Zusatz „Keine Auslagen" je Kennzeichen anlegen (anzahl 1, betrag 0).
+ * `herkunft` 'leerfahrt' (Migration 114): automatisch durch die Leerfahrt —
+ * „Leerfahrt entfernen" nimmt genau diese Einträge wieder weg.
+ */
+export async function keineAuslagenAnlegen(
+  eintraege: Array<{ tourId: string; kennzeichen: string | null }>,
+  herkunft?: 'leerfahrt',
+): Promise<number> {
   if (eintraege.length === 0) return 0;
   const { error } = await supabase.from('tour_zusaetze').insert(eintraege.map((e) => ({
     tour_id: e.tourId, kategorie: KEINE_AUSLAGEN, anzahl: 1, betrag: 0, kennzeichen: e.kennzeichen, notiz: null,
+    ...(herkunft ? { herkunft } : {}),
   })));
   if (error) throw new Error(error.message);
   return eintraege.length;
@@ -469,10 +477,20 @@ export async function keineAuslagenAnlegen(eintraege: Array<{ tourId: string; ke
  * Kennzeichen der Touren einen Zusatz an. Kennzeichen mit einer Auslage
  * (oder schon „Keine Auslagen") bekommen nichts.
  */
-export async function keineAuslagenFuerUngeklaerte(tourIds: string[], nurKennzeichen?: Slot): Promise<number> {
+export async function keineAuslagenFuerUngeklaerte(tourIds: string[], nurKennzeichen?: Slot, herkunft?: 'leerfahrt'): Promise<number> {
   const [touren, arten] = await Promise.all([ladeAuslagenTouren(tourIds), ladeZusatzArten()]);
-  const eintraege = touren.flatMap((t) => ungeklaerteSlots(t, arten)
-    .filter((s) => !nurKennzeichen || (s.rolle === nurKennzeichen.rolle && s.kennzeichen === nurKennzeichen.kennzeichen))
-    .map((s) => ({ tourId: t.id, kennzeichen: s.kennzeichen })));
-  return keineAuslagenAnlegen(eintraege);
+  const eintraege = touren.flatMap((t) => {
+    const slots = ungeklaerteSlots(t, arten)
+      .filter((s) => !nurKennzeichen || (s.rolle === nurKennzeichen.rolle && s.kennzeichen === nurKennzeichen.kennzeichen));
+    // Ohne erfasste Kennzeichen genügt EIN Eintrag auf Tour-Ebene (ohne
+    // Kennzeichen gilt er für alle) — nicht je Rolle doppelt.
+    const gesehen = new Set<string>();
+    return slots.filter((s) => {
+      const k = s.kennzeichen ?? '';
+      if (gesehen.has(k)) return false;
+      gesehen.add(k);
+      return true;
+    }).map((s) => ({ tourId: t.id, kennzeichen: s.kennzeichen }));
+  });
+  return keineAuslagenAnlegen(eintraege, herkunft);
 }

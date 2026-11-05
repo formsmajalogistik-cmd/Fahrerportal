@@ -6,11 +6,13 @@ import {
   type AbrechnungsStand, type AgAuslagenFormat, type AuslagenStatus,
 } from '../lib/auslagenStatus';
 import { AuslagenBadge } from '../components/auslagen/AuslagenBadge';
+import { LEERFAHRT_ENTFERNEN_FRAGE, ladeLeerfahrten, leerfahrtEntfernen, leerfahrtSetzen } from '../lib/leerfahrt';
 import { istKeineAuslagen, ladeZusatzArten, standardZusatzArten, type ZusatzArten } from '../lib/zusatzArten';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useTestGuard, useTestMode } from '../auth/TestModeContext';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
@@ -316,7 +318,7 @@ export function TourenlistePage() {
   const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
   /** Aktiver Abrechnungs-Warnungs-Filter (Banner-Klick): zeigt exklusiv
    *  die betroffenen Touren; zweiter Klick hebt ihn wieder auf. */
-  const [hinweisFilter, setHinweisFilter] = useState<null | 'kein_preis' | 'ohne_rechnung' | 'auslagen_offen' | 'auslagen_ungeklaert'>(null);
+  const [hinweisFilter, setHinweisFilter] = useState<null | 'kein_preis' | 'ohne_rechnung' | 'auslagen_offen' | 'auslagen_ungeklaert' | 'leerfahrt'>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -459,6 +461,10 @@ export function TourenlistePage() {
   const [abrStand, setAbrStand] = useState<AbrechnungsStand>(() => leererStand());
   const [agFormate, setAgFormate] = useState<Map<string, AgAuslagenFormat>>(new Map());
   const [zusatzArten, setZusatzArten] = useState<ZusatzArten>(() => standardZusatzArten());
+  // Leerfahrten (Migration 114, nur Admin)
+  const [leerfahrten, setLeerfahrten] = useState<Set<string>>(new Set());
+  const [leerfahrtFehlt, setLeerfahrtFehlt] = useState(false);
+  const [leerfahrtFrage, setLeerfahrtFrage] = useState<TourRow | null>(null);
   const [auslagenStand, setAuslagenStand] = useState(0);
   useEffect(() => {
     if (!isAdmin || rows.length === 0) {
@@ -497,13 +503,16 @@ export function TourenlistePage() {
       setRechnungByTour(map);
       const stand = leererStand();
       standAusPositionen(stand, data as never);
-      const [arten, formate] = await Promise.all([
+      const [arten, formate, , lf] = await Promise.all([
         ladeZusatzArten(),
         ladeAgFormate(rows.map((r) => r.auftraggeber_id).filter((x): x is string => !!x)),
         ladeLetzteAuslagenRechnungen(stand),
+        ladeLeerfahrten(ids),
       ]);
       if (cancelled) return;
       setZusatzArten(arten);
+      setLeerfahrten(new Set(lf.map.keys()));
+      setLeerfahrtFehlt(lf.fehlt);
       setAbrStand(stand);
       setAgFormate(formate);
       if (!posErr) setRechnungInfoGeladen(true);
@@ -533,6 +542,18 @@ export function TourenlistePage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : '„Keine Auslagen" konnte nicht gesetzt werden.');
     }
+  }, [load]);
+
+  /** Leerfahrt setzen (Schnellaktion); Entfernen fragt vorher nach. */
+  const leerfahrtUmschalten = useCallback(async (t: TourRow, an: boolean) => {
+    if (!an) { setLeerfahrtFrage(t); return; }
+    try {
+      await leerfahrtSetzen(t.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '„Leerfahrt" konnte nicht gesetzt werden.');
+    }
+    setAuslagenStand((n) => n + 1);
+    void load(true);
   }, [load]);
 
   // Reset Pagination wenn Filter sich ändern
@@ -766,6 +787,7 @@ export function TourenlistePage() {
     // übereinstimmen.
     if (hinweisFilter) {
       const set = hinweisFilter === 'kein_preis' ? hinweise.keinPreis
+        : hinweisFilter === 'leerfahrt' ? leerfahrten
         : hinweisFilter === 'auslagen_offen' ? hinweise.auslagenOffen
           : hinweisFilter === 'auslagen_ungeklaert' ? hinweise.auslagenUngeklaert
             : hinweise.ohneRechnung;
@@ -791,7 +813,7 @@ export function TourenlistePage() {
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise, suchModus, suche]);
+  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise, leerfahrten, suchModus, suche]);
 
   // ---- KPI-Daten ----
   // Alle KPIs respektieren Auftraggeber- und Fahrer-Filter (siehe Spec:
@@ -1392,6 +1414,19 @@ export function TourenlistePage() {
               </button>
             );
           })}
+          {/* Leerfahrten (Migration 114, nur Admin) — exklusiver Filter wie die Warn-Hinweise. */}
+          {isAdmin && !leerfahrtFehlt && leerfahrten.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHinweisFilter((cur) => (cur === 'leerfahrt' ? null : 'leerfahrt'))}
+              aria-pressed={hinweisFilter === 'leerfahrt'}
+              className={`inline-block rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                hinweisFilter === 'leerfahrt' ? 'bg-slate-600 text-white' : 'border border-maja-navy/15 bg-white text-maja-navy hover:bg-maja-light'
+              }`}
+            >
+              Leerfahrten ({rows.filter((r) => leerfahrten.has(r.id)).length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -1497,6 +1532,8 @@ export function TourenlistePage() {
               auslagen={auslagenById.get(t.id)}
               auslagenUngeklaertMelden={hinweise.auslagenUngeklaert.has(t.id)}
               onKeineAuslagen={() => keineAuslagenMarkieren(t.id)}
+              leerfahrt={isAdmin && !leerfahrtFehlt ? leerfahrten.has(t.id) : undefined}
+              onLeerfahrt={(an) => leerfahrtUmschalten(t, an)}
               geaendert={geaenderteTourIds.has(t.id)}
             />
           ))}
@@ -1541,6 +1578,21 @@ export function TourenlistePage() {
         <TourImportDialog
           onClose={() => setShowImport(false)}
           onImported={() => { void load(); }}
+        />
+      )}
+
+      {leerfahrtFrage && (
+        <ConfirmDialog
+          title="Leerfahrt entfernen?"
+          message={<>{leerfahrtFrage.tour_id ?? 'Tour'}: {LEERFAHRT_ENTFERNEN_FRAGE}</>}
+          confirmLabel="Leerfahrt entfernen"
+          onConfirm={async () => {
+            await leerfahrtEntfernen(leerfahrtFrage.id);
+            setLeerfahrtFrage(null);
+            setAuslagenStand((n) => n + 1);
+            void load(true);
+          }}
+          onClose={() => setLeerfahrtFrage(null)}
         />
       )}
 
@@ -1756,14 +1808,18 @@ interface CardProps {
   /** „Ungeklärt" wird gemeldet (abgeschlossen, 7-Tage-Fenster, …). */
   auslagenUngeklaertMelden?: boolean;
   onKeineAuslagen?: () => Promise<void>;
+  /** Leerfahrt (nur Admin; undefined = nicht anzeigen). */
+  leerfahrt?: boolean;
+  onLeerfahrt?: (an: boolean) => Promise<void>;
   /** Unquittierte Auftraggeber-Änderung an dieser Tour (Migration 079). */
   geaendert?: boolean;
 }
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
   rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung, geaendert,
-  auslagen, auslagenUngeklaertMelden, onKeineAuslagen,
+  auslagen, auslagenUngeklaertMelden, onKeineAuslagen, leerfahrt, onLeerfahrt,
 }: CardProps) {
+  const [leerfahrtBusy, setLeerfahrtBusy] = useState(false);
   const [auslagenBusy, setAuslagenBusy] = useState(false);
   // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
   // Zuweisung ein eigener Open-Button. Fallback auf die Legacy-Spalte,
@@ -1813,7 +1869,7 @@ function TourCard({
       <button
         type="button"
         onClick={onOpen}
-        className={`card w-full p-5 text-left transition hover:shadow-lg ${
+        className={`card relative w-full overflow-hidden p-5 text-left transition hover:shadow-lg ${
           hasZusaetze ? 'rounded-b-none' : ''
         }`}
       >
@@ -2040,6 +2096,38 @@ function TourCard({
             {isAdmin && auslagen && auslagen.art === 'offen' && auslagenUngeklaertMelden && (
               <AuslagenBadge status={auslagen} nurUngeklaert />
             )}
+            {leerfahrt !== undefined && onLeerfahrt && (
+              // Badge „Leerfahrt" (gesetzt) bzw. dezenter Umschalter — wie die
+              // übrigen Karten-Aktionen als role="button" (Karte ist ein Button).
+              <span
+                role="button"
+                tabIndex={0}
+                aria-pressed={leerfahrt}
+                aria-label={leerfahrt ? 'Leerfahrt — klicken zum Entfernen' : 'Als Leerfahrt markieren'}
+                data-leerfahrt={leerfahrt ? 'ja' : 'nein'}
+                className={`inline-flex cursor-pointer items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                  leerfahrt
+                    ? 'bg-slate-600 text-white dark:!bg-slate-300 dark:!text-slate-900'
+                    : 'border border-dashed border-maja-navy/25 text-maja-muted hover:bg-maja-light dark:!border-slate-500'
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation(); e.preventDefault();
+                  if (leerfahrtBusy) return;
+                  setLeerfahrtBusy(true);
+                  void onLeerfahrt(!leerfahrt).finally(() => setLeerfahrtBusy(false));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.stopPropagation(); e.preventDefault();
+                  if (leerfahrtBusy) return;
+                  setLeerfahrtBusy(true);
+                  void onLeerfahrt(!leerfahrt).finally(() => setLeerfahrtBusy(false));
+                }}
+                title={leerfahrt ? 'Leerfahrt — klicken zum Entfernen' : 'Als Leerfahrt markieren (setzt „Keine Auslagen")'}
+              >
+                {leerfahrtBusy ? '…' : 'Leerfahrt'}
+              </span>
+            )}
             {isAdmin && auslagenUngeklaertMelden && onKeineAuslagen && (
               // Wie die übrigen Karten-Aktionen als role="button" (die
               // ganze Karte ist bereits ein Button).
@@ -2078,6 +2166,17 @@ function TourCard({
             )}
           </div>
         </div>
+        {/* Wasserzeichen „LEERFAHRT": rein dekorativ, nicht klickbar, kein
+            Einfluss auf die Kartenhöhe, wird nicht gedruckt. Das Badge oben
+            trägt die Information für Screenreader und schmale Karten. */}
+        {leerfahrt && (
+          <span aria-hidden="true" data-wasserzeichen="leerfahrt"
+                className="pointer-events-none absolute inset-0 flex select-none items-center justify-center print:hidden">
+            <span className="-rotate-[17deg] whitespace-nowrap text-4xl font-black uppercase tracking-[0.25em] text-maja-navy/10 sm:text-6xl dark:!text-white/10">
+              Leerfahrt
+            </span>
+          </span>
+        )}
       </button>
       {hasZusaetze && (
         <div

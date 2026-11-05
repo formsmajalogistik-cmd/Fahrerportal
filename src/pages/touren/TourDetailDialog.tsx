@@ -46,6 +46,7 @@ import {
 } from '../../lib/auslagenPreis';
 import { AuslagenHinweis } from '../../components/AuslagenHinweis';
 import { AuslagenTourStatus } from '../../components/auslagen/AuslagenTourStatus';
+import { LeerfahrtLeiste } from '../../components/auslagen/LeerfahrtLeiste';
 import {
   loadTourProtokollZuweisungen, ProtokollSection,
   type TourProtokollZuweisung,
@@ -1390,6 +1391,11 @@ export function TourDetailDialog({
           </div>
         );
       })()}
+
+      {/* Leerfahrt (Migration 114, nur Admin): Hinweisbalken bzw. Umschalter */}
+      {isAdmin && !editing && (
+        <LeerfahrtLeiste tourId={tour.id} onChanged={() => { onChanged(); void zusaetzeNeuLaden(); }} />
+      )}
 
       {/* Detail-Felder */}
       {!editing || !draft ? (

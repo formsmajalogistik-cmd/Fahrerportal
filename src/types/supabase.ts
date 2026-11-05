@@ -817,6 +817,12 @@ export type Database = {
         Update: { schluessel?: string; bezeichnung?: string; zaehlt_als_auslage?: boolean };
         Relationships: [];
       };
+      tour_leerfahrt: {
+        Row: { tour_id: string; gesetzt_am: string; gesetzt_von: string | null; gesetzt_von_name: string | null };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       tour_keine_auslagen: {
         Row: {
           tour_id: string;
@@ -866,6 +872,7 @@ export type Database = {
           kennzeichen: string | null;
           dauer_min: number | null;
           preis_quelle: string | null;
+          herkunft: 'leerfahrt' | null;
           created_at: string;
         };
         Insert: {
@@ -878,6 +885,7 @@ export type Database = {
           kennzeichen?: string | null;
           dauer_min?: number | null;
           preis_quelle?: string | null;
+          herkunft?: 'leerfahrt' | null;
           created_at?: string;
         };
         Update: {
@@ -890,6 +898,7 @@ export type Database = {
           kennzeichen?: string | null;
           dauer_min?: number | null;
           preis_quelle?: string | null;
+          herkunft?: 'leerfahrt' | null;
           created_at?: string;
         };
         Relationships: [
@@ -2332,6 +2341,10 @@ export type Database = {
       };
       beleg_versand_import: {
         Args: { p_eintraege: Json };
+        Returns: Json;
+      };
+      tour_leerfahrt_setzen: {
+        Args: { p_tour_id: string; p_an: boolean };
         Returns: Json;
       };
       tour_keine_auslagen_setzen: {
