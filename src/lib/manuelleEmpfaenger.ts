@@ -11,6 +11,7 @@
 
 import { supabase } from './supabase';
 import type { Database } from '../types/supabase';
+import { erechnungSchemaVorhanden, istERechnungFormat, normLandCode, type ERechnungFormat } from './erechnung/stammdaten';
 
 export type ManuellerEmpfaenger =
   Database['public']['Tables']['manuelle_empfaenger']['Row'];
@@ -32,6 +33,14 @@ export interface ManuellerEmpfaengerEntwurf {
   email: string;
   ustId: string;
   kundennummer: string;
+  // E-Rechnung (Migration 115) — werden nur geschrieben, wenn das Schema da ist.
+  /** ISO 3166-1 alpha-2; neu: 'DE'. */
+  landCode: string;
+  /** Zahlungsziel in Tagen; '' = Standard aus den Einstellungen. */
+  zahlungsziel: string;
+  erechnungFormat: ERechnungFormat;
+  erechnungEmail: string;
+  kaeuferReferenz: string;
 }
 
 export function leererEmpfaenger(): ManuellerEmpfaengerEntwurf {
@@ -39,6 +48,7 @@ export function leererEmpfaenger(): ManuellerEmpfaengerEntwurf {
     firma: '', anrede: '', vorname: '', nachname: '',
     strasse: '', plz: '', ort: '', land: '',
     email: '', ustId: '', kundennummer: '',
+    landCode: 'DE', zahlungsziel: '', erechnungFormat: 'pdf', erechnungEmail: '', kaeuferReferenz: '',
   };
 }
 
@@ -111,7 +121,20 @@ export function entwurfAusGespeichertem(
     email: m.email ?? '',
     ustId: m.ust_id ?? '',
     kundennummer: m.kundennummer ?? '',
+    landCode: m.land_code ?? '',
+    zahlungsziel: m.zahlungsziel_tage != null ? String(m.zahlungsziel_tage) : '',
+    erechnungFormat: istERechnungFormat(m.erechnung_format) ? m.erechnung_format : 'pdf',
+    erechnungEmail: m.erechnung_email ?? '',
+    kaeuferReferenz: m.kaeufer_referenz ?? '',
   };
+}
+
+/** Zahlungsziel-Eingabe → Tage (0–365) oder null. */
+export function zahlungszielTage(eingabe: string): number | null {
+  const t = eingabe.trim();
+  if (!/^\d{1,3}$/.test(t)) return null;
+  const n = Number(t);
+  return n <= 365 ? n : null;
 }
 
 // ---------------------------------------------------------------
@@ -131,20 +154,27 @@ export async function ladeManuelleEmpfaenger(): Promise<ManuellerEmpfaenger[]> {
   return (data as ManuellerEmpfaenger[]) ?? [];
 }
 
-function toRow(e: ManuellerEmpfaengerEntwurf) {
+function toRow(e: ManuellerEmpfaengerEntwurf, mitERechnung: boolean) {
   const n = (v: string) => (v.trim() ? v.trim() : null);
   return {
     firma: n(e.firma), anrede: n(e.anrede),
     vorname: n(e.vorname), nachname: n(e.nachname),
     strasse: n(e.strasse), plz: n(e.plz), ort: n(e.ort), land: n(e.land),
     email: n(e.email), ust_id: n(e.ustId), kundennummer: n(e.kundennummer),
+    ...(mitERechnung ? {
+      land_code: normLandCode(e.landCode),
+      zahlungsziel_tage: zahlungszielTage(e.zahlungsziel),
+      erechnung_format: e.erechnungFormat,
+      erechnung_email: n(e.erechnungEmail),
+      kaeufer_referenz: n(e.kaeuferReferenz),
+    } : {}),
   };
 }
 
 export async function merkeEmpfaenger(
   e: ManuellerEmpfaengerEntwurf,
 ): Promise<{ ok: boolean; fehler?: string }> {
-  const { error } = await supabase.from('manuelle_empfaenger').insert(toRow(e));
+  const { error } = await supabase.from('manuelle_empfaenger').insert(toRow(e, await erechnungSchemaVorhanden()));
   if (error) return { ok: false, fehler: error.message };
   return { ok: true };
 }
@@ -178,7 +208,7 @@ export async function merkeEmpfaengerWennGewuenscht(args: {
   // Ohne Firma UND ohne Nachnamen gibt es nichts, was später
   // wiederzuerkennen wäre — ein leerer Eintrag hilft niemandem.
   const hatInhalt = !!(t(entwurf.firma) || t(entwurf.nachname));
-  const payload = toRow(entwurf);
+  const payload = toRow(entwurf, await erechnungSchemaVorhanden());
 
   if (!merken || !hatInhalt) {
     console.log(`[${quelle}] Empfänger merken`, {
@@ -203,7 +233,7 @@ export async function aktualisiereEmpfaenger(
   id: string, e: ManuellerEmpfaengerEntwurf,
 ): Promise<{ ok: boolean; fehler?: string }> {
   const { error } = await supabase
-    .from('manuelle_empfaenger').update(toRow(e)).eq('id', id);
+    .from('manuelle_empfaenger').update(toRow(e, await erechnungSchemaVorhanden())).eq('id', id);
   if (error) return { ok: false, fehler: error.message };
   return { ok: true };
 }

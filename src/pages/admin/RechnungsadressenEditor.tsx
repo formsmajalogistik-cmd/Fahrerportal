@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { XIcon } from '../../components/icons';
 import type { Database } from '../../types/supabase';
+import { gleicheAdresszeile, LAENDER, normLandCode, plzOrtZusammen, trennePlzOrt } from '../../lib/erechnung/stammdaten';
+import { useERechnungSchema } from '../../lib/erechnung/useERechnungSchema';
 
 type Rechnungsadresse = Database['public']['Tables']['rechnungsadressen']['Row'];
 type RechnungsadresseInsert = Database['public']['Tables']['rechnungsadressen']['Insert'];
@@ -17,6 +19,11 @@ interface AdresseDraft {
   plz_ort: string;
   land: string;
   ist_standard: boolean;
+  /** E-Rechnung (Migration 115): PLZ/Ort getrennt + ISO-Ländercode.
+   *  Das PDF nutzt weiterhin plz_ort/land. */
+  plz: string;
+  ort: string;
+  land_code: string;
 }
 
 function fromServer(r: Rechnungsadresse): AdresseDraft {
@@ -29,6 +36,9 @@ function fromServer(r: Rechnungsadresse): AdresseDraft {
     plz_ort: r.plz_ort ?? '',
     land: r.land ?? '',
     ist_standard: r.ist_standard,
+    plz: r.plz ?? '',
+    ort: r.ort ?? '',
+    land_code: r.land_code ?? '',
   };
 }
 
@@ -38,6 +48,7 @@ function emptyDraft(): AdresseDraft {
     key: `new-${Math.random().toString(36).slice(2, 10)}`,
     firma: '', ansprechpartner: '', strasse: '', plz_ort: '', land: '',
     ist_standard: false,
+    plz: '', ort: '', land_code: 'DE',
   };
 }
 
@@ -58,6 +69,7 @@ export function RechnungsadressenEditor({ auftraggeberId, onChanged }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const schemaOk = useERechnungSchema();
 
   useEffect(() => {
     if (!auftraggeberId) { setList([]); return; }
@@ -88,6 +100,10 @@ export function RechnungsadressenEditor({ auftraggeberId, onChanged }: Props) {
   async function save(d: AdresseDraft) {
     if (!auftraggeberId) return;
     if (!d.firma.trim()) { setError('Firma ist Pflicht.'); return; }
+    if (schemaOk && d.land_code.trim() && !normLandCode(d.land_code)) {
+      setError('Ländercode: bitte zwei Buchstaben angeben (z.B. DE).');
+      return;
+    }
     setSaving(d.key);
     setError(null);
     const payload: RechnungsadresseInsert = {
@@ -98,6 +114,11 @@ export function RechnungsadressenEditor({ auftraggeberId, onChanged }: Props) {
       plz_ort: d.plz_ort.trim() || null,
       land: d.land.trim() || null,
       ist_standard: d.ist_standard,
+      ...(schemaOk ? {
+        plz: d.plz.trim() || null,
+        ort: d.ort.trim() || null,
+        land_code: normLandCode(d.land_code),
+      } : {}),
     };
     if (d.id) {
       const { error: err } = await supabase
@@ -210,6 +231,7 @@ export function RechnungsadressenEditor({ auftraggeberId, onChanged }: Props) {
                          onChange={(e) => updateLocal(d.key, { land: e.target.value })} />
                 </div>
               </div>
+              {schemaOk && <ERechnungAdresse d={d} onPatch={(p) => updateLocal(d.key, p)} />}
               <div className="mt-2 flex justify-end">
                 <button
                   type="button"
@@ -223,6 +245,69 @@ export function RechnungsadressenEditor({ auftraggeberId, onChanged }: Props) {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * PLZ, Ort und Ländercode getrennt — für die spätere E-Rechnung. Das
+ * PDF verwendet weiterhin „PLZ / Ort" und „Land" von oben. Übernahme
+ * aus dem kombinierten Feld nur auf Knopfdruck und nur, wenn die
+ * Trennung eindeutig ist.
+ */
+function ERechnungAdresse({ d, onPatch }: { d: AdresseDraft; onPatch: (p: Partial<AdresseDraft>) => void }) {
+  const vorschlag = trennePlzOrt(d.plz_ort, d.land);
+  const getrennt = plzOrtZusammen(d.plz, d.ort);
+  const abweichend = getrennt !== '' && d.plz_ort.trim() !== '' && !gleicheAdresszeile(getrennt, d.plz_ort);
+  const kannUebernehmen = vorschlag.status === 'eindeutig'
+    && (vorschlag.plz !== d.plz.trim() || vorschlag.ort !== d.ort.trim()
+      || (!d.land_code.trim() && !!vorschlag.landCode));
+  const id = `ra-${d.key}`;
+  return (
+    <div className="mt-3 rounded-md bg-maja-light/50 p-3" data-testid="ra-erechnung">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium text-maja-navy">Für die E-Rechnung (getrennt)</span>
+        {kannUebernehmen && (
+          <button type="button" className="btn-secondary px-2 py-1 text-xs"
+                  onClick={() => onPatch({
+                    plz: vorschlag.plz ?? '', ort: vorschlag.ort ?? '',
+                    land_code: d.land_code.trim() || vorschlag.landCode || '',
+                  })}>
+            Aus „PLZ / Ort" übernehmen
+          </button>
+        )}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[1fr_2fr_1fr]">
+        <div>
+          <label htmlFor={`${id}-plz`} className="label">PLZ</label>
+          <input id={`${id}-plz`} className="input" value={d.plz}
+                 onChange={(e) => onPatch({ plz: e.target.value })} />
+        </div>
+        <div>
+          <label htmlFor={`${id}-ort`} className="label">Ort</label>
+          <input id={`${id}-ort`} className="input" value={d.ort}
+                 onChange={(e) => onPatch({ ort: e.target.value })} />
+        </div>
+        <div>
+          <label htmlFor={`${id}-land-code`} className="label">Ländercode</label>
+          <input id={`${id}-land-code`} className="input uppercase" maxLength={2} placeholder="DE"
+                 list={`${id}-laender`} value={d.land_code}
+                 onChange={(e) => onPatch({ land_code: e.target.value.toUpperCase() })} />
+          <datalist id={`${id}-laender`}>
+            {LAENDER.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
+          </datalist>
+        </div>
+      </div>
+      {abweichend && (
+        <p className="mt-1 text-xs text-amber-700 dark:!text-amber-300">
+          Weicht von „PLZ / Ort" ({d.plz_ort.trim()}) ab — das PDF druckt weiterhin „PLZ / Ort".
+        </p>
+      )}
+      {!getrennt && vorschlag.status === 'manuell' && d.plz_ort.trim() !== '' && (
+        <p className="mt-1 text-xs text-maja-muted">
+          Automatische Trennung nicht eindeutig ({vorschlag.hinweise.join('; ')}) — bitte von Hand eintragen.
+        </p>
       )}
     </div>
   );

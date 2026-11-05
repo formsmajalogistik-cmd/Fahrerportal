@@ -31,3 +31,8 @@ supabase/.temp
 *.njsproj
 *.sln
 *.sw?
+
+# E-Rechnung: lokaler Validator + Testausgaben (npm run test:erechnung)
+tools/erechnung/.validator
+tools/erechnung/.ausgabe
+tools/erechnung/offiziell

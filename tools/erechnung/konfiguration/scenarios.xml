@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Prüfszenarien für den KoSIT-Validator (lokal, offline).
+
+  Nachbau der offiziellen „validator-configuration-xrechnung" aus den
+  offiziellen Regel-Dateien (CEN EN 16931 Schematron, KoSIT XRechnung
+  Schematron, UN/CEFACT CII D16B XSD), bezogen über Maven Central
+  (siehe validator-einrichten.mjs). Liegt die offizielle Konfiguration
+  unter tools/erechnung/offiziell/ vor, wird stattdessen sie verwendet.
+-->
+<scenarios xmlns="http://www.xoev.de/de/validator/framework/1/scenarios" frameworkVersion="1.0.0">
+  <name>Maja-Logistik E-Rechnung (Test)</name>
+  <date>2026-11-05</date>
+  <description>
+    <p>XRechnung 3.0 (CII) und EN 16931 (CII) — Schema + CEN-Regeln (+ XRechnung-Regeln)</p>
+  </description>
+
+  <scenario>
+    <name>XRechnung 3.0 (CII)</name>
+    <namespace prefix="rsm">urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100</namespace>
+    <namespace prefix="ram">urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100</namespace>
+    <namespace prefix="rep">urn:maja-logistik:erechnung:pruefbericht</namespace>
+    <match>/rsm:CrossIndustryInvoice[starts-with(normalize-space(rsm:ExchangedDocumentContext/ram:GuidelineSpecifiedDocumentContextParameter/ram:ID), 'urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0')]</match>
+    <validateWithXmlSchema>
+      <resource>
+        <name>UN/CEFACT CII D16B</name>
+        <location>resources/cii/d16b/data/standard/CrossIndustryInvoice_100pD16B.xsd</location>
+      </resource>
+    </validateWithXmlSchema>
+    <validateWithSchematron>
+      <resource>
+        <name>CEN EN 16931 CII</name>
+        <location>resources/en16931/EN16931-CII-validation.xslt</location>
+      </resource>
+    </validateWithSchematron>
+    <validateWithSchematron>
+      <resource>
+        <name>KoSIT XRechnung CII</name>
+        <location>resources/xrechnung/XRechnung-CII-validation.xslt</location>
+      </resource>
+    </validateWithSchematron>
+    <createReport>
+      <resource>
+        <name>Prüfbericht</name>
+        <location>resources/report.xsl</location>
+      </resource>
+    </createReport>
+    <acceptMatch>/rep:report/@valid = 'true'</acceptMatch>
+  </scenario>
+
+  <scenario>
+    <name>EN 16931 (CII)</name>
+    <namespace prefix="rsm">urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100</namespace>
+    <namespace prefix="ram">urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100</namespace>
+    <namespace prefix="rep">urn:maja-logistik:erechnung:pruefbericht</namespace>
+    <match>/rsm:CrossIndustryInvoice[normalize-space(rsm:ExchangedDocumentContext/ram:GuidelineSpecifiedDocumentContextParameter/ram:ID) = 'urn:cen.eu:en16931:2017']</match>
+    <validateWithXmlSchema>
+      <resource>
+        <name>UN/CEFACT CII D16B</name>
+        <location>resources/cii/d16b/data/standard/CrossIndustryInvoice_100pD16B.xsd</location>
+      </resource>
+    </validateWithXmlSchema>
+    <validateWithSchematron>
+      <resource>
+        <name>CEN EN 16931 CII</name>
+        <location>resources/en16931/EN16931-CII-validation.xslt</location>
+      </resource>
+    </validateWithSchematron>
+    <createReport>
+      <resource>
+        <name>Prüfbericht</name>
+        <location>resources/report.xsl</location>
+      </resource>
+    </createReport>
+    <acceptMatch>/rep:report/@valid = 'true'</acceptMatch>
+  </scenario>
+
+  <noScenarioReport>
+    <resource>
+      <name>Prüfbericht</name>
+      <location>resources/report.xsl</location>
+    </resource>
+  </noScenarioReport>
+</scenarios>

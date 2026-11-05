@@ -14,6 +14,8 @@ import {
   anzeigeName, entwurfAusGespeichertem, ladeManuelleEmpfaenger,
   type ManuellerEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../lib/manuelleEmpfaenger';
+import { ERechnungFelder } from './erechnung/ERechnungFelder';
+import { useERechnungSchema } from '../lib/erechnung/useERechnungSchema';
 
 interface Props {
   wert: ManuellerEmpfaengerEntwurf;
@@ -22,11 +24,21 @@ interface Props {
   merken: boolean;
   onMerken: (v: boolean) => void;
   idPrefix: string;
+  /**
+   * Nur bei Rechnungen: Zahlungsziel + E-Rechnungs-Angaben (Migration 115).
+   * Gutschriften und Briefe zeigen diese Felder nicht.
+   */
+  mitRechnungsfeldern?: boolean;
+  /** Standard-Zahlungsziel (Einstellung) — gilt, wenn das Feld leer bleibt. */
+  standardZahlungsziel?: number;
 }
 
 export function ManuellerEmpfaengerFeldsatz({
-  wert, onChange, merken, onMerken, idPrefix,
+  wert, onChange, merken, onMerken, idPrefix, mitRechnungsfeldern = false, standardZahlungsziel,
 }: Props) {
+  const schemaOk = useERechnungSchema();
+  const zeigeRechnungsfelder = mitRechnungsfeldern && schemaOk === true;
+  const zielUngueltig = wert.zahlungsziel.trim() !== '' && !/^\d{1,3}$/.test(wert.zahlungsziel.trim());
   const [gemerkte, setGemerkte] = useState<ManuellerEmpfaenger[]>([]);
   const [geladen, setGeladen] = useState(false);
 
@@ -145,6 +157,28 @@ export function ManuellerEmpfaengerFeldsatz({
           </p>
         </div>
       </div>
+
+      {zeigeRechnungsfelder && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor={`${idPrefix}-zahlungsziel`} className="label">Zahlungsziel (Tage)</label>
+              <input id={`${idPrefix}-zahlungsziel`} className="input" inputMode="numeric"
+                     placeholder={standardZahlungsziel != null ? `${standardZahlungsziel} (Standard)` : ''}
+                     aria-invalid={zielUngueltig || undefined}
+                     value={wert.zahlungsziel} onChange={(e) => patch({ zahlungsziel: e.target.value })} />
+              <p className={`mt-1 text-xs ${zielUngueltig ? 'text-red-700' : 'text-maja-muted'}`}>
+                {zielUngueltig ? 'Bitte ganze Tage (0–365) angeben.' : 'Leer = Standard aus den Einstellungen. Wird gespeichert, aber (noch) nicht ins PDF gedruckt.'}
+              </p>
+            </div>
+          </div>
+          <ERechnungFelder
+            idPrefix={`${idPrefix}-er`}
+            wert={{ landCode: wert.landCode, format: wert.erechnungFormat, email: wert.erechnungEmail, referenz: wert.kaeuferReferenz }}
+            onChange={(w) => patch({ landCode: w.landCode, erechnungFormat: w.format, erechnungEmail: w.email, kaeuferReferenz: w.referenz })}
+          />
+        </>
+      )}
 
       <label className="flex items-center gap-2 text-sm text-maja-ink">
         <input

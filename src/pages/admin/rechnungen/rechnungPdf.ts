@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { berechneSummenProUst, type UstGroup } from '../../../lib/rechnungsformat';
 import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
+import { FIRMENDATEN, firmaPlzOrt } from '../../../lib/firmendaten';
 
 // ============================================================
 // Maja-Logistik Rechnungs-PDF
@@ -17,16 +18,17 @@ const MUTED     = rgb(0.45, 0.50, 0.55);
 const FAINT     = rgb(0.78, 0.81, 0.85);
 const SEPARATOR = rgb(0.85, 0.87, 0.90);
 
-// ----- Hardcoded Absender-Daten (Aufgabe-Briefing) -----
+// ----- Absender-Daten: zentral in src/lib/firmendaten.ts -----
+// (dieselbe Quelle liest später die E-Rechnung)
 const ABSENDER = {
-  name: 'Maja-Logistik M.Janßen',
-  strasse: 'Heiligenroder Strasse 38e',
-  plzOrt: '28816 Stuhr-Heiligenrode',
-  tel: '+49 17641461645',
-  email: 'info@maja-logistik.de',
-  uid: 'DE309356726',
-  iban: 'DE04280501000001429760',
-  bic: 'SLZODE22XXX',
+  name: FIRMENDATEN.name,
+  strasse: FIRMENDATEN.strasse,
+  plzOrt: firmaPlzOrt(),
+  tel: FIRMENDATEN.telefon,
+  email: FIRMENDATEN.email,
+  uid: FIRMENDATEN.ustId,
+  iban: FIRMENDATEN.iban,
+  bic: FIRMENDATEN.bic,
 };
 
 // ----- Geometrie -----
@@ -213,8 +215,8 @@ export function drawHeader(ctx: PageCtx, titel: string) {
 export function drawFooter(ctx: PageCtx) {
   const { page, fonts } = ctx;
   const lines = [
-    'Maja-Logistik',
-    'Heiligenroder Strasse 38e 28816 Stuhr',
+    FIRMENDATEN.pdf.fussName,
+    FIRMENDATEN.pdf.fussAdresse,
     `Tel.:${ABSENDER.tel} ${ABSENDER.email}`,
     `UID: ${ABSENDER.uid}  IBAN: ${ABSENDER.iban}  BIC: ${ABSENDER.bic}`,
   ];

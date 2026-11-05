@@ -18,6 +18,12 @@ import {
   nameZeile, plzOrt,
   type ManuellerEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../../lib/manuelleEmpfaenger';
+import { ERechnungFelder } from '../../components/erechnung/ERechnungFelder';
+import { useERechnungSchema } from '../../lib/erechnung/useERechnungSchema';
+import { normLandCode } from '../../lib/erechnung/stammdaten';
+import {
+  ladeRechnungEinstellungen, speichereRechnungEinstellungen,
+} from '../../lib/rechnungEinstellungen';
 
 export function ManuelleEmpfaengerPage() {
   const guard = useTestGuard();
@@ -29,6 +35,38 @@ export function ManuelleEmpfaengerPage() {
   const [entwurf, setEntwurf] = useState<ManuellerEmpfaengerEntwurf>(leererEmpfaenger());
   const [busy, setBusy] = useState(false);
   const [loeschId, setLoeschId] = useState<string | null>(null);
+  const schemaOk = useERechnungSchema();
+  /** Standard-Zahlungsziel für manuelle Rechnungen (Einstellung). */
+  const [standardZiel, setStandardZiel] = useState<number | null>(null);
+  const [zielEingabe, setZielEingabe] = useState('');
+  const [zielMeldung, setZielMeldung] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!schemaOk) return;
+    let aktiv = true;
+    void ladeRechnungEinstellungen().then((e) => {
+      if (!aktiv) return;
+      setStandardZiel(e.standard_zahlungsziel_tage);
+      setZielEingabe(String(e.standard_zahlungsziel_tage));
+    });
+    return () => { aktiv = false; };
+  }, [schemaOk]);
+
+  async function standardZielSpeichern() {
+    const n = Number(zielEingabe.trim());
+    if (!/^\d{1,3}$/.test(zielEingabe.trim()) || n > 365) {
+      setZielMeldung({ ok: false, text: 'Bitte ganze Tage zwischen 0 und 365 angeben.' });
+      return;
+    }
+    if (guard()) return;
+    try {
+      await speichereRechnungEinstellungen({ standard_zahlungsziel_tage: n });
+      setStandardZiel(n);
+      setZielMeldung({ ok: true, text: 'Gespeichert.' });
+    } catch (e) {
+      setZielMeldung({ ok: false, text: e instanceof Error ? e.message : 'Speichern fehlgeschlagen.' });
+    }
+  }
 
   const laden = useCallback(async () => {
     setLoading(true);
@@ -56,6 +94,14 @@ export function ManuelleEmpfaengerPage() {
   async function speichern() {
     if (!entwurf.firma.trim() && !entwurf.nachname.trim()) {
       setFehler('Bitte eine Firma oder einen Nachnamen angeben.');
+      return;
+    }
+    if (schemaOk && entwurf.landCode.trim() && !normLandCode(entwurf.landCode)) {
+      setFehler('Ländercode: bitte zwei Buchstaben angeben (z.B. DE).');
+      return;
+    }
+    if (schemaOk && entwurf.zahlungsziel.trim() && !/^\d{1,3}$/.test(entwurf.zahlungsziel.trim())) {
+      setFehler('Zahlungsziel: bitte ganze Tage (0–365) angeben.');
       return;
     }
     if (guard()) return;
@@ -112,6 +158,27 @@ export function ManuelleEmpfaengerPage() {
         </button>
       </div>
 
+      {schemaOk && (
+        <section className="card flex flex-wrap items-end gap-3 p-4" data-testid="standard-zahlungsziel">
+          <div>
+            <label htmlFor="standard-zahlungsziel" className="label">Standard-Zahlungsziel für manuelle Rechnungen (Tage)</label>
+            <input id="standard-zahlungsziel" className="input w-32" inputMode="numeric"
+                   value={zielEingabe} onChange={(e) => { setZielEingabe(e.target.value); setZielMeldung(null); }} />
+          </div>
+          <button type="button" className="btn-secondary" onClick={() => void standardZielSpeichern()}
+                  disabled={zielEingabe.trim() === String(standardZiel ?? '')}>
+            Speichern
+          </button>
+          {zielMeldung && (
+            <span role={zielMeldung.ok ? 'status' : 'alert'}
+                  className={`text-sm ${zielMeldung.ok ? 'text-emerald-700' : 'text-red-700'}`}>{zielMeldung.text}</span>
+          )}
+          <p className="w-full text-xs text-maja-muted">
+            Gilt für manuelle Rechnungen, bei denen kein eigenes Zahlungsziel eingetragen ist. Bestehende Rechnungen bleiben unverändert.
+          </p>
+        </section>
+      )}
+
       {fehler && (
         <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {fehler}
@@ -150,7 +217,16 @@ export function ManuelleEmpfaengerPage() {
             {feld('email', 'E-Mail')}
             {feld('ustId', 'USt-IdNr. / Steuernummer')}
             {feld('kundennummer', 'Kundennummer')}
+            {schemaOk && feld('zahlungsziel', 'Zahlungsziel (Tage)',
+              `Leer = Standard${standardZiel != null ? ` (${standardZiel} Tage)` : ''}.`)}
           </div>
+          {schemaOk && (
+            <ERechnungFelder
+              idPrefix="me-er"
+              wert={{ landCode: entwurf.landCode, format: entwurf.erechnungFormat, email: entwurf.erechnungEmail, referenz: entwurf.kaeuferReferenz }}
+              onChange={(w) => setEntwurf({ ...entwurf, landCode: w.landCode, erechnungFormat: w.format, erechnungEmail: w.email, kaeuferReferenz: w.referenz })}
+            />
+          )}
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <button
               type="button" className="btn-secondary" disabled={busy}

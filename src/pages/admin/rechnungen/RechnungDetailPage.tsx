@@ -667,13 +667,21 @@ export function RechnungDetailPage() {
         gesamtpreis: Number(p.gesamtpreis),
         ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
       }));
-      // Fällig-Datum aus Auftraggeber-Zahlungsziel + Rechnungsdatum.
-      const zahlungsziel = fresh.auftraggeber?.zahlungsziel_tage ?? null;
+      // Fällig-Datum aus Zahlungsziel + Rechnungsdatum — gedruckt wie
+      // bisher NUR bei Auftraggeber-Rechnungen. Seit Migration 115 wird
+      // die Fälligkeit beim Erstellen einmalig gespeichert (faellig_am,
+      // zahlungsziel_tage); ist sie gespeichert, gilt dieser Wert. Alte
+      // Rechnungen (Felder leer) rechnen exakt wie bisher. Manuelle
+      // Rechnungen: Zahlungsziel wird gespeichert, aber (noch) nicht
+      // gedruckt — das PDF bleibt unverändert.
+      const zahlungsziel = fresh.empfaenger_typ === 'manuell'
+        ? null
+        : (fresh.zahlungsziel_tage ?? fresh.auftraggeber?.zahlungsziel_tage ?? null);
       let faelligAm: string | null = null;
       if (zahlungsziel != null && Number.isFinite(zahlungsziel) && fresh.datum) {
         const d = new Date(`${fresh.datum}T12:00:00`);
         d.setDate(d.getDate() + Number(zahlungsziel));
-        faelligAm = d.toISOString().slice(0, 10);
+        faelligAm = fresh.faellig_am ?? d.toISOString().slice(0, 10);
       }
       // Unterschrift/Stempel des Absenders — nur das laden, was diese
       // Rechnung auch einsetzen soll.

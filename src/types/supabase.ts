@@ -87,6 +87,10 @@ export type Database = {
           sachbearbeiter: string | null;
           kunden_uid: string | null;
           zahlungsziel_tage: number | null;
+          land_code: string | null;
+          erechnung_format: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_email: string | null;
+          kaeufer_referenz: string | null;
         };
         Insert: {
           id?: string;
@@ -106,6 +110,10 @@ export type Database = {
           sachbearbeiter?: string | null;
           kunden_uid?: string | null;
           zahlungsziel_tage?: number | null;
+          land_code?: string | null;
+          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Update: {
           id?: string;
@@ -125,6 +133,10 @@ export type Database = {
           sachbearbeiter?: string | null;
           kunden_uid?: string | null;
           zahlungsziel_tage?: number | null;
+          land_code?: string | null;
+          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Relationships: [];
       };
@@ -139,6 +151,9 @@ export type Database = {
           land: string | null;
           ist_standard: boolean;
           created_at: string;
+          plz: string | null;
+          ort: string | null;
+          land_code: string | null;
         };
         Insert: {
           id?: string;
@@ -150,6 +165,9 @@ export type Database = {
           land?: string | null;
           ist_standard?: boolean;
           created_at?: string;
+          plz?: string | null;
+          ort?: string | null;
+          land_code?: string | null;
         };
         Update: {
           id?: string;
@@ -161,6 +179,9 @@ export type Database = {
           land?: string | null;
           ist_standard?: boolean;
           created_at?: string;
+          plz?: string | null;
+          ort?: string | null;
+          land_code?: string | null;
         };
         Relationships: [
           {
@@ -1164,6 +1185,11 @@ export type Database = {
           notiz: string | null;
           created_at: string;
           updated_at: string;
+          land_code: string | null;
+          zahlungsziel_tage: number | null;
+          erechnung_format: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_email: string | null;
+          kaeufer_referenz: string | null;
         };
         Insert: {
           id?: string;
@@ -1181,6 +1207,11 @@ export type Database = {
           notiz?: string | null;
           created_at?: string;
           updated_at?: string;
+          land_code?: string | null;
+          zahlungsziel_tage?: number | null;
+          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Update: {
           id?: string;
@@ -1198,6 +1229,11 @@ export type Database = {
           notiz?: string | null;
           created_at?: string;
           updated_at?: string;
+          land_code?: string | null;
+          zahlungsziel_tage?: number | null;
+          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Relationships: [];
       };
@@ -1417,6 +1453,14 @@ export type Database = {
           rechnungsempfaenger_id: string | null;
           created_at: string;
           updated_at: string;
+          faellig_am: string | null;
+          zahlungsziel_tage: number | null;
+          rechnungsadresse_plz: string | null;
+          rechnungsadresse_ort: string | null;
+          rechnungsadresse_land_code: string | null;
+          erechnung_format: 'pdf' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_email: string | null;
+          kaeufer_referenz: string | null;
         };
         Insert: {
           mit_unterschrift?: boolean;
@@ -1453,6 +1497,14 @@ export type Database = {
           rechnungsempfaenger_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          faellig_am?: string | null;
+          zahlungsziel_tage?: number | null;
+          rechnungsadresse_plz?: string | null;
+          rechnungsadresse_ort?: string | null;
+          rechnungsadresse_land_code?: string | null;
+          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Update: {
           mit_unterschrift?: boolean;
@@ -1489,6 +1541,14 @@ export type Database = {
           rechnungsempfaenger_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          faellig_am?: string | null;
+          zahlungsziel_tage?: number | null;
+          rechnungsadresse_plz?: string | null;
+          rechnungsadresse_ort?: string | null;
+          rechnungsadresse_land_code?: string | null;
+          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Relationships: [
           {
@@ -1526,6 +1586,10 @@ export type Database = {
           ist_manuell: boolean;
           ust_satz: number | null;
           created_at: string;
+          einheit_code: string | null;
+          steuerkategorie: string | null;
+          befreiungsgrund_code: string | null;
+          befreiungsgrund_text: string | null;
         };
         Insert: {
           id?: string;
@@ -1541,6 +1605,10 @@ export type Database = {
           ist_manuell?: boolean;
           ust_satz?: number | null;
           created_at?: string;
+          einheit_code?: string | null;
+          steuerkategorie?: string | null;
+          befreiungsgrund_code?: string | null;
+          befreiungsgrund_text?: string | null;
         };
         Update: {
           id?: string;
@@ -1556,6 +1624,10 @@ export type Database = {
           ist_manuell?: boolean;
           ust_satz?: number | null;
           created_at?: string;
+          einheit_code?: string | null;
+          steuerkategorie?: string | null;
+          befreiungsgrund_code?: string | null;
+          befreiungsgrund_text?: string | null;
         };
         Relationships: [
           {

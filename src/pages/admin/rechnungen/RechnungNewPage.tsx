@@ -13,8 +13,11 @@ import {
 } from '../../../lib/rechnungsformat';
 import { PositionsTable } from './PositionsTable';
 import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfaengerFeldsatz';
+import { useERechnungSchema } from '../../../lib/erechnung/useERechnungSchema';
+import { gleicheAdresszeile, landZuIso, normLandCode, plzOrtZusammen } from '../../../lib/erechnung/stammdaten';
+import { ladeRechnungEinstellungen } from '../../../lib/rechnungEinstellungen';
 import {
-  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaengerWennGewuenscht, nameZeile,
+  MANUELL_OPTION, leererEmpfaenger, merkeEmpfaengerWennGewuenscht, nameZeile, zahlungszielTage,
   snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../../../lib/manuelleEmpfaenger';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
@@ -103,6 +106,16 @@ export function RechnungNewPage() {
   const istManuell = auftraggeberId === MANUELL_OPTION;
   const [manuell, setManuell] = useState<ManuellerEmpfaengerEntwurf>(leererEmpfaenger());
   const [manuellMerken, setManuellMerken] = useState(false);
+  // E-Rechnung (Migration 115): Snapshot-Felder + Standard-Zahlungsziel
+  // für manuelle Rechnungen. Ohne Migration bleibt alles wie bisher.
+  const schemaOk = useERechnungSchema();
+  const [standardZiel, setStandardZiel] = useState<number | null>(null);
+  useEffect(() => {
+    if (!schemaOk) return;
+    let aktiv = true;
+    void ladeRechnungEinstellungen().then((e) => { if (aktiv) setStandardZiel(e.standard_zahlungsziel_tage); });
+    return () => { aktiv = false; };
+  }, [schemaOk]);
   /**
    * Rechnungsformat für manuelle Rechnungen. Ohne Auftraggeber gibt es
    * keine Stammdaten-Vorgabe — Standard, alternativ das Format eines
@@ -191,7 +204,7 @@ export function RechnungNewPage() {
         .from('auftraggeber')
         .select(`
           *,
-          rechnungsadressen (id, firma, ansprechpartner, strasse, plz_ort, land, ist_standard, auftraggeber_id, created_at)
+          rechnungsadressen (*)
         `)
         .order('name');
       if (cancelled) return;
@@ -740,6 +753,45 @@ export function RechnungNewPage() {
     return `${neu.length} ${neu.length === 1 ? 'Auslage' : 'Auslagen'} von ${a.tour.tour_nr ?? 'der Tour'} in die Rechnung übernommen.`;
   }
 
+  /**
+   * E-Rechnungs-Snapshot (Migration 115) für die neue Rechnung. Das PDF
+   * nutzt weiterhin plz_ort/land — die getrennten Felder werden nur
+   * übernommen, wenn sie exakt zur Adresszeile der Rechnung passen
+   * (sonst leer; die Pflichtfeld-Prüfung meldet es später).
+   */
+  function eRechnungSnapshot(): Partial<Database['public']['Tables']['rechnungen']['Insert']> {
+    if (!schemaOk) return {};
+    if (istManuell) {
+      return {
+        rechnungsadresse_plz: manuell.plz.trim() || null,
+        rechnungsadresse_ort: manuell.ort.trim() || null,
+        rechnungsadresse_land_code: normLandCode(manuell.landCode),
+        zahlungsziel_tage: zahlungszielTage(manuell.zahlungsziel) ?? standardZiel,
+        erechnung_format: manuell.erechnungFormat,
+        erechnung_email: manuell.erechnungEmail.trim() || null,
+        kaeufer_referenz: manuell.kaeuferReferenz.trim() || null,
+      };
+    }
+    if (!auftraggeber) return {};
+    const quellen = [
+      ...(auftraggeber.rechnungsadressen ?? []).map((a) => ({ plz: a.plz, ort: a.ort, land_code: a.land_code })),
+      { plz: auftraggeber.plz, ort: auftraggeber.ort, land_code: auftraggeber.land_code },
+    ];
+    const treffer = quellen.find((q) => (q.plz ?? '').trim() && (q.ort ?? '').trim()
+      && gleicheAdresszeile(plzOrtZusammen(q.plz, q.ort), effSnapshot.plz_ort));
+    let landCode = treffer ? normLandCode(treffer.land_code) : null;
+    const ausText = landZuIso(effSnapshot.land);
+    if (landCode && ausText !== landCode) landCode = null; // Land im Formular geändert → nicht raten
+    return {
+      rechnungsadresse_plz: treffer?.plz?.trim() || null,
+      rechnungsadresse_ort: treffer?.ort?.trim() || null,
+      rechnungsadresse_land_code: landCode,
+      erechnung_format: auftraggeber.erechnung_format ?? 'pdf',
+      erechnung_email: auftraggeber.erechnung_email ?? null,
+      kaeufer_referenz: auftraggeber.kaeufer_referenz ?? null,
+    };
+  }
+
   async function speichern(status: 'entwurf' | 'offen') {
     if (!istManuell && !auftraggeber) {
       setError('Bitte einen Auftraggeber wählen.'); return;
@@ -749,6 +801,9 @@ export function RechnungNewPage() {
       return;
     }
     if (!rechnungsdatum) { setError('Bitte das Rechnungsdatum angeben.'); return; }
+    if (istManuell && schemaOk && manuell.zahlungsziel.trim() && zahlungszielTage(manuell.zahlungsziel) == null) {
+      setError('Zahlungsziel: bitte ganze Tage (0–365) angeben.'); return;
+    }
     setError(null);
     setSaving(status);
 
@@ -767,6 +822,7 @@ export function RechnungNewPage() {
       const sum = berechneSummenProUst(positionen, ustSatz);
       type Insert = Database['public']['Tables']['rechnungen']['Insert'];
       const insertPayload: Insert = {
+        ...eRechnungSnapshot(),
         // Manuelle Rechnung: KEIN Auftraggeber-Bezug. Es wird auch
         // kein Eintrag in `auftraggeber` angelegt — der Empfänger
         // taucht damit in keiner Auftraggeber-Ansicht auf.
@@ -1049,6 +1105,8 @@ export function RechnungNewPage() {
             onChange={setManuell}
             merken={manuellMerken}
             onMerken={setManuellMerken}
+            mitRechnungsfeldern
+            standardZahlungsziel={standardZiel ?? undefined}
           />
         )}
 

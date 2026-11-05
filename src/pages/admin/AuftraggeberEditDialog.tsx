@@ -6,6 +6,9 @@ import { RechnungsadressenEditor } from './RechnungsadressenEditor';
 import { RechnungsformatEditor } from './RechnungsformatEditor';
 import type { Rechnungsformat } from '../../lib/rechnungsformat';
 import type { Json } from '../../types/supabase';
+import { ERechnungFelder, type ERechnungFelderWert } from '../../components/erechnung/ERechnungFelder';
+import { normLandCode } from '../../lib/erechnung/stammdaten';
+import { useERechnungSchema } from '../../lib/erechnung/useERechnungSchema';
 
 interface Props {
   initial: Auftraggeber | null;
@@ -78,6 +81,16 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
   const [zahlungsziel,   setZahlungsziel]   = useState<string>(
     initial?.zahlungsziel_tage != null ? String(initial.zahlungsziel_tage) : '',
   );
+  // E-Rechnung (Migration 115) — nur sichtbar/gespeichert, wenn das
+  // Schema da ist. Neuer Auftraggeber: Ländercode DE vorbelegt;
+  // Bestand ohne Ländercode bleibt leer (Vorschlag aus dem Probelauf).
+  const schemaOk = useERechnungSchema();
+  const [eRechnung, setERechnung] = useState<ERechnungFelderWert>({
+    landCode: initial ? (initial.land_code ?? '') : 'DE',
+    format: initial?.erechnung_format ?? 'pdf',
+    email: initial?.erechnung_email ?? '',
+    referenz: initial?.kaeufer_referenz ?? '',
+  });
   const [rechnungsformat, setRechnungsformat] = useState<Rechnungsformat | null>(
     (initial?.rechnungsformat as Rechnungsformat | null) ?? null,
   );
@@ -134,6 +147,10 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) { setError('Name ist Pflicht.'); return; }
+    if (schemaOk && eRechnung.landCode.trim() && !normLandCode(eRechnung.landCode)) {
+      setError('Ländercode: bitte zwei Buchstaben angeben (z.B. DE).');
+      return;
+    }
     setError(null);
     setSaving(true);
     try {
@@ -156,6 +173,12 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
         kunden_uid:     kundenUid.trim()      || null,
         zahlungsziel_tage: zahlungszielN != null && Number.isFinite(zahlungszielN) ? zahlungszielN : null,
         rechnungsformat: (rechnungsformat as unknown as Json | null) ?? null,
+        ...(schemaOk ? {
+          land_code: normLandCode(eRechnung.landCode),
+          erechnung_format: eRechnung.format,
+          erechnung_email: eRechnung.email.trim() || null,
+          kaeufer_referenz: eRechnung.referenz.trim() || null,
+        } : {}),
       };
       let auftraggeberId: string;
       if (isNew) {
@@ -319,6 +342,10 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
               </div>
             </div>
           </div>
+
+          {schemaOk && (
+            <ERechnungFelder idPrefix="ag" wert={eRechnung} onChange={setERechnung} />
+          )}
 
           {/* Rechnungsadressen */}
           <RechnungsadressenEditor auftraggeberId={auftraggeberIdLive} />
