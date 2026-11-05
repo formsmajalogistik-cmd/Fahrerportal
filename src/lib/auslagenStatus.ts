@@ -46,6 +46,9 @@ export interface AuslagenTour {
   tourenart?: string | null;
   kennzeichen: string[];
   zusaetze: AuslagenZusatz[];
+  start_stadt?: string | null;
+  ziel_stadt?: string | null;
+  rueckfuehrung_stadt?: string | null;
 }
 
 export interface RechnungRef { id: string; nr: string; istAuslagen: boolean; datum: string }
@@ -264,6 +267,63 @@ export function pruefeRechnungAuslagen(args: {
   return out;
 }
 
+// ---- Prüfergebnis je Tour und Kennzeichen (für den Prüfdialog) -----------
+
+export interface KennzeichenZeile {
+  slot: Slot;
+  /** ok = Auslage vorhanden, keine = „Keine Auslagen", ungeklaert. */
+  status: 'ok' | 'keine' | 'ungeklaert';
+}
+
+export interface TourPruefung {
+  tour: AuslagenTour;
+  zeilen: KennzeichenZeile[];
+  /** Abrechenbare Zusätze weder auf dieser noch auf einer anderen Rechnung. */
+  fehlend: AuslagenZusatz[];
+  problem: boolean;
+}
+
+export interface PruefErgebnis {
+  /** Alle geprüften Touren, nach Tourdatum sortiert. */
+  touren: TourPruefung[];
+  geprueft: number;
+  offen: number;
+}
+
+export function kennzeichenZeilen(t: AuslagenTour, arten: ZusatzArten): KennzeichenZeile[] {
+  const slots = slotsDerTour(t);
+  return slots.map((slot) => {
+    const fuer = t.zusaetze.filter((z) => zusatzGiltFuer(z.kennzeichen, slot, slots));
+    const status = fuer.some((z) => zaehltAlsAuslage(z.kategorie, arten)) ? 'ok'
+      : fuer.some((z) => istKeineAuslagen(z.kategorie)) ? 'keine' : 'ungeklaert';
+    return { slot, status };
+  });
+}
+
+/**
+ * Prüfung einer Rechnung, je Tour gruppiert (Regeln wie
+ * pruefeRechnungAuslagen). Liefert ALLE geprüften Touren, damit der Dialog
+ * nach einer Aktion erledigte Zeilen als ✓ zeigen kann.
+ */
+export function pruefeRechnung(args: Parameters<typeof pruefeRechnungAuslagen>[0]): PruefErgebnis {
+  const { art, fmt, touren, positionen, stand, arten } = args;
+  const eindeutig = [...new Map(touren.map((t) => [t.id, t])).values()]
+    .sort((a, b) => (a.enddatum ?? a.startdatum ?? '').localeCompare(b.enddatum ?? b.startdatum ?? '') || (a.tour_nr ?? '').localeCompare(b.tour_nr ?? ''));
+  if (art === 'normal' && fmt.getrennt) {
+    return { touren: eindeutig.map((t) => ({ tour: t, zeilen: [], fehlend: [], problem: false })), geprueft: eindeutig.length, offen: 0 };
+  }
+  const eigene = new Set(args.eigeneRechnungIds ?? []);
+  const hier = new Set(positionen.map((p) => p.zusatz_id).filter(Boolean) as string[]);
+  const anderswo = (z: AuslagenZusatz) => (stand.zusatzRechnungen.get(z.id) ?? []).some((r) => !eigene.has(r.id));
+  const ohnePos = art === 'normal' && zusaetzeOhnePositionen(fmt);
+  const out = eindeutig.map((t) => {
+    const zeilen = kennzeichenZeilen(t, arten);
+    const fehlend = ohnePos ? [] : abrechenbareZusaetze(t.zusaetze).filter((z) => !hier.has(z.id) && !anderswo(z));
+    return { tour: t, zeilen, fehlend, problem: fehlend.length > 0 || zeilen.some((z) => z.status === 'ungeklaert') };
+  });
+  return { touren: out, geprueft: out.length, offen: out.filter((x) => x.problem).length };
+}
+
 export function auffaelligkeitText(a: Auffaelligkeit): string {
   if (a.grund === 'ungeklaert') {
     return `${a.slots.map(slotLabel).join(', ')}: Auslagen ungeklärt — keine Auslage und kein „Keine Auslagen"`;
@@ -344,14 +404,16 @@ export async function ladeAgFormate(agIds: string[]): Promise<Map<string, AgAusl
   return m;
 }
 
-const TOUR_SELECT = 'id, tour_id, auftraggeber_id, startdatum, enddatum, tourenart, kennzeichen, zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, kennzeichen)';
+const TOUR_SELECT = 'id, tour_id, auftraggeber_id, startdatum, enddatum, tourenart, kennzeichen, start_stadt, ziel_stadt, rueckfuehrung_stadt, zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, kennzeichen)';
 type RawTour = {
   id: string; tour_id: string | null; auftraggeber_id: string | null; startdatum: string | null; enddatum: string | null;
   tourenart: string | null; kennzeichen: string[] | null; zusaetze: AuslagenZusatz[] | null;
+  start_stadt: string | null; ziel_stadt: string | null; rueckfuehrung_stadt: string | null;
 };
 const mapTour = (t: RawTour): AuslagenTour => ({
   id: t.id, tour_nr: t.tour_id, auftraggeber_id: t.auftraggeber_id, startdatum: t.startdatum, enddatum: t.enddatum,
   tourenart: t.tourenart, kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [],
+  start_stadt: t.start_stadt, ziel_stadt: t.ziel_stadt, rueckfuehrung_stadt: t.rueckfuehrung_stadt,
 });
 
 export async function ladeAuslagenTouren(ids: string[]): Promise<AuslagenTour[]> {

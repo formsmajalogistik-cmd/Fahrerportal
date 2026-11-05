@@ -21,8 +21,8 @@ import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefDialog';
 import { ladeZusatzArten } from '../../../lib/zusatzArten';
 import {
-  formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, pruefeRechnungAuslagen,
-  type Auffaelligkeit,
+  formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, pruefeRechnung,
+  type AuslagenTour, type AuslagenZusatz, type PruefErgebnis,
 } from '../../../lib/auslagenStatus';
 import { ladeTourenPerId } from '../../../lib/rechnungNeuLaden';
 import { SummenBlock } from './SummenBlock';
@@ -668,10 +668,11 @@ export function RechnungNewPage() {
   // Updates sind dort noch nicht durchgerendert).
   const editorRef = useRef({ haupt, auslagen, touren });
   useEffect(() => { editorRef.current = { haupt, auslagen, touren }; }, [haupt, auslagen, touren]);
-  const [pruefung, setPruefung] = useState<null | { status: 'entwurf' | 'offen'; liste: Auffaelligkeit[] }>(null);
+  const [pruefung, setPruefung] = useState<PruefErgebnis | null>(null);
 
-  async function auslagenPruefen(): Promise<Auffaelligkeit[]> {
-    if (istManuell || !auftraggeber) return [];
+  async function auslagenPruefen(): Promise<PruefErgebnis> {
+    const leer: PruefErgebnis = { touren: [], geprueft: 0, offen: 0 };
+    if (istManuell || !auftraggeber) return leer;
     const fmt = formatAusRechnungsformat(auftraggeber.rechnungsformat);
     const { haupt: h, auslagen: a, touren: tl } = editorRef.current;
     const pruefungen: Array<{ art: 'normal' | 'auslagen'; tourIds: string[]; positionen: EditorPosition[] }> = [];
@@ -684,29 +685,40 @@ export function RechnungNewPage() {
       pruefungen.push({ art: 'normal', tourIds: ids([...h, ...a]), positionen: [...h, ...a] });
     }
     const alleIds = [...new Set(pruefungen.flatMap((x) => x.tourIds))];
-    if (alleIds.length === 0) return [];
+    if (alleIds.length === 0) return leer;
     const [tourDaten, stand, arten] = await Promise.all([ladeAuslagenTouren(alleIds), ladeAbrechnungsStand(alleIds), ladeZusatzArten()]);
     const byId = new Map(tourDaten.map((t) => [t.id, t]));
-    return pruefungen.flatMap((x) => pruefeRechnungAuslagen({
+    // Eine Prüfung je zu erstellender Rechnung (bei „Auslagen separat" nur
+    // die Auslagenrechnung) — zusammengeführt für den Dialog.
+    const teile = pruefungen.map((x) => pruefeRechnung({
       art: x.art, fmt, stand, arten, positionen: x.positionen,
       touren: [...new Set(x.tourIds)].map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t),
     }));
+    const touren = teile.flatMap((e) => e.touren);
+    return { touren, geprueft: touren.length, offen: touren.filter((t) => t.problem).length };
   }
 
+  /**
+   * Speichern. Die Auslagen-Prüfung erscheint nur beim Übergang zur
+   * erstellten Rechnung („Rechnung erstellen") — nicht beim Entwurf.
+   */
   async function speichernMitPruefung(status: 'entwurf' | 'offen') {
     setError(null);
-    try {
-      const liste = await auslagenPruefen();
-      if (liste.length > 0) { setPruefung({ status, liste }); return; }
-    } catch (e) {
-      // Die Prüfung ist eine Hilfe — scheitert sie, wird wie bisher gespeichert.
-      console.warn('[Rechnungen] Auslagen-Prüfung fehlgeschlagen', e);
+    if (status === 'offen') {
+      try {
+        const e = await auslagenPruefen();
+        if (e.offen > 0) { setPruefung(e); return; }
+      } catch (err) {
+        // Die Prüfung ist eine Hilfe — scheitert sie, wird wie bisher gespeichert.
+        console.warn('[Rechnungen] Auslagen-Prüfung fehlgeschlagen', err);
+      }
     }
     await speichern(status);
   }
 
   /** Fehlende Zusätze einer Tour als Positionen übernehmen. */
-  async function auslagenUebernehmen(a: Auffaelligkeit): Promise<string> {
+  async function auslagenUebernehmen(at: AuslagenTour, fehlendeZusaetze: AuslagenZusatz[]): Promise<string> {
+    const a = { tour: at, fehlend: fehlendeZusaetze };
     const [tour] = await ladeTourenPerId([a.tour.id]);
     if (!tour) return 'Tour nicht gefunden.';
     const zielAuslagen = auslagenOnly || getrennt;
@@ -1307,16 +1319,12 @@ export function RechnungNewPage() {
 
       {pruefung && (
         <AuslagenPruefDialog
-          titel="Auslagen prüfen"
-          auffaelligkeiten={pruefung.liste}
-          fortfahrenLabel={pruefung.status === 'offen' ? 'Rechnung erstellen' : 'Als Entwurf speichern'}
-          onErneutPruefen={async () => {
-            const liste = await auslagenPruefen();
-            setPruefung((p) => (p ? { ...p, liste } : p));
-          }}
-          onAuslagenHinzufuegen={auslagenUebernehmen}
+          ergebnis={pruefung}
+          modus="erstellen"
+          neuPruefen={auslagenPruefen}
+          onZusaetzeHinzufuegen={auslagenUebernehmen}
           onAbbrechen={() => setPruefung(null)}
-          onFortfahren={() => { const s = pruefung.status; setPruefung(null); void speichern(s); }}
+          onFortfahren={() => { setPruefung(null); void speichern('offen'); }}
         />
       )}
 

@@ -1,12 +1,20 @@
-// „Touren erneut laden" in einer bestehenden Rechnung.
+// „Touren erneut laden" in einer bestehenden Rechnung — zwei Schritte:
 //
-// Vorher wurden die Touren über Auftraggeber + Enddatum im gespeicherten
-// Leistungszeitraum gesucht. Das fand je nach Rechnung andere Touren als
-// die auf der Rechnung (z.B. wenn der Leistungszeitraum beim Anlegen auf
-// das Rechnungsdatum gefallen war oder sich ein Enddatum geändert hatte)
-// und zog fremde Touren desselben Zeitraums mit hinein. Jetzt: genau die
-// Touren, die in den Positionen stehen — über ihre IDs, unabhängig von
-// jedem Datum. Rechnungsdatum und -nummer fasst das Neuladen nicht an.
+//  1. Vorhandene Positionen aktualisieren: die Touren der Positionen über
+//     ihre IDs, unabhängig von jedem Datum.
+//  2. Neue passende Touren hinzufügen (z.B. für eine provisorisch leer
+//     angelegte Rechnung): gleicher Auftraggeber (und ggf. derselbe
+//     Rechnungsempfänger), effektives Rechnungsdatum der Tour (abweichendes
+//     Rechnungsdatum, sonst Enddatum) am Rechnungsdatum der Rechnung bzw.
+//     in ihrem Leistungszeitraum — wie beim Anlegen einer Rechnung. Touren,
+//     die schon auf einer anderen Rechnung gleicher Art stehen, nicht.
+//
+// Früher (bis Prompt 116) wurde nur nach Enddatum im GESPEICHERTEN
+// Leistungszeitraum gesucht. Bei einer leer angelegten Rechnung ist der der
+// Anlagetag und ändert sich beim späteren Ändern des Rechnungsdatums nicht
+// mit — deshalb klappte es nur, wenn am selben Tag angelegt und gefüllt
+// wurde. Jetzt zählt bei einer Rechnung ohne Touren das AKTUELLE
+// Rechnungsdatum. Rechnungsdatum und -nummer fasst das Neuladen nicht an.
 
 import { supabase } from './supabase';
 import {
@@ -48,6 +56,70 @@ export async function ladeTourenPerId(ids: string[]): Promise<TourForRechnung[]>
     }
   }
   return out;
+}
+
+export interface NeueTourenSuche {
+  touren: TourForRechnung[];
+  /** Für die Meldung: „Arval, Rechnungstag 01.10.2026". */
+  beschreibung: string;
+  /** Gefunden, aber schon auf einer anderen Rechnung. */
+  aufAndererRechnung: number;
+}
+
+const dm = (iso: string) => iso.split('-').reverse().join('.');
+
+/** Suchzeitraum: ohne Touren nur das Rechnungsdatum, sonst Leistungszeitraum + Rechnungsdatum. */
+export function suchZeitraum(r: { datum: string; leistungszeitraum_von: string | null; leistungszeitraum_bis: string | null }, hatTouren: boolean): { von: string; bis: string } {
+  if (!hatTouren || !r.leistungszeitraum_von || !r.leistungszeitraum_bis) return { von: r.datum, bis: r.datum };
+  return {
+    von: r.leistungszeitraum_von < r.datum ? r.leistungszeitraum_von : r.datum,
+    bis: r.leistungszeitraum_bis > r.datum ? r.leistungszeitraum_bis : r.datum,
+  };
+}
+
+/** Neue passende Touren für eine Rechnung (siehe Kopf, Schritt 2). */
+export async function sucheNeueTouren(args: {
+  rechnungId: string;
+  auftraggeberId: string;
+  auftraggeberName: string;
+  rechnungsempfaengerId: string | null;
+  istAuslagen: boolean;
+  zeitraum: { von: string; bis: string };
+  vorhandeneTourIds: string[];
+}): Promise<NeueTourenSuche> {
+  const { von, bis } = args.zeitraum;
+  const or = `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.gte.${von},rechnungsdatum.lte.${bis}),`
+    + `and(rechnungsdatum_abweichend.eq.false,enddatum.gte.${von},enddatum.lte.${bis}),`
+    + `and(rechnungsdatum_abweichend.is.null,enddatum.gte.${von},enddatum.lte.${bis})`;
+  const kandidaten: RawTour[] = [];
+  for (let seite = 0; ; seite += 1) {
+    let q = supabase.from('touren').select(TOUR_SELECT).eq('auftraggeber_id', args.auftraggeberId);
+    if (args.rechnungsempfaengerId) q = q.eq('kontakt_id', args.rechnungsempfaengerId);
+    const { data, error } = await q.or(or).order('enddatum', { ascending: true }).order('id').range(seite * 1000, seite * 1000 + 999);
+    if (error) throw new Error(error.message);
+    kandidaten.push(...((data as unknown as RawTour[]) ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  const vorhanden = new Set(args.vorhandeneTourIds);
+  const neu = kandidaten.filter((t) => !vorhanden.has(t.id));
+  // Schon auf einer anderen Rechnung gleicher Art (normal / Auslagen)?
+  const belegt = new Set<string>();
+  for (let i = 0; i < neu.length; i += 100) {
+    const { data, error } = await supabase.from('rechnungspositionen')
+      .select('tour_id, rechnung:rechnung_id (id, ist_auslagen_rechnung)')
+      .in('tour_id', neu.slice(i, i + 100).map((t) => t.id));
+    if (error) throw new Error(error.message);
+    type P = { tour_id: string | null; rechnung: { id: string; ist_auslagen_rechnung: boolean } | null };
+    for (const p of (data as unknown as P[]) ?? []) {
+      if (p.tour_id && p.rechnung && p.rechnung.id !== args.rechnungId && !!p.rechnung.ist_auslagen_rechnung === args.istAuslagen) belegt.add(p.tour_id);
+    }
+  }
+  const frei = neu.filter((t) => !belegt.has(t.id)).map((t) => ({ ...t, kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [] }));
+  return {
+    touren: frei,
+    beschreibung: `${args.auftraggeberName}, ${von === bis ? `Rechnungstag ${dm(von)}` : `Zeitraum ${dm(von)} – ${dm(bis)}`}`,
+    aufAndererRechnung: neu.filter((t) => belegt.has(t.id)).length,
+  };
 }
 
 /** Welche Positionsart hat diese Rechnung beim Anlegen bekommen? */
@@ -124,12 +196,18 @@ export function neuLadenBilanz(
   return { aktualisiert, felder: reihenfolge.filter((x) => felder.has(x)), neu: neuCount, entfernt, unveraendert };
 }
 
-export function bilanzText(b: NeuLadenBilanz, nichtGefunden: number): string {
+export function bilanzText(b: NeuLadenBilanz, nichtGefunden: number, hinzu?: { touren: number; suche: string; aufAndererRechnung: number }): string {
   const teile: string[] = [];
+  if (hinzu && hinzu.touren > 0) teile.push(`${hinzu.touren} ${hinzu.touren === 1 ? 'Tour' : 'Touren'} hinzugefügt`);
   if (b.aktualisiert > 0) teile.push(`${b.aktualisiert} Position${b.aktualisiert === 1 ? '' : 'en'} aktualisiert: ${b.felder.join(', ')}`);
   if (b.neu > 0) teile.push(`${b.neu} neu`);
   if (b.entfernt > 0) teile.push(`${b.entfernt} entfernt`);
-  if (teile.length === 0) teile.push('Keine Änderungen — die Positionen entsprechen dem aktuellen Stand der Touren');
+  if (teile.length === 0) {
+    teile.push(hinzu
+      ? `Keine passenden neuen Touren gefunden (gesucht: ${hinzu.suche}${hinzu.aufAndererRechnung ? `; ${hinzu.aufAndererRechnung} ${hinzu.aufAndererRechnung === 1 ? 'steht' : 'stehen'} schon auf einer anderen Rechnung` : ''})`
+        + (b.aktualisiert + b.neu + b.entfernt === 0 && b.unveraendert > 0 ? ' · vorhandene Positionen unverändert' : '')
+      : 'Keine Änderungen — die Positionen entsprechen dem aktuellen Stand der Touren');
+  }
   let text = `${teile.join(' · ')}.`;
   if (nichtGefunden > 0) text += ` ${nichtGefunden} Tour${nichtGefunden === 1 ? '' : 'en'} nicht mehr gefunden — deren Positionen bleiben unverändert.`;
   return text;

@@ -14,7 +14,7 @@ import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefD
 import { ladeZusatzArten } from '../../../lib/zusatzArten';
 import {
   formatAusRechnungsformat, ladeAbrechnungsStand, ladeAuslagenTouren, ladeTourenZuRechnungstagen,
-  pruefeRechnungAuslagen, rechnungstageDerTouren, type Auffaelligkeit,
+  pruefeRechnung, rechnungstageDerTouren, type AuslagenTour, type AuslagenZusatz, type PruefErgebnis,
 } from '../../../lib/auslagenStatus';
 import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
@@ -36,7 +36,7 @@ import { empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition, newKey } from './positionUtils';
 import {
-  bilanzText, ladeTourenPerId, modusFuerRechnung, neuLadenBilanz, positionenNeuAufbauen,
+  bilanzText, ladeTourenPerId, modusFuerRechnung, neuLadenBilanz, positionenNeuAufbauen, sucheNeueTouren, suchZeitraum,
 } from '../../../lib/rechnungNeuLaden';
 import type {
   Auftraggeber, Rechnung, Rechnungsadresse, Rechnungsposition, RechnungStatus,
@@ -128,6 +128,8 @@ export function RechnungDetailPage() {
   /** Versandstatus (für die Warnung vor dem Neuladen nach Versand). */
   const [versand, setVersand] = useState<VersandStatus | null>(null);
   const [versandStand, setVersandStand] = useState(0);
+  /** Nach „Touren erneut laden" mit neuen Touren: Leistungszeitraum beim Speichern. */
+  const [neuerLeistungszeitraum, setNeuerLeistungszeitraum] = useState<{ von: string; bis: string } | null>(null);
   /** Ergebnis des Neuladens („2 Positionen aktualisiert: Kennzeichen, Preis"). */
   const [reloadInfo, setReloadInfo] = useState<string | null>(null);
 
@@ -182,9 +184,10 @@ export function RechnungDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rechnung?.id]);
 
-  const load = useCallback(async () => {
+  /** `still`: ohne Ladeanzeige nachladen (offene Dialoge bleiben stehen). */
+  const load = useCallback(async (still = false) => {
     if (!id) return;
-    setLoading(true);
+    if (!still) setLoading(true);
     setError(null);
     const [rRes, pRes] = await Promise.all([
       supabase
@@ -392,12 +395,16 @@ export function RechnungDetailPage() {
           netto_summe: sum.netto,
           ust_betrag: sum.ust,
           brutto_summe: sum.brutto,
+          ...(neuerLeistungszeitraum
+            ? { leistungszeitraum_von: neuerLeistungszeitraum.von, leistungszeitraum_bis: neuerLeistungszeitraum.bis }
+            : {}),
         })
         .eq('id', rechnung.id);
       if (uErr) throw uErr;
       setEditingPos(false);
       setReloadInfo(null);
-      await load();
+      setNeuerLeistungszeitraum(null);
+      await load(true);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -419,14 +426,17 @@ export function RechnungDetailPage() {
   // ---- Auslagen-Prüfung vor „Rechnung erstellen" / Versand (blockiert nie)
   const positionenRef = useRef(positionen);
   useEffect(() => { positionenRef.current = positionen; }, [positionen]);
-  const [pruefung, setPruefung] = useState<null | { anlass: 'erstellen' | 'versenden'; liste: Auffaelligkeit[]; weiter: () => void }>(null);
+  const [pruefung, setPruefung] = useState<null | { modus: 'erstellen' | 'versenden' | 'info'; ergebnis: PruefErgebnis; weiter: () => void }>(null);
+  /** Dezenter Hinweis im Entwurf (statt Dialog): Prüfergebnis im Hintergrund. */
+  const [entwurfPruefung, setEntwurfPruefung] = useState<PruefErgebnis | null>(null);
 
-  async function auslagenPruefen(): Promise<Auffaelligkeit[]> {
-    if (!rechnung?.auftraggeber_id) return [];
+  async function auslagenPruefen(): Promise<PruefErgebnis> {
+    const leer: PruefErgebnis = { touren: [], geprueft: 0, offen: 0 };
+    if (!rechnung?.auftraggeber_id) return leer;
     const { data: ag } = await supabase.from('auftraggeber').select('rechnungsformat').eq('id', rechnung.auftraggeber_id).maybeSingle();
     const fmt = formatAusRechnungsformat(ag?.rechnungsformat ?? null);
     const art = rechnung.ist_auslagen_rechnung ? 'auslagen' as const : 'normal' as const;
-    if (art === 'normal' && fmt.getrennt) return [];
+    if (art === 'normal' && fmt.getrennt) return leer;
     const pos = positionenRef.current;
     const posTouren = [...new Set(pos.map((p) => p.tour_id).filter((x): x is string => !!x))];
     let ids = posTouren;
@@ -437,23 +447,43 @@ export function RechnungDetailPage() {
       const amTag = await ladeTourenZuRechnungstagen(rechnung.auftraggeber_id, tage.filter(Boolean) as string[]);
       ids = [...new Set([...posTouren, ...amTag.map((t) => t.id)])];
     }
-    if (ids.length === 0) return [];
+    if (ids.length === 0) return leer;
     const [touren, stand, arten] = await Promise.all([ladeAuslagenTouren(ids), ladeAbrechnungsStand(ids), ladeZusatzArten()]);
-    return pruefeRechnungAuslagen({ art, fmt, touren, positionen: pos, stand, arten, eigeneRechnungIds: [rechnung.id] });
+    return pruefeRechnung({ art, fmt, touren, positionen: pos, stand, arten, eigeneRechnungIds: [rechnung.id] });
   }
 
+  /**
+   * Prüfdialog nur beim Übergang Entwurf → erstellte Rechnung: „Rechnung
+   * erstellen" oder Versand eines Entwurfs (der setzt ihn auf offen). Nicht
+   * beim Speichern, Neuladen oder Versand einer schon erstellten Rechnung.
+   */
   async function mitAuslagenPruefung(anlass: 'erstellen' | 'versenden', weiter: () => void) {
+    if (anlass === 'versenden' && rechnung?.status !== 'entwurf') { weiter(); return; }
     try {
-      const liste = await auslagenPruefen();
-      if (liste.length > 0) { setPruefung({ anlass, liste, weiter }); return; }
-    } catch (e) {
-      console.warn('[Rechnungen] Auslagen-Prüfung fehlgeschlagen', e);
+      const e = await auslagenPruefen();
+      if (e.offen > 0) { setPruefung({ modus: anlass, ergebnis: e, weiter }); return; }
+    } catch (err) {
+      console.warn('[Rechnungen] Auslagen-Prüfung fehlgeschlagen', err);
     }
     weiter();
   }
 
+  // Entwurf: im Hintergrund prüfen → Badge in der Kopfzeile (kein Dialog).
+  useEffect(() => {
+    if (!rechnung || rechnung.status !== 'entwurf' || editingPos) { queueMicrotask(() => setEntwurfPruefung(null)); return; }
+    let weg = false;
+    // positionenRef zieht erst im eigenen Effekt nach — hier den aktuellen
+    // Stand direkt setzen, damit die Prüfung nicht mit leerer Liste läuft.
+    positionenRef.current = positionen;
+    void auslagenPruefen().then((e) => { if (!weg) setEntwurfPruefung(e); }).catch(() => {});
+    return () => { weg = true; };
+  // auslagenPruefen liest den aktuellen Stand aus rechnung/positionenRef.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rechnung, positionen, editingPos]);
+
   /** Fehlende Zusätze als Positionen anhängen und die Rechnung speichern. */
-  async function auslagenUebernehmen(a: Auffaelligkeit): Promise<string> {
+  async function auslagenUebernehmen(at: AuslagenTour, fehlendeZusaetze: AuslagenZusatz[]): Promise<string> {
+    const a = { tour: at, fehlend: fehlendeZusaetze };
     if (!rechnung?.auftraggeber_id) return 'Rechnung ohne Auftraggeber.';
     const [tour] = await ladeTourenPerId([a.tour.id]);
     if (!tour) return 'Tour nicht gefunden.';
@@ -497,22 +527,46 @@ export function RechnungDetailPage() {
       if (agErr) throw new Error(agErr.message);
       const format = parseRechnungsformat(agData?.rechnungsformat ?? null);
 
+      // 1) Vorhandene Positionen über die Tour-IDs aktualisieren.
       const tourIds = positionen.map((p) => p.tour_id).filter((x): x is string => !!x);
-      if (tourIds.length === 0) {
-        setReloadInfo('Auf dieser Rechnung stehen keine Touren — nichts neu zu laden.');
-        return;
-      }
-      const list = await ladeTourenPerId(tourIds);
+      const list = tourIds.length ? await ladeTourenPerId(tourIds) : [];
       const modus = modusFuerRechnung(rechnung.ist_auslagen_rechnung, format);
-      const { positionen: neu } = positionenNeuAufbauen(positionen, list, format, modus, keepManualRows);
-      const bilanz = neuLadenBilanz(positionen, neu, list);
+      const { positionen: aktualisiert } = positionenNeuAufbauen(positionen, list, format, modus, keepManualRows);
+      const bilanz = neuLadenBilanz(positionen, aktualisiert, list);
       const nichtGefunden = new Set(tourIds).size - list.length;
-      setPositionen(neu.map((p) => ('key' in p ? p as EditorPosition : { ...p, key: newKey('tour') })));
-      setReloadInfo(`${bilanzText(bilanz, nichtGefunden)} Mit „Speichern" übernehmen.`);
+
+      // 2) Neue passende Touren ergänzen (Rechnungsdatum/Leistungszeitraum).
+      const suche = await sucheNeueTouren({
+        rechnungId: rechnung.id,
+        auftraggeberId: rechnung.auftraggeber_id,
+        auftraggeberName: rechnung.auftraggeber?.name ?? 'Auftraggeber',
+        rechnungsempfaengerId: rechnung.rechnungsempfaenger_id ?? null,
+        istAuslagen: rechnung.ist_auslagen_rechnung,
+        zeitraum: suchZeitraum(rechnung, tourIds.length > 0),
+        vorhandeneTourIds: tourIds,
+      });
+      const zusatzPos = generatePositionenFromTouren(suche.touren, format, { modus });
+      const hinzuTouren = new Set(zusatzPos.map((p) => p.tour_id));
+      // Neue Positionen vor die manuellen, damit Touren beisammen bleiben.
+      const manuell = aktualisiert.filter((p) => p.ist_manuell);
+      const ohneManuell = aktualisiert.filter((p) => !p.ist_manuell);
+      const gesamt = [...ohneManuell, ...zusatzPos, ...manuell];
+      setPositionen(gesamt.map((p) => ('key' in p ? p as EditorPosition : { ...p, key: newKey('tour') })));
+      // Leistungszeitraum beim Speichern an alle Touren anpassen, wenn
+      // welche dazukamen (bei einer leeren Rechnung ist er sonst der Anlagetag).
+      if (hinzuTouren.size > 0) {
+        const alle = [...list, ...suche.touren.filter((t) => hinzuTouren.has(t.id))];
+        const starts = alle.map((t) => t.startdatum ?? t.enddatum).filter(Boolean) as string[];
+        const enden = alle.map((t) => t.enddatum ?? t.startdatum).filter(Boolean) as string[];
+        setNeuerLeistungszeitraum(starts.length ? { von: starts.sort()[0], bis: enden.sort()[enden.length - 1] } : null);
+      }
+      setReloadInfo(`${bilanzText(bilanz, nichtGefunden, {
+        touren: hinzuTouren.size, suche: suche.beschreibung, aufAndererRechnung: suche.aufAndererRechnung,
+      })} Mit „Speichern" übernehmen.`);
 
       // Tour-Infos für die neue Positionsliste aktualisieren.
       const m = new Map<string, string>();
-      for (const t of list) {
+      for (const t of [...list, ...suche.touren]) {
         if (t.info && t.info.trim()) m.set(t.id, t.info.trim());
       }
       setTourInfoById(m);
@@ -693,6 +747,19 @@ export function RechnungDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold text-maja-navy">{rechnung.rechnungsnummer}</h1>
             <RechnungStatusBadge status={status} />
+            {/* Entwurf: dezenter Auslagen-Hinweis statt Dialog — anklickbar. */}
+            {status === 'entwurf' && entwurfPruefung && entwurfPruefung.offen > 0 && (
+              <button
+                type="button"
+                data-testid="auslagen-entwurf-hinweis"
+                onClick={() => setPruefung({ modus: 'info', ergebnis: entwurfPruefung, weiter: () => {} })}
+                className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-800 hover:ring-1 hover:ring-orange-400 dark:!bg-orange-900/50 dark:!text-orange-100"
+                title="Auslagen dieser Rechnung prüfen"
+              >
+                <span aria-hidden="true">⚠</span>
+                Auslagen: {entwurfPruefung.offen} {entwurfPruefung.offen === 1 ? 'Tour' : 'Touren'} prüfen
+              </button>
+            )}
             {rechnung.ist_auslagen_rechnung && (
               <span className="inline-flex rounded-full bg-maja-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-maja-accent">
                 Auslagen
@@ -889,7 +956,7 @@ export function RechnungDetailPage() {
                 >{savingPositions ? 'Speichert …' : 'Speichern'}</button>
                 <button
                   type="button" className="btn-secondary text-sm"
-                  onClick={() => { setEditingPos(false); setReloadInfo(null); void load(); }}
+                  onClick={() => { setEditingPos(false); setReloadInfo(null); setNeuerLeistungszeitraum(null); void load(); }}
                   disabled={savingPositions}
                 >Abbrechen</button>
               </>
@@ -1051,15 +1118,11 @@ export function RechnungDetailPage() {
 
       {pruefung && (
         <AuslagenPruefDialog
-          titel="Auslagen prüfen"
-          auffaelligkeiten={pruefung.liste}
-          fortfahrenLabel={pruefung.anlass === 'erstellen' ? 'Rechnung erstellen' : 'E-Mail versenden'}
-          onErneutPruefen={async () => {
-            const liste = await auslagenPruefen();
-            setPruefung((p) => (p ? { ...p, liste } : p));
-          }}
-          onAuslagenHinzufuegen={editingPos ? undefined : auslagenUebernehmen}
-          onAbbrechen={() => setPruefung(null)}
+          ergebnis={pruefung.ergebnis}
+          modus={pruefung.modus}
+          neuPruefen={auslagenPruefen}
+          onZusaetzeHinzufuegen={editingPos ? undefined : auslagenUebernehmen}
+          onAbbrechen={() => { setPruefung(null); if (rechnung?.status === 'entwurf') void auslagenPruefen().then(setEntwurfPruefung); }}
           onFortfahren={() => { const w = pruefung.weiter; setPruefung(null); w(); }}
         />
       )}
@@ -1078,7 +1141,10 @@ export function RechnungDetailPage() {
               )}
               Die Positionen der Touren auf dieser Rechnung werden aus dem
               aktuellen Stand der Touren neu erzeugt (unabhängig vom Datum).
-              Rechnungsdatum und Rechnungsnummer bleiben unverändert.
+              Zusätzlich werden passende neue Touren des Auftraggebers zum
+              Rechnungsdatum bzw. Leistungszeitraum ergänzt, sofern sie auf
+              keiner anderen Rechnung stehen. Rechnungsdatum und
+              Rechnungsnummer bleiben unverändert.
               Manuelle Änderungen an erzeugten Positionen gehen verloren.
               <label className="mt-3 flex items-center gap-2 text-sm">
                 <input
