@@ -156,12 +156,13 @@ async function uploadSmall(
 }
 
 async function uploadLarge(
-  path: string, bytes: Uint8Array, contentType: string,
+  path: string, bytes: Uint8Array, contentType: string, konflikt: 'replace' | 'fail' = 'replace',
 ): Promise<DriveItem> {
   const sessionUrl = `${userRoot()}/root:/${encodePath(path)}:/createUploadSession`;
   const sessResp = await graphFetch('POST', sessionUrl, {
-    item: { '@microsoft.graph.conflictBehavior': 'replace', name: path.split('/').pop() },
+    item: { '@microsoft.graph.conflictBehavior': konflikt, name: path.split('/').pop() },
   });
+  if (konflikt === 'fail' && sessResp.status === 409) throw new DateiExistiertFehler(path);
   if (!sessResp.ok) throw new Error(`UploadSession fehlgeschlagen: ${await sessResp.text()}`);
   const { uploadUrl } = (await sessResp.json()) as { uploadUrl: string };
   const chunkSize = 5 * 1024 * 1024;
@@ -185,6 +186,41 @@ async function uploadLarge(
   }
   if (!last) throw new Error('Upload abgeschlossen, aber kein DriveItem zurückgegeben');
   return last;
+}
+
+/** Fehler: Ziel existiert bereits (Upload ohne Überschreiben). */
+export class DateiExistiertFehler extends Error {
+  constructor(public pfad: string) {
+    super(`Datei existiert bereits und wird nicht überschrieben: ${pfad}`);
+    this.name = 'DateiExistiertFehler';
+  }
+}
+
+/**
+ * Lädt eine NEUE Datei hoch — existiert der Pfad schon, wird NICHT
+ * überschrieben (conflictBehavior=fail), sondern DateiExistiertFehler
+ * geworfen. Für das E-Rechnungs-Archiv (Dateien < 4 MB).
+ */
+export async function uploadFileNeu(path: string, bytes: Uint8Array, contentType: string): Promise<DriveItem> {
+  const lastSlash = path.lastIndexOf('/');
+  if (lastSlash > 0) await ensureFolderPath(path.slice(0, lastSlash));
+  if (bytes.byteLength > 4 * 1024 * 1024) {
+    if (await getItemMeta(path)) throw new DateiExistiertFehler(path);
+    return await uploadLarge(path, bytes, contentType, 'fail');
+  }
+  const url = `${userRoot()}/root:/${encodePath(path)}:/content?@microsoft.graph.conflictBehavior=fail`;
+  const resp = await graphFetch('PUT', url, bytes, { 'Content-Type': contentType });
+  if (resp.status === 409) throw new DateiExistiertFehler(path);
+  if (!resp.ok) throw new Error(`Upload ${path} fehlgeschlagen: ${resp.status} ${await resp.text()}`);
+  return (await resp.json()) as DriveItem;
+}
+
+/** Benennt eine Datei im selben Ordner um (schlägt fehl, wenn der neue Name belegt ist). */
+export async function renameItem(path: string, neuerName: string): Promise<void> {
+  const url = `${userRoot()}/root:/${encodePath(path)}?@microsoft.graph.conflictBehavior=fail`;
+  const resp = await graphFetch('PATCH', url, { name: neuerName });
+  if (resp.status === 409) throw new DateiExistiertFehler(neuerName);
+  if (!resp.ok) throw new Error(`Umbenennen ${path}: ${resp.status} ${await resp.text()}`);
 }
 
 /**

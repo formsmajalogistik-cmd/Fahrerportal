@@ -6,16 +6,24 @@
 
 import { supabase } from '../supabase';
 
-export type ERechnungFormat = 'pdf' | 'xrechnung_cii' | 'zugferd';
+export type ERechnungFormat = 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
 
 export const ERECHNUNG_FORMATE: ReadonlyArray<{ wert: ERechnungFormat; label: string; aktiv: boolean }> = [
   { wert: 'pdf', label: 'PDF (wie bisher)', aktiv: true },
-  { wert: 'xrechnung_cii', label: 'XRechnung (CII)', aktiv: false },
-  { wert: 'zugferd', label: 'ZUGFeRD / Factur-X', aktiv: false },
+  { wert: 'en16931_cii', label: 'E-Rechnung EN 16931 (XML) + PDF-Lesekopie', aktiv: true },
+  { wert: 'xrechnung_cii', label: 'XRechnung (XML) + PDF-Lesekopie', aktiv: true },
+  { wert: 'zugferd', label: 'ZUGFeRD', aktiv: false },
 ];
 
 export function istERechnungFormat(v: unknown): v is ERechnungFormat {
-  return v === 'pdf' || v === 'xrechnung_cii' || v === 'zugferd';
+  return v === 'pdf' || v === 'en16931_cii' || v === 'xrechnung_cii' || v === 'zugferd';
+}
+
+/** Format → Profil des XML; null = keine E-Rechnung (PDF). */
+export function profilFuerFormat(f: string | null | undefined): 'en16931' | 'xrechnung' | null {
+  if (f === 'en16931_cii') return 'en16931';
+  if (f === 'xrechnung_cii') return 'xrechnung';
+  return null;
 }
 
 /** Häufige Länder für die Auswahlhilfe (ISO 3166-1 alpha-2). */

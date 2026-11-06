@@ -16,6 +16,7 @@ import {
   type Fonts, type PageCtx,
 } from '../rechnungen/rechnungPdf';
 import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
+import type { Firmendaten } from '../../../lib/firmendaten';
 
 export interface BriefPdfInput {
   briefNr: string;
@@ -37,6 +38,8 @@ export interface BriefPdfInput {
   absenderUnterschrift?: string | null;
   /** Data-URL des hinterlegten Firmenstempels (Migration 092). */
   absenderStempel?: string | null;
+  /** Firmendaten aus den Einstellungen (sonst Vorgabewerte). */
+  absender?: Firmendaten;
 }
 
 
@@ -99,7 +102,7 @@ async function drawUnterschrift(
   // von ctx.page passieren — sonst landete alles Folgende auf der alten
   // Seite, während der Cursor schon auf der neuen stand.
   if (ctx.y < MARGIN_BOTTOM + 150) {
-    const neu = newPage(doc, ctx.fonts, ctx.logo, 'Brief');
+    const neu = newPage(doc, ctx.fonts, ctx.logo, 'Brief', { absender: ctx.absender });
     ctx.page = neu.page;
     ctx.y = neu.y;
   }
@@ -195,7 +198,7 @@ export async function generateBriefPdf(input: BriefPdfInput): Promise<Blob> {
     try { logo = await doc.embedPng(logoBytes); } catch { logo = null; }
   }
 
-  const ctx = newPage(doc, fonts, logo, 'Brief');
+  const ctx = newPage(doc, fonts, logo, 'Brief', { absender: input.absender });
   drawAbsenderRechts(ctx);
   ctx.y = A4_H - 150;
   drawAbsenderzeile(ctx);
@@ -215,7 +218,7 @@ export async function generateBriefPdf(input: BriefPdfInput): Promise<Blob> {
     const text = absatz.replace(/\n/g, ' ').trim();
     if (!text) continue;
     if (ctx.y < MARGIN_BOTTOM + 90) {
-      const neu = newPage(doc, fonts, logo, 'Brief');
+      const neu = newPage(doc, fonts, logo, 'Brief', { absender: input.absender });
       ctx.page = neu.page;
       ctx.y = neu.y;
     }

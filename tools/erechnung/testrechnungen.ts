@@ -10,19 +10,26 @@
 
 import type { Database } from '../../src/types/supabase';
 import { FIRMENDATEN, type Firmendaten } from '../../src/lib/firmendaten';
-import type { ERechnungQuelle } from '../../src/lib/erechnung/ausRechnung';
+import type { ERechnungQuelle, GutschriftQuelle } from '../../src/lib/erechnung/ausRechnung';
 import type { ERechnungProfil } from '../../src/lib/erechnung/typen';
 
 type RechnungRow = Database['public']['Tables']['rechnungen']['Row'];
 type PositionRow = Database['public']['Tables']['rechnungspositionen']['Row'];
+type GutschriftRow = Database['public']['Tables']['gutschriften']['Row'];
+type GutschriftPositionRow = Database['public']['Tables']['gutschriftspositionen']['Row'];
 
-export const TEST_FIRMA: Firmendaten = { ...FIRMENDATEN, kontaktName: 'Testkontakt (Platzhalter)' };
+export const TEST_FIRMA: Firmendaten = {
+  ...FIRMENDATEN, kontaktName: 'Testkontakt (Platzhalter)', inhaber: 'Test Inhaber', rechtsform: 'Einzelunternehmen',
+  steuernummer: '12/345/67890', bank: 'Testbank',
+};
 
 export interface Testrechnung {
   name: string;
   beschreibung: string;
   profil: ERechnungProfil;
-  quelle: ERechnungQuelle;
+  quelle?: ERechnungQuelle;
+  /** Storno/Teilgutschrift statt Rechnung. */
+  gutschrift?: GutschriftQuelle;
   /** Erwartetes Ergebnis des Validators. */
   erwartung: 'gueltig' | 'ungueltig';
   /** Bei 'ungueltig': diese Regel-IDs müssen gemeldet werden. */
@@ -46,6 +53,7 @@ function pos(rechnungId: string, nr: number, p: Partial<PositionRow> & Pick<Posi
     steuerkategorie: null,
     befreiungsgrund_code: null,
     befreiungsgrund_text: null,
+    leistungsdatum: p.tour_id ? '2026-10-14' : null,
     ...p,
   };
 }
@@ -74,7 +82,7 @@ function rechnung(id: string, p: Partial<RechnungRow>): RechnungRow {
     notizen: null,
     ist_auslagen_rechnung: false,
     ansprechpartner: 'Frau Erika Beispiel',
-    sachbearbeiter: null,
+    sachbearbeiter: 'Herr Kunde (Sachbearbeiter)',
     kundennummer: 'K-TEST-1',
     rechnungsadresse_firma: 'Beispiel Autovermietung GmbH',
     rechnungsadresse_strasse: 'Musterstraße 12',
@@ -94,6 +102,8 @@ function rechnung(id: string, p: Partial<RechnungRow>): RechnungRow {
     erechnung_format: 'xrechnung_cii',
     erechnung_email: 'rechnungseingang@example.com',
     kaeufer_referenz: 'BESTELLUNG-4711',
+    storniert_am: null,
+    absender_snapshot: null,
     ...p,
   };
 }
@@ -168,6 +178,7 @@ export function testrechnungen(): Testrechnung[] {
       rechnungsnummer: 'Re_26/9005',
       rechnungsadresse_firma: 'Müller & Söhne <Logistik> "Nord" GmbH',
       ansprechpartner: "Frau Zoë O'Brien-Jäger",
+      sachbearbeiter: "Frau Zoë O'Brien-Jäger",
       rechnungsadresse_strasse: 'Königsallee 1 & 2 <Hinterhaus>',
       rechnungsadresse_plz_ort: '40212 Düsseldorf',
       rechnungsadresse_plz: '40212', rechnungsadresse_ort: 'Düsseldorf',
@@ -221,7 +232,77 @@ export function testrechnungen(): Testrechnung[] {
     });
   }
 
+  // 12) Mehrtägige Tour (13.–15.10.) + zwei Touren an verschiedenen Tagen → Leistungsdatum je Position
+  {
+    const r = rechnung('r12', { rechnungsnummer: 'Re_26/9012', leistungszeitraum_von: '2026-10-01', leistungszeitraum_bis: '2026-10-31' });
+    liste.push({
+      name: '12_mehrtaegige_tour', profil: 'xrechnung', erwartung: 'gueltig',
+      beschreibung: 'Mehrtägige Tour: Leistungsdatum = Tag des Abschlusses (15.10.)',
+      quelle: { rechnung: r, auftraggeber: AG, positionen: [
+        pos('r12', 1, { bezeichnung: 'Bremen nach München 13.10./15.10.26', menge: 1, einzelpreis: 480, gesamtpreis: 480, tour_id: 't12', leistungsdatum: '2026-10-15' }),
+        pos('r12', 2, { bezeichnung: 'Bremen nach Hamburg 20.10.26', menge: 1, einzelpreis: 150, gesamtpreis: 150, tour_id: 't13', leistungsdatum: '2026-10-20' }),
+        pos('r12', 3, { bezeichnung: 'Manuelle Position ohne Datum', menge: 1, einzelpreis: 20, gesamtpreis: 20 }),
+      ] },
+    });
+  }
+  // 13) Auslagenrechnung Inland 19 % (normale Rechnung, Kategorie S)
+  {
+    const r = rechnung('r13', { rechnungsnummer: 'Re_26/9013', ist_auslagen_rechnung: true, rechnungsadresse_land: 'Deutschland' });
+    liste.push({
+      name: '13_auslagen_inland_19', profil: 'en16931', erwartung: 'gueltig',
+      beschreibung: 'Auslagenrechnung mit 19 % (Inland), Format EN 16931',
+      quelle: { rechnung: r, auftraggeber: AG, positionen: [
+        pos('r13', 1, { bezeichnung: 'Tankauslagen HB-XY 1', menge: 1, einzelpreis: 40.34, gesamtpreis: 40.34, tour_id: 't2' }),
+        pos('r13', 2, { bezeichnung: 'Bahnticket', menge: 1, einzelpreis: 29.9, gesamtpreis: 29.9, tour_id: 't2' }),
+      ] },
+    });
+  }
+  // 14) Stornorechnung (381) zur ABA-Rechnung — XRechnung
+  liste.push({
+    name: '14_storno_381', profil: 'xrechnung', erwartung: 'gueltig',
+    beschreibung: 'Stornorechnung (381) über den vollen Betrag mit Bezug auf Re_26/9002',
+    gutschrift: gutschriftQuelle('g14', 'storno', 'xrechnung_cii', [
+      gpos('g14', 1, { bezeichnung: 'Bremen – Kiel – Bremen', unterzeilen: ['ABA HB-XY 1/KI-AB 2'], menge: 1, einzelpreis: 211.2, gesamtpreis: 211.2, tour_id: 't2', leistungsdatum: '2026-10-21' }),
+      gpos('g14', 2, { bezeichnung: 'Überführung Bremen nach Oldenburg', menge: 1, einzelpreis: 98.5, gesamtpreis: 98.5, tour_id: 't3', leistungsdatum: '2026-10-22' }),
+    ]),
+  });
+  // 15) Teilgutschrift (381) — EN 16931 ohne Referenz
+  liste.push({
+    name: '15_teilgutschrift_381', profil: 'en16931', erwartung: 'gueltig',
+    beschreibung: 'Teilgutschrift (381) über eine Position, Format EN 16931',
+    gutschrift: gutschriftQuelle('g15', 'teilgutschrift', 'en16931_cii', [
+      gpos('g15', 1, { bezeichnung: 'Nachlass Wartezeit', menge: 1, einzelpreis: 25, gesamtpreis: 25 }),
+    ], { kaeufer_referenz: null, erechnung_email: null }),
+  });
+
   return liste;
+}
+
+function gpos(id: string, nr: number, p: Partial<GutschriftPositionRow> & Pick<GutschriftPositionRow, 'bezeichnung' | 'menge' | 'einzelpreis' | 'gesamtpreis'>): GutschriftPositionRow {
+  posZaehler += 1;
+  return {
+    id: `gp-${posZaehler}`, gutschrift_id: id, position_nr: nr, unterzeilen: [], ust_satz: null, tour_id: null,
+    ist_manuell: false, created_at: '2026-11-05T10:00:00Z', leistungsdatum: null, ...p,
+  } as GutschriftPositionRow;
+}
+
+function gutschriftQuelle(id: string, art: 'storno' | 'teilgutschrift', format: 'xrechnung_cii' | 'en16931_cii',
+  positionen: GutschriftPositionRow[], p: Partial<GutschriftRow> = {}): GutschriftQuelle {
+  const g: GutschriftRow = {
+    id, gutschrift_nr: art === 'storno' ? 'GS-2026/90' : 'GS-2026/91', auftraggeber_id: 'ag-test', rechnungsempfaenger_id: null,
+    rechnung_id: 'r2', datum: '2026-11-05', leistungszeitraum_von: '2026-10-01', leistungszeitraum_bis: '2026-10-31',
+    anrede: null, einleitungstext: art === 'storno' ? 'Hiermit stornieren wir die Rechnung Re_26/9002 vom 03.11.2026 in voller Höhe.' : null,
+    schlusstext: null, interne_notizen: null,
+    adress_snapshot: { firma: 'Beispiel Autovermietung GmbH', ansprechpartner: 'Frau Erika Beispiel', strasse: 'Musterstraße 12',
+      plz_ort: '28195 Bremen', land: null, plz: '28195', ort: 'Bremen', land_code: 'DE' },
+    kundennummer: 'K-TEST-1', sachbearbeiter: 'Herr Kunde (Sachbearbeiter)', ust_satz: 19, netto_summe: 0, ust_summe: 0, brutto_summe: 0,
+    status: 'final', pdf_url: null, email_versendet_am: null, created_at: 'x', updated_at: 'x',
+    empfaenger_typ: 'auftraggeber', empfaenger_email: null, empfaenger_ust_id: null, mit_unterschrift: true, mit_stempel: true,
+    absender_snapshot: null, art, bezug_rechnungsnummer: 'Re_26/9002', bezug_rechnungsdatum: '2026-11-03',
+    erechnung_format: format, erechnung_email: 'rechnungseingang@example.com', kaeufer_referenz: 'BESTELLUNG-4711',
+    ...p,
+  };
+  return { gutschrift: g, positionen, auftraggeber: { kunden_uid: 'DE123456789' } };
 }
 
 /** Testrechnungen, die mit den echten (unvollständigen) Firmendaten laufen. */

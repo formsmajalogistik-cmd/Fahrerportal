@@ -5,18 +5,24 @@ import { erzeugeCii, betrag, menge } from '../../src/lib/erechnung/cii';
 import { pruefeERechnung, hatFehler } from '../../src/lib/erechnung/pruefung';
 import { escapeAttr, escapeText } from '../../src/lib/erechnung/xml';
 import { landZuIso, normLandCode, trennePlzOrt } from '../../src/lib/erechnung/stammdaten';
-import { ERechnungAbbruch } from '../../src/lib/erechnung/typen';
+import { ERechnungAbbruch, TYP_CODE_KORREKTUR } from '../../src/lib/erechnung/typen';
 import { testDateiname } from '../../src/lib/erechnung';
 import { berechneSummenProUst } from '../../src/lib/rechnungsformat';
 import { generateRechnungPdf } from '../../src/pages/admin/rechnungen/rechnungPdf';
 import { FIRMENDATEN } from '../../src/lib/firmendaten';
 import { TEST_FIRMA, testrechnungen } from './testrechnungen';
+import { bildeERechnungGutschrift } from '../../src/lib/erechnung/ausRechnung';
+import { gutschriftPdfInputAus, rechnungPdfInputAus } from '../../src/lib/erechnung/belegPdf';
+import { firmendatenZuJson } from '../../src/lib/firmendaten';
+import { fusszeilen } from '../../src/pages/admin/rechnungen/rechnungPdf';
 
 type Fall = { name: string; fn: () => void | Promise<void> };
 const faelle: Fall[] = [];
 const test = (name: string, fn: Fall['fn']) => faelle.push({ name, fn });
 
-const T = Object.fromEntries(testrechnungen().map((t) => [t.name, t]));
+const ALLE = testrechnungen();
+const T = Object.fromEntries(ALLE.filter((t) => t.quelle).map((t) => [t.name, { ...t, quelle: t.quelle! }]));
+const G = Object.fromEntries(ALLE.filter((t) => t.gutschrift).map((t) => [t.name, t.gutschrift!]));
 const bild = (name: string, firma = TEST_FIRMA) => bildeERechnung(T[name].quelle, { firma });
 const texte = (m: { text: string }[]) => m.map((x) => x.text);
 
@@ -47,16 +53,18 @@ test('Betrags-, Mengen- und Dateinamen-Format', () => {
 });
 
 // ---------------------------------------------------------------- Abbrüche
-test('Abbruch: Gutschrift/Korrektur (Typ ≠ 380)', () => {
+test('Dokumentart: 381 nur mit Bezug, andere Codes abgelehnt', () => {
   const { daten } = bild('01_ab_tour');
-  assert.throws(() => erzeugeCii({ ...daten, typ: '381' as '380' }), ERechnungAbbruch);
-  assert.throws(() => erzeugeCii({ ...daten, typ: '384' as '380' }), /nur Rechnungen \(380\)/);
+  assert.throws(() => erzeugeCii({ ...daten, typ: '384' as '380' }), ERechnungAbbruch);
+  assert.throws(() => erzeugeCii({ ...daten, typ: TYP_CODE_KORREKTUR }), /Bezug auf die Originalrechnung/);
+  assert.equal(TYP_CODE_KORREKTUR, '381');
 });
 
-test('Abbruch: Auslagenrechnung', () => {
-  const t = T['01_ab_tour'];
-  const r = bildeERechnung({ ...t.quelle, rechnung: { ...t.quelle.rechnung, ist_auslagen_rechnung: true } }, { firma: TEST_FIRMA });
-  assert.match(r.abbruch ?? '', /Auslagenrechnung/);
+test('Auslagenrechnung mit 19 % (Inland) ist erzeugbar', () => {
+  const t = T['13_auslagen_inland_19'];
+  const r = bildeERechnung(t.quelle, { firma: TEST_FIRMA });
+  assert.equal(r.abbruch, null);
+  assert.ok(erzeugeCii(r.daten, 'en16931').includes('<ram:TypeCode>380</ram:TypeCode>'));
 });
 
 test('Abbruch: Position mit 0 % (Kategorie nicht freigegeben)', () => {
@@ -91,35 +99,108 @@ test('ABA-Aufschlag steckt im Positionspreis (keine Zu-/Abschläge)', () => {
   assert.ok(!xml.includes('SpecifiedTradeAllowanceCharge'));
 });
 
-test('PDF und XML zeigen dieselben Beträge (Textvergleich des PDFs)', async () => {
+async function pdfText(input: Parameters<typeof generateRechnungPdf>[0]): Promise<string> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { createRequire } = await import('node:module');
   const { dirname } = await import('node:path');
   const schriften = `${dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))}/standard_fonts/`;
   (globalThis as { fetch?: unknown }).fetch = async () => ({ ok: false });
-  const eur = (n: number) => n.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?=,))/g, '.');
-  for (const name of ['01_ab_tour', '02_aba_tour', '03_zwei_steuersaetze', '04_manuell_zahlungsziel']) {
+  const blob = await generateRechnungPdf(input);
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: false, standardFontDataUrl: schriften }).promise;
+  let text = '';
+  for (let i = 1; i <= doc.numPages; i += 1) {
+    const c = await (await doc.getPage(i)).getTextContent();
+    text += c.items.map((it) => ('str' in it ? it.str : '')).join(' ') + '\n';
+  }
+  return text;
+}
+const eur = (n: number) => n.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?=,))/g, '.');
+
+test('PDF-Lesekopie und XML: dieselben Beträge, Daten und Angaben (Rechnungen)', async () => {
+  for (const name of ['01_ab_tour', '02_aba_tour', '03_zwei_steuersaetze', '04_manuell_zahlungsziel', '12_mehrtaegige_tour']) {
     const q = T[name].quelle;
     const { daten } = bildeERechnung(q, { firma: TEST_FIRMA });
-    const blob = await generateRechnungPdf({
-      rechnungsnummer: q.rechnung.rechnungsnummer, datum: q.rechnung.datum, anrede: q.rechnung.anrede,
-      kundennummer: q.rechnung.kundennummer, sachbearbeiter: q.rechnung.sachbearbeiter, faelligAm: daten.faelligAm,
-      empfaenger: { firma: q.rechnung.rechnungsadresse_firma, ansprechpartner: q.rechnung.ansprechpartner, strasse: q.rechnung.rechnungsadresse_strasse, plz_ort: q.rechnung.rechnungsadresse_plz_ort, land: q.rechnung.rechnungsadresse_land },
-      kundenUid: null, zahlungszielTage: daten.zahlungszielTage, ustSatzDefault: Number(q.rechnung.ust_satz),
-      positionen: q.positionen.map((p, i) => ({ position_nr: i + 1, bezeichnung: p.bezeichnung, unterzeilen: p.unterzeilen, menge: p.menge, einzelpreis: p.einzelpreis, gesamtpreis: p.gesamtpreis, ust_satz: p.ust_satz })),
-    });
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: false, standardFontDataUrl: schriften }).promise;
-    let text = '';
-    for (let i = 1; i <= doc.numPages; i += 1) {
-      const c = await (await doc.getPage(i)).getTextContent();
-      text += c.items.map((it) => ('str' in it ? it.str : '')).join(' ') + '\n';
-    }
+    const text = await pdfText(rechnungPdfInputAus({
+      rechnung: q.rechnung, positionen: q.positionen, auftraggeber: q.auftraggeber,
+      firma: TEST_FIRMA, ausSnapshot: true, erechnung: daten,
+    }));
     const xml = erzeugeCii(daten);
     const soll = [daten.summen.netto, daten.summen.brutto, ...daten.summen.gruppen.map((g) => g.ust), ...daten.positionen.map((p) => p.netto)];
     for (const n of soll) {
       assert.ok(text.includes(eur(n)), `${name}: PDF enthält ${eur(n)}`);
       assert.ok(xml.includes(`>${betrag(n)}<`), `${name}: XML enthält ${betrag(n)}`);
     }
+    for (const p of daten.positionen.filter((x) => x.leistungsdatum)) {
+      const [y, m, d] = p.leistungsdatum!.split('-');
+      assert.ok(text.includes(`Leistungsdatum: ${d}.${m}.${y}`), `${name}: PDF Leistungsdatum ${p.leistungsdatum}`);
+      assert.ok(xml.includes(`>${y}${m}${d}<`), `${name}: XML Leistungsdatum ${p.leistungsdatum}`);
+    }
+    if (daten.faelligAm) {
+      const [y, m, d] = daten.faelligAm.split('-');
+      assert.ok(text.includes(`${d}.${m}.${y}`), `${name}: PDF Fälligkeit`);
+    }
+    if (daten.kaeuferReferenz) assert.ok(text.includes(daten.kaeuferReferenz), `${name}: PDF Käuferreferenz`);
+    assert.ok(text.includes('Maßgeblich ist die E-Rechnung'), `${name}: Lesekopie-Hinweis`);
+    assert.ok(text.includes('Steuernummer: 12/345/67890') && text.includes('Inhaber: Test Inhaber'), `${name}: Pflichtangaben`);
+  }
+});
+
+test('Mehrtägige Tour: Leistungsdatum = Abschlusstag in PDF und XML, BG-14 = min/max', async () => {
+  const q = T['12_mehrtaegige_tour'].quelle;
+  const { daten } = bildeERechnung(q, { firma: TEST_FIRMA });
+  assert.deepEqual([daten.leistungVon, daten.leistungBis], ['2026-10-15', '2026-10-20']);
+  const xml = erzeugeCii(daten);
+  assert.ok(/<ram:LineID>1<\/ram:LineID>[\s\S]*?<ram:BillingSpecifiedPeriod>\s*<ram:StartDateTime>\s*<udt:DateTimeString format="102">20261015</.test(xml));
+  assert.equal((xml.match(/<ram:BillingSpecifiedPeriod>/g) ?? []).length, 3, '2 Positionen + Rechnungsebene');
+});
+
+test('Normales PDF (ohne E-Rechnung) bleibt beim bisherigen Hinweis', async () => {
+  const q = T['01_ab_tour'].quelle;
+  const text = await pdfText(rechnungPdfInputAus({ rechnung: q.rechnung, positionen: q.positionen, auftraggeber: q.auftraggeber, firma: TEST_FIRMA, ausSnapshot: false }));
+  assert.ok(text.includes('Leistungsdatum = Datum des Fahrauftrages'));
+  assert.ok(!text.includes('Leistungsdatum: '));
+  assert.ok(!text.includes('Steuernummer'), 'Altlayout ohne Pflichtangaben-Fußzeile');
+});
+
+test('Storno (381): Bezug BT-25/26, Lesekopie mit Titel und Bezug', async () => {
+  const g = G['14_storno_381'];
+  const { daten, abbruch } = bildeERechnungGutschrift(g, { firma: TEST_FIRMA });
+  assert.equal(abbruch, null);
+  const xml = erzeugeCii(daten, 'xrechnung');
+  assert.ok(xml.includes('<ram:TypeCode>381</ram:TypeCode>'));
+  assert.ok(/<ram:InvoiceReferencedDocument>\s*<ram:IssuerAssignedID>Re_26\/9002<\/ram:IssuerAssignedID>[\s\S]*20261103/.test(xml));
+  assert.ok(!/<ram:ChargeAmount>-/.test(xml), 'keine negativen Einzelpreise');
+  const text = await pdfText(gutschriftPdfInputAus({ gutschrift: g.gutschrift, positionen: g.positionen, auftraggeber: g.auftraggeber,
+    firma: TEST_FIRMA, ausSnapshot: true, erechnung: daten, dokumentbezeichnung: 'Gutschrift', summenLabel: 'Gutschriftbetrag' }));
+  assert.ok(text.includes('Stornorechnung') && text.includes('Bezug: Rechnung Re_26/9002 vom 03.11.2026'));
+  assert.ok(text.includes(eur(daten.summen.brutto)) && xml.includes(`>${betrag(daten.summen.brutto)}<`));
+});
+
+test('Mengeneinheit immer C62 (auch wenn einheit_code gesetzt ist)', () => {
+  const xml = erzeugeCii(bild('04_manuell_zahlungsziel').daten);
+  assert.ok(xml.includes('unitCode="C62"') && !xml.includes('unitCode="HUR"'));
+});
+
+test('Sachbearbeiter des Kunden → Ansprechpartner des Käufers (BG-9)', () => {
+  const xml = erzeugeCii(bild('01_ab_tour').daten);
+  assert.ok(/<ram:BuyerTradeParty>[\s\S]*<ram:PersonName>Herr Kunde \(Sachbearbeiter\)<\/ram:PersonName>/.test(xml));
+  assert.ok(/<ram:SellerTradeParty>[\s\S]*<ram:PersonName>Testkontakt/.test(xml));
+});
+
+test('Snapshot am Beleg hat Vorrang vor den aktuellen Firmendaten', () => {
+  const t = T['01_ab_tour'];
+  const snap = { ...firmendatenZuJson(TEST_FIRMA), ort: 'Snapshot-Ort', kontakt_name: 'Snapshot Kontakt' };
+  const { daten } = bildeERechnung({ ...t.quelle, rechnung: { ...t.quelle.rechnung, absender_snapshot: snap } }, { firma: FIRMENDATEN });
+  assert.equal(daten.verkaeufer.ort, 'Snapshot-Ort');
+  assert.equal(daten.verkaeufer.kontaktName, 'Snapshot Kontakt');
+});
+
+test('Fußzeile: Altlayout vs. Pflichtangaben', () => {
+  const alt = fusszeilen(FIRMENDATEN, false);
+  assert.deepEqual(alt, ['Maja-Logistik', 'Heiligenroder Strasse 38e 28816 Stuhr-Heiligenrode', 'Tel.:+49 17641461645 info@maja-logistik.de', 'UID: DE309356726  IBAN: DE04280501000001429760  BIC: SLZODE22XXX']);
+  const neu = fusszeilen({ ...TEST_FIRMA, registergericht: 'Amtsgericht Test', registernummer: 'HRA 1' }, true).join(' | ');
+  for (const t of ['Inhaber: Test Inhaber', 'Einzelunternehmen', 'Steuernummer: 12/345/67890', 'Amtsgericht Test HRA 1', 'USt-IdNr.: DE309356726', 'Testbank']) {
+    assert.ok(neu.includes(t), t);
   }
 });
 
@@ -186,9 +267,20 @@ test('Negativer Einzelpreis und Rundungsabweichung werden gemeldet', () => {
   assert.ok(pruefeERechnung(falsch).some((x) => x.bt === 'BR-CO-17'));
 });
 
-test('Kleinbetrag ≤ 250 € → Hinweis', () => {
-  const { daten } = bild('01_ab_tour'); // 192 + 19 % = 228,48
-  assert.ok(pruefeERechnung(daten).some((x) => x.schwere === 'hinweis' && /Kleinbetrag/.test(x.text)));
+test('Fehlende USt-IdNr. des Empfängers → nur Hinweis', () => {
+  const t = T['01_ab_tour'];
+  const { daten } = bildeERechnung({ ...t.quelle, auftraggeber: { ...t.quelle.auftraggeber!, kunden_uid: null } }, { firma: TEST_FIRMA });
+  const m = pruefeERechnung(daten, 'xrechnung').filter((x) => x.bt === 'BT-48');
+  assert.equal(m.length, 1);
+  assert.equal(m[0].schwere, 'hinweis');
+  assert.equal(hatFehler(pruefeERechnung(daten, 'xrechnung')), false);
+});
+
+test('EN 16931: ohne Käuferreferenz, E-Rechnungs-Adresse und Kontaktname keine Fehler', () => {
+  const t = T['01_ab_tour'];
+  const { daten } = bildeERechnung({ ...t.quelle, rechnung: { ...t.quelle.rechnung, kaeufer_referenz: null, erechnung_email: null } }, { firma: FIRMENDATEN });
+  assert.equal(hatFehler(pruefeERechnung(daten, 'en16931')), false);
+  assert.equal(hatFehler(pruefeERechnung(daten, 'xrechnung')), true);
 });
 
 // ---------------------------------------------------------------- Stammdaten

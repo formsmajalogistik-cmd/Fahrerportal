@@ -357,13 +357,16 @@ export function standAusPositionen(stand: AbrechnungsStand, rows: PosRow[]): voi
   };
   for (const p of rows) {
     if (!p.rechnung) continue;
+    // Stornierte Rechnungen zählen nicht als „abgerechnet" — die Tour ist
+    // wieder frei (z.B. für „Als neue Rechnung übernehmen").
+    if ((p.rechnung as { status?: string }).status === 'storniert') continue;
     const r: RechnungRef = { id: p.rechnung.id, nr: p.rechnung.rechnungsnummer, istAuslagen: !!p.rechnung.ist_auslagen_rechnung, datum: p.rechnung.datum };
     if (p.tour_id) add(stand.tourRechnungen, p.tour_id, r);
     if (p.zusatz_id) add(stand.zusatzRechnungen, p.zusatz_id, r);
   }
 }
 
-export const POS_SELECT = 'id, tour_id, zusatz_id, rechnung:rechnung_id (id, rechnungsnummer, ist_auslagen_rechnung, datum)';
+export const POS_SELECT = 'id, tour_id, zusatz_id, rechnung:rechnung_id (id, rechnungsnummer, ist_auslagen_rechnung, datum, status)';
 
 /** Abrechnungsstand für Touren: Positionen und Auslagenrechnungen. */
 export async function ladeAbrechnungsStand(tourIds: string[]): Promise<AbrechnungsStand> {
@@ -381,7 +384,7 @@ export async function ladeAbrechnungsStand(tourIds: string[]): Promise<Abrechnun
 
 export async function ladeLetzteAuslagenRechnungen(stand: AbrechnungsStand): Promise<void> {
   const { data } = await ladeInBloecken((v, b) => supabase.from('rechnungen')
-    .select('id, auftraggeber_id, datum').eq('ist_auslagen_rechnung', true).order('id').range(v, b));
+    .select('id, auftraggeber_id, datum').eq('ist_auslagen_rechnung', true).neq('status', 'storniert').order('id').range(v, b));
   for (const r of (data as Array<{ auftraggeber_id: string | null; datum: string }>) ?? []) {
     if (!r.auftraggeber_id) continue;
     const alt = stand.letzteAuslagenRechnung.get(r.auftraggeber_id);

@@ -2,7 +2,10 @@
 export * from './typen';
 export { erzeugeCii, pruefeUnterstuetzt, betrag, menge } from './cii';
 export { pruefeERechnung, hatFehler, type Mangel } from './pruefung';
-export { bildeERechnung, ladeERechnungQuelle, type ERechnungQuelle, type Abbildung } from './ausRechnung';
+export {
+  bildeERechnung, ladeERechnungQuelle, bildeERechnungGutschrift, ladeGutschriftQuelle, EINHEIT_STUECK,
+  type ERechnungQuelle, type GutschriftQuelle, type Abbildung,
+} from './ausRechnung';
 export * from './stammdaten';
 
 /** Dateiname für den Test-Export: Re_26/1234 → Re_26_1234_TEST.xml */

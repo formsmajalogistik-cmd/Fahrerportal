@@ -20,7 +20,7 @@ import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { RechnungEmailDialog } from './RechnungEmailDialog';
-import { generateRechnungPdf, rechnungPdfFilename, type RechnungPdfPosition } from './rechnungPdf';
+import { generateRechnungPdf, rechnungPdfFilename } from './rechnungPdf';
 import { AbsenderSignaturSchalter } from '../../../components/AbsenderSignaturSchalter';
 import {
   ladeAbsenderBilder, ladeAbsenderSignatur, type AbsenderSignatur,
@@ -29,6 +29,15 @@ import {
   previewOneDrivePdf, triggerOneDriveDownload, uploadToOneDrive,
 } from '../../../lib/onedrive';
 import { RechnungStatusBadge } from './RechnungStatusBadge';
+import { ERechnungAbschnitt } from '../../../components/erechnung/ERechnungAbschnitt';
+import { TeilgutschriftDialog } from '../../../components/erechnung/TeilgutschriftDialog';
+import {
+  erechnungVorpruefung, ladeERechnungDokumente, rechnungErstellen, SPERR_HINWEIS, sperrMeldung, type Vorpruefung,
+} from '../../../lib/erechnung/erstellen';
+import { alsNeueRechnungUebernehmen, rechnungStornieren } from '../../../lib/erechnung/korrektur';
+import { rechnungPdfInputAus } from '../../../lib/erechnung/belegPdf';
+import { firmendatenFuerBeleg } from '../../../lib/firmendaten';
+import type { ERechnungDokument } from '../../../lib/onedrive';
 import { VersandAbschnitt } from '../../../components/versand/VersandAbschnitt';
 import { useZurueckZurListe } from '../../../lib/useListenZustand';
 import { eintragZeit, type VersandStatus } from '../../../lib/belegVersand';
@@ -61,6 +70,7 @@ interface GutschriftBezug {
   gutschrift_nr: string;
   datum: string;
   brutto_summe: number;
+  art?: 'gutschrift' | 'storno' | 'teilgutschrift';
 }
 
 /**
@@ -169,6 +179,15 @@ export function RechnungDetailPage() {
     DEFAULT_GUTSCHRIFT_SETTINGS.dokumentbezeichnung,
   );
 
+  // E-Rechnung (Migration 116): archivierte Fassungen, Vorprüfung im
+  // Entwurf, Korrekturen (Storno/Teilgutschrift/Übernahme).
+  const [dokumente, setDokumente] = useState<ERechnungDokument[]>([]);
+  const [vorpruefung, setVorpruefung] = useState<Vorpruefung | null>(null);
+  const [positionsZeilen, setPositionsZeilen] = useState<Rechnungsposition[]>([]);
+  const [stornoConfirm, setStornoConfirm] = useState(false);
+  const [teilgutschriftOffen, setTeilgutschriftOffen] = useState(false);
+  const [korrekturBusy, setKorrekturBusy] = useState(false);
+
   // Beleg-Zuordnung lösen (Aufgabe 2)
   const handleRemoveBelege = useCallback(async () => {
     if (!rechnung) return;
@@ -249,13 +268,16 @@ export function RechnungDetailPage() {
     const [gsRes, gsCfg] = await Promise.all([
       supabase
         .from('gutschriften')
-        .select('id, gutschrift_nr, datum, brutto_summe')
+        .select('*')
         .eq('rechnung_id', id)
         .order('datum', { ascending: false }),
       loadGutschriftSettings(),
     ]);
     setGutschriften((gsRes.data as unknown as GutschriftBezug[]) ?? []);
     setGsBezeichnung(gsCfg.dokumentbezeichnung);
+    setPositionsZeilen(rows);
+    setDokumente(await ladeERechnungDokumente('rechnung', id));
+    setVorpruefung(r.status === 'entwurf' ? await erechnungVorpruefung(id).catch(() => null) : null);
     setLoading(false);
   }, [id]);
 
@@ -272,8 +294,59 @@ export function RechnungDetailPage() {
       .update(patch)
       .eq('id', rechnung.id);
     setStatusBusy(false);
-    if (err) { setError(err.message); return; }
+    if (err) { setError(sperrMeldung(err.message)); return; }
     await load();
+  }
+
+  /** „Rechnung erstellen": bei E-Rechnungs-Empfängern mit Erzeugung + Archiv. */
+  async function erstellen() {
+    if (!rechnung) return;
+    setStatusBusy(true);
+    setError(null);
+    const res = await rechnungErstellen(rechnung.id);
+    setStatusBusy(false);
+    if (res.art === 'blockiert') {
+      setVorpruefung(res.vorpruefung);
+      setError(res.vorpruefung.abbruch
+        ?? 'E-Rechnung: Pflichtangaben fehlen (siehe Abschnitt „E-Rechnung"). Die Rechnung bleibt Entwurf.');
+      return;
+    }
+    if (res.art === 'fehler') setError(res.meldung);
+    if (res.art === 'erechnung') {
+      setHinweis(`E-Rechnung erzeugt und archiviert: ${res.dokument.xml_pfad} (SHA-256 ${res.dokument.sha256_xml.slice(0, 12)}…).`);
+    }
+    await load();
+  }
+
+  async function stornieren() {
+    if (!rechnung) return;
+    setKorrekturBusy(true);
+    setError(null);
+    try {
+      const res = await rechnungStornieren(rechnung.id);
+      navigate(`/gutschriften/${res.gutschriftId}`, {
+        state: { hinweis: res.erechnungFehler
+          ? `Stornorechnung angelegt, Rechnung ${rechnung.rechnungsnummer} ist storniert. E-Rechnung NICHT erzeugt: ${res.erechnungFehler} — bitte „E-Rechnung erzeugen" erneut auslösen.`
+          : `Stornorechnung angelegt, Rechnung ${rechnung.rechnungsnummer} ist storniert.${res.erechnung ? ' E-Rechnung (Typ ' + res.erechnung.typ_code + ') erzeugt und archiviert.' : ''}` },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Stornieren fehlgeschlagen');
+      setKorrekturBusy(false);
+      setStornoConfirm(false);
+    }
+  }
+
+  async function neueRechnungAusStorno() {
+    if (!rechnung) return;
+    setKorrekturBusy(true);
+    try {
+      const neuId = await alsNeueRechnungUebernehmen(rechnung.id);
+      navigate(`/rechnungen/${neuId}`, { state: { hinweis: `Neuer Entwurf aus der stornierten Rechnung ${rechnung.rechnungsnummer} — die neue Nummer steht oben.` } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Übernahme fehlgeschlagen');
+    } finally {
+      setKorrekturBusy(false);
+    }
   }
 
   async function speichereNotizen() {
@@ -605,7 +678,7 @@ export function RechnungDetailPage() {
       if (err) throw err;
       navigate('/rechnungen');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen');
+      setError(err instanceof Error ? sperrMeldung(err.message) : 'Löschen fehlgeschlagen');
       setDeleting(false);
       setDeleteConfirm(false);
     }
@@ -656,69 +729,28 @@ export function RechnungDetailPage() {
       if (pRes.error) throw pRes.error;
       const fresh = fRes.data as unknown as RechnungFull;
       const freshPositionen = (pRes.data ?? []) as Rechnungsposition[];
-
-      const defaultSatz = Number(fresh.ust_satz) || 0;
-      const pdfPositionen: RechnungPdfPosition[] = freshPositionen.map((p, idx) => ({
-        position_nr: idx + 1,
-        bezeichnung: p.bezeichnung,
-        unterzeilen: p.unterzeilen ?? [],
-        menge: Number(p.menge),
-        einzelpreis: Number(p.einzelpreis),
-        gesamtpreis: Number(p.gesamtpreis),
-        ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
-      }));
-      // Fällig-Datum aus Zahlungsziel + Rechnungsdatum — gedruckt wie
-      // bisher NUR bei Auftraggeber-Rechnungen. Seit Migration 115 wird
-      // die Fälligkeit beim Erstellen einmalig gespeichert (faellig_am,
-      // zahlungsziel_tage); ist sie gespeichert, gilt dieser Wert. Alte
-      // Rechnungen (Felder leer) rechnen exakt wie bisher. Manuelle
-      // Rechnungen: Zahlungsziel wird gespeichert, aber (noch) nicht
-      // gedruckt — das PDF bleibt unverändert.
-      const zahlungsziel = fresh.empfaenger_typ === 'manuell'
-        ? null
-        : (fresh.zahlungsziel_tage ?? fresh.auftraggeber?.zahlungsziel_tage ?? null);
-      let faelligAm: string | null = null;
-      if (zahlungsziel != null && Number.isFinite(zahlungsziel) && fresh.datum) {
-        const d = new Date(`${fresh.datum}T12:00:00`);
-        d.setDate(d.getDate() + Number(zahlungsziel));
-        faelligAm = fresh.faellig_am ?? d.toISOString().slice(0, 10);
-      }
-      // Unterschrift/Stempel des Absenders — nur das laden, was diese
+      // Firmendaten: Snapshot der erstellten Rechnung — spätere Änderungen
+      // in den Einstellungen verändern sie nicht. Ohne Snapshot (Entwurf,
+      // Altbestand) die aktuellen Einstellungen.
+      const { firma, ausSnapshot } = await firmendatenFuerBeleg(fresh.absender_snapshot);
+      // Unterschrift/Stempel des Absenders — nur laden, was diese
       // Rechnung auch einsetzen soll.
-      const absender = await ladeAbsenderBilder({
+      const bilder = await ladeAbsenderBilder({
         mitUnterschrift: fresh.mit_unterschrift ?? true,
         mitStempel: fresh.mit_stempel ?? true,
       });
-      const blob = await generateRechnungPdf({
-        rechnungsnummer: fresh.rechnungsnummer,
-        datum: fresh.datum,
-        anrede: fresh.anrede,
-        kundennummer: fresh.kundennummer,
-        sachbearbeiter: fresh.sachbearbeiter,
-        faelligAm,
-        empfaenger: {
-          firma:           fresh.rechnungsadresse_firma   ?? fresh.rechnungsadresse?.firma           ?? null,
-          ansprechpartner: fresh.ansprechpartner          ?? fresh.rechnungsadresse?.ansprechpartner ?? null,
-          strasse:         fresh.rechnungsadresse_strasse ?? fresh.rechnungsadresse?.strasse         ?? null,
-          plz_ort:         fresh.rechnungsadresse_plz_ort ?? fresh.rechnungsadresse?.plz_ort         ?? null,
-          land:            fresh.rechnungsadresse_land    ?? fresh.rechnungsadresse?.land            ?? null,
-        },
-        // Bei manuellen Rechnungen gibt es keinen Auftraggeber — die
-        // USt-IdNr. kommt dann aus dem Empfänger-Feld der Rechnung.
-        kundenUid: fresh.empfaenger_typ === 'manuell'
-          ? (fresh.empfaenger_ust_id ?? null)
-          : (fresh.auftraggeber?.kunden_uid ?? null),
-        zahlungszielTage: zahlungsziel,
-        ustSatzDefault: defaultSatz,
-        positionen: pdfPositionen,
-        absenderUnterschrift: absender.unterschrift,
-        absenderStempel: absender.stempel,
-      });
+      const blob = await generateRechnungPdf(rechnungPdfInputAus({
+        rechnung: fresh, positionen: freshPositionen, auftraggeber: fresh.auftraggeber,
+        rechnungsadresse: fresh.rechnungsadresse, firma, ausSnapshot, bilder,
+      }));
 
       const jahr = (fresh.datum ?? '').slice(0, 4) || String(new Date().getFullYear());
       const filename = rechnungPdfFilename(fresh.rechnungsnummer);
       const path = `Maja-Logistik/Rechnungen/${jahr}/${filename}`;
-      await uploadToOneDrive(path, blob);
+      // Nie überschreiben: eine vorhandene PDF bleibt als …_vN.pdf liegen,
+      // damit nachvollziehbar bleibt, was verschickt wurde.
+      const up = await uploadToOneDrive(path, blob, { versionieren: true });
+      if (up.alteVersion) setHinweis(`Neue PDF erzeugt. Die bisherige Fassung bleibt als „${up.alteVersion}" erhalten.`);
       const { error: uErr } = await supabase
         .from('rechnungen').update({ pdf_url: path }).eq('id', rechnung.id);
       if (uErr) throw uErr;
@@ -747,6 +779,14 @@ export function RechnungDetailPage() {
   };
   const hasAdresse = !!(adr.firma || adr.strasse || adr.plz_ort);
   const status: RechnungStatus = rechnung.status;
+  // Sperre (serverseitig durchgesetzt, hier nur die Oberfläche): mit
+  // archivierter E-Rechnung bzw. nach Storno keine Inhaltsänderung mehr.
+  const gesperrt = dokumente.length > 0;
+  const storniert = status === 'storniert';
+  const nurLesen = gesperrt || storniert;
+  const sperrText = gesperrt ? SPERR_HINWEIS : 'Rechnung storniert — keine Änderungen mehr';
+  const korrekturBelege = gutschriften.filter((g) => g.art === 'storno' || g.art === 'teilgutschrift');
+  const stornoBeleg = gutschriften.find((g) => g.art === 'storno');
 
   return (
     <div className="space-y-6">
@@ -805,8 +845,8 @@ export function RechnungDetailPage() {
           <button
             type="button" className="btn-primary"
             disabled={statusBusy}
-            onClick={() => void mitAuslagenPruefung('erstellen', () => void patchStatus({ status: 'offen' }))}
-          >Rechnung erstellen</button>
+            onClick={() => void mitAuslagenPruefung('erstellen', () => void erstellen())}
+          >{statusBusy ? 'Erstelle …' : 'Rechnung erstellen'}</button>
         )}
         {status === 'offen' && (
           <button
@@ -829,8 +869,31 @@ export function RechnungDetailPage() {
             >Zurück auf offen setzen</button>
           </>
         )}
+        {storniert && (
+          <span className="text-sm text-red-700 dark:!text-red-300" data-testid="storniert-hinweis">
+            Storniert{rechnung.storniert_am ? ` am ${formatDate(rechnung.storniert_am)}` : ''}
+            {stornoBeleg ? <> durch <button type="button" className="font-semibold underline" onClick={() => navigate(`/gutschriften/${stornoBeleg.id}`)}>{stornoBeleg.gutschrift_nr}</button></> : null}.
+          </span>
+        )}
         <span className="flex-1" />
+        {(status === 'offen' || status === 'bezahlt') && (
+          <>
+            <button type="button" className="btn-secondary text-sm" disabled={korrekturBusy}
+                    onClick={() => setTeilgutschriftOffen(true)}>Teilgutschrift</button>
+            <button type="button" className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:!border-red-500/60 dark:!bg-red-900/30 dark:!text-red-200"
+                    disabled={korrekturBusy} onClick={() => setStornoConfirm(true)}>Stornieren</button>
+          </>
+        )}
+        {storniert && (
+          <button type="button" className="btn-primary text-sm" disabled={korrekturBusy}
+                  onClick={() => void neueRechnungAusStorno()}>Als neue Rechnung übernehmen</button>
+        )}
       </section>
+      {nurLesen && (
+        <p role="note" data-testid="sperr-hinweis" className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-sm text-slate-700 dark:!border-slate-600 dark:!bg-slate-800 dark:!text-slate-100">
+          🔒 {sperrText}. Erlaubt bleiben Versandstatus, Zahlungseingang und interne Notizen.
+        </p>
+      )}
 
       {/* Stammdaten — editierbar */}
       <section className="card space-y-3 p-5">
@@ -839,6 +902,8 @@ export function RechnungDetailPage() {
           {!editingKopf ? (
             <button
               type="button" className="btn-secondary text-sm"
+              disabled={nurLesen}
+              title={nurLesen ? sperrText : undefined}
               onClick={() => { setKopfDraft(draftFromRechnung(rechnung)); setEditingKopf(true); }}
             >Stammdaten bearbeiten</button>
           ) : (
@@ -971,6 +1036,8 @@ export function RechnungDetailPage() {
             ) : (
               <button
                 type="button" className="btn-secondary text-sm"
+                disabled={nurLesen}
+                title={nurLesen ? `${sperrText} (auch Touren neu laden und Positionen hinzufügen)` : undefined}
                 onClick={startEditingPositions}
               >Bearbeiten</button>
             )}
@@ -989,6 +1056,10 @@ export function RechnungDetailPage() {
           prominent
         />
       </section>
+
+      {(dokumente.length > 0 || (status === 'entwurf' && vorpruefung)) && (
+        <ERechnungAbschnitt dokumente={dokumente} vorpruefung={status === 'entwurf' ? vorpruefung : null} />
+      )}
 
       {/* Notizen */}
       <section className="card space-y-2 p-5">
@@ -1011,7 +1082,7 @@ export function RechnungDetailPage() {
           signatur={absenderSig}
           mitUnterschrift={rechnung.mit_unterschrift ?? true}
           mitStempel={rechnung.mit_stempel ?? true}
-          disabled={generatingPdf}
+          disabled={generatingPdf || nurLesen}
           zielBeschreibung="über die Absenderzeile unter dem Gruß"
           onChange={(patch) => void setzeAbsenderSchalter(patch)}
         />
@@ -1022,13 +1093,16 @@ export function RechnungDetailPage() {
               filename={rechnungPdfFilename(rechnung.rechnungsnummer)}
               onRegenerate={() => void generierePdf()}
               regenerating={generatingPdf}
+              gesperrt={nurLesen ? sperrText : null}
             />
             <button
               type="button"
               className="btn-secondary text-sm"
+              disabled={status === 'entwurf' && !!vorpruefung}
+              title={status === 'entwurf' && vorpruefung ? 'E-Rechnungs-Empfänger: erst „Rechnung erstellen" — dabei entsteht die E-Rechnung.' : undefined}
               onClick={() => void mitAuslagenPruefung('versenden', () => setEmailOpen(true))}
             >
-              Rechnung per E-Mail versenden
+              {gesperrt ? 'E-Rechnung per E-Mail versenden' : 'Rechnung per E-Mail versenden'}
             </button>
             {rechnung.email_versendet_am && (
               <p className="text-xs text-maja-muted">
@@ -1038,12 +1112,21 @@ export function RechnungDetailPage() {
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm text-maja-muted">Noch keine PDF generiert.</p>
-            <button
-              type="button" className="btn-primary text-sm"
-              onClick={() => void generierePdf()}
-              disabled={generatingPdf}
-            >{generatingPdf ? 'Generiert …' : 'PDF generieren'}</button>
+            <p className="text-sm text-maja-muted">
+              {gesperrt ? 'PDF-Lesekopie und XML: siehe Abschnitt „E-Rechnung".' : 'Noch keine PDF generiert.'}
+            </p>
+            {!gesperrt && (
+              <button
+                type="button" className="btn-primary text-sm"
+                onClick={() => void generierePdf()}
+                disabled={generatingPdf || storniert}
+              >{generatingPdf ? 'Generiert …' : 'PDF generieren'}</button>
+            )}
+            {gesperrt && (
+              <button type="button" className="btn-secondary text-sm" onClick={() => setEmailOpen(true)}>
+                E-Rechnung per E-Mail versenden
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -1084,7 +1167,7 @@ export function RechnungDetailPage() {
                   className="text-maja-accent hover:underline"
                   onClick={() => navigate(`/gutschriften/${g.id}`)}
                 >
-                  {gsBezeichnung} vorhanden: {g.gutschrift_nr}
+                  {g.art === 'storno' ? 'Stornorechnung' : g.art === 'teilgutschrift' ? 'Teilgutschrift' : gsBezeichnung} vorhanden: {g.gutschrift_nr}
                 </button>
                 <span className="text-maja-muted">
                   {' '}· {formatDate(g.datum)} · {formatEuro(Number(g.brutto_summe))}
@@ -1117,7 +1200,8 @@ export function RechnungDetailPage() {
         <button
           type="button"
           onClick={() => setDeleteConfirm(true)}
-          disabled={deleting}
+          disabled={deleting || nurLesen || korrekturBelege.length > 0}
+          title={nurLesen ? sperrText : korrekturBelege.length > 0 ? 'Es gibt eine Stornorechnung/Teilgutschrift zu dieser Rechnung.' : undefined}
           className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
         >
           {deleting ? 'Lösche …' : 'Rechnung löschen'}
@@ -1132,6 +1216,31 @@ export function RechnungDetailPage() {
           onZusaetzeHinzufuegen={editingPos ? undefined : auslagenUebernehmen}
           onAbbrechen={() => { setPruefung(null); if (rechnung?.status === 'entwurf') void auslagenPruefen().then(setEntwurfPruefung); }}
           onFortfahren={() => { const w = pruefung.weiter; setPruefung(null); w(); }}
+        />
+      )}
+
+      {stornoConfirm && (
+        <ConfirmDialog
+          title="Rechnung stornieren?"
+          message={
+            <>Es wird eine Stornorechnung über den vollen Betrag
+              ({formatEuro(Number(rechnung.brutto_summe))}) mit Bezug auf {rechnung.rechnungsnummer} vom {formatDate(rechnung.datum)} erstellt.
+              Die Rechnung erhält den Status „storniert" und ist danach nicht mehr änderbar.
+              {rechnung.erechnung_format && rechnung.erechnung_format !== 'pdf'
+                ? ' Die Stornorechnung wird als E-Rechnung erzeugt und archiviert.' : ''}</>
+          }
+          confirmLabel="Stornieren"
+          destructive
+          onConfirm={async () => { await stornieren(); }}
+          onClose={() => setStornoConfirm(false)}
+        />
+      )}
+      {teilgutschriftOffen && (
+        <TeilgutschriftDialog
+          rechnung={rechnung}
+          positionen={positionsZeilen}
+          onClose={() => setTeilgutschriftOffen(false)}
+          onAngelegt={(gid) => navigate(`/gutschriften/${gid}`, { state: { hinweis: 'Teilgutschrift als Entwurf angelegt — bitte prüfen und finalisieren.' } })}
         />
       )}
 
@@ -1248,6 +1357,11 @@ export function RechnungDetailPage() {
             belege_pdf_url: rechnung.belege_pdf_url,
             status: rechnung.status,
           }}
+          erechnung={dokumente[0] ? {
+            xmlPfad: dokumente[0].xml_pfad,
+            pdfPfad: dokumente[0].pdf_pfad,
+            empfaenger: rechnung.erechnung_email ?? rechnung.empfaenger_email ?? null,
+          } : null}
           onClose={() => { setEmailOpen(false); setVersandStand((n) => n + 1); }}
           onSent={({ newStatus }) => {
             setEmailOpen(false);
@@ -1276,12 +1390,14 @@ export function RechnungDetailPage() {
  * Dateiname wird mitgegeben, damit der Modal-Header korrekt ist.
  */
 function RechnungPdfButtons({
-  pdfUrl, filename, onRegenerate, regenerating,
+  pdfUrl, filename, onRegenerate, regenerating, gesperrt,
 }: {
   pdfUrl: string;
   filename: string;
   onRegenerate: () => void;
   regenerating: boolean;
+  /** Grund, warum „PDF neu generieren" nicht erlaubt ist (null = erlaubt). */
+  gesperrt?: string | null;
 }) {
   const [busy, setBusy] = useState<null | 'preview' | 'download'>(null);
 
@@ -1329,7 +1445,8 @@ function RechnungPdfButtons({
         type="button"
         className="btn-primary text-sm"
         onClick={onRegenerate}
-        disabled={regenerating || busy !== null}
+        disabled={regenerating || busy !== null || !!gesperrt}
+        title={gesperrt ?? undefined}
       >{regenerating ? 'Generiert …' : 'PDF neu generieren'}</button>
     </div>
   );

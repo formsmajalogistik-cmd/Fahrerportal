@@ -20,6 +20,10 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import { loadMailboxes, type MailboxConfig } from '../../../lib/mailboxSettings';
 import { gutschriftPdfFilename } from '../../../lib/gutschriften';
 import type { EmailFavorit } from '../../../types/db';
+import { MAIL_HINWEIS_ERECHNUNG } from '../../../lib/erechnung/texte';
+import { ladeFirmendaten } from '../../../lib/firmendaten';
+import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
+import type { ERechnungVersand } from '../rechnungen/RechnungEmailDialog';
 
 interface Props {
   gutschrift: {
@@ -32,6 +36,8 @@ interface Props {
   };
   /** Konfigurierte Dokumentbezeichnung (Gutschrift / Rechnungskorrektur …). */
   bezeichnung: string;
+  /** Gesetzt = E-Rechnung (Storno/Teilgutschrift): XML + PDF-Lesekopie. */
+  erechnung?: ERechnungVersand | null;
   onClose: () => void;
   onSent: () => void;
 }
@@ -83,19 +89,60 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export function GutschriftEmailDialog({ gutschrift, bezeichnung, onClose, onSent }: Props) {
+export function GutschriftEmailDialog({ gutschrift, bezeichnung, erechnung = null, onClose, onSent }: Props) {
   const { profile } = useAuth();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
 
   const [options, setOptions] = useState<EmailOption[]>([]);
   const [optionsLoading, setOptionsLoading] = useState(true);
-  const [to, setTo] = useState<string[]>([]);
+  const [to, setTo] = useState<string[]>(() => (erechnung?.empfaenger?.trim() ? [erechnung.empfaenger.trim()] : []));
   const [cc, setCc] = useState<string[]>([]);
   const [ccOpen, setCcOpen] = useState(false);
   const [subject, setSubject] = useState(
     `${bezeichnung} ${gutschrift.gutschrift_nr} — Maja-Logistik`,
   );
-  const [body, setBody] = useState(defaultBody(gutschrift, bezeichnung));
+  const [body, setBody] = useState(() => defaultBody(gutschrift, bezeichnung) + (erechnung ? `\n\n${MAIL_HINWEIS_ERECHNUNG}` : ''));
+  const [probeAn, setProbeAn] = useState<string | null>(null);
+  const [probeMeldung, setProbeMeldung] = useState<string | null>(null);
+  useEffect(() => {
+    if (!erechnung) return;
+    let aktiv = true;
+    void ladeFirmendaten().then((f) => { if (aktiv) setProbeAn(f.kontaktEmail || f.email || null); });
+    return () => { aktiv = false; };
+  }, [erechnung]);
+
+  function feste(): Array<{ name: string; contentType: string; onedrive_path: string }> {
+    if (erechnung) {
+      const basis = sicheresPfadSegment(gutschrift.gutschrift_nr, 'Beleg');
+      return [
+        { name: `${basis}.xml`, contentType: 'application/xml', onedrive_path: erechnung.xmlPfad },
+        { name: `${basis}.pdf`, contentType: 'application/pdf', onedrive_path: erechnung.pdfPfad },
+      ];
+    }
+    return attachPdf && gutschrift.pdf_url ? [{
+      name: gutschriftPdfFilename(bezeichnung, gutschrift.gutschrift_nr),
+      contentType: 'application/pdf',
+      onedrive_path: gutschrift.pdf_url,
+    }] : [];
+  }
+
+  async function probeversand() {
+    if (!probeAn) return;
+    setError(null); setProbeMeldung(null); setBusy(true);
+    try {
+      const result = await sendEmail({
+        to: [probeAn], subject: `[Probeversand] ${subject}`, body,
+        bodyHtml: bodyWithSignatureHtml({ body, sig }), from: from || undefined, attachments: feste(),
+      });
+      setProbeMeldung(result.missing.length
+        ? `Probeversand an ${probeAn} — fehlende Anhänge: ${result.missing.join(', ')}.`
+        : `Probeversand an ${probeAn} gesendet (${result.attached} Anhänge). Kein Versandstatus gesetzt.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Probeversand fehlgeschlagen.');
+    } finally {
+      setBusy(false);
+    }
+  }
   const [attachPdf, setAttachPdf] = useState<boolean>(!!gutschrift.pdf_url);
   const [manualFiles, setManualFiles] = useState<ManualFile[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -198,20 +245,13 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, onClose, onSent
     e.preventDefault();
     setError(null);
     if (to.length === 0) { setError('Mindestens ein Empfänger ist erforderlich.'); return; }
-    if (!attachPdf && manualFiles.length === 0) {
+    if (!erechnung && !attachPdf && manualFiles.length === 0) {
       setError('Mindestens ein Anhang muss ausgewählt sein.');
       return;
     }
     setBusy(true);
     try {
-      const attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
-      if (attachPdf && gutschrift.pdf_url) {
-        attachments.push({
-          name: gutschriftPdfFilename(bezeichnung, gutschrift.gutschrift_nr),
-          contentType: 'application/pdf',
-          onedrive_path: gutschrift.pdf_url,
-        });
-      }
+      const attachments = feste();
       const manualAttachments = await Promise.all(
         manualFiles.map(async (m) => ({
           name: m.file.name,
@@ -325,6 +365,12 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, onClose, onSent
 
           <div>
             <span className="label">Anhänge</span>
+            {erechnung ? (
+              <div className="rounded-md bg-maja-light/50 px-3 py-2 text-sm" data-testid="erechnung-anhaenge">
+                <div className="font-medium text-maja-ink">E-Rechnung (XML, maßgeblich) + PDF-Lesekopie</div>
+                <div className="text-xs text-maja-muted">Aus dem Archiv: {erechnung.xmlPfad.split('/').pop()} · {erechnung.pdfPfad.split('/').pop()}</div>
+              </div>
+            ) : (
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
                      checked={attachPdf}
@@ -337,6 +383,7 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, onClose, onSent
                 <span className="text-[11px] text-maja-muted">(noch nicht generiert)</span>
               )}
             </label>
+            )}
 
             <div
               role="button"
@@ -415,7 +462,17 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, onClose, onSent
               {error}
             </div>
           )}
-          <div className="flex justify-end gap-2">
+          {probeMeldung && (
+            <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:!bg-emerald-900/40 dark:!text-emerald-100">{probeMeldung}</p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            {erechnung && (
+              <button type="button" className="btn-secondary mr-auto" disabled={busy || !probeAn}
+                      title={probeAn ? `An ${probeAn} — setzt keinen Versandstatus` : 'Keine Kontakt-E-Mail in den Firmendaten'}
+                      onClick={() => void probeversand()}>
+                Probeversand an mich
+              </button>
+            )}
             <button type="button" onClick={onClose} className="btn-secondary" disabled={busy}>
               Abbrechen
             </button>

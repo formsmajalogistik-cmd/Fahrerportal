@@ -10,6 +10,17 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import { rechnungPdfFilename } from './rechnungPdf';
 import { loadMailboxes, type MailboxConfig } from '../../../lib/mailboxSettings';
 import type { EmailFavorit } from '../../../types/db';
+import { MAIL_HINWEIS_ERECHNUNG } from '../../../lib/erechnung/texte';
+import { ladeFirmendaten } from '../../../lib/firmendaten';
+import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
+
+/** Archivierte E-Rechnung, die statt der normalen PDF versendet wird. */
+export interface ERechnungVersand {
+  xmlPfad: string;
+  pdfPfad: string;
+  /** E-Rechnungs-Adresse, sonst Rechnungs-E-Mail (null = aus Auftraggeber). */
+  empfaenger: string | null;
+}
 
 interface Props {
   rechnung: {
@@ -22,8 +33,10 @@ interface Props {
     empfaenger_email?: string | null;
     pdf_url: string | null;
     belege_pdf_url: string | null;
-    status: 'entwurf' | 'offen' | 'bezahlt';
+    status: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
   };
+  /** Gesetzt = E-Rechnung: XML (maßgeblich) + PDF-Lesekopie als Anhänge. */
+  erechnung?: ERechnungVersand | null;
   onClose: () => void;
   onSent: (args: { newStatus?: 'offen' }) => void;
 }
@@ -47,7 +60,7 @@ const splitList = (s: string) => s.split(/[,;]+/).map((x) => x.trim()).filter(Bo
  * sind Rechnungs-PDF + (falls zugeordnet) Belege-PDF, beide einzeln
  * abwählbar. Body wird mit der Admin-Signatur (Aufgabe 1) gesendet.
  */
-export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
+export function RechnungEmailDialog({ rechnung, erechnung = null, onClose, onSent }: Props) {
   const { profile } = useAuth();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
 
@@ -55,13 +68,23 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
   const [optionsLoading, setOptionsLoading] = useState(true);
   // Bei manuellen Rechnungen ist die Empfänger-Adresse Teil der
   // Rechnung — sie belegt das To-Feld vor, bleibt aber änderbar.
-  const [to, setTo] = useState<string[]>(
-    () => (rechnung.empfaenger_email?.trim() ? [rechnung.empfaenger_email.trim()] : []),
-  );
+  const [to, setTo] = useState<string[]>(() => {
+    const vorgabe = (erechnung ? erechnung.empfaenger : rechnung.empfaenger_email)?.trim();
+    return vorgabe ? [vorgabe] : [];
+  });
   const [cc, setCc] = useState<string[]>([]);
   const [ccOpen, setCcOpen] = useState(false);
   const [subject, setSubject] = useState(`Rechnung ${rechnung.rechnungsnummer} — Maja-Logistik`);
-  const [body, setBody] = useState(defaultBody(rechnung));
+  const [body, setBody] = useState(() => defaultBody(rechnung) + (erechnung ? `\n\n${MAIL_HINWEIS_ERECHNUNG}` : ''));
+  /** Probeversand an die eigene Kontakt-E-Mail (Firmendaten) — ohne Versandstatus. */
+  const [probeAn, setProbeAn] = useState<string | null>(null);
+  const [probeMeldung, setProbeMeldung] = useState<string | null>(null);
+  useEffect(() => {
+    if (!erechnung) return;
+    let aktiv = true;
+    void ladeFirmendaten().then((f) => { if (aktiv) setProbeAn(f.kontaktEmail || f.email || null); });
+    return () => { aktiv = false; };
+  }, [erechnung]);
   const [attachRechnung, setAttachRechnung] = useState<boolean>(!!rechnung.pdf_url);
   const [attachBelege, setAttachBelege] = useState<boolean>(!!rechnung.belege_pdf_url);
   const [setOpen, setSetOpen] = useState(rechnung.status === 'entwurf');
@@ -115,6 +138,12 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
         };
         add(ag.email1);
         add(ag.email2);
+        // E-Rechnung ohne eigene E-Rechnungs-Adresse: an die bisherige
+        // Rechnungs-E-Mail des Auftraggebers.
+        if (erechnung && !erechnung.empfaenger && ag.email1 && EMAIL_RE.test(ag.email1.trim())) {
+          const e1 = ag.email1.trim();
+          setTo((t) => (t.length ? t : [e1]));
+        }
       }
       const kRes = await supabase
         .from('auftraggeber_kontakte')
@@ -134,7 +163,7 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
     }
     setOptions([...byEmail.values()]);
     setOptionsLoading(false);
-  }, [rechnung.auftraggeber_id]);
+  }, [rechnung.auftraggeber_id, erechnung]);
 
   useEffect(() => {
     // setState läuft async, damit der React-19-Linter
@@ -146,27 +175,13 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
     e.preventDefault();
     setError(null);
     if (to.length === 0) { setError('Mindestens ein Empfänger ist erforderlich.'); return; }
-    if (!attachRechnung && !attachBelege) {
+    if (!erechnung && !attachRechnung && !attachBelege) {
       setError('Mindestens ein Anhang muss ausgewählt sein.');
       return;
     }
     setBusy(true);
     try {
-      const attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
-      if (attachRechnung && rechnung.pdf_url) {
-        attachments.push({
-          name: rechnungPdfFilename(rechnung.rechnungsnummer),
-          contentType: 'application/pdf',
-          onedrive_path: rechnung.pdf_url,
-        });
-      }
-      if (attachBelege && rechnung.belege_pdf_url) {
-        attachments.push({
-          name: `Belege_${rechnung.rechnungsnummer}.pdf`,
-          contentType: 'application/pdf',
-          onedrive_path: rechnung.belege_pdf_url,
-        });
-      }
+      const attachments = anhaenge();
       const bodyHtml = bodyWithSignatureHtml({ body, sig });
       const result = await sendEmail({
         to, cc: cc.length > 0 ? cc : undefined,
@@ -182,7 +197,7 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
         );
       }
       // Versanddatum + ggf. Status-Bump
-      const willBumpStatus = setOpen && rechnung.status === 'entwurf';
+      const willBumpStatus = !erechnung && setOpen && rechnung.status === 'entwurf';
       const patch = willBumpStatus
         ? { email_versendet_am: new Date().toISOString(), status: 'offen' as const }
         : { email_versendet_am: new Date().toISOString() };
@@ -193,6 +208,52 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Probeversand: gleiche Mail an die eigene Kontakt-E-Mail, ohne Versandstatus. */
+  async function probeversand() {
+    if (!probeAn) return;
+    setError(null); setProbeMeldung(null);
+    setBusy(true);
+    try {
+      const result = await sendEmail({
+        to: [probeAn], subject: `[Probeversand] ${subject}`, body,
+        bodyHtml: bodyWithSignatureHtml({ body, sig }),
+        from: from || undefined,
+        attachments: anhaenge(),
+        // bewusst KEIN versand_beleg und kein email_versendet_am
+      });
+      setProbeMeldung(result.missing.length
+        ? `Probeversand an ${probeAn} — fehlende Anhänge: ${result.missing.join(', ')}.`
+        : `Probeversand an ${probeAn} gesendet (${result.attached} Anhänge). Kein Versandstatus gesetzt.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Probeversand fehlgeschlagen.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function anhaenge(): Array<{ name: string; contentType: string; onedrive_path: string }> {
+      const attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
+      if (erechnung) {
+        const basis = sicheresPfadSegment(rechnung.rechnungsnummer, 'Rechnung');
+        attachments.push({ name: `${basis}.xml`, contentType: 'application/xml', onedrive_path: erechnung.xmlPfad });
+        attachments.push({ name: `${basis}.pdf`, contentType: 'application/pdf', onedrive_path: erechnung.pdfPfad });
+      } else if (attachRechnung && rechnung.pdf_url) {
+        attachments.push({
+          name: rechnungPdfFilename(rechnung.rechnungsnummer),
+          contentType: 'application/pdf',
+          onedrive_path: rechnung.pdf_url,
+        });
+      }
+      if (attachBelege && rechnung.belege_pdf_url) {
+        attachments.push({
+          name: `Belege_${rechnung.rechnungsnummer}.pdf`,
+          contentType: 'application/pdf',
+          onedrive_path: rechnung.belege_pdf_url,
+        });
+      }
+      return attachments;
   }
 
   async function toggleFavorit(opt: EmailOption) {
@@ -275,6 +336,12 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
           <div>
             <span className="label">Anhänge</span>
             <div className="space-y-1">
+              {erechnung ? (
+                <div className="rounded-md bg-maja-light/50 px-3 py-2 text-sm" data-testid="erechnung-anhaenge">
+                  <div className="font-medium text-maja-ink">E-Rechnung (XML, maßgeblich) + PDF-Lesekopie</div>
+                  <div className="text-xs text-maja-muted">Aus dem Archiv: {erechnung.xmlPfad.split('/').pop()} · {erechnung.pdfPfad.split('/').pop()}</div>
+                </div>
+              ) : (
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
                        checked={attachRechnung}
@@ -287,6 +354,7 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
                   <span className="text-[11px] text-maja-muted">(noch nicht generiert)</span>
                 )}
               </label>
+              )}
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
                        checked={attachBelege}
@@ -301,7 +369,7 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
               </label>
             </div>
           </div>
-          {rechnung.status === 'entwurf' && (
+          {rechnung.status === 'entwurf' && !erechnung && (
             <label className="flex items-center gap-2 rounded-md bg-maja-light/40 px-3 py-2 text-sm">
               <input type="checkbox" className="h-4 w-4 rounded border-maja-navy/30 text-maja-navy"
                      checked={setOpen}
@@ -314,7 +382,17 @@ export function RechnungEmailDialog({ rechnung, onClose, onSent }: Props) {
               {error}
             </div>
           )}
-          <div className="flex justify-end gap-2">
+          {probeMeldung && (
+            <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:!bg-emerald-900/40 dark:!text-emerald-100">{probeMeldung}</p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            {erechnung && (
+              <button type="button" className="btn-secondary mr-auto" disabled={busy || !probeAn}
+                      title={probeAn ? `An ${probeAn} — setzt keinen Versandstatus` : 'Keine Kontakt-E-Mail in den Firmendaten'}
+                      onClick={() => void probeversand()}>
+                Probeversand an mich
+              </button>
+            )}
             <button type="button" onClick={onClose} className="btn-secondary" disabled={busy}>
               Abbrechen
             </button>

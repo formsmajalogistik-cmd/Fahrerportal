@@ -8,6 +8,7 @@
 // samt gemerkter Empfänger, das PDF-Layout und den E-Mail-Dialog.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ladeFirmendaten } from '../../../lib/firmendaten';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
@@ -346,6 +347,7 @@ export function BriefDetailPage() {
         unterschriebenAm: signiert ? b.unterschrieben_am : null,
         absenderUnterschrift: absender.unterschrift,
         absenderStempel: absender.stempel,
+        absender: await ladeFirmendaten(),
       });
       const jahr = b.datum.slice(0, 4);
       const name = signiert

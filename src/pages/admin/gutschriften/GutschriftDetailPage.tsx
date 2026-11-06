@@ -7,7 +7,7 @@
 // Zahlungsverfolgung.
 
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { Spinner } from '../../../components/Spinner';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
@@ -20,9 +20,16 @@ import {
 import { PositionsTable } from '../rechnungen/PositionsTable';
 import { SummenBlock } from '../rechnungen/SummenBlock';
 import { emptyManuellePosition, type EditorPosition } from '../rechnungen/positionUtils';
+import { generateRechnungPdf } from '../rechnungen/rechnungPdf';
+import { ERechnungAbschnitt } from '../../../components/erechnung/ERechnungAbschnitt';
 import {
-  generateRechnungPdf, type RechnungPdfPosition,
-} from '../rechnungen/rechnungPdf';
+  gutschriftERechnungErzeugen, gutschriftVorpruefung, ladeERechnungDokumente, SPERR_HINWEIS, sperrMeldung, type Vorpruefung,
+} from '../../../lib/erechnung/erstellen';
+import { gutschriftPdfInputAus } from '../../../lib/erechnung/belegPdf';
+import { hatFehler } from '../../../lib/erechnung/pruefung';
+import { STORNO_TITEL } from '../../../lib/erechnung/texte';
+import { firmendatenFuerBeleg } from '../../../lib/firmendaten';
+import type { ERechnungDokument } from '../../../lib/onedrive';
 import { AbsenderSignaturSchalter } from '../../../components/AbsenderSignaturSchalter';
 import {
   ladeAbsenderBilder, ladeAbsenderSignatur, type AbsenderSignatur,
@@ -82,6 +89,12 @@ function draftVon(g: GutschriftFull): KopfDraft {
 export function GutschriftDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [hinweis, setHinweis] = useState<string | null>(() => (location.state as { hinweis?: string } | null)?.hinweis ?? null);
+  // E-Rechnung (Storno/Teilgutschrift, Migration 116)
+  const [dokumente, setDokumente] = useState<ERechnungDokument[]>([]);
+  const [vorpruefung, setVorpruefung] = useState<Vorpruefung | null>(null);
+  const [erzeugeBusy, setErzeugeBusy] = useState(false);
   /** Zurück auf genau den Stand der Übersicht (Filter, Suche, Scroll). */
   const zurueck = useZurueckZurListe('gutschriften', '/gutschriften');
   const [gutschrift, setGutschrift] = useState<GutschriftFull | null>(null);
@@ -138,6 +151,8 @@ export function GutschriftDetailPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Positionen konnten nicht geladen werden.');
     }
+    setDokumente(await ladeERechnungDokumente('gutschrift', g.id));
+    setVorpruefung(await gutschriftVorpruefung(g.id).catch(() => null));
     setLoading(false);
   }, [id]);
 
@@ -172,7 +187,12 @@ export function GutschriftDetailPage() {
           sachbearbeiter: d.sachbearbeiter || null,
           einleitungstext: d.einleitungstext || null,
           schlusstext: d.schlusstext || null,
-          adress_snapshot: d.adresse as unknown as Json,
+          // Zusatzfelder des Snapshots (plz/ort/land_code für die
+          // E-Rechnung) beim Bearbeiten nicht verlieren.
+          adress_snapshot: {
+            ...((gutschrift.adress_snapshot && typeof gutschrift.adress_snapshot === 'object') ? gutschrift.adress_snapshot as Record<string, unknown> : {}),
+            ...d.adresse,
+          } as unknown as Json,
           ust_satz: ustNum,
           netto_summe: sum.netto,
           ust_summe: sum.ust,
@@ -224,11 +244,45 @@ export function GutschriftDetailPage() {
   async function setzeStatus(status: 'entwurf' | 'final') {
     if (!gutschrift) return;
     setStatusBusy(true);
+    setError(null);
+    // Teilgutschrift an E-Rechnungs-Empfänger: Pflichtfelder vorher prüfen.
+    const vp = status === 'final' ? await gutschriftVorpruefung(gutschrift.id).catch(() => null) : null;
+    if (vp && (vp.abbruch || hatFehler(vp.maengel))) {
+      setVorpruefung(vp);
+      setStatusBusy(false);
+      setError(vp.abbruch ?? 'E-Rechnung: Pflichtangaben fehlen (siehe Abschnitt „E-Rechnung"). Der Beleg bleibt Entwurf.');
+      return;
+    }
     const { error: err } = await supabase
       .from('gutschriften').update({ status }).eq('id', gutschrift.id);
+    if (err) { setStatusBusy(false); setError(sperrMeldung(err.message)); return; }
+    if (vp) {
+      try {
+        const { dokument } = await gutschriftERechnungErzeugen(gutschrift.id);
+        setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad}.`);
+      } catch (e) {
+        await supabase.from('gutschriften').update({ status: 'entwurf' }).eq('id', gutschrift.id);
+        setError(`E-Rechnung nicht erzeugt — der Beleg bleibt Entwurf. ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     setStatusBusy(false);
-    if (err) { setError(err.message); return; }
     await load();
+  }
+
+  /** Erneuter Versuch (z.B. Stornorechnung, deren E-Rechnung beim Anlegen scheiterte). */
+  async function erechnungErzeugen() {
+    if (!gutschrift) return;
+    setErzeugeBusy(true);
+    setError(null);
+    try {
+      const { dokument } = await gutschriftERechnungErzeugen(gutschrift.id);
+      setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad}.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setErzeugeBusy(false);
+    }
   }
 
   /**
@@ -269,64 +323,24 @@ export function GutschriftDetailPage() {
       if (gRes.error) throw gRes.error;
       if (pRes.error) throw pRes.error;
       const fresh = gRes.data as unknown as GutschriftFull;
-      const adresse = parseAdressSnapshot(fresh.adress_snapshot);
-      const defaultSatz = Number(fresh.ust_satz) || 0;
-
-      const pdfPositionen: RechnungPdfPosition[] = (pRes.data ?? []).map((p, idx) => ({
-        position_nr: idx + 1,
-        bezeichnung: p.bezeichnung,
-        unterzeilen: Array.isArray(p.unterzeilen)
-          ? (p.unterzeilen as unknown[]).filter((x): x is string => typeof x === 'string')
-          : [],
-        menge: Number(p.menge),
-        einzelpreis: Number(p.einzelpreis),
-        gesamtpreis: Number(p.gesamtpreis),
-        ust_satz: p.ust_satz == null ? null : Number(p.ust_satz),
-      }));
-
-      const bezug = fresh.rechnung
-        ? `Bezug: Rechnung ${fresh.rechnung.rechnungsnummer} vom ${formatDate(fresh.rechnung.datum)}`
-        : null;
-      // Leistungszeitraum ist eine formale Pflichtangabe — wenn gepflegt,
-      // wandert er als zusätzliche Bezugszeile mit auf das Dokument.
-      const zeitraum = (fresh.leistungszeitraum_von || fresh.leistungszeitraum_bis)
-        ? `Leistungszeitraum: ${formatDate(fresh.leistungszeitraum_von ?? fresh.leistungszeitraum_bis!)}`
-          + (fresh.leistungszeitraum_von && fresh.leistungszeitraum_bis
-            && fresh.leistungszeitraum_von !== fresh.leistungszeitraum_bis
-              ? ` – ${formatDate(fresh.leistungszeitraum_bis)}`
-              : '')
-        : null;
-
+      const { firma, ausSnapshot } = await firmendatenFuerBeleg(fresh.absender_snapshot);
       // Unterschrift/Stempel — nur laden, was dieses Dokument einsetzt.
-      const absender = await ladeAbsenderBilder({
+      const bilder = await ladeAbsenderBilder({
         mitUnterschrift: fresh.mit_unterschrift ?? true,
         mitStempel: fresh.mit_stempel ?? true,
       });
-      const blob = await generateRechnungPdf({
-        dokumentTitel: cfg.dokumentbezeichnung,
-        rechnungsnummer: fresh.gutschrift_nr,
-        datum: fresh.datum,
-        anrede: fresh.anrede,
-        kundennummer: fresh.kundennummer,
-        sachbearbeiter: fresh.sachbearbeiter,
-        // Gutschriften haben kein Zahlungsziel.
-        faelligAm: null,
-        zahlungszielTage: null,
-        bezugszeile: [bezug, zeitraum].filter(Boolean).join('   ·   ') || null,
-        einleitungstext: fresh.einleitungstext,
-        schlusstext: fresh.schlusstext,
-        summenLabel: cfg.summen_label,
-        empfaenger: adresse,
-        kundenUid: fresh.auftraggeber?.kunden_uid ?? null,
-        ustSatzDefault: defaultSatz,
-        positionen: pdfPositionen,
-        absenderUnterschrift: absender.unterschrift,
-        absenderStempel: absender.stempel,
-      });
+      const blob = await generateRechnungPdf(gutschriftPdfInputAus({
+        gutschrift: fresh, positionen: pRes.data ?? [], auftraggeber: fresh.auftraggeber,
+        bezugRechnung: fresh.rechnung ? { nummer: fresh.rechnung.rechnungsnummer, datum: fresh.rechnung.datum } : null,
+        firma, ausSnapshot, bilder,
+        dokumentbezeichnung: cfg.dokumentbezeichnung, summenLabel: cfg.summen_label,
+      }));
 
-      const filename = gutschriftPdfFilename(cfg.dokumentbezeichnung, fresh.gutschrift_nr);
+      const titel = fresh.art === 'storno' ? STORNO_TITEL : cfg.dokumentbezeichnung;
+      const filename = gutschriftPdfFilename(titel, fresh.gutschrift_nr);
       const path = gutschriftPdfPath(fresh.datum, filename);
-      await uploadToOneDrive(path, blob);
+      const up = await uploadToOneDrive(path, blob, { versionieren: true });
+      if (up.alteVersion) setHinweis(`Neue PDF erzeugt. Die bisherige Fassung bleibt als „${up.alteVersion}" erhalten.`);
       const { error: uErr } = await supabase
         .from('gutschriften').update({ pdf_url: path }).eq('id', gutschrift.id);
       if (uErr) throw uErr;
@@ -357,7 +371,7 @@ export function GutschriftDetailPage() {
     const { error: err } = await supabase
       .from('gutschriften').delete().eq('id', gutschrift.id);
     if (err) {
-      setError(err.message);
+      setError(sperrMeldung(err.message));
       setDeleting(false);
       setDeleteConfirm(false);
       return;
@@ -373,7 +387,12 @@ export function GutschriftDetailPage() {
 
   const adresse = parseAdressSnapshot(gutschrift.adress_snapshot);
   const istFinal = gutschrift.status === 'final';
-  const filename = gutschriftPdfFilename(bezeichnung, gutschrift.gutschrift_nr);
+  const titel = gutschrift.art === 'storno' ? STORNO_TITEL : gutschrift.art === 'teilgutschrift' ? 'Teilgutschrift' : bezeichnung;
+  const filename = gutschriftPdfFilename(gutschrift.art === 'storno' ? STORNO_TITEL : bezeichnung, gutschrift.gutschrift_nr);
+  const gesperrt = dokumente.length > 0;
+  /** Stornorechnung ist immer endgültig; mit E-Rechnung ist alles gesperrt. */
+  const endgueltig = gesperrt || (gutschrift.art === 'storno' && istFinal);
+  const erechnungFehlt = istFinal && !gesperrt && !!vorpruefung;
 
   return (
     <div className="space-y-6">
@@ -383,7 +402,7 @@ export function GutschriftDetailPage() {
             <h1 className="text-2xl font-semibold text-maja-navy">{gutschrift.gutschrift_nr}</h1>
             <GutschriftStatusBadge status={gutschrift.status} />
             <span className="inline-flex rounded-full bg-maja-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-maja-accent">
-              {bezeichnung}
+              {titel}
             </span>
           </div>
           <p className="text-sm text-maja-muted">
@@ -410,18 +429,26 @@ export function GutschriftDetailPage() {
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
+      {hinweis && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <span>{hinweis}</span>
+          <button type="button" className="text-xs font-semibold underline" onClick={() => setHinweis(null)}>OK</button>
+        </div>
+      )}
 
       {/* Status */}
       <section className="card flex flex-wrap items-center gap-2 p-4">
         {istFinal ? (
           <>
             <span className="text-sm text-maja-ink">
-              Final — Stammdaten und Positionen sind gesperrt.
+              {gesperrt ? `🔒 ${SPERR_HINWEIS}.` : endgueltig ? '🔒 Stornorechnung — endgültig, nicht mehr änderbar.' : 'Final — Stammdaten und Positionen sind gesperrt.'}
             </span>
-            <button type="button" className="btn-secondary text-sm" disabled={statusBusy}
-                    onClick={() => void setzeStatus('entwurf')}>
-              Zurück auf Entwurf setzen
-            </button>
+            {!endgueltig && (
+              <button type="button" className="btn-secondary text-sm" disabled={statusBusy}
+                      onClick={() => void setzeStatus('entwurf')}>
+                Zurück auf Entwurf setzen
+              </button>
+            )}
           </>
         ) : (
           <>
@@ -430,7 +457,7 @@ export function GutschriftDetailPage() {
             </span>
             <button type="button" className="btn-primary text-sm" disabled={statusBusy}
                     onClick={() => void setzeStatus('final')}>
-              Als final markieren
+              {statusBusy ? 'Bitte warten …' : vorpruefung ? 'Als final markieren (E-Rechnung erzeugen)' : 'Als final markieren'}
             </button>
           </>
         )}
@@ -588,6 +615,16 @@ export function GutschriftDetailPage() {
         />
       </section>
 
+      {(dokumente.length > 0 || vorpruefung) && (
+        <ERechnungAbschnitt
+          dokumente={dokumente}
+          vorpruefung={!istFinal ? vorpruefung : null}
+          format={vorpruefung?.format ?? gutschrift.erechnung_format}
+          onErzeugen={erechnungFehlt ? () => void erechnungErzeugen() : undefined}
+          erzeugenBusy={erzeugeBusy}
+        />
+      )}
+
       {/* Notizen */}
       <section className="card space-y-2 p-5">
         <h2 className="text-base font-semibold text-maja-navy">Interne Notizen</h2>
@@ -606,7 +643,7 @@ export function GutschriftDetailPage() {
           signatur={absenderSig}
           mitUnterschrift={gutschrift.mit_unterschrift ?? true}
           mitStempel={gutschrift.mit_stempel ?? true}
-          disabled={generatingPdf}
+          disabled={generatingPdf || gesperrt}
           zielBeschreibung="über die Absenderzeile unter dem Gruß"
           onChange={(patch) => void setzeAbsenderSchalter(patch)}
         />
@@ -621,7 +658,8 @@ export function GutschriftDetailPage() {
                       onClick={() => void triggerOneDriveDownload(gutschrift.pdf_url!, filename)}>
                 <DownloadIcon className="h-4 w-4" /> Download
               </button>
-              <button type="button" className="btn-secondary text-sm" disabled={generatingPdf}
+              <button type="button" className="btn-secondary text-sm" disabled={generatingPdf || gesperrt}
+                      title={gesperrt ? SPERR_HINWEIS : undefined}
                       onClick={() => void generierePdf()}>
                 {generatingPdf ? 'Generiert …' : 'PDF neu generieren'}
               </button>
@@ -638,11 +676,20 @@ export function GutschriftDetailPage() {
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm text-maja-muted">Noch keine PDF generiert.</p>
-            <button type="button" className="btn-primary text-sm" disabled={generatingPdf}
-                    onClick={() => void generierePdf()}>
-              {generatingPdf ? 'Generiert …' : 'PDF generieren'}
-            </button>
+            <p className="text-sm text-maja-muted">
+              {gesperrt ? 'PDF-Lesekopie und XML: siehe Abschnitt „E-Rechnung".' : 'Noch keine PDF generiert.'}
+            </p>
+            {!gesperrt && (
+              <button type="button" className="btn-primary text-sm" disabled={generatingPdf}
+                      onClick={() => void generierePdf()}>
+                {generatingPdf ? 'Generiert …' : 'PDF generieren'}
+              </button>
+            )}
+            {gesperrt && (
+              <button type="button" className="btn-secondary text-sm" onClick={() => setEmailOpen(true)}>
+                E-Rechnung per E-Mail versenden
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -659,7 +706,8 @@ export function GutschriftDetailPage() {
         <button
           type="button"
           onClick={() => setDeleteConfirm(true)}
-          disabled={deleting}
+          disabled={deleting || endgueltig}
+          title={endgueltig ? 'Endgültiger Beleg — nicht löschbar.' : undefined}
           className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
         >
           {deleting ? 'Lösche …' : `${bezeichnung} löschen`}
@@ -676,7 +724,11 @@ export function GutschriftDetailPage() {
             auftraggeber_id: gutschrift.auftraggeber_id,
             pdf_url: gutschrift.pdf_url,
           }}
-          bezeichnung={bezeichnung}
+          bezeichnung={titel}
+          erechnung={dokumente[0] ? {
+            xmlPfad: dokumente[0].xml_pfad, pdfPfad: dokumente[0].pdf_pfad,
+            empfaenger: gutschrift.erechnung_email ?? gutschrift.empfaenger_email ?? null,
+          } : null}
           onClose={() => { setEmailOpen(false); setVersandStand((n) => n + 1); }}
           onSent={() => {
             setEmailOpen(false);

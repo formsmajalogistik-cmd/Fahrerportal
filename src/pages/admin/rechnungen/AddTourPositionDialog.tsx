@@ -174,13 +174,14 @@ export function AddTourPositionDialog({
       const tourIds = list.map((t) => t.id);
       const usedQuery = supabase
         .from('rechnungspositionen')
-        .select('tour_id, rechnung:rechnung_id (id, rechnungsnummer)')
+        .select('tour_id, rechnung:rechnung_id (id, rechnungsnummer, status)')
         .in('tour_id', tourIds);
       const { data: usedData } = await usedQuery;
-      type UsedRow = { tour_id: string | null; rechnung: { id: string; rechnungsnummer: string | null } | null };
+      type UsedRow = { tour_id: string | null; rechnung: { id: string; rechnungsnummer: string | null; status?: string } | null };
       const map = new Map<string, UsedInfo>();
       for (const u of (usedData as unknown as UsedRow[]) ?? []) {
         if (!u.tour_id || !u.rechnung) continue;
+        if (u.rechnung.status === 'storniert') continue; // storniert = Tour wieder frei
         if (excludeRechnungId && u.rechnung.id === excludeRechnungId) continue;
         if (map.has(u.tour_id)) continue;
         map.set(u.tour_id, {

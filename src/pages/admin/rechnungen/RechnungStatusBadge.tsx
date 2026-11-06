@@ -7,6 +7,7 @@ const STATUS_STYLE: Record<RechnungStatus, { bg: string; text: string; label: st
   entwurf:   { bg: 'bg-gray-100 dark:!bg-slate-600',      text: 'text-gray-700 dark:!text-slate-100',     label: 'Entwurf' },
   offen:     { bg: 'bg-blue-100 dark:!bg-blue-900',       text: 'text-blue-700 dark:!text-blue-100',      label: 'Offen' },
   bezahlt:   { bg: 'bg-emerald-100 dark:!bg-emerald-900', text: 'text-emerald-700 dark:!text-emerald-100', label: 'Bezahlt' },
+  storniert: { bg: 'bg-red-100 dark:!bg-red-900',         text: 'text-red-700 dark:!text-red-100',        label: 'Storniert' },
 };
 
 export function RechnungStatusBadge({ status }: { status: RechnungStatus }) {

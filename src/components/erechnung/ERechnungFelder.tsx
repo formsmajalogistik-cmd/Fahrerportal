@@ -22,10 +22,13 @@ interface Props {
 export function ERechnungFelder({ wert, onChange, idPrefix, mitLand = true }: Props) {
   const patch = (p: Partial<ERechnungFelderWert>) => onChange({ ...wert, ...p });
   const landUngueltig = wert.landCode.trim() !== '' && !/^[A-Za-z]{2}$/.test(wert.landCode.trim());
-  const fehlt = [
-    !wert.email.trim() && 'E-Rechnungs-Adresse',
-    !wert.referenz.trim() && 'Käuferreferenz / Leitweg-ID',
-    mitLand && !wert.landCode.trim() && 'Ländercode',
+  const xr = wert.format === 'xrechnung_cii';
+  const eRechnung = wert.format === 'xrechnung_cii' || wert.format === 'en16931_cii';
+  // XRechnung: E-Rechnungs-Adresse und Käuferreferenz sind Pflicht.
+  const pflichtFehlt = [
+    xr && !wert.email.trim() && 'E-Rechnungs-Adresse',
+    xr && !wert.referenz.trim() && 'Käuferreferenz / Leitweg-ID',
+    eRechnung && mitLand && !wert.landCode.trim() && 'Ländercode',
   ].filter(Boolean) as string[];
 
   return (
@@ -33,8 +36,9 @@ export function ERechnungFelder({ wert, onChange, idPrefix, mitLand = true }: Pr
       <div>
         <h3 className="text-sm font-semibold text-maja-navy">E-Rechnung (Vorbereitung)</h3>
         <p className="text-xs text-maja-muted">
-          Rechnungen werden weiterhin als PDF versendet. Die Angaben hier werden für die
-          spätere E-Rechnung gespeichert.
+          {eRechnung
+            ? 'Beim Erstellen einer Rechnung werden XML (maßgeblich) und PDF-Lesekopie erzeugt, archiviert und an die E-Rechnungs-Adresse versendet (leer = bisherige Rechnungs-E-Mail).'
+            : 'Rechnungen werden wie bisher als PDF erstellt und versendet.'}
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -44,7 +48,7 @@ export function ERechnungFelder({ wert, onChange, idPrefix, mitLand = true }: Pr
                   onChange={(e) => patch({ format: e.target.value as ERechnungFormat })}>
             {ERECHNUNG_FORMATE.map((f) => (
               <option key={f.wert} value={f.wert} disabled={!f.aktiv}>
-                {f.label}{f.aktiv ? '' : ' — in Vorbereitung'}
+                {f.label}{f.aktiv ? '' : ' — folgt'}
               </option>
             ))}
           </select>
@@ -66,21 +70,21 @@ export function ERechnungFelder({ wert, onChange, idPrefix, mitLand = true }: Pr
           </div>
         )}
         <div>
-          <label htmlFor={`${idPrefix}-erech-email`} className="label">E-Rechnungs-Adresse</label>
+          <label htmlFor={`${idPrefix}-erech-email`} className="label">E-Rechnungs-Adresse{xr ? ' *' : ''}</label>
           <input id={`${idPrefix}-erech-email`} type="email" className="input"
                  placeholder="z.B. rechnungseingang@kunde.de"
                  value={wert.email} onChange={(e) => patch({ email: e.target.value })} />
         </div>
         <div>
-          <label htmlFor={`${idPrefix}-referenz`} className="label">Käuferreferenz / Leitweg-ID</label>
+          <label htmlFor={`${idPrefix}-referenz`} className="label">Käuferreferenz / Leitweg-ID{xr ? ' *' : ''}</label>
           <input id={`${idPrefix}-referenz`} className="input"
                  placeholder="vom Kunden vorgegeben"
                  value={wert.referenz} onChange={(e) => patch({ referenz: e.target.value })} />
         </div>
       </div>
-      {fehlt.length > 0 && (
-        <p className="text-xs text-maja-muted">
-          Für eine spätere E-Rechnung fehlen noch: {fehlt.join(', ')}.
+      {pflichtFehlt.length > 0 && (
+        <p role="alert" className="text-xs font-medium text-red-700 dark:!text-red-300">
+          Für {xr ? 'XRechnung' : 'die E-Rechnung'} fehlt noch: {pflichtFehlt.join(', ')} — ohne diese Angaben kann keine Rechnung erstellt werden.
         </p>
       )}
     </div>

@@ -10,7 +10,7 @@
 // (aus berechneSummenProUst stammenden) Werte nur formatiert hinaus.
 
 import {
-  ERechnungAbbruch, PROFIL_KENNUNG, PROZESS_KENNUNG,
+  ERechnungAbbruch, PROFIL_KENNUNG, PROZESS_KENNUNG, TYP_CODE_KORREKTUR, TYP_CODE_RECHNUNG,
   type ERechnungDaten, type ERechnungPartei, type ERechnungProfil,
 } from './typen';
 import { el, elA, serialisiere, txt, wert, type XmlElement } from './xml';
@@ -74,8 +74,11 @@ function partei(name: string, p: ERechnungPartei, rolle: 'verkaeufer' | 'kaeufer
 
 /** Wirft ERechnungAbbruch, wenn die Rechnung (noch) nicht unterstützt ist. */
 export function pruefeUnterstuetzt(d: ERechnungDaten): void {
-  if (d.typ !== '380') {
-    throw new ERechnungAbbruch(`Dokumentart ${String(d.typ)} wird noch nicht unterstützt — nur Rechnungen (380).`);
+  if (d.typ !== TYP_CODE_RECHNUNG && d.typ !== TYP_CODE_KORREKTUR) {
+    throw new ERechnungAbbruch(`Dokumentart ${String(d.typ)} wird nicht unterstützt — nur Rechnung (${TYP_CODE_RECHNUNG}) und Storno/Teilgutschrift (${TYP_CODE_KORREKTUR}).`);
+  }
+  if (d.typ === TYP_CODE_KORREKTUR && !d.bezug?.nummer) {
+    throw new ERechnungAbbruch('Storno/Teilgutschrift ohne Bezug auf die Originalrechnung (BT-25).');
   }
   if (d.positionen.length === 0) {
     throw new ERechnungAbbruch('Die Rechnung hat keine Positionen.');
@@ -126,6 +129,11 @@ export function erzeugeCii(d: ERechnungDaten, profil: ERechnungProfil = 'xrechnu
         wert('ram:CategoryCode', p.kategorie),
         wert('ram:RateApplicablePercent', prozent(p.ustSatz)),
       ),
+      p.leistungsdatum
+        ? el('ram:BillingSpecifiedPeriod',
+            datum('ram:StartDateTime', p.leistungsdatum),
+            datum('ram:EndDateTime', p.leistungsdatum))
+        : null,
       el('ram:SpecifiedTradeSettlementLineMonetarySummation',
         wert('ram:LineTotalAmount', betrag(p.netto)),
       ),
@@ -141,7 +149,8 @@ export function erzeugeCii(d: ERechnungDaten, profil: ERechnungProfil = 'xrechnu
   // Pflicht-Element, auch wenn leer — el() würde es weglassen, daher direkt.
   const lieferung: XmlElement = { name: 'ram:ApplicableHeaderTradeDelivery', kinder: [] };
 
-  const zahlungsText = d.zahlungszielTage != null ? `Zahlungsziel: ${d.zahlungszielTage} Tage` : null;
+  const zahlungsText = d.zahlungsText
+    ?? (d.zahlungszielTage != null ? `Zahlungsziel: ${d.zahlungszielTage} Tage` : null);
 
   const abrechnung = el('ram:ApplicableHeaderTradeSettlement',
     wert('ram:InvoiceCurrencyCode', W),
@@ -176,6 +185,13 @@ export function erzeugeCii(d: ERechnungDaten, profil: ERechnungProfil = 'xrechnu
       wert('ram:GrandTotalAmount', betrag(d.summen.brutto)),
       wert('ram:DuePayableAmount', betrag(d.summen.brutto)),
     ),
+    d.bezug?.nummer
+      ? el('ram:InvoiceReferencedDocument',
+          wert('ram:IssuerAssignedID', d.bezug.nummer),
+          d.bezug.datum
+            ? el('ram:FormattedIssueDateTime', elA('qdt:DateTimeString', { format: '102' }, txt(d.bezug.datum.replace(/-/g, '').slice(0, 8))))
+            : null)
+      : null,
   );
 
   const transaktion = el('rsm:SupplyChainTradeTransaction',

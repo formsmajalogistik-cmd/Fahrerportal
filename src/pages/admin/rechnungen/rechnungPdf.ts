@@ -1,7 +1,10 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import { berechneSummenProUst, type UstGroup } from '../../../lib/rechnungsformat';
 import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
-import { FIRMENDATEN, firmaPlzOrt } from '../../../lib/firmendaten';
+import { FIRMENDATEN, firmaPlzOrt, firmaRegister, type Firmendaten } from '../../../lib/firmendaten';
+import {
+  LEISTUNGSDATUM_HINWEIS, LEISTUNGSDATUM_HINWEIS_LESEKOPIE, LESEKOPIE_HINWEIS,
+} from '../../../lib/erechnung/texte';
 
 // ============================================================
 // Maja-Logistik Rechnungs-PDF
@@ -18,18 +21,13 @@ const MUTED     = rgb(0.45, 0.50, 0.55);
 const FAINT     = rgb(0.78, 0.81, 0.85);
 const SEPARATOR = rgb(0.85, 0.87, 0.90);
 
-// ----- Absender-Daten: zentral in src/lib/firmendaten.ts -----
-// (dieselbe Quelle liest später die E-Rechnung)
-const ABSENDER = {
-  name: FIRMENDATEN.name,
-  strasse: FIRMENDATEN.strasse,
-  plzOrt: firmaPlzOrt(),
-  tel: FIRMENDATEN.telefon,
-  email: FIRMENDATEN.email,
-  uid: FIRMENDATEN.ustId,
-  iban: FIRMENDATEN.iban,
-  bic: FIRMENDATEN.bic,
-};
+// ----- Absender-Daten -----
+// Kommen aus den Firmendaten (Einstellungen bzw. Snapshot am Beleg,
+// src/lib/firmendaten.ts) über den Seiten-Kontext; ohne Angabe gelten
+// die Vorgabewerte.
+function absenderVon(ctx: PageCtx): Firmendaten {
+  return ctx.absender ?? FIRMENDATEN;
+}
 
 // ----- Geometrie -----
 export const A4_W = 595.28;
@@ -63,7 +61,10 @@ export interface RechnungPdfPosition {
   einzelpreis: number;
   gesamtpreis: number;
   ust_satz: number | null;
+  /** Leistungsdatum (YYYY-MM-DD) — nur in der E-Rechnungs-Lesekopie gedruckt. */
+  leistungsdatum?: string | null;
 }
+
 
 export interface RechnungPdfInput {
   rechnungsnummer: string;
@@ -103,6 +104,26 @@ export interface RechnungPdfInput {
   zahlungszielTage: number | null;
   ustSatzDefault: number;
   positionen: RechnungPdfPosition[];
+  /** Firmendaten des Absenders (Snapshot der Rechnung bzw. Einstellung). */
+  absender?: Firmendaten;
+  /**
+   * Fußzeile mit allen Pflichtangaben (Inhaber, Rechtsform, Register,
+   * Steuernummer) — für Belege mit Absender-Snapshot (ab Migration 116)
+   * und Entwürfe. Ohne: bisheriges Layout.
+   */
+  pflichtangaben?: boolean;
+  /**
+   * PDF-Lesekopie einer E-Rechnung: zusätzlich die Angaben, die im XML
+   * stehen (Referenz, Leistungszeitraum, Leistungsdatum je Position,
+   * Ansprechpartner) und der Hinweis auf das maßgebliche XML.
+   */
+  lesekopie?: {
+    kaeuferReferenz: string | null;
+    leistungVon: string | null;
+    leistungBis: string | null;
+    kontaktName: string | null;
+    bezug?: string | null;
+  } | null;
   /** Data-URL der hinterlegten Absender-Unterschrift (Migration 092);
    *  null/undefined = wie bisher nur die Lücke über der Absenderzeile. */
   absenderUnterschrift?: string | null;
@@ -179,6 +200,8 @@ export interface PageCtx {
   logo: PDFImage | null;
   /** pdf-lib-y-Cursor (Ursprung unten links). */
   y: number;
+  absender?: Firmendaten;
+  pflichtangaben?: boolean;
 }
 
 export function drawHeader(ctx: PageCtx, titel: string) {
@@ -212,14 +235,28 @@ export function drawHeader(ctx: PageCtx, titel: string) {
   ctx.y = A4_H - HEADER_H - 8;
 }
 
+/** Fußzeilen-Text (4 Zeilen) — bisheriges Layout bzw. mit Pflichtangaben. */
+export function fusszeilen(f: Firmendaten, pflichtangaben: boolean): string[] {
+  if (!pflichtangaben) {
+    return [
+      f.kurzname,
+      `${f.strasse} ${firmaPlzOrt(f)}`,
+      `Tel.:${f.telefon} ${f.email}`,
+      `UID: ${f.ustId}  IBAN: ${f.iban}  BIC: ${f.bic}`,
+    ];
+  }
+  const teile = (xs: Array<string | null | undefined>) => xs.filter((x) => x && x.trim()).join('  |  ');
+  return [
+    teile([f.name, f.inhaber ? `Inhaber: ${f.inhaber}` : null, f.rechtsform]),
+    teile([f.strasse, firmaPlzOrt(f), `Tel.: ${f.telefon}`, f.email]),
+    teile([f.ustId ? `USt-IdNr.: ${f.ustId}` : null, f.steuernummer ? `Steuernummer: ${f.steuernummer}` : null, firmaRegister(f)]),
+    teile([f.bank, `IBAN: ${f.iban}`, f.bic ? `BIC: ${f.bic}` : null]),
+  ];
+}
+
 export function drawFooter(ctx: PageCtx) {
   const { page, fonts } = ctx;
-  const lines = [
-    FIRMENDATEN.pdf.fussName,
-    FIRMENDATEN.pdf.fussAdresse,
-    `Tel.:${ABSENDER.tel} ${ABSENDER.email}`,
-    `UID: ${ABSENDER.uid}  IBAN: ${ABSENDER.iban}  BIC: ${ABSENDER.bic}`,
-  ];
+  const lines = fusszeilen(absenderVon(ctx), !!ctx.pflichtangaben);
   let y = MARGIN_BOTTOM - 2;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const text = winAnsi(lines[i]);
@@ -234,13 +271,14 @@ export function drawFooter(ctx: PageCtx) {
 export function drawAbsenderRechts(ctx: PageCtx) {
   // Absender-Block oben rechts in 8 pt Navy.
   const { page, fonts } = ctx;
+  const a = absenderVon(ctx);
   const lines = [
-    ABSENDER.name,
-    ABSENDER.strasse,
-    ABSENDER.plzOrt,
-    `Tel.:${ABSENDER.tel}`,
-    ABSENDER.email,
-    `UID:${ABSENDER.uid}`,
+    a.name,
+    a.strasse,
+    firmaPlzOrt(a),
+    `Tel.:${a.telefon}`,
+    a.email,
+    `UID:${a.ustId}`,
   ];
   const size = 8;
   // Beginnt unmittelbar unter dem Navy-Header.
@@ -260,8 +298,9 @@ export function drawAbsenderRechts(ctx: PageCtx) {
 export function drawAbsenderzeile(ctx: PageCtx) {
   // Sehr kleine Abs.-Zeile über dem Empfängerblock.
   const { page, fonts } = ctx;
+  const a = absenderVon(ctx);
   const text = winAnsi(
-    `Abs.: ${ABSENDER.name} | ${ABSENDER.strasse} | ${ABSENDER.plzOrt}`,
+    `Abs.: ${a.name} | ${a.strasse} | ${firmaPlzOrt(a)}`,
   );
   page.drawText(text, {
     x: MARGIN_X, y: ctx.y,
@@ -305,6 +344,16 @@ function drawEmpfaengerUndMeta(ctx: PageCtx, input: RechnungPdfInput) {
   if (input.sachbearbeiter) metaLines.push(['Sachbearbeiter:', input.sachbearbeiter]);
   if (input.faelligAm) metaLines.push(['fällig am:', formatDateDe(input.faelligAm)]);
   if (input.kundennummer) metaLines.push(['Kundennummer:', input.kundennummer]);
+  const lk = input.lesekopie;
+  if (lk) {
+    if (lk.kaeuferReferenz) metaLines.push(['Ihre Referenz:', lk.kaeuferReferenz]);
+    if (lk.leistungVon || lk.leistungBis) {
+      const von = formatDateDe(lk.leistungVon ?? lk.leistungBis);
+      const bis = formatDateDe(lk.leistungBis ?? lk.leistungVon);
+      metaLines.push(['Leistungszeitraum:', von === bis ? von : `${von} – ${bis}`]);
+    }
+    if (lk.kontaktName) metaLines.push(['Ansprechpartner:', lk.kontaktName]);
+  }
 
   let yR = startY;
   for (const [label, value] of metaLines) {
@@ -532,8 +581,9 @@ function drawSummenBlock(ctx: PageCtx, groups: UstGroup[], summen: { netto: numb
     leftY -= 11;
   };
   if (input.kundenUid) drawLeft(`Ihre UID: ${input.kundenUid}`);
-  drawLeft('Leistungsdatum = Datum des Fahrauftrages');
+  drawLeft(input.lesekopie ? LEISTUNGSDATUM_HINWEIS_LESEKOPIE : LEISTUNGSDATUM_HINWEIS);
   if (input.zahlungszielTage != null) drawLeft(`Zahlungsziel: ${input.zahlungszielTage} Tage`);
+  if (input.lesekopie) drawLeft(LESEKOPIE_HINWEIS);
 
   // Rechts: Summen — pro USt-Satz eine Zeile bei multi-VAT, sonst eine.
   let rightY = ctx.y;
@@ -661,9 +711,10 @@ export async function drawBildProportional(
 
 export function newPage(
   doc: PDFDocument, fonts: Fonts, logo: PDFImage | null, titel: string,
+  opts?: { absender?: Firmendaten; pflichtangaben?: boolean },
 ): PageCtx {
   const page = doc.addPage([A4_W, A4_H]);
-  const ctx: PageCtx = { page, fonts, logo, y: A4_H - HEADER_H - 8 };
+  const ctx: PageCtx = { page, fonts, logo, y: A4_H - HEADER_H - 8, absender: opts?.absender, pflichtangaben: opts?.pflichtangaben };
   drawHeader(ctx, titel);
   drawFooter(ctx);
   return ctx;
@@ -686,9 +737,17 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
   }
 
   const titel = input.dokumentTitel ?? 'Rechnung';
+  const seite = { absender: input.absender, pflichtangaben: input.pflichtangaben };
+  // Lesekopie: Leistungsdatum je Position als zusätzliche Unterzeile
+  // (dasselbe Datum steht im XML je Position).
+  const positionen: RechnungPdfPosition[] = input.lesekopie
+    ? input.positionen.map((p) => (p.leistungsdatum
+      ? { ...p, unterzeilen: [...p.unterzeilen, `Leistungsdatum: ${formatDateDe(p.leistungsdatum)}`] }
+      : p))
+    : input.positionen;
 
   // Seite 1 mit komplettem Kopf + Tabellen-Header + erste Positionen.
-  let ctx = newPage(doc, fonts, logo, titel);
+  let ctx = newPage(doc, fonts, logo, titel, seite);
   drawAbsenderRechts(ctx);
   // Nach dem Absender-Block den Cursor wieder nach oben links versetzen,
   // damit Empfänger + Meta auf gleicher Höhe stehen.
@@ -699,14 +758,14 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
   drawTableHeader(ctx);
 
   // Positionen — bei Bedarf Seitenumbruch, Header auf jeder Folgeseite wiederholen.
-  for (let i = 0; i < input.positionen.length; i += 1) {
-    const p = input.positionen[i];
+  for (let i = 0; i < positionen.length; i += 1) {
+    const p = positionen[i];
     const needed = positionHeight(p);
     // Auf der letzten Position reservieren wir zusätzlich Platz für den
     // Summen-Block (~ 90 pt) plus Abschluss (~ 60 pt).
-    const tail = (i === input.positionen.length - 1) ? 150 : 0;
+    const tail = (i === positionen.length - 1) ? 150 : 0;
     if (ctx.y - needed - FOOTER_H - tail < MARGIN_BOTTOM) {
-      ctx = newPage(doc, fonts, logo, titel);
+      ctx = newPage(doc, fonts, logo, titel, seite);
       drawTableHeader(ctx);
     }
     drawPosition(ctx, p, input.ustSatzDefault);
@@ -729,9 +788,10 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
     stempel: input.absenderStempel ?? null,
   };
   const abschlussH = (absender.unterschrift || absender.stempel) ? 115 : 60;
-  const summenH = 30 + Math.max(sum.groups.length, 1) * 16 + abschlussH + schlussZeilen * 14;
+  const summenH = 30 + Math.max(sum.groups.length, 1) * 16 + abschlussH + schlussZeilen * 14
+    + (input.lesekopie ? 11 : 0);
   if (ctx.y - summenH - FOOTER_H < MARGIN_BOTTOM) {
-    ctx = newPage(doc, fonts, logo, titel);
+    ctx = newPage(doc, fonts, logo, titel, seite);
   }
   drawSummenBlock(ctx, sum.groups, sum, input);
   await drawAbschluss(ctx, doc, input.schlusstext, absender);

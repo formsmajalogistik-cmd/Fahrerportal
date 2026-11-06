@@ -9,6 +9,11 @@
 //                  (auch ohne action: für direkte Browser-Links)
 //   delete-pdf     POST  body: { path, formular_id }
 //   files          GET   ?folder=
+//   erechnung-archivieren POST body: { beleg, id, xml_base64, pdf_base64 }
+//                  (nur Admin; legt XML + PDF-Lesekopie unveränderlich ab)
+//
+// upload mit { versionieren: true }: existiert die Datei schon, wird sie
+// vorher zu <name>_vN.<ext> umbenannt statt überschrieben.
 //
 // Browser-direkt-Links (window.location.href) gehen über GET; das
 // ?action= kann fehlen, wir interpretieren GET ohne action automatisch
@@ -17,8 +22,9 @@
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 import { assertCanAccessPdfPath, assertCanAccessTourDokument } from '../server-lib/formularAuth.js';
 import {
-  createUploadSession, deleteFile, downloadFile, listChildren, uploadFile,
+  createUploadSession, deleteFile, downloadFile, getItemMeta, listChildren, renameItem, uploadFile,
 } from '../server-lib/graph.js';
+import { ARCHIV_ROOT, archiviereERechnung } from '../server-lib/erechnungArchiv.js';
 import { contentDisposition, istUnsichererPfad } from '../server-lib/paths.js';
 
 interface Req {
@@ -59,6 +65,31 @@ function assertUploadPathAllowed(role: string | null, path: string): void {
   if (role === 'auftraggeber' && !path.startsWith('Maja-Logistik/Formular-Wuensche/')) {
     throw new HttpError(403, 'Upload-Pfad für Auftraggeber-Profile nicht erlaubt');
   }
+  // Das E-Rechnungs-Archiv beschreibt ausschließlich erechnung-archivieren.
+  if (path === ARCHIV_ROOT || path.startsWith(`${ARCHIV_ROOT}/`)) {
+    throw new HttpError(403, 'Das E-Rechnungs-Archiv ist schreibgeschützt.');
+  }
+}
+
+/**
+ * Vorhandene Datei vor dem Hochladen beiseite legen: „Re-26_5.pdf" →
+ * „Re-26_5_v1.pdf" (nächste freie Nummer). Liefert den neuen Namen oder
+ * null, wenn es noch keine Datei gab.
+ */
+async function alteVersionAblegen(path: string): Promise<string | null> {
+  if (!(await getItemMeta(path))) return null;
+  const ordner = path.slice(0, path.lastIndexOf('/') + 1);
+  const name = path.slice(ordner.length);
+  const punkt = name.lastIndexOf('.');
+  const stamm = punkt > 0 ? name.slice(0, punkt) : name;
+  const endung = punkt > 0 ? name.slice(punkt) : '';
+  for (let n = 1; n < 1000; n += 1) {
+    const kandidat = `${stamm}_v${n}${endung}`;
+    if (await getItemMeta(`${ordner}${kandidat}`)) continue;
+    await renameItem(path, kandidat);
+    return kandidat;
+  }
+  throw new HttpError(500, 'Keine freie Versionsnummer gefunden');
 }
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -180,12 +211,31 @@ export default async function handler(req: Req, res: Res) {
       }
       assertUploadPathAllowed(user.role, path);
       const bytes = base64ToBytes(contentB64);
+      const alteVersion = body.versionieren === true ? await alteVersionAblegen(path) : null;
       const item = await uploadFile(path, bytes, contentType);
       res.status(200).json({
         ok: true,
         path,
+        alteVersion,
         item: { id: item.id, webUrl: item.webUrl, name: item.name },
       });
+      return;
+    }
+
+    // ---- E-RECHNUNG ARCHIVIEREN ------------------------------------
+    if (action === 'erechnung-archivieren') {
+      if (user.role !== 'admin') throw new HttpError(403, 'Nur Admins dürfen E-Rechnungen erzeugen.');
+      const beleg = asString(body.beleg);
+      const id = asString(body.id);
+      const xmlB64 = asString(body.xml_base64);
+      const pdfB64 = asString(body.pdf_base64);
+      if ((beleg !== 'rechnung' && beleg !== 'gutschrift') || !id || !xmlB64 || !pdfB64) {
+        throw new HttpError(400, 'beleg / id / xml_base64 / pdf_base64 erforderlich');
+      }
+      const dokument = await archiviereERechnung({
+        beleg, id, xml: base64ToBytes(xmlB64), pdf: base64ToBytes(pdfB64), userId: user.id,
+      });
+      res.status(200).json({ ok: true, dokument });
       return;
     }
 
@@ -196,6 +246,7 @@ export default async function handler(req: Req, res: Res) {
         throw new HttpError(400, `Ungültiger Pfad: ${path.slice(0, 160)}`);
       }
       assertUploadPathAllowed(user.role, path);
+      if (body.versionieren === true) await alteVersionAblegen(path);
       const { uploadUrl } = await createUploadSession(path);
       res.status(200).json({ ok: true, uploadUrl });
       return;

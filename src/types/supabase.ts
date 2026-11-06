@@ -88,7 +88,7 @@ export type Database = {
           kunden_uid: string | null;
           zahlungsziel_tage: number | null;
           land_code: string | null;
-          erechnung_format: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_format: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email: string | null;
           kaeufer_referenz: string | null;
         };
@@ -111,7 +111,7 @@ export type Database = {
           kunden_uid?: string | null;
           zahlungsziel_tage?: number | null;
           land_code?: string | null;
-          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
         };
@@ -134,7 +134,7 @@ export type Database = {
           kunden_uid?: string | null;
           zahlungsziel_tage?: number | null;
           land_code?: string | null;
-          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
         };
@@ -1187,7 +1187,7 @@ export type Database = {
           updated_at: string;
           land_code: string | null;
           zahlungsziel_tage: number | null;
-          erechnung_format: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_format: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email: string | null;
           kaeufer_referenz: string | null;
         };
@@ -1209,7 +1209,7 @@ export type Database = {
           updated_at?: string;
           land_code?: string | null;
           zahlungsziel_tage?: number | null;
-          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
         };
@@ -1231,7 +1231,7 @@ export type Database = {
           updated_at?: string;
           land_code?: string | null;
           zahlungsziel_tage?: number | null;
-          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd';
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
         };
@@ -1433,7 +1433,7 @@ export type Database = {
           ust_satz: number;
           ust_betrag: number;
           brutto_summe: number;
-          status: 'entwurf' | 'offen' | 'bezahlt';
+          status: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
           bezahlt_am: string | null;
           pdf_url: string | null;
           belege_pdf_url: string | null;
@@ -1458,9 +1458,11 @@ export type Database = {
           rechnungsadresse_plz: string | null;
           rechnungsadresse_ort: string | null;
           rechnungsadresse_land_code: string | null;
-          erechnung_format: 'pdf' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_format: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
           erechnung_email: string | null;
           kaeufer_referenz: string | null;
+          storniert_am: string | null;
+          absender_snapshot: Json | null;
         };
         Insert: {
           mit_unterschrift?: boolean;
@@ -1477,7 +1479,7 @@ export type Database = {
           ust_satz?: number;
           ust_betrag?: number;
           brutto_summe?: number;
-          status?: 'entwurf' | 'offen' | 'bezahlt';
+          status?: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
           belege_pdf_url?: string | null;
@@ -1502,9 +1504,11 @@ export type Database = {
           rechnungsadresse_plz?: string | null;
           rechnungsadresse_ort?: string | null;
           rechnungsadresse_land_code?: string | null;
-          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
+          storniert_am?: string | null;
+          absender_snapshot?: Json | null;
         };
         Update: {
           mit_unterschrift?: boolean;
@@ -1521,7 +1525,7 @@ export type Database = {
           ust_satz?: number;
           ust_betrag?: number;
           brutto_summe?: number;
-          status?: 'entwurf' | 'offen' | 'bezahlt';
+          status?: 'entwurf' | 'offen' | 'bezahlt' | 'storniert';
           bezahlt_am?: string | null;
           pdf_url?: string | null;
           belege_pdf_url?: string | null;
@@ -1546,9 +1550,11 @@ export type Database = {
           rechnungsadresse_plz?: string | null;
           rechnungsadresse_ort?: string | null;
           rechnungsadresse_land_code?: string | null;
-          erechnung_format?: 'pdf' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
+          storniert_am?: string | null;
+          absender_snapshot?: Json | null;
         };
         Relationships: [
           {
@@ -1590,6 +1596,7 @@ export type Database = {
           steuerkategorie: string | null;
           befreiungsgrund_code: string | null;
           befreiungsgrund_text: string | null;
+          leistungsdatum: string | null;
         };
         Insert: {
           id?: string;
@@ -1609,6 +1616,7 @@ export type Database = {
           steuerkategorie?: string | null;
           befreiungsgrund_code?: string | null;
           befreiungsgrund_text?: string | null;
+          leistungsdatum?: string | null;
         };
         Update: {
           id?: string;
@@ -1628,6 +1636,7 @@ export type Database = {
           steuerkategorie?: string | null;
           befreiungsgrund_code?: string | null;
           befreiungsgrund_text?: string | null;
+          leistungsdatum?: string | null;
         };
         Relationships: [
           {
@@ -1861,6 +1870,30 @@ export type Database = {
           },
         ];
       };
+      erechnung_dokumente: {
+        Row: {
+          id: string;
+          rechnung_id: string | null;
+          gutschrift_id: string | null;
+          version: number;
+          format: 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
+          typ_code: string;
+          belegnummer: string;
+          xml_pfad: string;
+          pdf_pfad: string;
+          bucket_pfad: string;
+          sha256_xml: string;
+          sha256_pdf: string;
+          xml_bytes: number;
+          pdf_bytes: number;
+          erzeugt_am: string;
+          erzeugt_von: string | null;
+          erzeugt_von_name: string | null;
+        };
+        Insert: { [k: string]: never };
+        Update: { [k: string]: never };
+        Relationships: [];
+      };
       gutschriften: {
         Row: {
           mit_unterschrift: boolean;
@@ -1892,6 +1925,13 @@ export type Database = {
           email_versendet_am: string | null;
           created_at: string;
           updated_at: string;
+          absender_snapshot: Json | null;
+          art: 'gutschrift' | 'storno' | 'teilgutschrift';
+          bezug_rechnungsnummer: string | null;
+          bezug_rechnungsdatum: string | null;
+          erechnung_format: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_email: string | null;
+          kaeufer_referenz: string | null;
         };
         Insert: {
           mit_unterschrift?: boolean;
@@ -1923,6 +1963,13 @@ export type Database = {
           email_versendet_am?: string | null;
           created_at?: string;
           updated_at?: string;
+          absender_snapshot?: Json | null;
+          art?: 'gutschrift' | 'storno' | 'teilgutschrift';
+          bezug_rechnungsnummer?: string | null;
+          bezug_rechnungsdatum?: string | null;
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Update: {
           mit_unterschrift?: boolean;
@@ -1954,6 +2001,13 @@ export type Database = {
           email_versendet_am?: string | null;
           created_at?: string;
           updated_at?: string;
+          absender_snapshot?: Json | null;
+          art?: 'gutschrift' | 'storno' | 'teilgutschrift';
+          bezug_rechnungsnummer?: string | null;
+          bezug_rechnungsdatum?: string | null;
+          erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
         };
         Relationships: [
           {
@@ -1978,6 +2032,7 @@ export type Database = {
           tour_id: string | null;
           ist_manuell: boolean;
           created_at: string;
+          leistungsdatum: string | null;
         };
         Insert: {
           id?: string;
@@ -1992,6 +2047,7 @@ export type Database = {
           tour_id?: string | null;
           ist_manuell?: boolean;
           created_at?: string;
+          leistungsdatum?: string | null;
         };
         Update: {
           id?: string;
@@ -2006,6 +2062,7 @@ export type Database = {
           tour_id?: string | null;
           ist_manuell?: boolean;
           created_at?: string;
+          leistungsdatum?: string | null;
         };
         Relationships: [
           {
@@ -2398,6 +2455,18 @@ export type Database = {
           p_notiz?: string | null; p_fehler?: string | null;
         };
         Returns: string;
+      };
+      rechnung_stornieren: {
+        Args: { p_rechnung_id: string };
+        Returns: string;
+      };
+      rechnung_hat_erechnung: {
+        Args: { p_id: string };
+        Returns: boolean;
+      };
+      gutschrift_hat_erechnung: {
+        Args: { p_id: string };
+        Returns: boolean;
       };
       beleg_versand_markieren: {
         Args: { p_typ: string; p_ids: string[]; p_weg: string; p_datum: string; p_notiz?: string | null };

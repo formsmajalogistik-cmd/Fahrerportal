@@ -9,6 +9,7 @@
 // ausgestelltes Dokument.
 
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Spinner } from '../../components/Spinner';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { useTestGuard } from '../../auth/TestModeContext';
@@ -22,7 +23,7 @@ import { ERechnungFelder } from '../../components/erechnung/ERechnungFelder';
 import { useERechnungSchema } from '../../lib/erechnung/useERechnungSchema';
 import { normLandCode } from '../../lib/erechnung/stammdaten';
 import {
-  ladeRechnungEinstellungen, speichereRechnungEinstellungen,
+  ladeRechnungEinstellungen,
 } from '../../lib/rechnungEinstellungen';
 
 export function ManuelleEmpfaengerPage() {
@@ -38,35 +39,13 @@ export function ManuelleEmpfaengerPage() {
   const schemaOk = useERechnungSchema();
   /** Standard-Zahlungsziel für manuelle Rechnungen (Einstellung). */
   const [standardZiel, setStandardZiel] = useState<number | null>(null);
-  const [zielEingabe, setZielEingabe] = useState('');
-  const [zielMeldung, setZielMeldung] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     if (!schemaOk) return;
     let aktiv = true;
-    void ladeRechnungEinstellungen().then((e) => {
-      if (!aktiv) return;
-      setStandardZiel(e.standard_zahlungsziel_tage);
-      setZielEingabe(String(e.standard_zahlungsziel_tage));
-    });
+    void ladeRechnungEinstellungen().then((e) => { if (aktiv) setStandardZiel(e.standard_zahlungsziel_tage); });
     return () => { aktiv = false; };
   }, [schemaOk]);
-
-  async function standardZielSpeichern() {
-    const n = Number(zielEingabe.trim());
-    if (!/^\d{1,3}$/.test(zielEingabe.trim()) || n > 365) {
-      setZielMeldung({ ok: false, text: 'Bitte ganze Tage zwischen 0 und 365 angeben.' });
-      return;
-    }
-    if (guard()) return;
-    try {
-      await speichereRechnungEinstellungen({ standard_zahlungsziel_tage: n });
-      setStandardZiel(n);
-      setZielMeldung({ ok: true, text: 'Gespeichert.' });
-    } catch (e) {
-      setZielMeldung({ ok: false, text: e instanceof Error ? e.message : 'Speichern fehlgeschlagen.' });
-    }
-  }
 
   const laden = useCallback(async () => {
     setLoading(true);
@@ -159,24 +138,10 @@ export function ManuelleEmpfaengerPage() {
       </div>
 
       {schemaOk && (
-        <section className="card flex flex-wrap items-end gap-3 p-4" data-testid="standard-zahlungsziel">
-          <div>
-            <label htmlFor="standard-zahlungsziel" className="label">Standard-Zahlungsziel für manuelle Rechnungen (Tage)</label>
-            <input id="standard-zahlungsziel" className="input w-32" inputMode="numeric"
-                   value={zielEingabe} onChange={(e) => { setZielEingabe(e.target.value); setZielMeldung(null); }} />
-          </div>
-          <button type="button" className="btn-secondary" onClick={() => void standardZielSpeichern()}
-                  disabled={zielEingabe.trim() === String(standardZiel ?? '')}>
-            Speichern
-          </button>
-          {zielMeldung && (
-            <span role={zielMeldung.ok ? 'status' : 'alert'}
-                  className={`text-sm ${zielMeldung.ok ? 'text-emerald-700' : 'text-red-700'}`}>{zielMeldung.text}</span>
-          )}
-          <p className="w-full text-xs text-maja-muted">
-            Gilt für manuelle Rechnungen, bei denen kein eigenes Zahlungsziel eingetragen ist. Bestehende Rechnungen bleiben unverändert.
-          </p>
-        </section>
+        <p className="text-sm text-maja-muted" data-testid="standard-zahlungsziel-hinweis">
+          Standard-Zahlungsziel für manuelle Rechnungen: {standardZiel ?? '…'} Tage —{' '}
+          <Link to="/einstellungen/firmendaten" className="font-medium text-maja-navy underline">ändern unter „Firmendaten (Rechnungen)"</Link>
+        </p>
       )}
 
       {fehler && (

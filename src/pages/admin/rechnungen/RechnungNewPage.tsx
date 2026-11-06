@@ -16,6 +16,8 @@ import { ManuellerEmpfaengerFeldsatz } from '../../../components/ManuellerEmpfae
 import { useERechnungSchema } from '../../../lib/erechnung/useERechnungSchema';
 import { gleicheAdresszeile, landZuIso, normLandCode, plzOrtZusammen } from '../../../lib/erechnung/stammdaten';
 import { ladeRechnungEinstellungen } from '../../../lib/rechnungEinstellungen';
+import { profilFuerFormat } from '../../../lib/erechnung/stammdaten';
+import { rechnungErstellen } from '../../../lib/erechnung/erstellen';
 import {
   MANUELL_OPTION, leererEmpfaenger, merkeEmpfaengerWennGewuenscht, nameZeile, zahlungszielTage,
   snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
@@ -806,6 +808,13 @@ export function RechnungNewPage() {
     }
     setError(null);
     setSaving(status);
+    // E-Rechnungs-Empfänger: erst als Entwurf speichern, dann über den
+    // gemeinsamen Ablauf erstellen (Prüfung → Erzeugung → Archiv).
+    // PDF-Empfänger: unverändert direkt als „offen".
+    const eRechnung = status === 'offen' && schemaOk === true
+      && !!profilFuerFormat(istManuell ? manuell.erechnungFormat : auftraggeber?.erechnung_format);
+    const insertStatus: 'entwurf' | 'offen' = eRechnung ? 'entwurf' : status;
+    const angelegt: string[] = [];
 
     async function insertOne(
       positionen: EditorPosition[],
@@ -841,7 +850,7 @@ export function RechnungNewPage() {
         ust_satz: ustSatz,
         ust_betrag: sum.ust,
         brutto_summe: sum.brutto,
-        status,
+        status: insertStatus,
         notizen: notizen || null,
         ist_auslagen_rechnung: istAuslagen,
         ansprechpartner: effSnapshot.ansprechpartner || null,
@@ -881,6 +890,7 @@ export function RechnungNewPage() {
       }));
       const { error: pErr } = await supabase.from('rechnungspositionen').insert(rows);
       if (pErr) return { ok: false, error: pErr.message };
+      angelegt.push(rRow.id);
       return { ok: true, id: rRow.id, nummer: rRow.rechnungsnummer };
     }
 
@@ -922,14 +932,23 @@ export function RechnungNewPage() {
         setError(`Rechnung angelegt, aber der Empfänger konnte nicht gemerkt werden: ${gemerkt.fehler}`);
       }
 
-      if (status === 'offen') {
+      const eHinweise: string[] = [];
+      if (eRechnung) {
+        for (const rid of angelegt) {
+          const res = await rechnungErstellen(rid);
+          if (res.art === 'erechnung') eHinweise.push(`E-Rechnung erzeugt und archiviert (${res.dokument.xml_pfad}).`);
+          else if (res.art === 'blockiert') eHinweise.push(`Als Entwurf gespeichert — E-Rechnung nicht möglich: ${res.vorpruefung.abbruch ?? res.vorpruefung.maengel.filter((m) => m.schwere === 'fehler').map((m) => m.text).join('; ')}.`);
+          else if (res.art === 'fehler') eHinweise.push(res.meldung);
+        }
+      } else if (status === 'offen') {
         alert('Rechnung erstellt. PDF-Generierung wird in Kürze verfügbar.');
       }
       // Vorschlag zwischenzeitlich vergeben (z.B. parallel eine andere
       // Rechnung angelegt)? Dann sagen, welche Nummer es geworden ist.
-      const hinweis = !manuelleNummer && nummerVorschlag && firstNummer && firstNummer !== nummerVorschlag
+      const nummerHinweis = !manuelleNummer && nummerVorschlag && firstNummer && firstNummer !== nummerVorschlag
         ? `Die vorgeschlagene Nummer ${nummerVorschlag} war inzwischen vergeben — die Rechnung hat die Nummer ${firstNummer} erhalten.`
         : null;
+      const hinweis = [nummerHinweis, ...eHinweise].filter(Boolean).join(' ') || null;
       if (firstId) navigate(`/rechnungen/${firstId}`, hinweis ? { state: { hinweis } } : undefined);
       else navigate('/rechnungen');
     } catch (err) {

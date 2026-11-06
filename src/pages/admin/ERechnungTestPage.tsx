@@ -13,6 +13,7 @@ import {
   ERechnungAbbruch, type Abbildung, type ERechnungProfil, type Mangel,
 } from '../../lib/erechnung';
 import { useERechnungSchema } from '../../lib/erechnung/useERechnungSchema';
+import { firmendatenFuerBeleg } from '../../lib/firmendaten';
 
 interface Zeile {
   id: string;
@@ -68,7 +69,8 @@ export function ERechnungTestPage() {
     setErgebnis(null);
     try {
       const quelle = await ladeERechnungQuelle(z.id);
-      const abbildung = bildeERechnung(quelle, { testAbleitung: abl });
+      const { firma } = await firmendatenFuerBeleg(quelle.rechnung.absender_snapshot);
+      const abbildung = bildeERechnung(quelle, { testAbleitung: abl, firma });
       const maengel = [...abbildung.hinweise, ...pruefeERechnung(abbildung.daten, p)];
       setErgebnis({ abbildung, maengel });
     } catch (e) {
@@ -133,11 +135,11 @@ export function ERechnungTestPage() {
                    onChange={(e) => setSuche(e.target.value)} />
           </div>
           <div>
-            <label htmlFor="ert-profil" className="label">Profil</label>
+            <label htmlFor="ert-profil" className="label">Format</label>
             <select id="ert-profil" className="input" value={profil}
                     onChange={(e) => setProfil(e.target.value as ERechnungProfil)}>
-              <option value="xrechnung">XRechnung 3.0 (CII)</option>
-              <option value="en16931">EN 16931 (CII)</option>
+              <option value="xrechnung">XRechnung (XML)</option>
+              <option value="en16931">E-Rechnung EN 16931 (XML)</option>
             </select>
           </div>
         </div>

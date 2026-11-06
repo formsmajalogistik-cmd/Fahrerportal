@@ -106,12 +106,13 @@ export async function sucheNeueTouren(args: {
   const belegt = new Set<string>();
   for (let i = 0; i < neu.length; i += 100) {
     const { data, error } = await supabase.from('rechnungspositionen')
-      .select('tour_id, rechnung:rechnung_id (id, ist_auslagen_rechnung)')
+      .select('tour_id, rechnung:rechnung_id (id, ist_auslagen_rechnung, status)')
       .in('tour_id', neu.slice(i, i + 100).map((t) => t.id));
     if (error) throw new Error(error.message);
-    type P = { tour_id: string | null; rechnung: { id: string; ist_auslagen_rechnung: boolean } | null };
+    type P = { tour_id: string | null; rechnung: { id: string; ist_auslagen_rechnung: boolean; status?: string } | null };
     for (const p of (data as unknown as P[]) ?? []) {
-      if (p.tour_id && p.rechnung && p.rechnung.id !== args.rechnungId && !!p.rechnung.ist_auslagen_rechnung === args.istAuslagen) belegt.add(p.tour_id);
+      // Stornierte Rechnungen belegen keine Tour mehr.
+      if (p.tour_id && p.rechnung && p.rechnung.status !== 'storniert' && p.rechnung.id !== args.rechnungId && !!p.rechnung.ist_auslagen_rechnung === args.istAuslagen) belegt.add(p.tour_id);
     }
   }
   const frei = neu.filter((t) => !belegt.has(t.id)).map((t) => ({ ...t, kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [] }));

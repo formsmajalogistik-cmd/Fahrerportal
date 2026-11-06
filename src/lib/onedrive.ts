@@ -112,9 +112,12 @@ const DIRECT_UPLOAD_THRESHOLD = 3 * 1024 * 1024;
 
 export async function uploadToOneDrive(
   path: string, file: Blob,
-): Promise<{ ok: true; path: string; webUrl?: string }> {
+  /** versionieren: vorhandene Datei als <name>_vN behalten statt überschreiben. */
+  opts?: { versionieren?: boolean },
+): Promise<{ ok: true; path: string; webUrl?: string; alteVersion?: string | null }> {
+  const versionieren = !!opts?.versionieren;
   if (file.size > DIRECT_UPLOAD_THRESHOLD) {
-    return await uploadViaSession(path, file);
+    return await uploadViaSession(path, file, versionieren);
   }
   const buf = await file.arrayBuffer();
   const b64 = await bytesToBase64(new Uint8Array(buf));
@@ -126,6 +129,7 @@ export async function uploadToOneDrive(
       path,
       contentType: file.type || 'application/octet-stream',
       content_base64: b64,
+      ...(versionieren ? { versionieren: true } : {}),
     }),
     timeoutMs: 60_000,
   });
@@ -134,7 +138,7 @@ export async function uploadToOneDrive(
     // 413 → Datei doch zu groß für JSON-Pfad: einmal über Session retry.
     if (resp.status === 413) {
       console.warn('[uploadToOneDrive] /api/onedrive?action=upload 413 → Session-Fallback');
-      return await uploadViaSession(path, file);
+      return await uploadViaSession(path, file, versionieren);
     }
     throw new UploadFehler(resp.status, `Upload (${resp.status}): ${txt.slice(0, 200)}`);
   }
@@ -148,12 +152,12 @@ export async function uploadToOneDrive(
  * Dateien reicht ein einzelner PUT.
  */
 async function uploadViaSession(
-  path: string, file: Blob,
+  path: string, file: Blob, versionieren = false,
 ): Promise<{ ok: true; path: string; webUrl?: string }> {
   const sess = await fetchWithAuthRetry('/api/onedrive?action=upload-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify(versionieren ? { path, versionieren: true } : { path }),
     timeoutMs: 30_000,
   });
   if (!sess.ok) {
@@ -211,6 +215,33 @@ async function fetchWithTimeout(
 }
 
 /** Inhalt eines OneDrive-Ordners (Admin/Fahrer; Auftraggeber nicht). */
+/** Archiv-Eintrag einer E-Rechnung (Tabelle erechnung_dokumente). */
+export interface ERechnungDokument {
+  id: string; version: number; format: string; typ_code: string; belegnummer: string;
+  xml_pfad: string; pdf_pfad: string; bucket_pfad: string; sha256_xml: string; sha256_pdf: string;
+  erzeugt_am: string; erzeugt_von_name: string | null;
+}
+
+/**
+ * Legt XML + PDF-Lesekopie einer E-Rechnung unveränderlich ab (Server:
+ * OneDrive ohne Überschreiben, Supabase-Bucket, SHA-256, Archiv-Eintrag).
+ */
+export async function archiviereERechnungApi(
+  beleg: 'rechnung' | 'gutschrift', id: string, xml: string, pdf: Blob,
+): Promise<ERechnungDokument> {
+  const xmlB64 = await bytesToBase64(new TextEncoder().encode(xml));
+  const pdfB64 = await bytesToBase64(new Uint8Array(await pdf.arrayBuffer()));
+  const resp = await fetchWithAuthRetry('/api/onedrive?action=erechnung-archivieren', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ beleg, id, xml_base64: xmlB64, pdf_base64: pdfB64 }),
+    timeoutMs: 90_000,
+  });
+  const j = await resp.json().catch(() => ({})) as { dokument?: ERechnungDokument; error?: string };
+  if (!resp.ok || !j.dokument) throw new Error(j.error ?? `Archivierung fehlgeschlagen (${resp.status})`);
+  return j.dokument;
+}
+
 export async function listeOneDriveOrdner(folder: string): Promise<Array<{ name: string; isFolder: boolean; size?: number }>> {
   const qs = new URLSearchParams({ action: 'files', folder });
   const resp = await fetchWithAuthRetry(`/api/onedrive?${qs.toString()}`, { timeoutMs: 30_000 });

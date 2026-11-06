@@ -1,5 +1,5 @@
 // Erzeugt aus den Testrechnungen die XML-Dateien (für den Validator).
-import { bildeERechnung } from '../../src/lib/erechnung/ausRechnung';
+import { bildeERechnung, bildeERechnungGutschrift } from '../../src/lib/erechnung/ausRechnung';
 import { erzeugeCii } from '../../src/lib/erechnung/cii';
 import { pruefeERechnung, type Mangel } from '../../src/lib/erechnung/pruefung';
 import { MIT_ECHTEN_FIRMENDATEN, TEST_FIRMA, testrechnungen, type Testrechnung } from './testrechnungen';
@@ -13,10 +13,12 @@ export interface Testdatei extends Omit<Testrechnung, 'quelle'> {
 export function erzeugeTestdateien(): Testdatei[] {
   const dateien = testrechnungen().map((t) => {
     const firma = MIT_ECHTEN_FIRMENDATEN.has(t.name) ? FIRMENDATEN : TEST_FIRMA;
-    const { daten, hinweise, abbruch } = bildeERechnung(t.quelle, { firma });
+    const { daten, hinweise, abbruch } = t.gutschrift
+      ? bildeERechnungGutschrift(t.gutschrift, { firma })
+      : bildeERechnung(t.quelle!, { firma });
     if (abbruch) throw new Error(`${t.name}: ${abbruch}`);
-    const { quelle: _q, ...rest } = t;
-    void _q;
+    const { quelle: _q, gutschrift: _g, ...rest } = t;
+    void _q; void _g;
     return {
       ...rest,
       xml: erzeugeCii(daten, t.profil),

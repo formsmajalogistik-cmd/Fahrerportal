@@ -12,6 +12,17 @@ export const PROFIL_KENNUNG: Record<ERechnungProfil, string> = {
   en16931: 'urn:cen.eu:en16931:2017',
 };
 
+/**
+ * Dokumentart (UNTDID 1001, BT-3).
+ *   380 = Rechnung
+ *   381 = Gutschrift/Korrektur — für Stornorechnung und Teilgutschrift.
+ * TYP_CODE_KORREKTUR ist die EINE Stelle für den Code der Korrekturbelege;
+ * er wird noch vom Steuerberater bestätigt (Alternative wäre z.B. 384).
+ */
+export const TYP_CODE_RECHNUNG = '380';
+export const TYP_CODE_KORREKTUR = '381';
+export type ERechnungTypCode = typeof TYP_CODE_RECHNUNG | typeof TYP_CODE_KORREKTUR;
+
 /** Geschäftsprozess (BT-23) — von XRechnung empfohlen. */
 export const PROZESS_KENNUNG = 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0';
 
@@ -47,6 +58,8 @@ export interface ERechnungPosition {
   ustSatz: number;
   /** UNCL 5305 — vorerst nur 'S'. */
   kategorie: string;
+  /** Leistungsdatum der Position (BG-26, Start = Ende); null = keins. */
+  leistungsdatum?: string | null;
 }
 
 export interface ERechnungSteuerGruppe {
@@ -57,8 +70,12 @@ export interface ERechnungSteuerGruppe {
 }
 
 export interface ERechnungDaten {
-  /** UNTDID 1001 — vorerst nur 380 (Rechnung). */
-  typ: '380';
+  /** UNTDID 1001: 380 Rechnung, 381 Storno/Teilgutschrift. */
+  typ: ERechnungTypCode;
+  /** Bezug auf die Originalrechnung (BT-25/BT-26) — Pflicht bei 381. */
+  bezug?: { nummer: string; datum: string | null } | null;
+  /** Freitext der Zahlungsbedingungen (BT-20); ohne: „Zahlungsziel: N Tage". */
+  zahlungsText?: string | null;
   nummer: string;
   /** YYYY-MM-DD */
   datum: string;

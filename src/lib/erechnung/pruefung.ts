@@ -36,7 +36,7 @@ export function pruefeERechnung(d: ERechnungDaten, profil: ERechnungProfil = 'xr
   // ---- Rechnung ----
   if (leer(d.nummer)) add('BT-1', 'Rechnungsnummer fehlt');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.datum ?? '')) add('BT-2', 'Rechnungsdatum fehlt oder ist ungültig');
-  if (d.faelligAm == null && d.zahlungszielTage == null && d.summen.brutto > 0) {
+  if (d.faelligAm == null && d.zahlungszielTage == null && leer(d.zahlungsText) && d.summen.brutto > 0) {
     add('BT-9/BT-20', 'Fälligkeitsdatum bzw. Zahlungsziel fehlt');
   }
   if (!d.leistungVon && !d.leistungBis) add('BG-14', 'Leistungszeitraum fehlt', 'warnung');
@@ -67,6 +67,7 @@ export function pruefeERechnung(d: ERechnungDaten, profil: ERechnungProfil = 'xr
   if (leer(k.ort)) add('BT-52', 'Ort des Empfängers fehlt', xr ? 'fehler' : 'warnung');
   if (leer(k.landCode)) add('BT-55', 'Ländercode des Empfängers fehlt');
   else if (!/^[A-Z]{2}$/.test(k.landCode!)) add('BT-55', `Ländercode des Empfängers „${k.landCode}" ist kein ISO-Code`);
+  if (leer(k.ustId)) add('BT-48', 'USt-IdNr. des Empfängers fehlt (Vorgabe: soll immer auf der Rechnung stehen)', 'hinweis');
   if (leer(k.elektronischeAdresse)) {
     add('BT-49', xr ? 'E-Rechnungs-Adresse fehlt (Pflicht bei XRechnung)' : 'E-Rechnungs-Adresse fehlt', xr ? 'fehler' : 'hinweis');
   } else if (!EMAIL.test(k.elektronischeAdresse!.trim())) {
@@ -102,10 +103,8 @@ export function pruefeERechnung(d: ERechnungDaten, profil: ERechnungProfil = 'xr
     add('BR-CO-15', 'Summen der Rechnung passen nicht zu den Positionen');
   }
 
-  // ---- Hinweis Kleinbetrag ----
-  if (d.summen.brutto > 0 && d.summen.brutto <= 250) {
-    add('§33 UStDV', 'Kleinbetragsrechnung (≤ 250 € brutto) — ob E-Rechnung oder PDF: Frage S6', 'hinweis');
-  }
+  // ---- Storno/Teilgutschrift ----
+  if (d.typ === '381' && leer(d.bezug?.nummer)) add('BT-25', 'Bezug auf die Originalrechnung fehlt');
   return m;
 }
 
