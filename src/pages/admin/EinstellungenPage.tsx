@@ -13,6 +13,7 @@ const subNav: SubNavItem[] = [
   { to: '/einstellungen/brief-vorlagen', label: 'Brief-Vorlagen' },
   { to: '/einstellungen/auftrags-email', label: 'Auftrags-E-Mail' },
   { to: '/einstellungen/firmendaten', label: 'Firmendaten (Rechnungen)' },
+  { to: '/einstellungen/erechnung-export', label: 'E-Rechnungen exportieren' },
   { to: '/einstellungen/erechnung-test', label: 'E-Rechnung (Test)' },
   { to: '/einstellungen/diagnose', label: 'Diagnose' },
 ];

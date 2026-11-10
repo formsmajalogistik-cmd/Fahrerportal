@@ -9,6 +9,7 @@
 //                  (auch ohne action: für direkte Browser-Links)
 //   delete-pdf     POST  body: { path, formular_id }
 //   files          GET   ?folder=
+//   archiv-urls    POST  body: { paths[] }  → kurzlebige Direkt-Links (nur Admin, nur Archiv)
 //   erechnung-archivieren POST body: { beleg, id, xml_base64?, pdf_base64 }
 //                  (nur Admin; legt XML + PDF-Lesekopie unveränderlich ab)
 //
@@ -22,7 +23,7 @@
 import { getAuthedUser, HttpError } from '../server-lib/auth.js';
 import { assertCanAccessPdfPath, assertCanAccessTourDokument } from '../server-lib/formularAuth.js';
 import {
-  createUploadSession, deleteFile, downloadFile, getItemMeta, listChildren, renameItem, uploadFile,
+  createUploadSession, deleteFile, downloadFile, getDownloadUrl, getItemMeta, listChildren, renameItem, uploadFile,
 } from '../server-lib/graph.js';
 import { ARCHIV_ROOT, archiviereERechnung } from '../server-lib/erechnungArchiv.js';
 import { contentDisposition, istUnsichererPfad } from '../server-lib/paths.js';
@@ -237,6 +238,26 @@ export default async function handler(req: Req, res: Res) {
         beleg, id, xml: xmlB64 ? base64ToBytes(xmlB64) : null, pdf: base64ToBytes(pdfB64), userId: user.id,
       });
       res.status(200).json({ ok: true, dokument });
+      return;
+    }
+
+    // ---- ARCHIV-URLS (Export) -----------------------------------------
+    // Kurzlebige Direkt-Links für Dateien des E-Rechnungs-Archivs, damit
+    // der Export die Dateien direkt von OneDrive lädt (kein Transfer durch
+    // die Function). Nur Admin, nur Pfade im Archiv, nur lesen.
+    if (action === 'archiv-urls') {
+      if (user.role !== 'admin') throw new HttpError(403, 'Nur Admins dürfen das Archiv exportieren.');
+      const paths = Array.isArray(body.paths) ? body.paths.filter((x): x is string => typeof x === 'string') : [];
+      if (paths.length === 0 || paths.length > 60) throw new HttpError(400, 'paths: 1–60 Pfade erforderlich');
+      for (const p of paths) {
+        if (istUnsichererPfad(p) || !p.startsWith(`${ARCHIV_ROOT}/`)) throw new HttpError(400, `Kein Archiv-Pfad: ${p.slice(0, 120)}`);
+      }
+      const urls: Record<string, string | null> = {};
+      // In kleinen Gruppen, damit Graph nicht drosselt.
+      for (let i = 0; i < paths.length; i += 6) {
+        await Promise.all(paths.slice(i, i + 6).map(async (p) => { urls[p] = await getDownloadUrl(p); }));
+      }
+      res.status(200).json({ ok: true, urls });
       return;
     }
 

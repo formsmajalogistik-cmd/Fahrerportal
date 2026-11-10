@@ -43,7 +43,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     }
     if (m === 'GET') {
       if (u.pathname.endsWith(':/content')) return drive.has(pfad) ? new Response(drive.get(pfad)! as BodyInit, { status: 200 }) : json({}, 404);
-      return drive.has(pfad) ? json({ id: pfad, name: pfad.split('/').pop() }) : json({}, 404);
+      return drive.has(pfad) ? json({ id: pfad, name: pfad.split('/').pop(), '@microsoft.graph.downloadUrl': `https://direkt.example/${encodeURIComponent(pfad)}?tempauth=x` }) : json({}, 404);
     }
     if (m === 'DELETE') { geloescht.push(pfad); drive.delete(pfad); return new Response(null, { status: 204 }); }
     if (m === 'PATCH') {
@@ -236,6 +236,19 @@ await pr('Upload ohne versionieren überschreibt wie bisher', async () => {
   await rufe('upload', { path: pfad, contentType: 'application/pdf', content_base64: b64('A') });
   await rufe('upload', { path: pfad, contentType: 'application/pdf', content_base64: b64('B') });
   assert.equal(txt(pfad), 'B');
+});
+await pr('Export: Direkt-Links nur für Admin und nur für Archiv-Pfade', async () => {
+  const r = await rufe('archiv-urls', { paths: [`${A}Re_26_77.xml`, `${A}Re_26_77.pdf`, `${A}gibt_es_nicht.xml`] });
+  assert.equal(r.status, 200, JSON.stringify(r.out));
+  const urls = r.out.urls as Record<string, string | null>;
+  assert.ok(urls[`${A}Re_26_77.xml`]!.startsWith('https://direkt.example/') && urls[`${A}Re_26_77.pdf`]);
+  assert.equal(urls[`${A}gibt_es_nicht.xml`], null);
+  assert.equal((await rufe('archiv-urls', { paths: ['Maja-Logistik/Rechnungen/2026/Re_26_5.pdf'] })).status, 400);
+  assert.equal((await rufe('archiv-urls', { paths: [`${A}../x.xml`] })).status, 400);
+  rolle.wert = 'fahrer';
+  assert.equal((await rufe('archiv-urls', { paths: [`${A}Re_26_77.xml`] })).status, 403);
+  rolle.wert = 'admin';
+  assert.deepEqual(geloescht, [], 'der Export löscht nichts');
 });
 console.log(`Server-Tests (Archiv): ${ok}/${ok + f} bestanden`);
 if (f) process.exitCode = 1;

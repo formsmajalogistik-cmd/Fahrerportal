@@ -253,6 +253,19 @@ export async function archiviereERechnungApi(
   return j.dokument;
 }
 
+/** Kurzlebige Direkt-Links für Dateien des E-Rechnungs-Archivs (nur Admin). */
+export async function holeArchivUrls(paths: string[]): Promise<Record<string, string | null>> {
+  const resp = await fetchWithAuthRetry('/api/onedrive?action=archiv-urls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths }),
+    timeoutMs: 60_000,
+  });
+  const j = await resp.json().catch(() => ({})) as { urls?: Record<string, string | null>; error?: string };
+  if (!resp.ok || !j.urls) throw new Error(j.error ?? `Archiv-Links nicht abrufbar (${resp.status})`);
+  return j.urls;
+}
+
 export async function listeOneDriveOrdner(folder: string): Promise<Array<{ name: string; isFolder: boolean; size?: number }>> {
   const qs = new URLSearchParams({ action: 'files', folder });
   const resp = await fetchWithAuthRetry(`/api/onedrive?${qs.toString()}`, { timeoutMs: 30_000 });

@@ -15,6 +15,7 @@ import { bildeERechnungGutschrift } from '../../src/lib/erechnung/ausRechnung';
 import { gutschriftPdfInputAus, rechnungPdfInputAus } from '../../src/lib/erechnung/belegPdf';
 import { firmendatenZuJson, pruefeFirmendaten } from '../../src/lib/firmendaten';
 import { fusszeilen } from '../../src/pages/admin/rechnungen/rechnungPdf';
+import { baueCsv, baueZip, dateienVon, monatsGrenzen, sha256Hex, type ExportEintrag } from '../../src/lib/erechnung/export';
 
 type Fall = { name: string; fn: () => void | Promise<void> };
 const faelle: Fall[] = [];
@@ -320,6 +321,71 @@ test('Land → ISO-Code', () => {
   assert.equal(landZuIso('Mars'), null);
   assert.equal(normLandCode(' de '), 'DE');
   assert.equal(normLandCode('Deutschland'), null);
+});
+
+// ---------------------------------------------------------------- Archiv-Export
+function exportEintrag(nr: string, format: 'en16931_cii' | 'zugferd', xmlPfad: string | null): ExportEintrag {
+  return {
+    dokument: { id: `d-${nr}`, rechnung_id: 'r', gutschrift_id: null, version: 1, format, typ_code: '380', belegnummer: nr,
+      xml_pfad: xmlPfad, pdf_pfad: `Maja-Logistik/E-Rechnungen/2026/${nr.replace('/', '_')}.pdf`, bucket_pfad: 'x', protokoll: null,
+      sha256_xml: 'a'.repeat(64), sha256_pdf: 'b'.repeat(64), xml_bytes: 1, pdf_bytes: 1, erzeugt_am: '2026-11-05T10:00:00Z', erzeugt_von: null, erzeugt_von_name: null },
+    belegnummer: nr, datum: '2026-11-05', empfaenger: 'Müller & Söhne "Nord"; GmbH', auftraggeberId: 'ag', typ: 'Rechnung', brutto: 1234.5, zuletztExportiert: null,
+  };
+}
+
+test('Export: Monatsgrenzen (auch Februar/Schaltjahr)', () => {
+  assert.deepEqual(monatsGrenzen('2026-11'), { von: '2026-11-01', bis: '2026-11-30' });
+  assert.deepEqual(monatsGrenzen('2028-02'), { von: '2028-02-01', bis: '2028-02-29' });
+  assert.deepEqual(monatsGrenzen('2027-02'), { von: '2027-02-01', bis: '2027-02-28' });
+});
+
+test('Export: Dateien je Beleg — XML + Lesekopie bzw. EIN ZUGFeRD-PDF', () => {
+  const zwei = dateienVon(exportEintrag('Re_26/5', 'en16931_cii', 'Maja-Logistik/E-Rechnungen/2026/Re_26_5.xml'));
+  assert.deepEqual(zwei.map((d) => [d.art, d.name, d.sollHash[0]]), [['XML', '2026/Re_26_5.xml', 'a'], ['PDF-Lesekopie', '2026/Re_26_5.pdf', 'b']]);
+  const eins = dateienVon(exportEintrag('Re_26/6', 'zugferd', null));
+  assert.deepEqual(eins.map((d) => [d.art, d.name, d.sollHash[0]]), [['ZUGFeRD-PDF', '2026/Re_26_6.pdf', 'b']]);
+});
+
+test('Export: ZIP enthält die Dateien Byte für Byte unverändert (Namen in UTF-8)', async () => {
+  const dateien = [
+    { name: 'Uebersicht.csv', bytes: new TextEncoder().encode('a;b\r\n') },
+    { name: '2026/Re_26_5.xml', bytes: new TextEncoder().encode('<x>Müller & Söhne</x>') },
+    { name: '2026/Größe_ä.pdf', bytes: new Uint8Array([0, 255, 37, 80, 68, 70, 1, 2, 3]) },
+  ];
+  const zip = baueZip(dateien, new Date(2026, 10, 5, 10, 0, 0));
+  // Zentrales Verzeichnis lesen und jede Datei zurückholen.
+  const v = new DataView(zip.buffer);
+  const eocd = zip.length - 22;
+  assert.equal(v.getUint32(eocd, true), 0x06054b50);
+  assert.equal(v.getUint16(eocd + 10, true), 3);
+  let p = v.getUint32(eocd + 16, true);
+  for (const f of dateien) {
+    assert.equal(v.getUint32(p, true), 0x02014b50);
+    assert.equal(v.getUint16(p + 10, true), 0, 'ohne Kompression');
+    const len = v.getUint32(p + 24, true); const nLen = v.getUint16(p + 28, true); const lokal = v.getUint32(p + 42, true);
+    assert.equal(new TextDecoder().decode(zip.subarray(p + 46, p + 46 + nLen)), f.name);
+    const start = lokal + 30 + v.getUint16(lokal + 26, true) + v.getUint16(lokal + 28, true);
+    assert.deepEqual([...zip.subarray(start, start + len)], [...f.bytes]);
+    assert.equal(await sha256Hex(zip.subarray(start, start + len)), await sha256Hex(f.bytes));
+    p += 46 + nLen;
+  }
+});
+
+test('Export: CSV mit Escaping, Hash-Prüfung „ok" und deutlicher Abweichung', () => {
+  const e = exportEintrag('Re_26/5', 'en16931_cii', 'Maja-Logistik/E-Rechnungen/2026/Re_26_5.xml');
+  const [x, y] = dateienVon(e);
+  const csv = baueCsv([
+    { ...x, eintrag: e, istHash: 'a'.repeat(64), bytes: new Uint8Array(1), fehler: null },
+    { ...y, eintrag: e, istHash: 'c'.repeat(64), bytes: new Uint8Array(1), fehler: null },
+    { ...y, eintrag: { ...e, empfaenger: '=SUMME(A1)' }, istHash: null, bytes: null, fehler: 'nicht gefunden' },
+  ]);
+  const zeilen = csv.replace('\uFEFF', '').trim().split('\r\n');
+  assert.equal(zeilen[0], '"Belegnummer";"Datum";"Empfänger";"Typ";"Format";"Brutto";"Datei";"Dateiname";"SHA-256";"erzeugt am";"Hash-Prüfung"');
+  assert.ok(zeilen[1].startsWith('"Re_26/5";"05.11.2026";"Müller & Söhne ""Nord""; GmbH";"Rechnung";"EN 16931 (XML)";"1234,50";"XML";"2026/Re_26_5.xml";"' + 'a'.repeat(64) + '"'));
+  assert.ok(zeilen[1].endsWith(';"ok"'));
+  assert.ok(/;"ABWEICHUNG \(Datei: c{64}\)"$/.test(zeilen[2]));
+  assert.ok(zeilen[3].includes(`"'=SUMME(A1)"`) && zeilen[3].endsWith(';"FEHLER: nicht gefunden"'));
+  assert.ok(csv.startsWith('\uFEFF'));
 });
 
 // ---------------------------------------------------------------- Lauf

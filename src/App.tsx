@@ -28,6 +28,7 @@ import { DiagnoseLogPage } from './pages/admin/DiagnoseLogPage';
 import { ManuelleEmpfaengerPage } from './pages/admin/ManuelleEmpfaengerPage';
 import { ERechnungTestPage } from './pages/admin/ERechnungTestPage';
 import { FirmendatenPage } from './pages/admin/FirmendatenPage';
+import { ERechnungExportPage } from './pages/admin/ERechnungExportPage';
 import { BriefeListPage } from './pages/admin/briefe/BriefeListPage';
 import { BriefDetailPage } from './pages/admin/briefe/BriefDetailPage';
 import { TankkartenPage } from './pages/admin/briefe/TankkartenPage';
@@ -186,6 +187,7 @@ export default function App() {
             <Route path="brief-vorlagen" element={<BriefVorlagenPage />} />
             <Route path="auftrags-email" element={<AuftragsEmailSettingsPage />} />
             <Route path="firmendaten" element={<FirmendatenPage />} />
+            <Route path="erechnung-export" element={<ERechnungExportPage />} />
             <Route path="erechnung-test" element={<ERechnungTestPage />} />
             <Route path="diagnose" element={<DiagnoseLogPage />} />
           </Route>

@@ -265,6 +265,21 @@ export async function getItemMeta(path: string): Promise<DriveItem | null> {
   return (await resp.json()) as DriveItem;
 }
 
+/**
+ * Kurzlebige, vorab autorisierte Download-URL einer Datei (Microsoft:
+ * „@microsoft.graph.downloadUrl", gültig ca. 1 Stunde, CORS-fähig). Der
+ * Browser lädt damit direkt von OneDrive — nicht durch die Function.
+ */
+export async function getDownloadUrl(path: string): Promise<string | null> {
+  const url = `${userRoot()}/root:/${encodePath(path)}`;
+  const resp = await graphFetch('GET', url);
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`Download-URL ${path}: ${resp.status}`);
+  const j = (await resp.json()) as Record<string, unknown>;
+  const u = j['@microsoft.graph.downloadUrl'];
+  return typeof u === 'string' ? u : null;
+}
+
 interface MailRecipient { emailAddress: { address: string } }
 interface MailAttachment {
   '@odata.type': '#microsoft.graph.fileAttachment';
