@@ -10,13 +10,14 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import { rechnungPdfFilename } from './rechnungPdf';
 import { loadMailboxes, type MailboxConfig } from '../../../lib/mailboxSettings';
 import type { EmailFavorit } from '../../../types/db';
-import { MAIL_HINWEIS_ERECHNUNG } from '../../../lib/erechnung/texte';
+import { MAIL_HINWEIS_ERECHNUNG, MAIL_HINWEIS_ZUGFERD } from '../../../lib/erechnung/texte';
 import { ladeFirmendaten } from '../../../lib/firmendaten';
 import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 
 /** Archivierte E-Rechnung, die statt der normalen PDF versendet wird. */
 export interface ERechnungVersand {
-  xmlPfad: string;
+  /** null = ZUGFeRD: nur EIN Anhang (PDF mit eingebettetem XML). */
+  xmlPfad: string | null;
   pdfPfad: string;
   /** E-Rechnungs-Adresse, sonst Rechnungs-E-Mail (null = aus Auftraggeber). */
   empfaenger: string | null;
@@ -75,7 +76,7 @@ export function RechnungEmailDialog({ rechnung, erechnung = null, onClose, onSen
   const [cc, setCc] = useState<string[]>([]);
   const [ccOpen, setCcOpen] = useState(false);
   const [subject, setSubject] = useState(`Rechnung ${rechnung.rechnungsnummer} — Maja-Logistik`);
-  const [body, setBody] = useState(() => defaultBody(rechnung) + (erechnung ? `\n\n${MAIL_HINWEIS_ERECHNUNG}` : ''));
+  const [body, setBody] = useState(() => defaultBody(rechnung) + (erechnung ? `\n\n${erechnung.xmlPfad ? MAIL_HINWEIS_ERECHNUNG : MAIL_HINWEIS_ZUGFERD}` : ''));
   /** Probeversand an die eigene Kontakt-E-Mail (Firmendaten) — ohne Versandstatus. */
   const [probeAn, setProbeAn] = useState<string | null>(null);
   const [probeMeldung, setProbeMeldung] = useState<string | null>(null);
@@ -237,7 +238,7 @@ export function RechnungEmailDialog({ rechnung, erechnung = null, onClose, onSen
       const attachments: Array<{ name: string; contentType: string; onedrive_path: string }> = [];
       if (erechnung) {
         const basis = sicheresPfadSegment(rechnung.rechnungsnummer, 'Rechnung');
-        attachments.push({ name: `${basis}.xml`, contentType: 'application/xml', onedrive_path: erechnung.xmlPfad });
+        if (erechnung.xmlPfad) attachments.push({ name: `${basis}.xml`, contentType: 'application/xml', onedrive_path: erechnung.xmlPfad });
         attachments.push({ name: `${basis}.pdf`, contentType: 'application/pdf', onedrive_path: erechnung.pdfPfad });
       } else if (attachRechnung && rechnung.pdf_url) {
         attachments.push({
@@ -338,8 +339,8 @@ export function RechnungEmailDialog({ rechnung, erechnung = null, onClose, onSen
             <div className="space-y-1">
               {erechnung ? (
                 <div className="rounded-md bg-maja-light/50 px-3 py-2 text-sm" data-testid="erechnung-anhaenge">
-                  <div className="font-medium text-maja-ink">E-Rechnung (XML, maßgeblich) + PDF-Lesekopie</div>
-                  <div className="text-xs text-maja-muted">Aus dem Archiv: {erechnung.xmlPfad.split('/').pop()} · {erechnung.pdfPfad.split('/').pop()}</div>
+                  <div className="font-medium text-maja-ink">{erechnung.xmlPfad ? 'E-Rechnung (XML, maßgeblich) + PDF-Lesekopie' : 'ZUGFeRD-PDF (mit eingebettetem XML)'}</div>
+                  <div className="text-xs text-maja-muted">Aus dem Archiv: {[erechnung.xmlPfad, erechnung.pdfPfad].filter(Boolean).map((x) => x!.split('/').pop()).join(' · ')}</div>
                 </div>
               ) : (
               <label className="flex items-center gap-2 text-sm">

@@ -218,8 +218,13 @@ async function fetchWithTimeout(
 /** Archiv-Eintrag einer E-Rechnung (Tabelle erechnung_dokumente). */
 export interface ERechnungDokument {
   id: string; version: number; format: string; typ_code: string; belegnummer: string;
-  xml_pfad: string; pdf_pfad: string; bucket_pfad: string; sha256_xml: string; sha256_pdf: string;
+  /** null bei ZUGFeRD — dort ist pdf_pfad die maßgebliche Datei (PDF mit eingebettetem XML). */
+  xml_pfad: string | null; pdf_pfad: string; bucket_pfad: string; sha256_xml: string; sha256_pdf: string;
   erzeugt_am: string; erzeugt_von_name: string | null;
+  /** Vermerk des Servers (z.B. beiseitegelegte Datei aus einem früheren Versuch). */
+  protokoll?: string | null;
+  rechnung_id?: string | null; gutschrift_id?: string | null;
+  xml_bytes?: number; pdf_bytes?: number;
 }
 
 /**
@@ -227,10 +232,16 @@ export interface ERechnungDokument {
  * OneDrive ohne Überschreiben, Supabase-Bucket, SHA-256, Archiv-Eintrag).
  */
 export async function archiviereERechnungApi(
-  beleg: 'rechnung' | 'gutschrift', id: string, xml: string, pdf: Blob,
+  beleg: 'rechnung' | 'gutschrift', id: string,
+  /** XML-Datei; null bei ZUGFeRD (das XML steckt im PDF, der Server liest es dort aus). */
+  xml: string | null, pdf: Blob,
 ): Promise<ERechnungDokument> {
-  const xmlB64 = await bytesToBase64(new TextEncoder().encode(xml));
+  const xmlB64 = xml == null ? undefined : await bytesToBase64(new TextEncoder().encode(xml));
   const pdfB64 = await bytesToBase64(new Uint8Array(await pdf.arrayBuffer()));
+  // Vercel-Functions nehmen höchstens ~4,5 MB Body an.
+  if (pdfB64.length + (xmlB64?.length ?? 0) > 4_000_000) {
+    throw new Error(`Die Datei ist mit ${(pdf.size / 1_048_576).toFixed(1)} MB zu groß für die Ablage (Grenze ca. 3 MB). Bitte melden.`);
+  }
   const resp = await fetchWithAuthRetry('/api/onedrive?action=erechnung-archivieren', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

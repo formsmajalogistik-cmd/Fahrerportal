@@ -20,7 +20,7 @@ import { formatDate, formatEuro } from '../../../lib/touren';
 import { loadMailboxes, type MailboxConfig } from '../../../lib/mailboxSettings';
 import { gutschriftPdfFilename } from '../../../lib/gutschriften';
 import type { EmailFavorit } from '../../../types/db';
-import { MAIL_HINWEIS_ERECHNUNG } from '../../../lib/erechnung/texte';
+import { MAIL_HINWEIS_ERECHNUNG, MAIL_HINWEIS_ZUGFERD } from '../../../lib/erechnung/texte';
 import { ladeFirmendaten } from '../../../lib/firmendaten';
 import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 import type { ERechnungVersand } from '../rechnungen/RechnungEmailDialog';
@@ -101,7 +101,7 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, erechnung = nul
   const [subject, setSubject] = useState(
     `${bezeichnung} ${gutschrift.gutschrift_nr} — Maja-Logistik`,
   );
-  const [body, setBody] = useState(() => defaultBody(gutschrift, bezeichnung) + (erechnung ? `\n\n${MAIL_HINWEIS_ERECHNUNG}` : ''));
+  const [body, setBody] = useState(() => defaultBody(gutschrift, bezeichnung) + (erechnung ? `\n\n${erechnung.xmlPfad ? MAIL_HINWEIS_ERECHNUNG : MAIL_HINWEIS_ZUGFERD}` : ''));
   const [probeAn, setProbeAn] = useState<string | null>(null);
   const [probeMeldung, setProbeMeldung] = useState<string | null>(null);
   useEffect(() => {
@@ -115,7 +115,7 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, erechnung = nul
     if (erechnung) {
       const basis = sicheresPfadSegment(gutschrift.gutschrift_nr, 'Beleg');
       return [
-        { name: `${basis}.xml`, contentType: 'application/xml', onedrive_path: erechnung.xmlPfad },
+        ...(erechnung.xmlPfad ? [{ name: `${basis}.xml`, contentType: 'application/xml', onedrive_path: erechnung.xmlPfad }] : []),
         { name: `${basis}.pdf`, contentType: 'application/pdf', onedrive_path: erechnung.pdfPfad },
       ];
     }
@@ -367,8 +367,8 @@ export function GutschriftEmailDialog({ gutschrift, bezeichnung, erechnung = nul
             <span className="label">Anhänge</span>
             {erechnung ? (
               <div className="rounded-md bg-maja-light/50 px-3 py-2 text-sm" data-testid="erechnung-anhaenge">
-                <div className="font-medium text-maja-ink">E-Rechnung (XML, maßgeblich) + PDF-Lesekopie</div>
-                <div className="text-xs text-maja-muted">Aus dem Archiv: {erechnung.xmlPfad.split('/').pop()} · {erechnung.pdfPfad.split('/').pop()}</div>
+                <div className="font-medium text-maja-ink">{erechnung.xmlPfad ? 'E-Rechnung (XML, maßgeblich) + PDF-Lesekopie' : 'ZUGFeRD-PDF (mit eingebettetem XML)'}</div>
+                <div className="text-xs text-maja-muted">Aus dem Archiv: {[erechnung.xmlPfad, erechnung.pdfPfad].filter(Boolean).map((x) => x!.split('/').pop()).join(' · ')}</div>
               </div>
             ) : (
             <label className="flex items-center gap-2 text-sm">

@@ -63,7 +63,13 @@ export async function erechnungVorpruefung(rechnungId: string): Promise<Vorpruef
   return { format, profil, ...pruefen(a, profil) };
 }
 
-async function erzeugeUndArchiviereRechnung(rechnungId: string): Promise<{ dokument: ERechnungDokument; maengel: Mangel[] }> {
+/**
+ * XML + PDF aus dem gespeicherten Stand einer ERSTELLTEN Rechnung erzeugen
+ * und archivieren. Auch als Nachholen nutzbar, falls eine Rechnung „offen"
+ * ist, aber (noch) keine archivierte E-Rechnung hat. Wiederholbar: der
+ * Server übernimmt identische Dateien und überschreibt nie.
+ */
+export async function rechnungERechnungErzeugen(rechnungId: string): Promise<{ dokument: ERechnungDokument; maengel: Mangel[] }> {
   const q = await ladeERechnungQuelle(rechnungId);
   const r = q.rechnung;
   const profil = profilFuerFormat(r.erechnung_format);
@@ -99,19 +105,29 @@ export async function rechnungErstellen(rechnungId: string): Promise<ErstellErge
   if (!vp) return { art: 'pdf' };
 
   try {
-    const { dokument, maengel } = await erzeugeUndArchiviereRechnung(rechnungId);
+    const { dokument, maengel } = await rechnungERechnungErzeugen(rechnungId);
     return { art: 'erechnung', dokument, maengel };
   } catch (e) {
-    const meldung = e instanceof Error ? e.message : String(e);
-    // Zurück auf Entwurf. Gelingt das nicht, weil die E-Rechnung doch
-    // archiviert wurde (Antwort verloren), gilt sie als erzeugt.
+    const grund = (e instanceof Error ? e.message : String(e)).replace(/^ERECHNUNG_BEREITS_ARCHIVIERT:\s*/, '');
+    // Antwort verloren, aber doch archiviert? Dann gilt sie als erzeugt.
+    const schon = await ladeERechnungDokumente('rechnung', rechnungId);
+    if (schon.length) return { art: 'erechnung', dokument: schon[0], maengel: [] };
+    // Zurück auf Entwurf — die Rechnungsnummer bleibt an der Rechnung
+    // (keine Lücke, keine Doppelvergabe).
     const { error: rErr } = await supabase.from('rechnungen')
       .update({ status: 'entwurf', faellig_am: null, absender_snapshot: null }).eq('id', rechnungId);
-    if (rErr && /ERECHNUNG_GESPERRT/.test(rErr.message)) {
-      const dok = await ladeERechnungDokumente('rechnung', rechnungId);
-      if (dok.length) return { art: 'erechnung', dokument: dok[0], maengel: [] };
+    if (rErr) {
+      if (/ERECHNUNG_GESPERRT/.test(rErr.message)) {
+        const dok = await ladeERechnungDokumente('rechnung', rechnungId);
+        if (dok.length) return { art: 'erechnung', dokument: dok[0], maengel: [] };
+      }
+      return { art: 'fehler', meldung:
+        `Was ist passiert: Die E-Rechnung konnte nicht abgelegt werden (${grund}). Die Rechnung ließ sich auch nicht auf „Entwurf" zurücksetzen (${rErr.message}) — `
+        + 'sie ist jetzt „offen", aber ohne archivierte E-Rechnung. Was tun: im Abschnitt „E-Rechnung" auf „E-Rechnung erzeugen" klicken (erneut versuchen). Es wird nichts überschrieben oder doppelt abgelegt.' };
     }
-    return { art: 'fehler', meldung: `E-Rechnung nicht erzeugt — die Rechnung bleibt Entwurf. ${meldung}` };
+    return { art: 'fehler', meldung:
+      `Was ist passiert: Die E-Rechnung konnte nicht abgelegt werden (${grund}). Die Rechnung ist wieder ein Entwurf und behält ihre Nummer. `
+      + 'Was tun: „Rechnung erstellen" erneut versuchen. Bereits abgelegte Dateien werden übernommen; nichts wird überschrieben oder doppelt abgelegt.' };
   }
 }
 

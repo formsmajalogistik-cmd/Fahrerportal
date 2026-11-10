@@ -190,9 +190,11 @@ async function uploadLarge(
 
 /** Fehler: Ziel existiert bereits (Upload ohne Überschreiben). */
 export class DateiExistiertFehler extends Error {
-  constructor(public pfad: string) {
+  pfad: string;
+  constructor(pfad: string) {
     super(`Datei existiert bereits und wird nicht überschrieben: ${pfad}`);
     this.name = 'DateiExistiertFehler';
+    this.pfad = pfad;
   }
 }
 

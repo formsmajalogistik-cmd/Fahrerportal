@@ -32,8 +32,9 @@ import { RechnungStatusBadge } from './RechnungStatusBadge';
 import { ERechnungAbschnitt } from '../../../components/erechnung/ERechnungAbschnitt';
 import { TeilgutschriftDialog } from '../../../components/erechnung/TeilgutschriftDialog';
 import {
-  erechnungVorpruefung, ladeERechnungDokumente, rechnungErstellen, SPERR_HINWEIS, sperrMeldung, type Vorpruefung,
+  erechnungVorpruefung, ladeERechnungDokumente, rechnungERechnungErzeugen, rechnungErstellen, SPERR_HINWEIS, sperrMeldung, type Vorpruefung,
 } from '../../../lib/erechnung/erstellen';
+import { profilFuerFormat } from '../../../lib/erechnung/stammdaten';
 import { alsNeueRechnungUebernehmen, rechnungStornieren } from '../../../lib/erechnung/korrektur';
 import { rechnungPdfInputAus } from '../../../lib/erechnung/belegPdf';
 import { firmendatenFuerBeleg } from '../../../lib/firmendaten';
@@ -313,9 +314,25 @@ export function RechnungDetailPage() {
     }
     if (res.art === 'fehler') setError(res.meldung);
     if (res.art === 'erechnung') {
-      setHinweis(`E-Rechnung erzeugt und archiviert: ${res.dokument.xml_pfad} (SHA-256 ${res.dokument.sha256_xml.slice(0, 12)}…).`);
+      setHinweis(`E-Rechnung erzeugt und archiviert: ${res.dokument.xml_pfad ?? res.dokument.pdf_pfad} (SHA-256 ${(res.dokument.xml_pfad ? res.dokument.sha256_xml : res.dokument.sha256_pdf).slice(0, 12)}…).${res.dokument.protokoll ? ` Vermerk: ${res.dokument.protokoll}.` : ''}`);
     }
     await load();
+  }
+
+  /** Nachholen: Rechnung ist erstellt, aber die E-Rechnung wurde (noch) nicht archiviert. */
+  async function erechnungNachholen() {
+    if (!rechnung) return;
+    setKorrekturBusy(true);
+    setError(null);
+    try {
+      const { dokument } = await rechnungERechnungErzeugen(rechnung.id);
+      setHinweis(`E-Rechnung erzeugt und archiviert: ${dokument.xml_pfad ?? dokument.pdf_pfad}.`);
+      await load();
+    } catch (e) {
+      setError(`Die E-Rechnung konnte nicht abgelegt werden: ${e instanceof Error ? e.message : String(e)} Bitte erneut versuchen — es wird nichts überschrieben.`);
+    } finally {
+      setKorrekturBusy(false);
+    }
   }
 
   async function stornieren() {
@@ -787,6 +804,8 @@ export function RechnungDetailPage() {
   const sperrText = gesperrt ? SPERR_HINWEIS : 'Rechnung storniert — keine Änderungen mehr';
   const korrekturBelege = gutschriften.filter((g) => g.art === 'storno' || g.art === 'teilgutschrift');
   const stornoBeleg = gutschriften.find((g) => g.art === 'storno');
+  /** Erstellt für einen E-Rechnungs-Empfänger, aber (noch) nichts archiviert → nachholen. */
+  const erechnungFehlt = (status === 'offen' || status === 'bezahlt') && !gesperrt && !!profilFuerFormat(rechnung.erechnung_format);
 
   return (
     <div className="space-y-6">
@@ -1057,8 +1076,19 @@ export function RechnungDetailPage() {
         />
       </section>
 
-      {(dokumente.length > 0 || (status === 'entwurf' && vorpruefung)) && (
-        <ERechnungAbschnitt dokumente={dokumente} vorpruefung={status === 'entwurf' ? vorpruefung : null} />
+      {erechnungFehlt && (
+        <p role="alert" data-testid="erechnung-fehlt" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:!border-amber-500/60 dark:!bg-amber-900/30 dark:!text-amber-100">
+          Diese Rechnung ist erstellt, aber die E-Rechnung wurde noch nicht archiviert. Bitte unten „E-Rechnung erzeugen" auslösen — vorher nicht versenden.
+        </p>
+      )}
+      {(dokumente.length > 0 || (status === 'entwurf' && vorpruefung) || erechnungFehlt) && (
+        <ERechnungAbschnitt
+          dokumente={dokumente}
+          vorpruefung={status === 'entwurf' ? vorpruefung : null}
+          format={rechnung.erechnung_format}
+          onErzeugen={erechnungFehlt ? () => void erechnungNachholen() : undefined}
+          erzeugenBusy={korrekturBusy}
+        />
       )}
 
       {/* Notizen */}

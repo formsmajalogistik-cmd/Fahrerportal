@@ -259,7 +259,7 @@ export function GutschriftDetailPage() {
     if (vp) {
       try {
         const { dokument } = await gutschriftERechnungErzeugen(gutschrift.id);
-        setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad}.`);
+        setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad ?? dokument.pdf_pfad}.`);
       } catch (e) {
         await supabase.from('gutschriften').update({ status: 'entwurf' }).eq('id', gutschrift.id);
         setError(`E-Rechnung nicht erzeugt — der Beleg bleibt Entwurf. ${e instanceof Error ? e.message : String(e)}`);
@@ -276,7 +276,7 @@ export function GutschriftDetailPage() {
     setError(null);
     try {
       const { dokument } = await gutschriftERechnungErzeugen(gutschrift.id);
-      setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad}.`);
+      setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad ?? dokument.pdf_pfad}.`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -9,7 +9,7 @@
 //                  (auch ohne action: für direkte Browser-Links)
 //   delete-pdf     POST  body: { path, formular_id }
 //   files          GET   ?folder=
-//   erechnung-archivieren POST body: { beleg, id, xml_base64, pdf_base64 }
+//   erechnung-archivieren POST body: { beleg, id, xml_base64?, pdf_base64 }
 //                  (nur Admin; legt XML + PDF-Lesekopie unveränderlich ab)
 //
 // upload mit { versionieren: true }: existiert die Datei schon, wird sie
@@ -229,11 +229,12 @@ export default async function handler(req: Req, res: Res) {
       const id = asString(body.id);
       const xmlB64 = asString(body.xml_base64);
       const pdfB64 = asString(body.pdf_base64);
-      if ((beleg !== 'rechnung' && beleg !== 'gutschrift') || !id || !xmlB64 || !pdfB64) {
-        throw new HttpError(400, 'beleg / id / xml_base64 / pdf_base64 erforderlich');
+      // xml_base64 entfällt bei ZUGFeRD (das XML steckt im PDF).
+      if ((beleg !== 'rechnung' && beleg !== 'gutschrift') || !id || !pdfB64) {
+        throw new HttpError(400, 'beleg / id / pdf_base64 erforderlich');
       }
       const dokument = await archiviereERechnung({
-        beleg, id, xml: base64ToBytes(xmlB64), pdf: base64ToBytes(pdfB64), userId: user.id,
+        beleg, id, xml: xmlB64 ? base64ToBytes(xmlB64) : null, pdf: base64ToBytes(pdfB64), userId: user.id,
       });
       res.status(200).json({ ok: true, dokument });
       return;

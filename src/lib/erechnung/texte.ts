@@ -11,5 +11,10 @@ export const LESEKOPIE_HINWEIS = 'PDF-Lesekopie. Maßgeblich ist die E-Rechnung 
 export const MAIL_HINWEIS_ERECHNUNG =
   'Die maßgebliche Rechnung ist die angehängte XML-Datei (E-Rechnung nach EN 16931). Die PDF-Datei dient nur der Ansicht.';
 
+/** Mailtext-Hinweis für ZUGFeRD (eine Datei: PDF mit eingebettetem XML). */
+export const MAIL_HINWEIS_ZUGFERD =
+  'Diese Rechnung ist eine E-Rechnung im Format ZUGFeRD. Das PDF enthält die maschinenlesbaren Rechnungsdaten (XML); maßgeblich sind die eingebetteten XML-Daten.';
+export const ZUGFERD_HINWEIS_PDF = 'E-Rechnung im Format ZUGFeRD. Maßgeblich sind die eingebetteten XML-Daten (EN 16931).';
+
 /** Dokumenttitel der Korrekturbelege. */
 export const STORNO_TITEL = 'Stornorechnung';

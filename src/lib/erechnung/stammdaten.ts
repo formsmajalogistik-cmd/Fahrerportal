@@ -19,9 +19,12 @@ export function istERechnungFormat(v: unknown): v is ERechnungFormat {
   return v === 'pdf' || v === 'en16931_cii' || v === 'xrechnung_cii' || v === 'zugferd';
 }
 
-/** Format → Profil des XML; null = keine E-Rechnung (PDF). */
+/**
+ * Format → Profil des XML; null = keine E-Rechnung (PDF).
+ * ZUGFeRD/Factur-X nutzt das Profil EN 16931 (dasselbe XML, eingebettet ins PDF/A-3).
+ */
 export function profilFuerFormat(f: string | null | undefined): 'en16931' | 'xrechnung' | null {
-  if (f === 'en16931_cii') return 'en16931';
+  if (f === 'en16931_cii' || f === 'zugferd') return 'en16931';
   if (f === 'xrechnung_cii') return 'xrechnung';
   return null;
 }

@@ -52,7 +52,8 @@ export function ERechnungAbschnitt({
     setBusy(`${d.id}-${art}`);
     try {
       if (art === 'pdf') await previewOneDrivePdf(d.pdf_pfad, { filename: d.pdf_pfad.split('/').pop() });
-      else await triggerOneDriveDownload(d.xml_pfad, d.xml_pfad.split('/').pop() ?? 'rechnung.xml');
+      else if (d.xml_pfad) await triggerOneDriveDownload(d.xml_pfad, d.xml_pfad.split('/').pop() ?? 'rechnung.xml');
+      else await triggerOneDriveDownload(d.pdf_pfad, d.pdf_pfad.split('/').pop() ?? 'rechnung.pdf');
     } finally { setBusy(null); }
   }
 
@@ -69,17 +70,20 @@ export function ERechnungAbschnitt({
                 </span>
                 <span className="flex flex-wrap gap-2">
                   <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy !== null}
-                          onClick={() => void oeffne(d, 'xml')}>XML herunterladen (maßgeblich)</button>
+                          onClick={() => void oeffne(d, 'xml')}>
+                    {d.xml_pfad ? 'XML herunterladen (maßgeblich)' : 'ZUGFeRD-PDF herunterladen (maßgeblich)'}
+                  </button>
                   <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy !== null}
-                          onClick={() => void oeffne(d, 'pdf')}>PDF-Lesekopie ansehen</button>
+                          onClick={() => void oeffne(d, 'pdf')}>{d.xml_pfad ? 'PDF-Lesekopie ansehen' : 'ZUGFeRD-PDF ansehen'}</button>
                 </span>
               </div>
               <p className="mt-1 text-xs text-maja-muted">
-                Erzeugt am {zeit(d.erzeugt_am)}{d.erzeugt_von_name ? ` von ${d.erzeugt_von_name}` : ''} · archiviert unter {d.xml_pfad}
+                Erzeugt am {zeit(d.erzeugt_am)}{d.erzeugt_von_name ? ` von ${d.erzeugt_von_name}` : ''} · archiviert unter {d.xml_pfad ?? d.pdf_pfad}
               </p>
-              <p className="mt-0.5 break-all font-mono text-[11px] text-maja-muted" title="SHA-256 der XML-Datei">
-                SHA-256 (XML): {d.sha256_xml}
+              <p className="mt-0.5 break-all font-mono text-[11px] text-maja-muted" title={d.xml_pfad ? 'SHA-256 der XML-Datei' : 'SHA-256 der ZUGFeRD-Datei (PDF)'}>
+                {d.xml_pfad ? `SHA-256 (XML): ${d.sha256_xml}` : `SHA-256 (PDF): ${d.sha256_pdf}`}
               </p>
+              {d.protokoll && <p className="mt-0.5 text-xs text-amber-700 dark:!text-amber-300">Vermerk: {d.protokoll}</p>}
             </li>
           ))}
         </ul>

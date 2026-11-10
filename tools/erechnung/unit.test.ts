@@ -13,7 +13,7 @@ import { FIRMENDATEN } from '../../src/lib/firmendaten';
 import { TEST_FIRMA, testrechnungen } from './testrechnungen';
 import { bildeERechnungGutschrift } from '../../src/lib/erechnung/ausRechnung';
 import { gutschriftPdfInputAus, rechnungPdfInputAus } from '../../src/lib/erechnung/belegPdf';
-import { firmendatenZuJson } from '../../src/lib/firmendaten';
+import { firmendatenZuJson, pruefeFirmendaten } from '../../src/lib/firmendaten';
 import { fusszeilen } from '../../src/pages/admin/rechnungen/rechnungPdf';
 
 type Fall = { name: string; fn: () => void | Promise<void> };
@@ -265,6 +265,23 @@ test('Negativer Einzelpreis und Rundungsabweichung werden gemeldet', () => {
   assert.ok(texte(pruefeERechnung(neg)).some((x) => /negativer Einzelpreis/.test(x)));
   const falsch = { ...daten, summen: { ...daten.summen, gruppen: [{ ...daten.summen.gruppen[0], ust: 36.47 }] } };
   assert.ok(pruefeERechnung(falsch).some((x) => x.bt === 'BR-CO-17'));
+});
+
+test('Rechtsform, Register, Steuernummer leer: keine leeren Etiketten im PDF, kein Element im XML, keine Pflicht', () => {
+  const ohne = { ...TEST_FIRMA, rechtsform: null, registergericht: null, registernummer: null, steuernummer: null, inhaber: null, bank: null };
+  assert.deepEqual(pruefeFirmendaten(ohne), []);
+  const zeilen = fusszeilen(ohne, true);
+  assert.deepEqual(zeilen, [
+    'Maja-Logistik M.Janßen',
+    'Heiligenroder Strasse 38e  |  28816 Stuhr-Heiligenrode  |  Tel.: +49 17641461645  |  info@maja-logistik.de',
+    'USt-IdNr.: DE309356726',
+    'IBAN: DE04280501000001429760  |  BIC: SLZODE22XXX',
+  ]);
+  for (const z of zeilen) assert.ok(!/(Steuernummer|Inhaber|HR[AB]|Amtsgericht|Rechtsform)/.test(z) && !/\|\s*$|^\s*\|/.test(z) && !/:\s*(\||$)/.test(z), z);
+  const { daten } = bildeERechnung(T['01_ab_tour'].quelle, { firma: ohne });
+  const xml = erzeugeCii(daten, 'xrechnung');
+  assert.ok(!xml.includes('schemeID="FC"') && xml.includes('schemeID="VA">DE309356726'));
+  assert.equal(hatFehler(pruefeERechnung(daten, 'xrechnung')), false);
 });
 
 test('Fehlende USt-IdNr. des Empfängers → nur Hinweis', () => {

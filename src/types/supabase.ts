@@ -1879,8 +1879,9 @@ export type Database = {
           format: 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           typ_code: string;
           belegnummer: string;
-          xml_pfad: string;
+          xml_pfad: string | null;
           pdf_pfad: string;
+          protokoll: string | null;
           bucket_pfad: string;
           sha256_xml: string;
           sha256_pdf: string;
@@ -1891,6 +1892,28 @@ export type Database = {
           erzeugt_von_name: string | null;
         };
         Insert: { [k: string]: never };
+        Update: { [k: string]: never };
+        Relationships: [];
+      };
+      erechnung_exporte: {
+        Row: {
+          id: string;
+          dokument_id: string;
+          exportiert_am: string;
+          exportiert_von: string | null;
+          exportiert_von_name: string | null;
+          hash_ok: boolean;
+          hinweis: string | null;
+        };
+        Insert: {
+          id?: string;
+          dokument_id: string;
+          exportiert_am?: string;
+          exportiert_von?: string | null;
+          exportiert_von_name?: string | null;
+          hash_ok: boolean;
+          hinweis?: string | null;
+        };
         Update: { [k: string]: never };
         Relationships: [];
       };

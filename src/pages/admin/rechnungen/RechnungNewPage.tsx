@@ -936,7 +936,7 @@ export function RechnungNewPage() {
       if (eRechnung) {
         for (const rid of angelegt) {
           const res = await rechnungErstellen(rid);
-          if (res.art === 'erechnung') eHinweise.push(`E-Rechnung erzeugt und archiviert (${res.dokument.xml_pfad}).`);
+          if (res.art === 'erechnung') eHinweise.push(`E-Rechnung erzeugt und archiviert (${res.dokument.xml_pfad ?? res.dokument.pdf_pfad}).`);
           else if (res.art === 'blockiert') eHinweise.push(`Als Entwurf gespeichert — E-Rechnung nicht möglich: ${res.vorpruefung.abbruch ?? res.vorpruefung.maengel.filter((m) => m.schwere === 'fehler').map((m) => m.text).join('; ')}.`);
           else if (res.art === 'fehler') eHinweise.push(res.meldung);
         }

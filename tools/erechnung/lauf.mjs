@@ -27,6 +27,8 @@ async function buendeln(eintrag, ziel) {
     outfile: join(AUS, ziel),
     bundle: true, platform: 'node', format: 'esm', logLevel: 'warning',
     external: ['pdfjs-dist'],
+    // CommonJS-Abhängigkeiten (supabase-js) brauchen im ESM-Bündel ein require.
+    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
     define: { 'import.meta.env': JSON.stringify({ VITE_SUPABASE_URL: 'https://stub.supabase.co', VITE_SUPABASE_ANON_KEY: 'stub' }) },
   });
   return pathToFileURL(join(AUS, ziel)).href;
@@ -48,6 +50,10 @@ try {
 // ---------------------------------------------------------------- 1. Unit-Tests
 console.log('\n1) Unit-Tests');
 await import(await buendeln('unit.test.ts', 'unit.test.mjs'));
+
+// ---------------------------------------------------------------- 1b. Server-Tests (Archiv)
+console.log('\n1b) Server-Tests Archiv (OneDrive/Supabase simuliert)');
+await import(await buendeln('archiv.test.ts', 'archiv.test.mjs'));
 const unitOk = !process.exitCode;
 if (nurUnit) process.exit(process.exitCode ?? 0);
 

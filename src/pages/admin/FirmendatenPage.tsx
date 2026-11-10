@@ -23,9 +23,9 @@ const GRUPPEN: Array<{ titel: string; felder: Feld[] }> = [
     { key: 'name', label: 'Firmenname (wie im Handelsregister) *', breit: true },
     { key: 'kurzname', label: 'Kurzbezeichnung (Fußzeile)' },
     { key: 'inhaber', label: 'Inhaber' },
-    { key: 'rechtsform', label: 'Rechtsform', hinweis: 'z.B. Einzelunternehmen, e.K.' },
-    { key: 'registergericht', label: 'Registergericht', hinweis: 'z.B. Amtsgericht Walsrode' },
-    { key: 'registernummer', label: 'Registernummer', hinweis: 'z.B. HRA 12345' },
+    { key: 'rechtsform', label: 'Rechtsform (optional)', hinweis: 'Leer = erscheint nicht auf der Rechnung.' },
+    { key: 'registergericht', label: 'Registergericht (optional)', hinweis: 'Nur bei Eintragung im Handelsregister.' },
+    { key: 'registernummer', label: 'Registernummer (optional)', hinweis: 'Nur bei Eintragung im Handelsregister.' },
   ] },
   { titel: 'Anschrift', felder: [
     { key: 'strasse', label: 'Straße *', breit: true },
@@ -37,7 +37,7 @@ const GRUPPEN: Array<{ titel: string; felder: Feld[] }> = [
   ] },
   { titel: 'Steuer', felder: [
     { key: 'ustId', label: 'USt-IdNr.' },
-    { key: 'steuernummer', label: 'Steuernummer' },
+    { key: 'steuernummer', label: 'Steuernummer (optional)', hinweis: 'Optional, wenn die USt-IdNr. eingetragen ist.' },
   ] },
   { titel: 'Kontakt für Rechnungen (E-Rechnung)', felder: [
     { key: 'kontaktName', label: 'Name', hinweis: 'Pflicht bei XRechnung (BR-DE-5).' },
