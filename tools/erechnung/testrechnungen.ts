@@ -275,6 +275,21 @@ export function testrechnungen(): Testrechnung[] {
     ], { kaeufer_referenz: null, erechnung_email: null }),
   });
 
+  // 16) Lange Rechnung über mehrere Seiten (95 Touren)
+  {
+    const r = rechnung('r16', { rechnungsnummer: 'Re_26/9016' });
+    const viele = Array.from({ length: 95 }, (_, i) => pos('r16', i + 1, {
+      bezeichnung: `Überführung Bremen nach Zielort ${i + 1}`, unterzeilen: [`HB-XY ${1000 + i}`], menge: 1,
+      einzelpreis: 100 + i, gesamtpreis: 100 + i, tour_id: `t16-${i}`,
+      leistungsdatum: `2026-10-${String((i % 28) + 1).padStart(2, '0')}`,
+    }));
+    liste.push({
+      name: '16_lange_rechnung', profil: 'en16931', erwartung: 'gueltig',
+      beschreibung: 'Lange Rechnung mit 95 Positionen über mehrere Seiten',
+      quelle: { rechnung: r, auftraggeber: AG, positionen: viele },
+    });
+  }
+
   return liste;
 }
 

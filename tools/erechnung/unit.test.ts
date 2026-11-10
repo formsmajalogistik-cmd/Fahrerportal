@@ -16,6 +16,9 @@ import { gutschriftPdfInputAus, rechnungPdfInputAus } from '../../src/lib/erechn
 import { firmendatenZuJson, pruefeFirmendaten } from '../../src/lib/firmendaten';
 import { fusszeilen } from '../../src/pages/admin/rechnungen/rechnungPdf';
 import { baueCsv, baueZip, dateienVon, monatsGrenzen, sha256Hex, type ExportEintrag } from '../../src/lib/erechnung/export';
+import { srgbIccProfil, xmpPaket } from '../../src/lib/erechnung/zugferd';
+import { LIEFERDATUM_IM_KOPF } from '../../src/lib/erechnung/typen';
+import { erzeugeZugferdDateien } from './zugferd';
 
 type Fall = { name: string; fn: () => void | Promise<void> };
 const faelle: Fall[] = [];
@@ -101,13 +104,16 @@ test('ABA-Aufschlag steckt im Positionspreis (keine Zu-/Abschläge)', () => {
 });
 
 async function pdfText(input: Parameters<typeof generateRechnungPdf>[0]): Promise<string> {
+  (globalThis as { fetch?: unknown }).fetch = async () => ({ ok: false });
+  const blob = await generateRechnungPdf(input);
+  return pdfTextVon(new Uint8Array(await blob.arrayBuffer()));
+}
+async function pdfTextVon(bytes: Uint8Array): Promise<string> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { createRequire } = await import('node:module');
   const { dirname } = await import('node:path');
   const schriften = `${dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))}/standard_fonts/`;
-  (globalThis as { fetch?: unknown }).fetch = async () => ({ ok: false });
-  const blob = await generateRechnungPdf(input);
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: false, standardFontDataUrl: schriften }).promise;
+  const doc = await pdfjs.getDocument({ data: bytes.slice(), useSystemFonts: false, standardFontDataUrl: schriften }).promise;
   let text = '';
   for (let i = 1; i <= doc.numPages; i += 1) {
     const c = await (await doc.getPage(i)).getTextContent();
@@ -321,6 +327,67 @@ test('Land → ISO-Code', () => {
   assert.equal(landZuIso('Mars'), null);
   assert.equal(normLandCode(' de '), 'DE');
   assert.equal(normLandCode('Deutschland'), null);
+});
+
+// ---------------------------------------------------------------- ZUGFeRD
+test('sRGB-ICC-Profil: gültiger Kopf (v2.1, Monitor, RGB, D50), Größe stimmt', () => {
+  const icc = srgbIccProfil();
+  const v = new DataView(icc.buffer);
+  const t = (o: number) => new TextDecoder().decode(icc.subarray(o, o + 4));
+  assert.equal(v.getUint32(0), icc.length);
+  assert.deepEqual([v.getUint32(8), t(12), t(16), t(20), t(36)], [0x02100000, 'mntr', 'RGB ', 'XYZ ', 'acsp']);
+  assert.equal(v.getUint32(128), 9, 'neun Tags');
+  assert.ok(icc.length < 4000, `klein (${icc.length} Byte)`);
+});
+
+test('XMP: PDF/A-3b-Kennung, Factur-X-Erweiterung (EN 16931), Zeiten wie im Info-Eintrag', () => {
+  const x = xmpPaket({ titel: 'Rechnung Re_26/1 & <Test>', autor: 'Maja-Logistik M.Janßen', erstellt: new Date('2026-11-10T10:00:00Z') });
+  for (const t of ['<pdfaid:part>3</pdfaid:part>', '<pdfaid:conformance>B</pdfaid:conformance>', '<fx:DocumentType>INVOICE</fx:DocumentType>',
+    '<fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>', '<fx:Version>1.0</fx:Version>', '<fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>',
+    'urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#', '<xmp:CreateDate>2026-11-10T10:00:00Z</xmp:CreateDate>', '<xmp:ModifyDate>2026-11-10T10:00:00Z</xmp:ModifyDate>',
+    'Rechnung Re_26/1 &amp; &lt;Test&gt;']) assert.ok(x.includes(t), t);
+});
+
+test('ZUGFeRD-PDF: eingebettetes XML = erzeugtes XML, nur eingebettete Schrift, PDF/A-Bausteine vorhanden', async () => {
+  const { resolve } = await import('node:path');
+  const dateien = await erzeugeZugferdDateien(resolve(process.cwd()));
+  assert.equal(dateien.length, 9);
+  for (const d of dateien) {
+    assert.equal(d.eingebettet, d.xml, `${d.name}: XML unverändert eingebettet`);
+    const roh = new TextDecoder('latin1').decode(d.pdf);
+    assert.ok(!/\/BaseFont\s*\/Helvetica/.test(roh), `${d.name}: keine Standardschrift`);
+    assert.ok(/LiberationSans/.test(roh), `${d.name}: Liberation Sans eingebettet`);
+    for (const t of ['/OutputIntents', '/GTS_PDFA1', '/AFRelationship /Alternative', '/AF ', '/Type /Metadata', '/ID [']) assert.ok(roh.includes(t), `${d.name}: ${t}`);
+    assert.ok(roh.includes('<pdfaid:part>3</pdfaid:part>'), `${d.name}: XMP unkomprimiert lesbar`);
+    assert.ok(!/\/JavaScript|\/AcroForm|\/URI\b/.test(roh), `${d.name}: kein JavaScript/Formular/externer Verweis`);
+  }
+  const lang = dateien.find((d) => d.name === '16_lange_rechnung')!;
+  assert.ok(lang.seiten >= 5, `lange Rechnung mehrseitig (${lang.seiten})`);
+  assert.ok(lang.pdf.length < 3_000_000, 'weit unter der Upload-Grenze');
+  // Sichtbarer Inhalt: Umlaute, ß, €, Sonderzeichen; Leistungsdatum je Position; Hinweis auf das XML
+  const text = await pdfTextVon(dateien.find((d) => d.name === '05_sonderzeichen')!.pdf);
+  for (const t of ['Müller & Söhne <Logistik> "Nord" GmbH', 'Königsallee', 'Düsseldorf', '€', 'M.Janßen', 'Leistungsdatum = Tag des Tourabschlusses',
+    'E-Rechnung im Format ZUGFeRD', 'Steuernummer: 12/345/67890', 'fällig am:']) assert.ok(text.includes(t), t);
+});
+
+test('ZUGFeRD-PDF zeigt denselben Inhalt wie die Lesekopie (nur der Hinweis unterscheidet sich)', async () => {
+  const { resolve } = await import('node:path');
+  const q = T['12_mehrtaegige_tour'].quelle;
+  const { daten } = bildeERechnung(q, { firma: TEST_FIRMA });
+  const lesekopie = await pdfText(rechnungPdfInputAus({ rechnung: q.rechnung, positionen: q.positionen, auftraggeber: q.auftraggeber, firma: TEST_FIRMA, ausSnapshot: true, erechnung: daten }));
+  const zf = (await erzeugeZugferdDateien(resolve(process.cwd()), false)).find((d) => d.name === '12_mehrtaegige_tour')!;
+  const norm = (t: string) => t.replace(/\s+/g, ' ').replace('PDF-Lesekopie. Maßgeblich ist die E-Rechnung (XML nach EN 16931).', '#').replace('E-Rechnung im Format ZUGFeRD. Maßgeblich sind die eingebetteten XML-Daten (EN 16931).', '#').trim();
+  assert.equal(norm(await pdfTextVon(zf.pdf)), norm(lesekopie));
+});
+
+test('Lieferdatum im Kopf (BT-72): Standard aus; als Option ohne leeres Element', () => {
+  const { daten } = bild('12_mehrtaegige_tour');
+  assert.equal(LIEFERDATUM_IM_KOPF, 'nie');
+  assert.equal(daten.lieferdatum ?? null, null);
+  assert.ok(erzeugeCii(daten, 'en16931').includes('<ram:ApplicableHeaderTradeDelivery/>'));
+  const mit = erzeugeCii({ ...daten, lieferdatum: daten.leistungBis }, 'en16931');
+  assert.ok(/<ram:ApplicableHeaderTradeDelivery>\s*<ram:ActualDeliverySupplyChainEvent>\s*<ram:OccurrenceDateTime>\s*<udt:DateTimeString format="102">20261020</.test(mit));
+  assert.equal((mit.match(/ApplicableHeaderTradeDelivery>/g) ?? []).length, 2, 'Element genau einmal (auf/zu)');
 });
 
 // ---------------------------------------------------------------- Archiv-Export

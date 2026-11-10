@@ -3,8 +3,9 @@ import { berechneSummenProUst, type UstGroup } from '../../../lib/rechnungsforma
 import { sicheresPfadSegment } from '../../../lib/onedrivePaths';
 import { FIRMENDATEN, firmaPlzOrt, firmaRegister, type Firmendaten } from '../../../lib/firmendaten';
 import {
-  LEISTUNGSDATUM_HINWEIS, LEISTUNGSDATUM_HINWEIS_LESEKOPIE, LESEKOPIE_HINWEIS,
+  LEISTUNGSDATUM_HINWEIS, LEISTUNGSDATUM_HINWEIS_LESEKOPIE, LESEKOPIE_HINWEIS, ZUGFERD_HINWEIS_PDF,
 } from '../../../lib/erechnung/texte';
+import { macheZugferd, type ZugferdSchriften } from '../../../lib/erechnung/zugferd';
 
 // ============================================================
 // Maja-Logistik Rechnungs-PDF
@@ -123,6 +124,20 @@ export interface RechnungPdfInput {
     leistungBis: string | null;
     kontaktName: string | null;
     bezug?: string | null;
+  } | null;
+  /**
+   * ZUGFeRD/Factur-X: Das PDF wird als PDF/A-3b mit eingebetteter
+   * factur-x.xml erzeugt (eingebettete Schrift Liberation Sans statt
+   * Helvetica, sRGB-OutputIntent, XMP). Inhaltlich wie die Lesekopie —
+   * `lesekopie` muss gesetzt sein. Ohne diese Angabe: normales PDF.
+   */
+  zugferd?: {
+    xml: string;
+    schriften: ZugferdSchriften;
+    /** @pdf-lib/fontkit (dynamisch geladen, nur für ZUGFeRD nötig). */
+    fontkit: unknown;
+    /** Erstellzeitpunkt für Info/XMP (Standard: jetzt). */
+    erstellt?: Date;
   } | null;
   /** Data-URL der hinterlegten Absender-Unterschrift (Migration 092);
    *  null/undefined = wie bisher nur die Lücke über der Absenderzeile. */
@@ -583,7 +598,7 @@ function drawSummenBlock(ctx: PageCtx, groups: UstGroup[], summen: { netto: numb
   if (input.kundenUid) drawLeft(`Ihre UID: ${input.kundenUid}`);
   drawLeft(input.lesekopie ? LEISTUNGSDATUM_HINWEIS_LESEKOPIE : LEISTUNGSDATUM_HINWEIS);
   if (input.zahlungszielTage != null) drawLeft(`Zahlungsziel: ${input.zahlungszielTage} Tage`);
-  if (input.lesekopie) drawLeft(LESEKOPIE_HINWEIS);
+  if (input.lesekopie) drawLeft(input.zugferd ? ZUGFERD_HINWEIS_PDF : LESEKOPIE_HINWEIS);
 
   // Rechts: Summen — pro USt-Satz eine Zeile bei multi-VAT, sonst eine.
   let rightY = ctx.y;
@@ -726,8 +741,18 @@ export function newPage(
 
 export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob> {
   const doc = await PDFDocument.create();
-  const regular = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let regular: PDFFont;
+  let bold: PDFFont;
+  if (input.zugferd) {
+    // PDF/A verlangt eingebettete Schriften — Liberation Sans ist metrisch
+    // kompatibel zu Helvetica, das Layout bleibt gleich.
+    doc.registerFontkit(input.zugferd.fontkit as Parameters<PDFDocument['registerFontkit']>[0]);
+    regular = await doc.embedFont(input.zugferd.schriften.regular, { subset: true });
+    bold = await doc.embedFont(input.zugferd.schriften.bold, { subset: true });
+  } else {
+    regular = await doc.embedFont(StandardFonts.Helvetica);
+    bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  }
   const fonts: Fonts = { regular, bold };
 
   const logoBytes = await fetchLogoBytes();
@@ -796,6 +821,15 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
   drawSummenBlock(ctx, sum.groups, sum, input);
   await drawAbschluss(ctx, doc, input.schlusstext, absender);
 
+  if (input.zugferd) {
+    await macheZugferd(doc, input.zugferd.xml, {
+      titel: `${titel} ${input.rechnungsnummer}`,
+      autor: (input.absender ?? FIRMENDATEN).name,
+      erstellt: input.zugferd.erstellt ?? new Date(),
+    });
+    const zBytes = await doc.save({ useObjectStreams: false });
+    return new Blob([zBytes as unknown as ArrayBuffer], { type: 'application/pdf' });
+  }
   const bytes = await doc.save();
   return new Blob([bytes as unknown as ArrayBuffer], { type: 'application/pdf' });
 }

@@ -12,7 +12,7 @@ import { FIRMENDATEN, firmendatenAusJson, type Firmendaten } from '../firmendate
 import { supabase } from '../supabase';
 import type { Database } from '../../types/supabase';
 import {
-  TYP_CODE_KORREKTUR, TYP_CODE_RECHNUNG,
+  LIEFERDATUM_IM_KOPF, TYP_CODE_KORREKTUR, TYP_CODE_RECHNUNG,
   type ERechnungDaten, type ERechnungPartei, type ERechnungPosition,
 } from './typen';
 import { gleicheAdresszeile, landZuIso, normLandCode, trennePlzOrt } from './stammdaten';
@@ -210,6 +210,7 @@ export function bildeERechnung(q: ERechnungQuelle, opt: AbbildungOptionen = {}):
     zahlungszielTage: ziel,
     leistungVon: z.von,
     leistungBis: z.bis,
+    lieferdatum: LIEFERDATUM_IM_KOPF === 'letzter_leistungstag' ? z.bis : null,
     waehrung: 'EUR',
     kaeuferReferenz: referenz,
     notizen: [LEISTUNGSDATUM_HINWEIS_LESEKOPIE],
@@ -285,6 +286,7 @@ export function bildeERechnungGutschrift(q: GutschriftQuelle, opt: AbbildungOpti
     zahlungszielTage: null,
     leistungVon: z.von,
     leistungBis: z.bis,
+    lieferdatum: LIEFERDATUM_IM_KOPF === 'letzter_leistungstag' ? z.bis : null,
     waehrung: 'EUR',
     kaeuferReferenz: g.kaeufer_referenz ?? null,
     notizen: [LEISTUNGSDATUM_HINWEIS_LESEKOPIE, ...(g.einleitungstext ? [g.einleitungstext] : [])],

@@ -23,6 +23,17 @@ export const TYP_CODE_RECHNUNG = '380';
 export const TYP_CODE_KORREKTUR = '381';
 export type ERechnungTypCode = typeof TYP_CODE_RECHNUNG | typeof TYP_CODE_KORREKTUR;
 
+/**
+ * Lieferdatum im Rechnungskopf (BT-72, „Actual delivery date").
+ *   'nie'                  — Stand heute: nur Leistungszeitraum (BG-14) und
+ *                            Leistungsdatum je Position (BG-26).
+ *   'letzter_leistungstag' — zusätzlich BT-72 = letzter Leistungstag der
+ *                            Rechnung. Vermeidet die Warnung „leeres Element"
+ *                            (PEPPOL-EN16931-R008) im Factur-X-Schematron.
+ * Das ist eine zusätzliche steuerliche Angabe — erst nach Bestätigung umstellen.
+ */
+export const LIEFERDATUM_IM_KOPF: 'nie' | 'letzter_leistungstag' = 'nie';
+
 /** Geschäftsprozess (BT-23) — von XRechnung empfohlen. */
 export const PROZESS_KENNUNG = 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0';
 
@@ -83,6 +94,8 @@ export interface ERechnungDaten {
   zahlungszielTage: number | null;
   leistungVon: string | null;
   leistungBis: string | null;
+  /** Lieferdatum im Kopf (BT-72); null/undefined = nicht angeben. */
+  lieferdatum?: string | null;
   waehrung: 'EUR';
   kaeuferReferenz: string | null;
   notizen: string[];

@@ -24,6 +24,8 @@ interface Gemeinsam {
   /** Gesetzt = PDF-Lesekopie einer E-Rechnung. */
   erechnung?: ERechnungDaten | null;
   bilder?: { unterschrift: string | null; stempel: string | null };
+  /** ZUGFeRD: PDF/A-3 mit eingebettetem XML (setzt `erechnung` voraus). */
+  zugferd?: RechnungPdfInput['zugferd'];
 }
 
 function datumDe(iso: string | null | undefined): string {
@@ -99,6 +101,7 @@ export function rechnungPdfInputAus(args: Gemeinsam & {
     absender: args.firma,
     pflichtangaben: args.ausSnapshot || r.status === 'entwurf',
     lesekopie: lesekopie(e),
+    zugferd: e ? (args.zugferd ?? null) : null,
     absenderUnterschrift: args.bilder?.unterschrift ?? null,
     absenderStempel: args.bilder?.stempel ?? null,
   };
@@ -158,6 +161,7 @@ export function gutschriftPdfInputAus(args: Gemeinsam & {
     absender: args.firma,
     pflichtangaben: args.ausSnapshot || g.status === 'entwurf',
     lesekopie: lesekopie(e),
+    zugferd: e ? (args.zugferd ?? null) : null,
     absenderUnterschrift: args.bilder?.unterschrift ?? null,
     absenderStempel: args.bilder?.stempel ?? null,
   };

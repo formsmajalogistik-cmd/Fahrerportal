@@ -116,4 +116,56 @@ const md = [
 ];
 writeFileSync(join(AUS, 'bericht.md'), md.join('\n'), 'utf8');
 console.log(`\nValidator: ${zeilen.length - abweichungen}/${zeilen.length} wie erwartet — Bericht: tools/erechnung/.ausgabe/bericht.md`);
-process.exit(unitOk && abweichungen === 0 ? 0 : 1);
+
+// ---------------------------------------------------------------- 3. ZUGFeRD
+console.log('\n3) ZUGFeRD: PDF/A-3b (veraPDF), eingebettetes XML (KoSIT), ganze Datei (Mustang)');
+const veraJar = join(VAL, 'verapdf.jar'); const mustangJar = join(VAL, 'mustang.jar');
+if (!existsSync(veraJar) || !existsSync(mustangJar)) {
+  console.error('veraPDF/Mustang nicht eingerichtet — bitte: npm run erechnung:validator-einrichten');
+  process.exit(2);
+}
+const java = (args) => { try { return execFileSync('java', args, { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).toString(); } catch (e) { return String(e.stdout ?? ''); } };
+const { erzeugeZugferdDateien } = await import(await buendeln('zugferd.ts', 'zugferd.mjs'));
+const zf = await erzeugeZugferdDateien(join(HIER, '..', '..'));
+const zfDir = join(AUS, 'zugferd'); const zfXml = join(zfDir, 'xml'); const zfBer = join(zfDir, 'berichte');
+mkdirSync(zfXml, { recursive: true }); mkdirSync(zfBer, { recursive: true });
+for (const d of zf) {
+  writeFileSync(join(zfDir, `${d.name}.pdf`), d.pdf);
+  if (d.eingebettet != null) writeFileSync(join(zfXml, `${d.name}.xml`), d.eingebettet, 'utf8');
+}
+// veraPDF: alle Dateien in einem Lauf
+const veraAus = java(['-cp', veraJar, 'org.verapdf.apps.GreenfieldCliWrapper', '--flavour', '3b', '--format', 'text', ...zf.map((d) => join(zfDir, `${d.name}.pdf`))]);
+// KoSIT: die aus dem PDF gelesenen XML-Dateien
+java(['-jar', join(VAL, 'validator.jar'), '-s', szenarien, '-r', repo, '-o', zfBer, ...zf.filter((d) => d.eingebettet != null).map((d) => join(zfXml, `${d.name}.xml`))]);
+let zfFehler = 0;
+const zfZeilen = [];
+for (const d of zf) {
+  const pfad = join(zfDir, `${d.name}.pdf`);
+  const vera = new RegExp(`^PASS ${pfad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} 3b`, 'm').test(veraAus);
+  const rep = readdirSync(zfBer).find((f) => f.startsWith(`${d.name}-report`) && f.endsWith('.xml'));
+  const repXml = rep ? readFileSync(join(zfBer, rep), 'utf8') : '';
+  const kosit = /<rep:report[^>]*valid="true"/.test(repXml);
+  const kositMeld = [...repXml.matchAll(/<rep:message level="([^"]+)" id="([^"]*)"/g)].filter((m) => m[1] !== 'information').map((m) => `${m[1]}:${m[2]}`);
+  const mAus = java(['-jar', mustangJar, '--disable-file-logging', '--action', 'validate', '--source', pfad]);
+  const mustang = /<summary status="valid"\/>\s*<\/validation>/.test(mAus);
+  const mPdf = /<pdf>[\s\S]*?<summary status="valid"\/>[\s\S]*?<\/pdf>/.test(mAus);
+  const mWarn = [...new Set([...mAus.matchAll(/<(warning|error)[^>]*>[\s\S]*?\[ID ([^\]]+)\]/g)].map((m) => `${m[1]}:${m[2]}`))];
+  const identisch = d.eingebettet === d.xml;
+  const okAlles = vera && kosit && mustang && mPdf && identisch && kositMeld.length === 0;
+  if (!okAlles) zfFehler += 1;
+  zfZeilen.push({ d, vera, kosit, kositMeld, mustang, mWarn, identisch, kb: Math.round(d.pdf.length / 1024) });
+  console.log(`  ${okAlles ? 'ok  ' : 'FAIL'}  ${d.name.padEnd(26)} veraPDF ${vera ? 'bestanden' : 'FEHLER'} · KoSIT ${kosit ? 'bestanden' : 'FEHLER'} · Mustang ${mustang ? 'gültig' : 'UNGÜLTIG'}`
+    + `${mWarn.length ? ` (${mWarn.join(', ')})` : ''} · XML ${identisch ? 'identisch' : 'ABWEICHEND'} · ${d.seiten} S. · ${Math.round(d.pdf.length / 1024)} KB`);
+  for (const k of kositMeld) console.log(`          KoSIT ${k}`);
+}
+writeFileSync(join(AUS, 'bericht-zugferd.md'), [
+  '# ZUGFeRD — Validator-Bericht (Testrechnungen)', '',
+  `Erstellt: ${new Date().toISOString()}  `,
+  `veraPDF ${versionen.verapdf ?? '?'} (Profil PDF/A-3b) · KoSIT ${versionen.kosit ?? '?'} mit CEN ${versionen.cen ?? '?'} · Mustang ${versionen.mustang ?? '?'}`, '',
+  '| Testfall | Seiten | Größe | veraPDF PDF/A-3b | KoSIT (eingebettetes XML) | Mustang (ganze Datei) | Mustang-Meldungen | XML = erzeugtes XML |',
+  '|---|---|---|---|---|---|---|---|',
+  ...zfZeilen.map((z) => `| ${z.d.name} — ${z.d.beschreibung} | ${z.d.seiten} | ${z.kb} KB | ${z.vera ? 'bestanden' : '**FEHLER**'} | ${z.kosit ? 'bestanden' : '**FEHLER**'}${z.kositMeld.length ? ` (${z.kositMeld.join(', ')})` : ''} | ${z.mustang ? 'gültig' : '**UNGÜLTIG**'} | ${z.mWarn.join(', ') || '—'} | ${z.identisch ? 'ja' : '**NEIN**'} |`),
+  '',
+].join('\n'), 'utf8');
+console.log(`\nZUGFeRD: ${zf.length - zfFehler}/${zf.length} bestanden — Bericht: tools/erechnung/.ausgabe/bericht-zugferd.md`);
+process.exit(unitOk && abweichungen === 0 && zfFehler === 0 ? 0 : 1);

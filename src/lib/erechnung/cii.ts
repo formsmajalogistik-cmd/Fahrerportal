@@ -146,8 +146,12 @@ export function erzeugeCii(d: ERechnungDaten, profil: ERechnungProfil = 'xrechnu
     partei('ram:BuyerTradeParty', d.kaeufer, 'kaeufer'),
   );
 
-  // Pflicht-Element, auch wenn leer — el() würde es weglassen, daher direkt.
-  const lieferung: XmlElement = { name: 'ram:ApplicableHeaderTradeDelivery', kinder: [] };
+  // Pflicht-Element laut Schema, auch wenn leer — el() würde es weglassen,
+  // daher direkt. Inhalt nur, wenn ein Lieferdatum (BT-72) übergeben wird.
+  const lieferEreignis = d.lieferdatum
+    ? el('ram:ActualDeliverySupplyChainEvent', datum('ram:OccurrenceDateTime', d.lieferdatum))
+    : null;
+  const lieferung: XmlElement = { name: 'ram:ApplicableHeaderTradeDelivery', kinder: lieferEreignis ? [lieferEreignis] : [] };
 
   const zahlungsText = d.zahlungsText
     ?? (d.zahlungszielTage != null ? `Zahlungsziel: ${d.zahlungszielTage} Tage` : null);
@@ -195,9 +199,9 @@ export function erzeugeCii(d: ERechnungDaten, profil: ERechnungProfil = 'xrechnu
   );
 
   const transaktion = el('rsm:SupplyChainTradeTransaction',
-    positionen, vereinbarung, lieferung, abrechnung,
+    positionen, vereinbarung, abrechnung,
   );
-  // Leeres Liefer-Element nachträglich an seine Stelle setzen (el() lässt Leeres weg).
+  // Liefer-Element (ggf. leer) an seine feste Stelle setzen — el() ließe ein leeres weg.
   transaktion.kinder.splice(transaktion.kinder.indexOf(vereinbarung) + 1, 0, lieferung);
 
   return serialisiere(el('rsm:CrossIndustryInvoice', kontext, dokument, transaktion), NS);

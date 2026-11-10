@@ -8,6 +8,8 @@
 //   * CEN EN 16931 CII-Regeln (Schematron/XSLT)    — aus com.helger.phive.rules:phive-rules-en16931
 //   * KoSIT XRechnung 3.0.2 CII-Regeln (XSLT)      — aus com.helger.phive.rules:phive-rules-xrechnung
 //   * UN/CEFACT CII D16B XML-Schema               — aus com.helger.cii:ph-cii-d16b
+//   * veraPDF 1.28.2 (PDF/A-Prüfung)               — org.verapdf.apps:greenfield-apps
+//   * Mustang-CLI 2.26.0 (ZUGFeRD-Gegenprobe)      — org.mustangproject:Mustang-CLI (ca. 59 MB)
 // und baut daraus die Prüfkonfiguration (konfiguration/scenarios.xml).
 //
 // Es werden KEINE Rechnungsdaten übertragen — nur diese Programmdateien
@@ -40,6 +42,8 @@ export const VERSIONEN = {
   cen: '1.3.15',
   xrechnung: '3.0.2',
   cii: '10.1.0',
+  verapdf: '1.28.2',
+  mustang: '2.26.0',
 };
 
 const ARTEFAKTE = [
@@ -47,6 +51,9 @@ const ARTEFAKTE = [
   { datei: `phive-rules-en16931-${VERSIONEN.phive}.jar`, pfad: `com/helger/phive/rules/phive-rules-en16931/${VERSIONEN.phive}` },
   { datei: `phive-rules-xrechnung-${VERSIONEN.phive}.jar`, pfad: `com/helger/phive/rules/phive-rules-xrechnung/${VERSIONEN.phive}` },
   { datei: `ph-cii-d16b-${VERSIONEN.cii}.jar`, pfad: `com/helger/cii/ph-cii-d16b/${VERSIONEN.cii}` },
+  // ZUGFeRD: veraPDF (PDF/A-3b) und Mustang (Gegenprobe der ganzen Datei)
+  { datei: `greenfield-apps-${VERSIONEN.verapdf}.jar`, pfad: `org/verapdf/apps/greenfield-apps/${VERSIONEN.verapdf}` },
+  { datei: `Mustang-CLI-${VERSIONEN.mustang}.jar`, pfad: `org/mustangproject/Mustang-CLI/${VERSIONEN.mustang}` },
 ];
 
 function laden(url, ziel) {
@@ -128,7 +135,7 @@ function entpacken(jar, praefix, zielOrdner, umbenennen = (n) => n) {
 function main() {
   console.log('E-Rechnung: Validator einrichten');
   mkdirSync(DOWNLOAD, { recursive: true });
-  const [kosit, en, xr, cii] = ARTEFAKTE.map(holen);
+  const [kosit, en, xr, cii, vera, mustang] = ARTEFAKTE.map(holen);
 
   rmSync(REPO, { recursive: true, force: true });
   const res = join(REPO, 'resources');
@@ -139,12 +146,15 @@ function main() {
   copyFileSync(join(HIER, 'konfiguration', 'report.xsl'), join(res, 'report.xsl'));
   copyFileSync(join(HIER, 'konfiguration', 'scenarios.xml'), join(REPO, 'scenarios.xml'));
   copyFileSync(kosit, join(ZIEL, 'validator.jar'));
+  copyFileSync(vera, join(ZIEL, 'verapdf.jar'));
+  copyFileSync(mustang, join(ZIEL, 'mustang.jar'));
   for (const f of ['en16931/EN16931-CII-validation.xslt', 'xrechnung/XRechnung-CII-validation.xslt',
     'cii/d16b/data/standard/CrossIndustryInvoice_100pD16B.xsd']) {
     if (!existsSync(join(res, f))) throw new Error(`Fehlt nach dem Entpacken: ${f}`);
   }
   writeFileSync(join(ZIEL, 'versionen.json'), JSON.stringify({ ...VERSIONEN, eingerichtet: new Date().toISOString() }, null, 2));
   console.log(`  ✓ ${nXsd} Schema-Dateien, CEN ${VERSIONEN.cen}, XRechnung ${VERSIONEN.xrechnung}, KoSIT ${VERSIONEN.kosit}`);
+  console.log(`  ✓ veraPDF ${VERSIONEN.verapdf} (PDF/A-3b), Mustang ${VERSIONEN.mustang} (ZUGFeRD-Gegenprobe)`);
   console.log(`Fertig: ${ZIEL}`);
   if (existsSync(join(HIER, 'offiziell', 'scenarios.xml'))) {
     console.log('Hinweis: tools/erechnung/offiziell/scenarios.xml gefunden — die Prüfung verwendet die offizielle Konfiguration.');
