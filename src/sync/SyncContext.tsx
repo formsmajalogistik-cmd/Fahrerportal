@@ -42,6 +42,7 @@ import { ersetzePendingFoto } from '../lib/pendingFoto';
 import type {
   AusgefuelltesFormular, FormularTemplate, PhotoValue,
 } from '../types/db';
+import { meldeOffeneArbeit } from '../lib/neueVersion';
 
 /**
  * Pendings + Drainer für Foto-Uploads und Formular-Einreichungen.
@@ -108,6 +109,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [pendingSubmissions, setPendingSubmissions] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const runningRef = useRef(false);
+  // Beim Versionswechsel nicht automatisch neu laden, solange gerade
+  // hochgeladen/abgeglichen wird (die Warteschlange selbst liegt sicher
+  // in IndexedDB; das verhindert nur einen unnötigen Abbruch).
+  useEffect(() => meldeOffeneArbeit('Abgleich', () => runningRef.current), []);
 
   const refreshCounts = useCallback(async () => {
     try {

@@ -9,6 +9,7 @@ import { SyncProvider } from './sync/SyncContext';
 import { EingaengeProvider } from './sync/EingaengeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import App from './App';
+import { NeueVersionHinweis } from './components/NeueVersionHinweis';
 import './index.css';
 import { applyTheme, watchSystemTheme } from './lib/theme';
 
@@ -87,6 +88,7 @@ createRoot(document.getElementById('root')!).render(
               <SyncProvider>
                 <EingaengeProvider>
                   <App />
+                  <NeueVersionHinweis />
                 </EingaengeProvider>
               </SyncProvider>
             </FahrerProvider>

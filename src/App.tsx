@@ -14,43 +14,50 @@ import { FormularPage } from './pages/FormularPage';
 import { ProfilPage } from './pages/ProfilPage';
 import { KontoAuswahlPage } from './pages/KontoAuswahlPage';
 import { MeineUnterkontenPage } from './pages/MeineUnterkontenPage';
-import { FahrerListPage } from './pages/admin/FahrerListPage';
-import { AuftraggeberListPage } from './pages/admin/AuftraggeberListPage';
-import { PreislistePage } from './pages/admin/PreislistePage';
-import { EinstellungenPage } from './pages/admin/EinstellungenPage';
-import { TemplatesListPage } from './pages/admin/TemplatesListPage';
-import { TemplateEditorPage } from './pages/admin/TemplateEditorPage';
 import { EingaengePage } from './pages/admin/EingaengePage';
-import { PosteingangPage } from './pages/admin/PosteingangPage';
-import { PostfaecherSettingsPage } from './pages/admin/PostfaecherSettingsPage';
-import { FeldVorschlaegePage } from './pages/admin/FeldVorschlaegePage';
-import { DiagnoseLogPage } from './pages/admin/DiagnoseLogPage';
-import { ManuelleEmpfaengerPage } from './pages/admin/ManuelleEmpfaengerPage';
-import { ERechnungTestPage } from './pages/admin/ERechnungTestPage';
-import { FirmendatenPage } from './pages/admin/FirmendatenPage';
-import { ERechnungExportPage } from './pages/admin/ERechnungExportPage';
-import { BriefeListPage } from './pages/admin/briefe/BriefeListPage';
-import { BriefDetailPage } from './pages/admin/briefe/BriefDetailPage';
-import { TankkartenPage } from './pages/admin/briefe/TankkartenPage';
-import { BriefVorlagenPage } from './pages/admin/BriefVorlagenPage';
 import { FahrerBriefePage } from './pages/FahrerBriefePage';
-import { GutschriftSettingsPage } from './pages/admin/GutschriftSettingsPage';
-import { AuftragsEmailSettingsPage } from './pages/admin/AuftragsEmailSettingsPage';
-import { GutschriftenListPage } from './pages/admin/gutschriften/GutschriftenListPage';
-import { GutschriftNewPage } from './pages/admin/gutschriften/GutschriftNewPage';
-import { GutschriftDetailPage } from './pages/admin/gutschriften/GutschriftDetailPage';
-import { BelegePage } from './pages/admin/BelegePage';
-import { AufstellungPage } from './pages/admin/AufstellungPage';
-import { RechnungenListPage } from './pages/admin/rechnungen/RechnungenListPage';
-import { RechnungNewPage } from './pages/admin/rechnungen/RechnungNewPage';
-import { RechnungDetailPage } from './pages/admin/rechnungen/RechnungDetailPage';
 import { TourenlistePage } from './pages/TourenlistePage';
 import { GreimelZugaengePage } from './pages/GreimelZugaengePage';
-import { RecoveryPage } from './pages/admin/RecoveryPage';
-import { FuehrerscheinPage } from './pages/admin/FuehrerscheinPage';
 import { AuftraggeberShell } from './components/AuftraggeberShell';
-import { AuftraggeberTourenPage } from './pages/auftraggeber/AuftraggeberTourenPage';
-import { AuftraggeberFormularePage } from './pages/auftraggeber/AuftraggeberFormularePage';
+import { SeitenRahmen } from './components/SeitenRahmen';
+import { lazySeite } from './lib/lazySeite';
+
+// Admin- und Auftraggeber-Seiten werden erst bei Bedarf geladen: Fahrer
+// laden sie (und ihre großen Bibliotheken) beim Öffnen der App nicht mit.
+// Fahrer- und gemeinsam genutzte Seiten (Tourenliste, Formular, Entwürfe,
+// Eingänge …) bleiben im Haupt-Bundle — das Formular muss offline gehen.
+const FahrerListPage = lazySeite(() => import('./pages/admin/FahrerListPage'), 'FahrerListPage');
+const AuftraggeberListPage = lazySeite(() => import('./pages/admin/AuftraggeberListPage'), 'AuftraggeberListPage');
+const PreislistePage = lazySeite(() => import('./pages/admin/PreislistePage'), 'PreislistePage');
+const EinstellungenPage = lazySeite(() => import('./pages/admin/EinstellungenPage'), 'EinstellungenPage');
+const TemplatesListPage = lazySeite(() => import('./pages/admin/TemplatesListPage'), 'TemplatesListPage');
+const TemplateEditorPage = lazySeite(() => import('./pages/admin/TemplateEditorPage'), 'TemplateEditorPage');
+const PosteingangPage = lazySeite(() => import('./pages/admin/PosteingangPage'), 'PosteingangPage');
+const PostfaecherSettingsPage = lazySeite(() => import('./pages/admin/PostfaecherSettingsPage'), 'PostfaecherSettingsPage');
+const FeldVorschlaegePage = lazySeite(() => import('./pages/admin/FeldVorschlaegePage'), 'FeldVorschlaegePage');
+const DiagnoseLogPage = lazySeite(() => import('./pages/admin/DiagnoseLogPage'), 'DiagnoseLogPage');
+const ManuelleEmpfaengerPage = lazySeite(() => import('./pages/admin/ManuelleEmpfaengerPage'), 'ManuelleEmpfaengerPage');
+const ERechnungTestPage = lazySeite(() => import('./pages/admin/ERechnungTestPage'), 'ERechnungTestPage');
+const FirmendatenPage = lazySeite(() => import('./pages/admin/FirmendatenPage'), 'FirmendatenPage');
+const ERechnungExportPage = lazySeite(() => import('./pages/admin/ERechnungExportPage'), 'ERechnungExportPage');
+const BriefeListPage = lazySeite(() => import('./pages/admin/briefe/BriefeListPage'), 'BriefeListPage');
+const BriefDetailPage = lazySeite(() => import('./pages/admin/briefe/BriefDetailPage'), 'BriefDetailPage');
+const TankkartenPage = lazySeite(() => import('./pages/admin/briefe/TankkartenPage'), 'TankkartenPage');
+const BriefVorlagenPage = lazySeite(() => import('./pages/admin/BriefVorlagenPage'), 'BriefVorlagenPage');
+const GutschriftSettingsPage = lazySeite(() => import('./pages/admin/GutschriftSettingsPage'), 'GutschriftSettingsPage');
+const AuftragsEmailSettingsPage = lazySeite(() => import('./pages/admin/AuftragsEmailSettingsPage'), 'AuftragsEmailSettingsPage');
+const GutschriftenListPage = lazySeite(() => import('./pages/admin/gutschriften/GutschriftenListPage'), 'GutschriftenListPage');
+const GutschriftNewPage = lazySeite(() => import('./pages/admin/gutschriften/GutschriftNewPage'), 'GutschriftNewPage');
+const GutschriftDetailPage = lazySeite(() => import('./pages/admin/gutschriften/GutschriftDetailPage'), 'GutschriftDetailPage');
+const BelegePage = lazySeite(() => import('./pages/admin/BelegePage'), 'BelegePage');
+const AufstellungPage = lazySeite(() => import('./pages/admin/AufstellungPage'), 'AufstellungPage');
+const RechnungenListPage = lazySeite(() => import('./pages/admin/rechnungen/RechnungenListPage'), 'RechnungenListPage');
+const RechnungNewPage = lazySeite(() => import('./pages/admin/rechnungen/RechnungNewPage'), 'RechnungNewPage');
+const RechnungDetailPage = lazySeite(() => import('./pages/admin/rechnungen/RechnungDetailPage'), 'RechnungDetailPage');
+const RecoveryPage = lazySeite(() => import('./pages/admin/RecoveryPage'), 'RecoveryPage');
+const FuehrerscheinPage = lazySeite(() => import('./pages/admin/FuehrerscheinPage'), 'FuehrerscheinPage');
+const AuftraggeberTourenPage = lazySeite(() => import('./pages/auftraggeber/AuftraggeberTourenPage'), 'AuftraggeberTourenPage');
+const AuftraggeberFormularePage = lazySeite(() => import('./pages/auftraggeber/AuftraggeberFormularePage'), 'AuftraggeberFormularePage');
 
 export default function App() {
   const { status, profile, profileLoading, profileError, refreshProfile, signOut } = useAuth();
@@ -67,12 +74,14 @@ export default function App() {
 
   if (status === 'unauthenticated') {
     return (
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/passwort-reset" element={<PasswordResetPage />} />
-        <Route path="/passwort-neu" element={<PasswordNewPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <SeitenRahmen>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/passwort-reset" element={<PasswordResetPage />} />
+          <Route path="/passwort-neu" element={<PasswordNewPage />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </SeitenRahmen>
     );
   }
 
@@ -117,13 +126,15 @@ export default function App() {
   if (profile?.role === 'test' && effectiveRole === 'auftraggeber') {
     return (
       <AuftraggeberShell>
-        <Routes>
-          <Route path="/" element={<Navigate to="/touren" replace />} />
-          <Route path="/touren" element={<AuftraggeberTourenPage />} />
-          <Route path="/formulare" element={<AuftraggeberFormularePage />} />
-          <Route path="/profil" element={<ProfilPage />} />
-          <Route path="*" element={<Navigate to="/touren" replace />} />
-        </Routes>
+        <SeitenRahmen>
+          <Routes>
+            <Route path="/" element={<Navigate to="/touren" replace />} />
+            <Route path="/touren" element={<AuftraggeberTourenPage />} />
+            <Route path="/formulare" element={<AuftraggeberFormularePage />} />
+            <Route path="/profil" element={<ProfilPage />} />
+            <Route path="*" element={<Navigate to="/touren" replace />} />
+          </Routes>
+        </SeitenRahmen>
       </AuftraggeberShell>
     );
   }
@@ -136,14 +147,16 @@ export default function App() {
   if (profile?.role === 'auftraggeber') {
     return (
       <AuftraggeberShell>
-        <Routes>
-          <Route path="/" element={<Navigate to="/touren" replace />} />
-          <Route path="/touren" element={<AuftraggeberTourenPage />} />
-          <Route path="/formulare" element={<AuftraggeberFormularePage />} />
-          <Route path="/profil" element={<ProfilPage />} />
-          <Route path="/passwort-neu" element={<PasswordNewPage />} />
-          <Route path="*" element={<Navigate to="/touren" replace />} />
-        </Routes>
+        <SeitenRahmen>
+          <Routes>
+            <Route path="/" element={<Navigate to="/touren" replace />} />
+            <Route path="/touren" element={<AuftraggeberTourenPage />} />
+            <Route path="/formulare" element={<AuftraggeberFormularePage />} />
+            <Route path="/profil" element={<ProfilPage />} />
+            <Route path="/passwort-neu" element={<PasswordNewPage />} />
+            <Route path="*" element={<Navigate to="/touren" replace />} />
+          </Routes>
+        </SeitenRahmen>
       </AuftraggeberShell>
     );
   }
@@ -151,59 +164,61 @@ export default function App() {
   if (profile?.role === 'admin') {
     return (
       <AdminShell>
-        <Routes>
-          {/* Default-Reiter nach Login = Tourenliste */}
-          <Route path="/" element={<Navigate to="/touren" replace />} />
-          <Route path="/touren" element={<TourenlistePage />} />
-          <Route path="/meine-formulare" element={<FahrerDashboard />} />
-          {/* Alias auf /meine-formulare — alte Bookmark-URLs umleiten. */}
-          <Route path="/meine-drafts" element={<Navigate to="/meine-formulare" replace />} />
-          <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
-          <Route path="/eingaenge" element={<EingaengePage />} />
-          <Route path="/posteingang" element={<PosteingangPage />} />
-          <Route path="/belege" element={<BelegePage />} />
-          <Route path="/aufstellung" element={<AufstellungPage />} />
-          <Route path="/rechnungen" element={<RechnungenListPage />} />
-          <Route path="/rechnungen/neu" element={<RechnungNewPage />} />
-          <Route path="/rechnungen/:id" element={<RechnungDetailPage />} />
-          <Route path="/gutschriften" element={<GutschriftenListPage />} />
-          <Route path="/gutschriften/neu" element={<GutschriftNewPage />} />
-          <Route path="/gutschriften/:id" element={<GutschriftDetailPage />} />
-          <Route path="/briefe" element={<BriefeListPage />} />
-          <Route path="/briefe/neu" element={<BriefDetailPage />} />
-          <Route path="/briefe/:id" element={<BriefDetailPage />} />
-          <Route path="/tankkarten" element={<TankkartenPage />} />
-          <Route path="/templates" element={<TemplatesListPage />} />
-          <Route path="/templates/:id" element={<TemplateEditorPage />} />
-          <Route path="/einstellungen" element={<EinstellungenPage />}>
-            <Route index element={<Navigate to="auftraggeber" replace />} />
-            <Route path="auftraggeber" element={<AuftraggeberListPage />} />
-            <Route path="preislisten" element={<PreislistePage />} />
-            <Route path="fahrer" element={<FahrerListPage />} />
-            <Route path="postfaecher" element={<PostfaecherSettingsPage />} />
-            <Route path="vorschlaege" element={<FeldVorschlaegePage />} />
-            <Route path="gutschriften" element={<GutschriftSettingsPage />} />
-            <Route path="manuelle-empfaenger" element={<ManuelleEmpfaengerPage />} />
-            <Route path="brief-vorlagen" element={<BriefVorlagenPage />} />
-            <Route path="auftrags-email" element={<AuftragsEmailSettingsPage />} />
-            <Route path="firmendaten" element={<FirmendatenPage />} />
-            <Route path="erechnung-export" element={<ERechnungExportPage />} />
-            <Route path="erechnung-test" element={<ERechnungTestPage />} />
-            <Route path="diagnose" element={<DiagnoseLogPage />} />
-          </Route>
-          {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
-          <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />
-          <Route path="/auftraggeber" element={<Navigate to="/einstellungen/auftraggeber" replace />} />
-          <Route path="/preisliste" element={<Navigate to="/einstellungen/preislisten" replace />} />
-          <Route path="/zuweisungen" element={<Navigate to="/templates" replace />} />
-          <Route path="/formular/:id" element={<FormularPage />} />
-          <Route path="/profil" element={<ProfilPage />} />
-          <Route path="/recovery" element={<RecoveryPage />} />
-          <Route path="/fuehrerschein" element={<FuehrerscheinPage />} />
-          <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
-          <Route path="/passwort-neu" element={<PasswordNewPage />} />
-          <Route path="*" element={<Navigate to="/touren" replace />} />
-        </Routes>
+        <SeitenRahmen>
+          <Routes>
+            {/* Default-Reiter nach Login = Tourenliste */}
+            <Route path="/" element={<Navigate to="/touren" replace />} />
+            <Route path="/touren" element={<TourenlistePage />} />
+            <Route path="/meine-formulare" element={<FahrerDashboard />} />
+            {/* Alias auf /meine-formulare — alte Bookmark-URLs umleiten. */}
+            <Route path="/meine-drafts" element={<Navigate to="/meine-formulare" replace />} />
+            <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
+            <Route path="/eingaenge" element={<EingaengePage />} />
+            <Route path="/posteingang" element={<PosteingangPage />} />
+            <Route path="/belege" element={<BelegePage />} />
+            <Route path="/aufstellung" element={<AufstellungPage />} />
+            <Route path="/rechnungen" element={<RechnungenListPage />} />
+            <Route path="/rechnungen/neu" element={<RechnungNewPage />} />
+            <Route path="/rechnungen/:id" element={<RechnungDetailPage />} />
+            <Route path="/gutschriften" element={<GutschriftenListPage />} />
+            <Route path="/gutschriften/neu" element={<GutschriftNewPage />} />
+            <Route path="/gutschriften/:id" element={<GutschriftDetailPage />} />
+            <Route path="/briefe" element={<BriefeListPage />} />
+            <Route path="/briefe/neu" element={<BriefDetailPage />} />
+            <Route path="/briefe/:id" element={<BriefDetailPage />} />
+            <Route path="/tankkarten" element={<TankkartenPage />} />
+            <Route path="/templates" element={<TemplatesListPage />} />
+            <Route path="/templates/:id" element={<TemplateEditorPage />} />
+            <Route path="/einstellungen" element={<EinstellungenPage />}>
+              <Route index element={<Navigate to="auftraggeber" replace />} />
+              <Route path="auftraggeber" element={<AuftraggeberListPage />} />
+              <Route path="preislisten" element={<PreislistePage />} />
+              <Route path="fahrer" element={<FahrerListPage />} />
+              <Route path="postfaecher" element={<PostfaecherSettingsPage />} />
+              <Route path="vorschlaege" element={<FeldVorschlaegePage />} />
+              <Route path="gutschriften" element={<GutschriftSettingsPage />} />
+              <Route path="manuelle-empfaenger" element={<ManuelleEmpfaengerPage />} />
+              <Route path="brief-vorlagen" element={<BriefVorlagenPage />} />
+              <Route path="auftrags-email" element={<AuftragsEmailSettingsPage />} />
+              <Route path="firmendaten" element={<FirmendatenPage />} />
+              <Route path="erechnung-export" element={<ERechnungExportPage />} />
+              <Route path="erechnung-test" element={<ERechnungTestPage />} />
+              <Route path="diagnose" element={<DiagnoseLogPage />} />
+            </Route>
+            {/* Legacy-URL-Aliasse — alte Bookmarks weiterleiten. */}
+            <Route path="/fahrer" element={<Navigate to="/einstellungen/fahrer" replace />} />
+            <Route path="/auftraggeber" element={<Navigate to="/einstellungen/auftraggeber" replace />} />
+            <Route path="/preisliste" element={<Navigate to="/einstellungen/preislisten" replace />} />
+            <Route path="/zuweisungen" element={<Navigate to="/templates" replace />} />
+            <Route path="/formular/:id" element={<FormularPage />} />
+            <Route path="/profil" element={<ProfilPage />} />
+            <Route path="/recovery" element={<RecoveryPage />} />
+            <Route path="/fuehrerschein" element={<FuehrerscheinPage />} />
+            <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
+            <Route path="/passwort-neu" element={<PasswordNewPage />} />
+            <Route path="*" element={<Navigate to="/touren" replace />} />
+          </Routes>
+        </SeitenRahmen>
       </AdminShell>
     );
   }
@@ -211,21 +226,23 @@ export default function App() {
   if (profile.role === 'fahrer' || (profile.role === 'test' && effectiveRole === 'fahrer')) {
     return (
       <AppShell>
-        <Routes>
-          {/* Default-Reiter nach Login = Tourenliste */}
-          <Route path="/" element={<Navigate to="/touren" replace />} />
-          <Route path="/touren" element={<TourenlistePage />} />
-          <Route path="/meine-formulare" element={<FahrerDashboard />} />
-          <Route path="/offen" element={<Navigate to="/meine-formulare" replace />} />
-          <Route path="/briefe" element={<FahrerBriefePage />} />
-          <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
-          <Route path="/eingaenge" element={<EingaengePage />} />
-          <Route path="/formular/:id" element={<FormularPage />} />
-          <Route path="/profil" element={<ProfilPage />} />
-          <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
-          <Route path="/passwort-neu" element={<PasswordNewPage />} />
-          <Route path="*" element={<Navigate to="/touren" replace />} />
-        </Routes>
+        <SeitenRahmen>
+          <Routes>
+            {/* Default-Reiter nach Login = Tourenliste */}
+            <Route path="/" element={<Navigate to="/touren" replace />} />
+            <Route path="/touren" element={<TourenlistePage />} />
+            <Route path="/meine-formulare" element={<FahrerDashboard />} />
+            <Route path="/offen" element={<Navigate to="/meine-formulare" replace />} />
+            <Route path="/briefe" element={<FahrerBriefePage />} />
+            <Route path="/greimel-zugaenge" element={<GreimelZugaengePage />} />
+            <Route path="/eingaenge" element={<EingaengePage />} />
+            <Route path="/formular/:id" element={<FormularPage />} />
+            <Route path="/profil" element={<ProfilPage />} />
+            <Route path="/meine-unterkonten" element={<MeineUnterkontenPage />} />
+            <Route path="/passwort-neu" element={<PasswordNewPage />} />
+            <Route path="*" element={<Navigate to="/touren" replace />} />
+          </Routes>
+        </SeitenRahmen>
       </AppShell>
     );
   }

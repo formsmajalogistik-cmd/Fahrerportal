@@ -36,6 +36,7 @@ import {
 import { diagnose } from './diagnose';
 import type { AusgefuelltesFormular, FormularTemplate, TemplatePdf } from '../types/db';
 import type { Json } from '../types/supabase';
+import { meldeOffeneArbeit } from './neueVersion';
 
 /** Kennung dieses Tabs — wer einen Auftrag gerade bearbeitet. */
 export const TAB_ID: string = (() => {
@@ -66,6 +67,8 @@ export function automatischFortsetzen(formularId: string): boolean {
 
 // Schließen/Neuladen warnen, solange in diesem Tab erzeugt wird.
 if (typeof window !== 'undefined') {
+  // Beim Versionswechsel nicht automatisch neu laden, solange erzeugt wird.
+  meldeOffeneArbeit('PDF-Erzeugung', () => laufend.size > 0);
   window.addEventListener('beforeunload', (e) => {
     if (laufend.size === 0) return;
     e.preventDefault();

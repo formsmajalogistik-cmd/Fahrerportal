@@ -4,7 +4,7 @@
 // auch das nachträgliche Ergänzen von Belegen zu einem Eingang jede
 // PDF-Seite als eigenen Beleg übernimmt.
 
-import { pdfjsLib } from './pdfjs';
+import { ladePdfjs } from './pdfjs';
 
 /** Render-Auflösung. 150 dpi ist der Kompromiss aus Lesbarkeit und Größe. */
 export const PDF_RENDER_DPI = 150;
@@ -22,7 +22,7 @@ export async function pdfToJpegPages(
   onProgress?: (current: number, total: number) => void,
 ): Promise<File[]> {
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await (await ladePdfjs()).getDocument({ data: arrayBuffer }).promise;
   const total = pdf.numPages;
   const out: File[] = [];
   const baseName = file.name.replace(/\.pdf$/i, '') || 'pdf';

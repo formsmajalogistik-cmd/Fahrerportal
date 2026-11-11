@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
-import { pdfjsLib } from '../../lib/pdfjs';
+import { ladePdfjs } from '../../lib/pdfjs';
 import {
   baseFieldId,
   computeDynamicSlots,
@@ -46,7 +46,7 @@ export function PdfMappingCanvas({
     setRendering(true);
 
     async function render() {
-      const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+      const pdf = await (await ladePdfjs()).getDocument({ data: pdfBytes.slice(0) }).promise;
       if (cancelled) return;
       onPageCount(pdf.numPages);
       const pageNum = Math.max(1, Math.min(page, pdf.numPages));

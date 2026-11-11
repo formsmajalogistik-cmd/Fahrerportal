@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getFormDraft, saveFormDraft } from './offlineDb';
 import { entwurfKennzahlen, entwurfZumServer, entwurfZumServerBeimVerlassen, type EntwurfVorgang } from './entwurfSync';
 import { diagnose } from './diagnose';
+import { meldeOffeneArbeit } from './neueVersion';
 
 export type SpeicherStatus =
   | { art: 'unbekannt' }
@@ -64,6 +65,9 @@ export function useEntwurfSync(args: {
     dataRef.current = data; dirtyRef.current = dirty; aktivRef.current = aktiv;
     onGespeichertRef.current = onGespeichert;
   }, [data, dirty, aktiv, onGespeichert]);
+  // Beim Versionswechsel nicht automatisch neu laden, solange dieses
+  // Formular ungespeicherte Änderungen hat oder gerade speichert.
+  useEffect(() => meldeOffeneArbeit(`Formular ${formularId ?? 'neu'}`, () => dirtyRef.current || laeuftRef.current), [formularId]);
 
   const lokalSichern = useCallback(async (serverOffen: boolean) => {
     if (!formularId) return;

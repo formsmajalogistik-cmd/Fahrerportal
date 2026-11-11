@@ -9,7 +9,7 @@ import { ZUSATZ_KATEGORIEN_ERFASSUNG as ZUSATZ_KATEGORIEN } from '../../lib/zusa
 import { KEINE_AUSLAGEN, istKeineAuslagen, ladeZusatzArten, standardZusatzArten, type ZusatzArten } from '../../lib/zusatzArten';
 import { konfliktBeimHinzufuegen, ungeklaerteSlots } from '../../lib/auslagenStatus';
 import { addBelege } from '../../lib/belegeStorage';
-import { pdfjsLib } from '../../lib/pdfjs';
+import { ladePdfjs } from '../../lib/pdfjs';
 import { compressImage } from '../../lib/photo';
 import {
   fetchAttachmentBlob, type MailDetail,
@@ -629,7 +629,7 @@ async function pdfBlobToPages(
   blob: Blob, baseName: string,
 ): Promise<Array<{ file: File }>> {
   const buf = await blob.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pdf = await (await ladePdfjs()).getDocument({ data: buf }).promise;
   const out: Array<{ file: File }> = [];
   const scale = 150 / 72; // 150 DPI — wie BelegeUploadTab
   const cleanName = baseName.replace(/\.pdf$/i, '') || 'pdf';

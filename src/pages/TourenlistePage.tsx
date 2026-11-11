@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   POS_SELECT, auslagenStatus, keineAuslagenFuerUngeklaerte, ladeAgFormate, ladeLetzteAuslagenRechnungen,
@@ -16,8 +16,6 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useTestGuard, useTestMode } from '../auth/TestModeContext';
 import { TourCreateDialog } from './touren/TourCreateDialog';
 import { TourDetailDialog } from './touren/TourDetailDialog';
-import { TourImportDialog } from './touren/TourImportDialog';
-import { exportTourenExcel } from '../lib/tourenExport';
 import { effektivesDatumFilter, inStuecken, ladeInBloecken } from '../lib/ladeInBloecken';
 import { sendEmail } from '../lib/onedrive';
 import { loadMailboxes } from '../lib/mailboxSettings';
@@ -42,6 +40,11 @@ import {
 import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
 } from '../types/db';
+import { mitVersionsschutz } from '../lib/neueVersion';
+
+// Excel-Import/-Export (Bibliothek xlsx) nur für Admins — erst bei Bedarf laden.
+const TourImportDialog = lazy(() => mitVersionsschutz(() => import('./touren/TourImportDialog'))
+  .then((m) => ({ default: m.TourImportDialog })));
 
 type FahrerWithUser = Pick<Fahrer, 'id' | 'user_id' | 'aktiv' | 'vorname' | 'nachname'> & {
   user: Pick<AppUser, 'email' | 'vorname' | 'nachname'> | null;
@@ -954,6 +957,7 @@ export function TourenlistePage() {
     setExporting(true);
     setError(null);
     try {
+      const { exportTourenExcel } = await mitVersionsschutz(() => import('../lib/tourenExport'));
       const n = await exportTourenExcel({
         dateFrom, dateTo,
         auftraggeberId: auftraggeberFilter || null,
@@ -1575,10 +1579,12 @@ export function TourenlistePage() {
       )}
 
       {showImport && isAdmin && (
-        <TourImportDialog
-          onClose={() => setShowImport(false)}
-          onImported={() => { void load(); }}
-        />
+        <Suspense fallback={null}>
+          <TourImportDialog
+            onClose={() => setShowImport(false)}
+            onImported={() => { void load(); }}
+          />
+        </Suspense>
       )}
 
       {leerfahrtFrage && (

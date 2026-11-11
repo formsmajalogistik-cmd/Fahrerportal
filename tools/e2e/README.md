@@ -36,6 +36,19 @@ npm run erechnung:pruefe-zugferd -- tools/e2e/.ausgabe/erechnung-zugferd_light/x
 Scheitert ein Lauf, wird er **einmal** wiederholt (kalter Start der App); das
 steht dann ausdrücklich in der Ausgabe („erst im 2. Versuch").
 
+## Produktions-Build
+
+```
+npm run test:e2e:prod
+```
+
+Baut die App zweimal (Version A und B, wie vor und nach einem Deploy) und
+prüft im echten Build: alle Seiten je Rolle (Admin, Fahrer, Auftraggeber,
+Test-Account), dass Fahrer keine Admin-Programmteile laden, den
+Versionswechsel (fehlender Programmteil → einmal neu laden bzw. Hinweis,
+Schutz gegen Endlosschleife), den Service-Worker-Cache und das
+Fahrer-Formular offline mit Abgleich nach dem Wiederverbinden.
+
 Die Datenbank-Trigger selbst (Sperren, Snapshot, Nummernvergabe) prüfen die
 Tests in `tools/db/` gegen einen lokalen PostgreSQL — die Browsertests bilden
 sie nur so weit nach, wie die Oberfläche sie braucht.

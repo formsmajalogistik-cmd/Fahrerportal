@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { pdfjsLib } from '../lib/pdfjs';
+import { ladePdfjs } from '../lib/pdfjs';
 
 /**
  * Rendert eine PDF (Blob-URL) mit pdf.js Seite für Seite als Canvas —
@@ -21,7 +21,7 @@ export function PdfCanvasPages({ blobUrl }: { blobUrl: string }) {
         // synchrones setState im Effect-Body läuft (React-Linter).
         setState('loading');
         const buf = await fetch(blobUrl).then((r) => r.arrayBuffer());
-        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        const pdf = await (await ladePdfjs()).getDocument({ data: buf }).promise;
         destroy = () => { void pdf.destroy().catch(() => { /* ignore */ }); };
         if (cancelled) return;
         const container = pagesRef.current;

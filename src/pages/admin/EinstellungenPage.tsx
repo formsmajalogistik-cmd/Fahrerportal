@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { SeitenRahmen } from '../../components/SeitenRahmen';
 
 interface SubNavItem { to: string; label: string }
 
@@ -51,7 +52,7 @@ export function EinstellungenPage() {
       </nav>
 
       <div>
-        <Outlet />
+        <SeitenRahmen><Outlet /></SeitenRahmen>
       </div>
     </div>
   );
