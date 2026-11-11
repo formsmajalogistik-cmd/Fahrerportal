@@ -19,6 +19,7 @@ Projekts): `npm i -g playwright && npx playwright install chromium`, oder
 |---|---|
 | `leerfahrt` | Leerfahrt markieren/entfernen, Wasserzeichen, Filter |
 | `keine-auslagen` | Zusatz „Keine Auslagen" in Tourenliste, Tour-Detail, Posteingang, Prüfdialog |
+| `excel-roundtrip` | Excel-Export der Tourenliste → Import derselben Datei → identische Daten; Duplikat-Warnung; Auftraggeber-Filter |
 | `rechnung-neu-laden` | „Touren neu laden", Prüfdialog beim Erstellen |
 | `erechnung-stammdaten` | Empfänger-Stammdaten, Test-Export (XML und ZUGFeRD), mit/ohne Migration 115 |
 | `erechnung-ablauf` | Erstellen, Sperre, Versand, Storno (381), Teilgutschrift, PDF-Versionierung |
