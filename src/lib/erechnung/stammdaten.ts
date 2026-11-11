@@ -8,11 +8,23 @@ import { supabase } from '../supabase';
 
 export type ERechnungFormat = 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
 
+/**
+ * ZUGFeRD für Empfänger wählbar? Erzeugung, Archiv, Versand und Export sind
+ * fertig und lokal validiert: veraPDF (PDF/A-3b) ohne Befund, KoSIT ohne
+ * Befund, Mustang „gültig" — Mustang meldet aber EINE Warnung
+ * (PEPPOL-EN16931-R008: leeres Pflichtelement ApplicableHeaderTradeDelivery,
+ * weil kein Lieferdatum im Kopf steht; siehe LIEFERDATUM_IM_KOPF in typen.ts).
+ * Vorgabe: keine Freischaltung mit bekannten Warnungen. Erst nach der
+ * Entscheidung dazu auf true setzen. Der Test-Export (Einstellungen) kann
+ * ZUGFeRD unabhängig davon erzeugen — dort wird nichts versendet.
+ */
+export const ZUGFERD_FREIGESCHALTET = false;
+
 export const ERECHNUNG_FORMATE: ReadonlyArray<{ wert: ERechnungFormat; label: string; aktiv: boolean }> = [
   { wert: 'pdf', label: 'PDF (wie bisher)', aktiv: true },
   { wert: 'en16931_cii', label: 'E-Rechnung EN 16931 (XML) + PDF-Lesekopie', aktiv: true },
   { wert: 'xrechnung_cii', label: 'XRechnung (XML) + PDF-Lesekopie', aktiv: true },
-  { wert: 'zugferd', label: 'ZUGFeRD', aktiv: false },
+  { wert: 'zugferd', label: 'ZUGFeRD (PDF mit eingebettetem XML)', aktiv: ZUGFERD_FREIGESCHALTET },
 ];
 
 export function istERechnungFormat(v: unknown): v is ERechnungFormat {

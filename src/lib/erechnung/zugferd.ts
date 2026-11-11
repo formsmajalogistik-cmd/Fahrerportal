@@ -143,7 +143,7 @@ export function xmpPaket(m: ZugferdMeta): string {
                 <pdfaProperty:category>external</pdfaProperty:category>
                 <pdfaProperty:description>${beschreibung}</pdfaProperty:description>
               </rdf:li>`;
-  return `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+  return `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
     <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">

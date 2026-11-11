@@ -8,8 +8,8 @@ export {
 } from './ausRechnung';
 export * from './stammdaten';
 
-/** Dateiname für den Test-Export: Re_26/1234 → Re_26_1234_TEST.xml */
-export function testDateiname(rechnungsnummer: string): string {
+/** Dateiname für den Test-Export: Re_26/1234 → Re_26_1234_TEST.xml (ZUGFeRD: …_TEST.pdf) */
+export function testDateiname(rechnungsnummer: string, endung: 'xml' | 'pdf' = 'xml'): string {
   const sicher = rechnungsnummer.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'Rechnung';
-  return `${sicher}_TEST.xml`;
+  return `${sicher}_TEST.${endung}`;
 }

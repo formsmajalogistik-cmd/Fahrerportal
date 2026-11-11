@@ -90,8 +90,9 @@ export function ERechnungAbschnitt({
       ) : vorpruefung ? (
         <div className="space-y-2">
           <p className="text-sm text-maja-ink">
-            Empfänger-Format: <strong>{formatLabel(vorpruefung.format)}</strong>. Beim Erstellen werden XML und
-            PDF-Lesekopie erzeugt und unveränderlich archiviert.
+            Empfänger-Format: <strong>{formatLabel(vorpruefung.format)}</strong>. Beim Erstellen
+            {vorpruefung.format === 'zugferd' ? ' wird das ZUGFeRD-PDF (mit eingebettetem XML)' : ' werden XML und PDF-Lesekopie'} erzeugt
+            und unveränderlich archiviert.
           </p>
           {vorpruefung.abbruch ? (
             <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:!bg-red-900/40 dark:!text-red-200">{vorpruefung.abbruch}</p>

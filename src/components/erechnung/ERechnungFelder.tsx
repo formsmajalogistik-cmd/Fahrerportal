@@ -23,7 +23,8 @@ export function ERechnungFelder({ wert, onChange, idPrefix, mitLand = true }: Pr
   const patch = (p: Partial<ERechnungFelderWert>) => onChange({ ...wert, ...p });
   const landUngueltig = wert.landCode.trim() !== '' && !/^[A-Za-z]{2}$/.test(wert.landCode.trim());
   const xr = wert.format === 'xrechnung_cii';
-  const eRechnung = wert.format === 'xrechnung_cii' || wert.format === 'en16931_cii';
+  const zugferd = wert.format === 'zugferd';
+  const eRechnung = wert.format === 'xrechnung_cii' || wert.format === 'en16931_cii' || zugferd;
   // XRechnung: E-Rechnungs-Adresse und Käuferreferenz sind Pflicht.
   const pflichtFehlt = [
     xr && !wert.email.trim() && 'E-Rechnungs-Adresse',
@@ -36,7 +37,9 @@ export function ERechnungFelder({ wert, onChange, idPrefix, mitLand = true }: Pr
       <div>
         <h3 className="text-sm font-semibold text-maja-navy">E-Rechnung (Vorbereitung)</h3>
         <p className="text-xs text-maja-muted">
-          {eRechnung
+          {zugferd
+            ? 'Beim Erstellen einer Rechnung wird EIN ZUGFeRD-PDF (PDF/A-3 mit eingebettetem XML, maßgeblich sind die XML-Daten) erzeugt, archiviert und an die E-Rechnungs-Adresse versendet (leer = bisherige Rechnungs-E-Mail).'
+            : eRechnung
             ? 'Beim Erstellen einer Rechnung werden XML (maßgeblich) und PDF-Lesekopie erzeugt, archiviert und an die E-Rechnungs-Adresse versendet (leer = bisherige Rechnungs-E-Mail).'
             : 'Rechnungen werden wie bisher als PDF erstellt und versendet.'}
         </p>

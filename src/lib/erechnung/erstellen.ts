@@ -18,7 +18,8 @@ import { ladeAbsenderBilder } from '../absenderSignatur';
 import { firmendatenFuerBeleg } from '../firmendaten';
 import { archiviereERechnungApi, type ERechnungDokument } from '../onedrive';
 import { loadGutschriftSettings } from '../gutschriftSettings';
-import { generateRechnungPdf } from '../../pages/admin/rechnungen/rechnungPdf';
+import { generateRechnungPdf, type RechnungPdfInput } from '../../pages/admin/rechnungen/rechnungPdf';
+import { ladeZugferdSchriften } from './zugferd';
 import {
   bildeERechnung, bildeERechnungGutschrift, ladeERechnungQuelle, ladeGutschriftQuelle, type Abbildung,
 } from './ausRechnung';
@@ -27,6 +28,16 @@ import { hatFehler, pruefeERechnung, type Mangel } from './pruefung';
 import { profilFuerFormat } from './stammdaten';
 import { gutschriftPdfInputAus, rechnungPdfInputAus } from './belegPdf';
 import { ERechnungAbbruch, type ERechnungProfil } from './typen';
+
+/**
+ * ZUGFeRD: Schrift und fontkit erst bei Bedarf laden (nur dieses Format
+ * braucht sie). null = kein ZUGFeRD → normale Lesekopie + separate XML.
+ */
+export async function zugferdOption(format: string | null | undefined, xml: string): Promise<RechnungPdfInput['zugferd']> {
+  if (format !== 'zugferd') return null;
+  const [{ default: fontkit }, schriften] = await Promise.all([import('@pdf-lib/fontkit'), ladeZugferdSchriften()]);
+  return { xml, schriften, fontkit };
+}
 
 export interface Vorpruefung {
   format: string;
@@ -82,11 +93,13 @@ export async function rechnungERechnungErzeugen(rechnungId: string): Promise<{ d
   if (hatFehler(maengel)) throw new Error(maengel.filter((m) => m.schwere === 'fehler').map((m) => m.text).join('; '));
   const xml = erzeugeCii(a.daten, profil);
   const bilder = await ladeAbsenderBilder({ mitUnterschrift: r.mit_unterschrift ?? true, mitStempel: r.mit_stempel ?? true });
+  const zugferd = await zugferdOption(r.erechnung_format, xml);
   const pdf = await generateRechnungPdf(rechnungPdfInputAus({
     rechnung: r, positionen: q.positionen, auftraggeber: q.auftraggeber,
-    firma, ausSnapshot, erechnung: a.daten, bilder,
+    firma, ausSnapshot, erechnung: a.daten, bilder, zugferd,
   }));
-  const dokument = await archiviereERechnungApi('rechnung', rechnungId, xml, pdf);
+  // ZUGFeRD: nur EINE Datei (das XML steckt im PDF).
+  const dokument = await archiviereERechnungApi('rechnung', rechnungId, zugferd ? null : xml, pdf);
   return { dokument, maengel };
 }
 
@@ -149,9 +162,9 @@ export async function gutschriftERechnungErzeugen(gutschriftId: string): Promise
   const pdf = await generateRechnungPdf(gutschriftPdfInputAus({
     gutschrift: g, positionen: q.positionen, auftraggeber: q.auftraggeber,
     firma, ausSnapshot, erechnung: a.daten, bilder,
-    dokumentbezeichnung: cfg.dokumentbezeichnung, summenLabel: cfg.summen_label,
+    dokumentbezeichnung: cfg.dokumentbezeichnung, summenLabel: cfg.summen_label, zugferd: await zugferdOption(g.erechnung_format, xml),
   }));
-  const dokument = await archiviereERechnungApi('gutschrift', gutschriftId, xml, pdf);
+  const dokument = await archiviereERechnungApi('gutschrift', gutschriftId, g.erechnung_format === 'zugferd' ? null : xml, pdf);
   return { dokument, maengel };
 }
 

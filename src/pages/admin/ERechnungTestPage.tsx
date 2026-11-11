@@ -1,7 +1,7 @@
 // Einstellungen → „E-Rechnung (Test)" (nur Admin).
 //
-// Erzeugt für eine ausgewählte Rechnung die E-Rechnung (CII-XML) als
-// Download und zeigt das Ergebnis der Pflichtfeld-Prüfung. Reiner
+// Erzeugt für eine ausgewählte Rechnung die E-Rechnung (CII-XML oder
+// ZUGFeRD-PDF) als Download und zeigt das Ergebnis der Pflichtfeld-Prüfung. Reiner
 // Lesezugriff: kein Speichern in OneDrive, kein Versand, keine
 // Statusänderung an der Rechnung.
 
@@ -10,10 +10,29 @@ import { supabase } from '../../lib/supabase';
 import { formatDate } from '../../lib/touren';
 import {
   bildeERechnung, erzeugeCii, ladeERechnungQuelle, pruefeERechnung, testDateiname,
-  ERechnungAbbruch, type Abbildung, type ERechnungProfil, type Mangel,
+  ERechnungAbbruch, type Abbildung, type ERechnungProfil, type ERechnungQuelle, type Mangel,
 } from '../../lib/erechnung';
 import { useERechnungSchema } from '../../lib/erechnung/useERechnungSchema';
-import { firmendatenFuerBeleg } from '../../lib/firmendaten';
+import { rechnungPdfInputAus } from '../../lib/erechnung/belegPdf';
+import { zugferdOption } from '../../lib/erechnung/erstellen';
+import { firmendatenFuerBeleg, type Firmendaten } from '../../lib/firmendaten';
+import { ladeAbsenderBilder } from '../../lib/absenderSignatur';
+import { generateRechnungPdf } from './rechnungen/rechnungPdf';
+
+/** Auswahl im Test-Export; ZUGFeRD nutzt das Profil EN 16931. */
+type TestFormat = ERechnungProfil | 'zugferd';
+const FORMAT_NAME: Record<TestFormat, string> = { xrechnung: 'XRechnung', en16931: 'EN 16931', zugferd: 'ZUGFeRD (EN 16931)' };
+
+function speichern(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 interface Zeile {
   id: string;
@@ -40,10 +59,14 @@ export function ERechnungTestPage() {
   const [liste, setListe] = useState<Zeile[]>([]);
   const [laedt, setLaedt] = useState(false);
   const [gewaehlt, setGewaehlt] = useState<Zeile | null>(null);
-  const [profil, setProfil] = useState<ERechnungProfil>('xrechnung');
+  const [format, setFormat] = useState<TestFormat>('xrechnung');
+  const profil: ERechnungProfil = format === 'zugferd' ? 'en16931' : format;
   const [ableiten, setAbleiten] = useState(true);
-  const [ergebnis, setErgebnis] = useState<{ abbildung: Abbildung; maengel: Mangel[] } | null>(null);
+  const [ergebnis, setErgebnis] = useState<{
+    abbildung: Abbildung; maengel: Mangel[]; quelle: ERechnungQuelle; firma: Firmendaten; ausSnapshot: boolean;
+  } | null>(null);
   const [fehler, setFehler] = useState<string | null>(null);
+  const [erzeugt, setErzeugt] = useState(false);
 
   const ladeListe = useCallback(async (q: string) => {
     setLaedt(true);
@@ -69,10 +92,10 @@ export function ERechnungTestPage() {
     setErgebnis(null);
     try {
       const quelle = await ladeERechnungQuelle(z.id);
-      const { firma } = await firmendatenFuerBeleg(quelle.rechnung.absender_snapshot);
+      const { firma, ausSnapshot } = await firmendatenFuerBeleg(quelle.rechnung.absender_snapshot);
       const abbildung = bildeERechnung(quelle, { testAbleitung: abl, firma });
       const maengel = [...abbildung.hinweise, ...pruefeERechnung(abbildung.daten, p)];
-      setErgebnis({ abbildung, maengel });
+      setErgebnis({ abbildung, maengel, quelle, firma, ausSnapshot });
     } catch (e) {
       setFehler(e instanceof Error ? e.message : 'Laden fehlgeschlagen');
     }
@@ -83,22 +106,33 @@ export function ERechnungTestPage() {
     void Promise.resolve().then(() => pruefen(gewaehlt, profil, ableiten));
   }, [gewaehlt, profil, ableiten, pruefen]);
 
-  function herunterladen() {
+  async function herunterladen() {
     if (!ergebnis || !gewaehlt) return;
+    setFehler(null);
+    setErzeugt(true);
     try {
       const xml = erzeugeCii(ergebnis.abbildung.daten, profil);
+      if (format === 'zugferd') {
+        // Derselbe Weg wie beim Erstellen: ein PDF/A-3 mit eingebettetem XML.
+        const r = ergebnis.quelle.rechnung;
+        const [bilder, zugferd] = await Promise.all([
+          ladeAbsenderBilder({ mitUnterschrift: r.mit_unterschrift ?? true, mitStempel: r.mit_stempel ?? true }),
+          zugferdOption('zugferd', xml),
+        ]);
+        const pdf = await generateRechnungPdf(rechnungPdfInputAus({
+          rechnung: r, positionen: ergebnis.quelle.positionen, auftraggeber: ergebnis.quelle.auftraggeber,
+          firma: ergebnis.firma, ausSnapshot: ergebnis.ausSnapshot, erechnung: ergebnis.abbildung.daten, bilder, zugferd,
+        }));
+        speichern(pdf, testDateiname(gewaehlt.rechnungsnummer, 'pdf'));
+        return;
+      }
       const kommentar = `<!-- TESTDATEI — nur zur Prüfung, NICHT an Kunden senden. Erzeugt ${new Date().toLocaleString('de-DE')} (Profil ${profil}). -->\n`;
       const mitKommentar = xml.replace(/^(<\?xml[^>]*\?>\n)/, `$1${kommentar}`);
-      const url = URL.createObjectURL(new Blob([mitKommentar], { type: 'application/xml' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = testDateiname(gewaehlt.rechnungsnummer);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      speichern(new Blob([mitKommentar], { type: 'application/xml' }), testDateiname(gewaehlt.rechnungsnummer));
     } catch (e) {
       setFehler(e instanceof ERechnungAbbruch ? e.message : (e instanceof Error ? e.message : 'Erzeugung fehlgeschlagen'));
+    } finally {
+      setErzeugt(false);
     }
   }
 
@@ -118,13 +152,13 @@ export function ERechnungTestPage() {
       <div>
         <h2 className="text-lg font-semibold text-maja-navy">E-Rechnung (Test)</h2>
         <p className="text-sm text-maja-muted">
-          Erzeugt die E-Rechnung (XML, CII-Syntax) einer bestehenden Rechnung zur Prüfung.
+          Erzeugt die E-Rechnung (XML in CII-Syntax oder ZUGFeRD-PDF) einer bestehenden Rechnung zur Prüfung.
           Es wird nichts gespeichert, nichts versendet und an der Rechnung nichts geändert.
         </p>
       </div>
 
       <div role="note" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 dark:!border-amber-500/60 dark:!bg-amber-900/30 dark:!text-amber-100">
-        Nur zur Prüfung — nicht an Kunden senden. Rechnungen gehen weiterhin ausschließlich als PDF raus.
+        Nur zur Prüfung — nicht an Kunden senden. Die Testdatei wird weder archiviert noch versendet.
       </div>
 
       <section className="card space-y-3 p-4">
@@ -136,10 +170,11 @@ export function ERechnungTestPage() {
           </div>
           <div>
             <label htmlFor="ert-profil" className="label">Format</label>
-            <select id="ert-profil" className="input" value={profil}
-                    onChange={(e) => setProfil(e.target.value as ERechnungProfil)}>
+            <select id="ert-profil" className="input" value={format}
+                    onChange={(e) => setFormat(e.target.value as TestFormat)}>
               <option value="xrechnung">XRechnung (XML)</option>
               <option value="en16931">E-Rechnung EN 16931 (XML)</option>
+              <option value="zugferd">ZUGFeRD (PDF mit eingebettetem XML)</option>
             </select>
           </div>
         </div>
@@ -188,10 +223,10 @@ export function ERechnungTestPage() {
         <section className="card space-y-3 p-4" data-testid="ert-ergebnis">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-base font-semibold text-maja-navy">
-              {gewaehlt.rechnungsnummer} — Pflichtfeld-Prüfung ({profil === 'xrechnung' ? 'XRechnung' : 'EN 16931'})
+              {gewaehlt.rechnungsnummer} — Pflichtfeld-Prüfung ({FORMAT_NAME[format]})
             </h3>
-            <button type="button" className="btn-primary" disabled={!!abbruch} onClick={herunterladen}>
-              XML herunterladen (_TEST)
+            <button type="button" className="btn-primary" disabled={!!abbruch || erzeugt} onClick={() => void herunterladen()}>
+              {erzeugt ? 'Erzeuge …' : format === 'zugferd' ? 'ZUGFeRD-PDF herunterladen (_TEST)' : 'XML herunterladen (_TEST)'}
             </button>
           </div>
 

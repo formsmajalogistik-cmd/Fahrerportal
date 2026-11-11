@@ -136,7 +136,7 @@ export function baueCsv(dateien: ExportDatei[]): string {
     new Date(d.eintrag.dokument.erzeugt_am).toLocaleString('de-DE'),
     d.fehler ? `FEHLER: ${d.fehler}` : d.istHash === d.sollHash ? 'ok' : `ABWEICHUNG (Datei: ${d.istHash})`,
   ].map(csvFeld).join(';'));
-  return `﻿${[kopf.map(csvFeld).join(';'), ...zeilen].join('\r\n')}\r\n`;
+  return `\uFEFF${[kopf.map(csvFeld).join(';'), ...zeilen].join('\r\n')}\r\n`;
 }
 
 let crcTabelle: Uint32Array | null = null;
