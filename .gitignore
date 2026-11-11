@@ -35,4 +35,8 @@ supabase/.temp
 # E-Rechnung: lokaler Validator + Testausgaben (npm run test:erechnung)
 tools/erechnung/.validator
 tools/erechnung/.ausgabe
+tools/erechnung/.ausgabe-pruefung
 tools/erechnung/offiziell
+
+# Browsertests: Screenshots und abgefangene Dateien (npm run test:e2e)
+tools/e2e/.ausgabe

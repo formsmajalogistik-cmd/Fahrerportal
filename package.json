@@ -11,7 +11,9 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test:erechnung": "node tools/erechnung/lauf.mjs",
-    "erechnung:validator-einrichten": "node tools/erechnung/validator-einrichten.mjs"
+    "test:e2e": "node tools/e2e/lauf.mjs",
+    "erechnung:validator-einrichten": "node tools/erechnung/validator-einrichten.mjs",
+    "erechnung:pruefe-zugferd": "node tools/erechnung/pruefe-zugferd.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
