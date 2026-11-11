@@ -12,6 +12,7 @@
     "typecheck": "tsc -b --noEmit",
     "test:erechnung": "node tools/erechnung/lauf.mjs",
     "test:e2e": "node tools/e2e/lauf.mjs",
+    "test:db": "bash tools/db/lauf.sh",
     "erechnung:validator-einrichten": "node tools/erechnung/validator-einrichten.mjs",
     "erechnung:pruefe-zugferd": "node tools/erechnung/pruefe-zugferd.mjs"
   },
