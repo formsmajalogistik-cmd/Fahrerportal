@@ -23,8 +23,10 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
    *   haken.archiv = (anfrage) => null                      normal weiter
    *                              | { status, body }         Server antwortet mit Fehler
    *                              | { abbruch: true, speichern } Verbindung bricht ab (optional NACH dem Ablegen)
+   *   haken.patch  = (rechnungId, änderung) => null | { status, body }   Änderung an der Rechnung schlägt fehl
+   *   haken.patchGutschrift = (gutschriftId, änderung) => …               dasselbe für Gutschriften
    */
-  const haken = { archiv: null };
+  const haken = { archiv: null, patch: null, patchGutschrift: null };
   // ---------------------------------------------------------------- Daten
   const FIRMA = {
     firmenname: 'Maja-Logistik M.Janßen', kurzname: 'Maja-Logistik', inhaber: 'M. Janßen', rechtsform: 'Einzelunternehmen',
@@ -73,7 +75,7 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
   const gutschriften = {};
   const gpositionen = [];
   const dokumente = [];
-  const log = { patchR: [], archiv: [], upload: [], mails: [], settingsUp: [], rpc: [], gsInsert: [] };
+  const log = { patchR: [], archiv: [], upload: [], mails: [], settingsUp: [], rpc: [], gsInsert: [], patchG: [] };
 
   // Stub der Datenbank-Trigger (Migration 115/116)
   function trigger(r, alt) {
@@ -145,6 +147,8 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
       const id = eqW('id');
       if (m === 'PATCH') {
         const x = body(); log.patchR.push({ id, ...x }); const re = rechnungen[id]; const alt = { ...re };
+        const eingriffP = haken.patch ? haken.patch(id, x) : null;
+        if (eingriffP) return json(eingriffP.body, eingriffP.status);
         if (gesperrt(id) && Object.keys(x).some((k) => !['status', 'bezahlt_am', 'notizen', 'email_versendet_am'].includes(k))) {
           return json({ code: '42501', message: 'ERECHNUNG_GESPERRT: E-Rechnung erstellt — Änderung nur über Storno/Teilgutschrift.' }, 403);
         }
@@ -180,6 +184,17 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
     if (p === '/rest/v1/gutschriften') {
       const id = eqW('id'); const rid = eqW('rechnung_id');
       if (m === 'POST') { const x = body(); log.gsInsert.push(x); const gid = `g${Object.keys(gutschriften).length + 1}`; gutschriften[gid] = { ...x, id: gid, gutschrift_nr: 'GS-2026/8', adress_snapshot: x.adress_snapshot, absender_snapshot: null, pdf_url: null, email_versendet_am: null, interne_notizen: null, schlusstext: null }; return obj ? json({ id: gid }, 201) : json([{ id: gid }], 201); }
+      if (m === 'PATCH') {
+        const x = body(); log.patchG.push({ id, ...x }); const g = gutschriften[id];
+        const eingriffG = haken.patchGutschrift ? haken.patchGutschrift(id, x) : null;
+        if (eingriffG) return json(eingriffG.body, eingriffG.status);
+        if (dokumente.some((d) => d.gutschrift_id === id) && Object.keys(x).some((k) => !['interne_notizen', 'email_versendet_am', 'pdf_url'].includes(k))) {
+          return json({ code: '42501', message: 'ERECHNUNG_GESPERRT: E-Rechnung erstellt — Änderung nur über Storno/Teilgutschrift.' }, 403);
+        }
+        // Trigger gutschrift_final_snapshot (Migration 116)
+        if (x.status === 'final' && g.status !== 'final') g.absender_snapshot = { ...settings.firmendaten };
+        Object.assign(g, x); return json([], 200);
+      }
       if (id) { const g = gutschriften[id]; return one(g ? { ...g, auftraggeber: AG[g.auftraggeber_id] ?? null, rechnung: rechnungen[g.rechnung_id] ? { id: g.rechnung_id, rechnungsnummer: rechnungen[g.rechnung_id].rechnungsnummer, datum: rechnungen[g.rechnung_id].datum } : null } : null); }
       return json(Object.values(gutschriften).filter((g) => !rid || g.rechnung_id === rid));
     }

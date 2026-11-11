@@ -312,11 +312,12 @@ export function RechnungDetailPage() {
         ?? 'E-Rechnung: Pflichtangaben fehlen (siehe Abschnitt „E-Rechnung"). Die Rechnung bleibt Entwurf.');
       return;
     }
-    if (res.art === 'fehler') setError(res.meldung);
     if (res.art === 'erechnung') {
       setHinweis(`E-Rechnung erzeugt und archiviert: ${res.dokument.xml_pfad ?? res.dokument.pdf_pfad} (SHA-256 ${(res.dokument.xml_pfad ? res.dokument.sha256_xml : res.dokument.sha256_pdf).slice(0, 12)}…).${res.dokument.protokoll ? ` Vermerk: ${res.dokument.protokoll}.` : ''}`);
     }
     await load();
+    // load() leert die Fehlermeldung — erst danach setzen, sonst wäre sie nie sichtbar.
+    if (res.art === 'fehler') setError(res.meldung);
   }
 
   /** Nachholen: Rechnung ist erstellt, aber die E-Rechnung wurde (noch) nicht archiviert. */

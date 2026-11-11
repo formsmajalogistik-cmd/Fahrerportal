@@ -256,17 +256,31 @@ export function GutschriftDetailPage() {
     const { error: err } = await supabase
       .from('gutschriften').update({ status }).eq('id', gutschrift.id);
     if (err) { setStatusBusy(false); setError(sperrMeldung(err.message)); return; }
+    let fehlerText: string | null = null;
     if (vp) {
+      const erzeugt = (d: ERechnungDokument) => setHinweis(`E-Rechnung (Typ ${d.typ_code}) erzeugt und archiviert: ${d.xml_pfad ?? d.pdf_pfad}.`);
       try {
-        const { dokument } = await gutschriftERechnungErzeugen(gutschrift.id);
-        setHinweis(`E-Rechnung (Typ ${dokument.typ_code}) erzeugt und archiviert: ${dokument.xml_pfad ?? dokument.pdf_pfad}.`);
+        erzeugt((await gutschriftERechnungErzeugen(gutschrift.id)).dokument);
       } catch (e) {
-        await supabase.from('gutschriften').update({ status: 'entwurf' }).eq('id', gutschrift.id);
-        setError(`E-Rechnung nicht erzeugt — der Beleg bleibt Entwurf. ${e instanceof Error ? e.message : String(e)}`);
+        const grund = (e instanceof Error ? e.message : String(e)).replace(/^ERECHNUNG_BEREITS_ARCHIVIERT:\s*/, '');
+        // Antwort verloren, aber doch archiviert? Dann gilt sie als erzeugt.
+        const schon = await ladeERechnungDokumente('gutschrift', gutschrift.id).catch(() => []);
+        if (schon.length) erzeugt(schon[0]);
+        else {
+          // Zurück auf Entwurf — die Belegnummer bleibt am Beleg.
+          const { error: rErr } = await supabase.from('gutschriften').update({ status: 'entwurf' }).eq('id', gutschrift.id);
+          fehlerText = rErr
+            ? `Was ist passiert: Die E-Rechnung konnte nicht abgelegt werden (${grund}). Der Beleg ließ sich auch nicht auf „Entwurf" zurücksetzen (${rErr.message}) — `
+              + 'er ist jetzt final, aber ohne archivierte E-Rechnung. Was tun: im Abschnitt „E-Rechnung" auf „E-Rechnung erzeugen" klicken (erneut versuchen). Es wird nichts überschrieben oder doppelt abgelegt.'
+            : `Was ist passiert: Die E-Rechnung konnte nicht abgelegt werden (${grund}). Der Beleg ist wieder ein Entwurf und behält seine Nummer. `
+              + 'Was tun: erneut finalisieren. Bereits abgelegte Dateien werden übernommen; nichts wird überschrieben oder doppelt abgelegt.';
+        }
       }
     }
     setStatusBusy(false);
     await load();
+    // load() leert die Fehlermeldung — erst danach setzen, sonst wäre sie nie sichtbar.
+    if (fehlerText) setError(fehlerText);
   }
 
   /** Erneuter Versuch (z.B. Stornorechnung, deren E-Rechnung beim Anlegen scheiterte). */
