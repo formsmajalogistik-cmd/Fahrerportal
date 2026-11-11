@@ -90,7 +90,8 @@ await card('T-2026-0401').locator('[data-leerfahrt="nein"]').click();
 await card('T-2026-0401').locator('[data-wasserzeichen]').waitFor({ timeout: 8000 });
 pr('L1: RPC gesetzt + „Keine Auslagen" (herkunft leerfahrt) für HB-AB 1', log.rpc.at(-1)?.p_an === true && log.posts.some((x) => x.tour_id === 'L1' && x.kategorie === 'Keine Auslagen' && x.kennzeichen === 'HB-AB 1' && x.herkunft === 'leerfahrt'), log.posts);
 pr('L1: Badge „Leerfahrt" gesetzt (aria-pressed)', (await card('T-2026-0401').locator('[data-leerfahrt="ja"]').getAttribute('aria-pressed')) === 'true');
-await card('T-2026-0401').locator('[data-auslagen="keine"]').waitFor({ timeout: 8000 }).catch(() => {});
+// Kalter Start der App: das Nachladen der Zusätze kann beim ersten Lauf länger dauern.
+await card('T-2026-0401').locator('[data-auslagen="keine"]').waitFor({ timeout: 25000 }).catch(() => {});
 pr('L1: Auslagen danach geklärt (Badge „Keine Auslagen")', (await card('T-2026-0401').locator('[data-auslagen]').allInnerTexts()).join('|').toLowerCase().includes('keine auslagen'));
 const [mitWz, ohneWz] = await card('T-2026-0401').locator('button.card').evaluate((e) => {
   const mit = e.offsetHeight; const w = e.querySelector('[data-wasserzeichen]'); w.style.display = 'none';

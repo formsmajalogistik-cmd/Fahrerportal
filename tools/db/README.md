@@ -4,7 +4,8 @@
 npm run test:db
 ```
 
-Prüft Trigger, Sperren, RLS und RPCs der Migrationen 115–117 gegen einen
+Prüft Trigger, Sperren, RLS und RPCs der Migrationen 115–117 sowie die
+Daten-Skripte aus `supabase/scripts/` gegen einen
 **lokalen** PostgreSQL (≥ 15) — nie gegen die echte Datenbank:
 
 1. Vorlage bauen: kleine Supabase-Nachbildung (`bootstrap.sql`: Rollen
@@ -17,6 +18,7 @@ Prüft Trigger, Sperren, RLS und RPCs der Migrationen 115–117 gegen einen
 |---|---|
 | `115.test.sh` | Fälligkeit, Empfänger-/Positionsfelder, Bestand unverändert |
 | `116.test.sh` | Firmendaten-Snapshot, Archiv nur per Server, Sperren, Storno-RPC |
+| `adressen.test.sh` | PLZ/Ort-Schreibskript: Probelauf ändert nichts, echter Lauf schreibt nur „eindeutig" und nichts Gefülltes, zweiter Lauf ohne Wirkung |
 | `117.test.sh` | ZUGFeRD-Eintrag ohne XML-Pfad, Export-Protokoll, Rechnungsnummer bei gescheitertem Erstellen (keine Lücke, keine Doppelvergabe) |
 
 Verbindung: Standard ist `-h /tmp -p 5463 -U postgres`; anpassen mit
