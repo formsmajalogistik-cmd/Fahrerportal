@@ -200,7 +200,7 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
     }
     if (p === '/rest/v1/gutschriftspositionen') {
       if (m === 'POST') { const x = body(); const rows = (Array.isArray(x) ? x : [x]).map((y, i) => ({ ...y, id: `gpn${gpositionen.length + i}` })); gpositionen.push(...rows); return json(rows.map((y) => ({ id: y.id, position_nr: y.position_nr })), 201); }
-      if (m === 'PATCH') return json([], 200);
+      if (m === 'PATCH') { const x = body(); const id = eqW('id'); for (const gp of gpositionen.filter((y) => y.id === id)) Object.assign(gp, x); return json([], 200); }
       const gid = eqW('gutschrift_id'); return json(gpositionen.filter((x) => x.gutschrift_id === gid));
     }
     if (p.startsWith('/rest/v1/rpc/')) return json(null);

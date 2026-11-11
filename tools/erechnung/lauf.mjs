@@ -94,7 +94,8 @@ for (const d of dateien) {
     .map((m) => ({ stufe: m[1], id: m[2], text: m[3].replace(/\s+/g, ' ').trim() }));
   const fehler = meldungen.filter((m) => m.stufe === 'error');
   const warnungen = meldungen.filter((m) => m.stufe === 'warning');
-  let passt = d.erwartung === 'gueltig' ? gueltig : !gueltig;
+  // Gültige Testfälle: zusätzlich 0 Warnungen (Freigabe-Bedingung).
+  let passt = d.erwartung === 'gueltig' ? gueltig && warnungen.length === 0 : !gueltig;
   if (passt && d.erwarteteRegeln) passt = d.erwarteteRegeln.every((r) => fehler.some((f) => f.id === r));
   if (!passt) abweichungen += 1;
   zeilen.push({ d, gueltig, szenario, fehler, warnungen, passt });
@@ -150,12 +151,15 @@ for (const d of zf) {
   const mustang = /<summary status="valid"\/>\s*<\/validation>/.test(mAus);
   const mPdf = /<pdf>[\s\S]*?<summary status="valid"\/>[\s\S]*?<\/pdf>/.test(mAus);
   const mWarn = [...new Set([...mAus.matchAll(/<(warning|error)[^>]*>[\s\S]*?\[ID ([^\]]+)\]/g)].map((m) => `${m[1]}:${m[2]}`))];
+  // Hinweise („notice") von Mustang — u.a. aus der zusätzlichen XRechnung-Gegenprüfung; keine Warnungen.
+  const mNotiz = [...new Set([...mAus.matchAll(/<notice[^>]*>[\s\S]*?\[ID ([^\]]+)\]/g)].map((m) => m[1]))];
   const identisch = d.eingebettet === d.xml;
-  const okAlles = vera && kosit && mustang && mPdf && identisch && kositMeld.length === 0;
+  // Freigabe-Bedingung: 0 Fehler und 0 Warnungen bei veraPDF, KoSIT und Mustang.
+  const okAlles = vera && kosit && mustang && mPdf && identisch && kositMeld.length === 0 && mWarn.length === 0;
   if (!okAlles) zfFehler += 1;
-  zfZeilen.push({ d, vera, kosit, kositMeld, mustang, mWarn, identisch, kb: Math.round(d.pdf.length / 1024) });
+  zfZeilen.push({ d, vera, kosit, kositMeld, mustang, mWarn, mNotiz, identisch, kb: Math.round(d.pdf.length / 1024) });
   console.log(`  ${okAlles ? 'ok  ' : 'FAIL'}  ${d.name.padEnd(26)} veraPDF ${vera ? 'bestanden' : 'FEHLER'} · KoSIT ${kosit ? 'bestanden' : 'FEHLER'} · Mustang ${mustang ? 'gültig' : 'UNGÜLTIG'}`
-    + `${mWarn.length ? ` (${mWarn.join(', ')})` : ''} · XML ${identisch ? 'identisch' : 'ABWEICHEND'} · ${d.seiten} S. · ${Math.round(d.pdf.length / 1024)} KB`);
+    + `${mWarn.length ? ` (${mWarn.join(', ')})` : ' (0 Warnungen)'}${mNotiz.length ? ` [Hinweise: ${mNotiz.join(', ')}]` : ''} · XML ${identisch ? 'identisch' : 'ABWEICHEND'} · ${d.seiten} S. · ${Math.round(d.pdf.length / 1024)} KB`);
   for (const k of kositMeld) console.log(`          KoSIT ${k}`);
 }
 writeFileSync(join(AUS, 'bericht-zugferd.md'), [

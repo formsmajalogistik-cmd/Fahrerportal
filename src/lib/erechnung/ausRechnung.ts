@@ -83,7 +83,16 @@ function firmaFuer(snapshot: unknown, opt: AbbildungOptionen): Firmendaten {
   return opt.firma ?? FIRMENDATEN;
 }
 
-/** Leistungszeitraum der Rechnung: frühestes/spätestes Positionsdatum, sonst der gespeicherte Zeitraum. */
+/**
+ * Leistungszeitraum der Rechnung (BG-14): frühestes/spätestes Leistungsdatum
+ * der Positionen, sonst der gespeicherte Zeitraum. `bis` ist damit zugleich
+ * der letzte Leistungstag für das Lieferdatum im Kopf (BT-72).
+ */
+/** BT-72 = letzter Leistungstag (siehe LIEFERDATUM_IM_KOPF). */
+function lieferdatumKopf(z: { bis: string | null }): string | null {
+  return LIEFERDATUM_IM_KOPF === 'letzter_leistungstag' ? z.bis : null;
+}
+
 function zeitraum(pos: ERechnungPosition[], von: string | null, bis: string | null): { von: string | null; bis: string | null } {
   const daten = pos.map((p) => p.leistungsdatum).filter((x): x is string => !!x).sort();
   if (daten.length) return { von: daten[0], bis: daten[daten.length - 1] };
@@ -210,7 +219,7 @@ export function bildeERechnung(q: ERechnungQuelle, opt: AbbildungOptionen = {}):
     zahlungszielTage: ziel,
     leistungVon: z.von,
     leistungBis: z.bis,
-    lieferdatum: LIEFERDATUM_IM_KOPF === 'letzter_leistungstag' ? z.bis : null,
+    lieferdatum: lieferdatumKopf(z),
     waehrung: 'EUR',
     kaeuferReferenz: referenz,
     notizen: [LEISTUNGSDATUM_HINWEIS_LESEKOPIE],
@@ -286,7 +295,7 @@ export function bildeERechnungGutschrift(q: GutschriftQuelle, opt: AbbildungOpti
     zahlungszielTage: null,
     leistungVon: z.von,
     leistungBis: z.bis,
-    lieferdatum: LIEFERDATUM_IM_KOPF === 'letzter_leistungstag' ? z.bis : null,
+    lieferdatum: lieferdatumKopf(z),
     waehrung: 'EUR',
     kaeuferReferenz: g.kaeufer_referenz ?? null,
     notizen: [LEISTUNGSDATUM_HINWEIS_LESEKOPIE, ...(g.einleitungstext ? [g.einleitungstext] : [])],

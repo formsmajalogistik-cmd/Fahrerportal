@@ -6,7 +6,7 @@
 // verbindliche Prüfung bleibt der KoSIT-Validator; diese Liste soll die
 // häufigsten Lücken vorher verständlich benennen.
 
-import type { ERechnungDaten, ERechnungProfil } from './typen';
+import { LIEFERDATUM_IM_KOPF, type ERechnungDaten, type ERechnungProfil } from './typen';
 
 export interface Mangel {
   /** Bezug in der Norm (BT-/BG-Nummer bzw. Regel). */
@@ -40,6 +40,9 @@ export function pruefeERechnung(d: ERechnungDaten, profil: ERechnungProfil = 'xr
     add('BT-9/BT-20', 'Fälligkeitsdatum bzw. Zahlungsziel fehlt');
   }
   if (!d.leistungVon && !d.leistungBis) add('BG-14', 'Leistungszeitraum fehlt', 'warnung');
+  if (LIEFERDATUM_IM_KOPF === 'letzter_leistungstag' && !d.lieferdatum) {
+    add('BT-72', 'Lieferdatum (letzter Leistungstag) nicht bestimmbar — weder Leistungsdatum an den Positionen noch Leistungszeitraum vorhanden');
+  }
   if (leer(d.kaeuferReferenz)) {
     add('BT-10', xr ? 'Käuferreferenz fehlt (Pflicht bei XRechnung)' : 'Käuferreferenz fehlt', xr ? 'fehler' : 'hinweis');
   }

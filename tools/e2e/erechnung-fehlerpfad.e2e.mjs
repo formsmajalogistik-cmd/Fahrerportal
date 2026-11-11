@@ -112,4 +112,9 @@ await pg.getByText(/E-Rechnung \(Typ 381\) erzeugt und archiviert/).waitFor({ ti
 pr('Teilgutschrift: erneut finalisiert → Typ 381, genau EIN Archiv-Eintrag, dieselbe Nummer', gutschriften[gid].status === 'final' && dokumente.filter((d) => d.gutschrift_id === gid).length === 1
   && dokumente.find((d) => d.gutschrift_id === gid).typ_code === '381' && gutschriften[gid].gutschrift_nr === gNr, dokumente.filter((d) => d.gutschrift_id === gid));
 
+const xmlTg = Buffer.from(log.archiv.filter((x) => x.beleg === 'gutschrift' && x.id === gid).at(-1).xml_base64, 'base64').toString();
+pr('Teilgutschrift: Leistungsdatum der gutgeschriebenen Position übernommen, BT-72 = dieser Tag',
+  /<ram:ActualDeliverySupplyChainEvent>\s*<ram:OccurrenceDateTime>\s*<udt:DateTimeString format="102">20261020</.test(xmlTg)
+  && /<ram:IncludedSupplyChainTradeLineItem>[\s\S]*?<ram:BillingSpecifiedPeriod>\s*<ram:StartDateTime>\s*<udt:DateTimeString format="102">20261020</.test(xmlTg));
+
 await ende(b);

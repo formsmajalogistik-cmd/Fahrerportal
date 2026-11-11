@@ -380,14 +380,82 @@ test('ZUGFeRD-PDF zeigt denselben Inhalt wie die Lesekopie (nur der Hinweis unte
   assert.equal(norm(await pdfTextVon(zf.pdf)), norm(lesekopie));
 });
 
-test('Lieferdatum im Kopf (BT-72): Standard aus; als Option ohne leeres Element', () => {
+const bt72 = (xml: string) => /<ram:ApplicableHeaderTradeDelivery>\s*<ram:ActualDeliverySupplyChainEvent>\s*<ram:OccurrenceDateTime>\s*<udt:DateTimeString format="102">(\d{8})</.exec(xml)?.[1] ?? null;
+const bg14 = (xml: string) => {
+  const m = /<ram:ApplicableHeaderTradeSettlement>[\s\S]*?<ram:BillingSpecifiedPeriod>\s*<ram:StartDateTime>\s*<udt:DateTimeString format="102">(\d{8})<[\s\S]*?<ram:EndDateTime>\s*<udt:DateTimeString format="102">(\d{8})</.exec(xml);
+  return m ? `${m[1]}-${m[2]}` : null;
+};
+const zeilenDaten = (xml: string) => [...xml.matchAll(/<ram:IncludedSupplyChainTradeLineItem>[\s\S]*?<\/ram:IncludedSupplyChainTradeLineItem>/g)]
+  .map((m) => /<ram:BillingSpecifiedPeriod>\s*<ram:StartDateTime>\s*<udt:DateTimeString format="102">(\d{8})/.exec(m[0])?.[1] ?? null);
+
+test('BT-72 eingeschaltet: Element nie leer, genau einmal', () => {
+  assert.equal(LIEFERDATUM_IM_KOPF, 'letzter_leistungstag');
+  for (const t of Object.values(T)) {
+    if (t.erwartung !== 'gueltig') continue;
+    const daten = t.gutschrift ? bildeERechnungGutschrift(t.gutschrift, { firma: TEST_FIRMA }).daten : bildeERechnung(t.quelle!, { firma: TEST_FIRMA }).daten;
+    const xml = erzeugeCii(daten, t.profil);
+    assert.ok(!xml.includes('<ram:ApplicableHeaderTradeDelivery/>'), `${t.name}: leeres Element`);
+    assert.equal((xml.match(/ApplicableHeaderTradeDelivery>/g) ?? []).length, 2, `${t.name}: genau einmal`);
+    assert.ok(bt72(xml), `${t.name}: BT-72 fehlt`);
+  }
+});
+
+test('BT-72 bei mehreren Leistungstagen = letzter Tag; Positionsdaten und BG-14 unverändert', () => {
   const { daten } = bild('12_mehrtaegige_tour');
-  assert.equal(LIEFERDATUM_IM_KOPF, 'nie');
-  assert.equal(daten.lieferdatum ?? null, null);
-  assert.ok(erzeugeCii(daten, 'en16931').includes('<ram:ApplicableHeaderTradeDelivery/>'));
-  const mit = erzeugeCii({ ...daten, lieferdatum: daten.leistungBis }, 'en16931');
-  assert.ok(/<ram:ApplicableHeaderTradeDelivery>\s*<ram:ActualDeliverySupplyChainEvent>\s*<ram:OccurrenceDateTime>\s*<udt:DateTimeString format="102">20261020</.test(mit));
-  assert.equal((mit.match(/ApplicableHeaderTradeDelivery>/g) ?? []).length, 2, 'Element genau einmal (auf/zu)');
+  const xml = erzeugeCii(daten, 'xrechnung');
+  assert.equal(daten.lieferdatum, '2026-10-20');
+  assert.equal(bt72(xml), '20261020');
+  assert.equal(bg14(xml), '20261015-20261020');
+  assert.deepEqual(zeilenDaten(xml), ['20261015', '20261020', null], 'Positionsdaten unverändert, manuelle Position ohne Datum');
+});
+
+test('BT-72 bei einem Leistungstag = dieser Tag', () => {
+  const xml = erzeugeCii(bild('01_ab_tour').daten, 'xrechnung');
+  assert.equal(bt72(xml), '20261014');
+  assert.equal(bg14(xml), '20261014-20261014');
+});
+
+test('BT-72 bei nur manuellen Positionen = Ende des Leistungszeitraums der Rechnung', () => {
+  const t = T['04_manuell_zahlungsziel'];
+  assert.ok(t.quelle!.positionen.every((p) => !p.leistungsdatum), 'Fixture: keine Positionsdaten');
+  const xml = erzeugeCii(bild('04_manuell_zahlungsziel').daten, 'xrechnung');
+  assert.equal(bg14(xml), `${t.quelle!.rechnung.leistungszeitraum_von!.replace(/-/g, '')}-${t.quelle!.rechnung.leistungszeitraum_bis!.replace(/-/g, '')}`);
+  assert.equal(bt72(xml), t.quelle!.rechnung.leistungszeitraum_bis!.replace(/-/g, ''));
+  assert.deepEqual(zeilenDaten(xml).filter(Boolean), []);
+});
+
+test('BT-72 bei Storno = wie Bezugsbeleg; Teilgutschrift = letzter Tag der gutgeschriebenen Positionen', () => {
+  const G = Object.fromEntries(ALLE.filter((t) => t.gutschrift).map((t) => [t.name, t.gutschrift!]));
+  const st = G['14_storno_381'];
+  const xmlSt = erzeugeCii(bildeERechnungGutschrift(st, { firma: TEST_FIRMA }).daten, 'xrechnung');
+  const letzter = st.positionen.map((p) => p.leistungsdatum!).sort().at(-1)!;
+  assert.equal(bt72(xmlSt), letzter.replace(/-/g, ''));
+  const tg = G['15_teilgutschrift_381'];
+  const xmlTg = erzeugeCii(bildeERechnungGutschrift(tg, { firma: TEST_FIRMA }).daten, 'en16931');
+  const letzterTg = tg.positionen.map((p) => p.leistungsdatum).filter(Boolean).sort().at(-1) ?? tg.gutschrift.leistungszeitraum_bis!;
+  assert.equal(bt72(xmlTg), letzterTg.replace(/-/g, ''));
+});
+
+test('BT-72 nicht bestimmbar → Fehler in der Prüfung (keine Datei mit leerem Element)', () => {
+  const { daten } = bild('04_manuell_zahlungsziel');
+  const ohne = { ...daten, leistungVon: null, leistungBis: null, lieferdatum: null };
+  assert.ok(pruefeERechnung(ohne, 'en16931').some((m) => m.bt === 'BT-72' && m.schwere === 'fehler'));
+  assert.ok(!pruefeERechnung(daten, 'en16931').some((m) => m.bt === 'BT-72'));
+});
+
+test('Lesekopie/ZUGFeRD-PDF zeigt den Leistungszeitraum aus dem XML (BG-14) — normales PDF nicht', async () => {
+  const q = T['12_mehrtaegige_tour'].quelle!;
+  const { daten } = bildeERechnung(q, { firma: TEST_FIRMA });
+  const basis = { rechnung: q.rechnung, positionen: q.positionen, auftraggeber: q.auftraggeber, firma: TEST_FIRMA, ausSnapshot: true };
+  const lk = (await pdfText(rechnungPdfInputAus({ ...basis, erechnung: daten }))).replace(/\s+/g, ' ');
+  // Text-Extraktion liefert Wert vor Etikett; der Gedankenstrich wird im PDF als „-" gesetzt.
+  assert.ok(lk.includes('15.10.2026 - 20.10.2026 Leistungszeitraum:'), lk);
+  const normal = (await pdfText(rechnungPdfInputAus(basis))).replace(/\s+/g, ' ');
+  assert.ok(!normal.includes('Leistungszeitraum'), 'normales PDF ohne Zeile');
+  const einTag = bildeERechnung(T['01_ab_tour'].quelle!, { firma: TEST_FIRMA }).daten;
+  const q1 = T['01_ab_tour'].quelle!;
+  const lk1 = (await pdfText(rechnungPdfInputAus({ rechnung: q1.rechnung, positionen: q1.positionen, auftraggeber: q1.auftraggeber, firma: TEST_FIRMA, ausSnapshot: true, erechnung: einTag }))).replace(/\s+/g, ' ');
+  assert.ok(lk1.includes('14.10.2026 Leistungszeitraum:') && !lk1.includes('14.10.2026 - '), lk1);
 });
 
 // ---------------------------------------------------------------- Archiv-Export

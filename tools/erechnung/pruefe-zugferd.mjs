@@ -67,14 +67,19 @@ for (const f of faelle) {
   const mAus = java(['-jar', join(VAL, 'mustang.jar'), '--disable-file-logging', '--action', 'validate', '--source', f.pfad]);
   const mustang = /<summary status="valid"\/>\s*<\/validation>/.test(mAus);
   const mMeld = [...new Set([...mAus.matchAll(/<(warning|error)[^>]*>[\s\S]*?\[ID ([^\]]+)\]/g)].map((m) => `${m[1]}:${m[2]}`))];
+  // Hinweise („notice") von Mustang — u.a. aus der zusätzlichen XRechnung-Gegenprüfung; keine Warnungen.
+  const mNotiz = [...new Set([...mAus.matchAll(/<notice[^>]*>[\s\S]*?\[ID ([^\]]+)\]/g)].map((m) => m[1]))];
   const typ = f.xml ? (/<ram:TypeCode>([^<]*)</.exec(f.xml)?.[1] ?? '?') : '—';
   const nr = f.xml ? (/<rsm:ExchangedDocument>[\s\S]*?<ram:ID>([^<]*)</.exec(f.xml)?.[1] ?? '?') : '—';
+  const dt = (re) => { const m = f.xml ? re.exec(f.xml)?.[1] : null; return m ? `${m.slice(6, 8)}.${m.slice(4, 6)}.${m.slice(0, 4)}` : '—'; };
+  const bt72 = dt(/<ram:ActualDeliverySupplyChainEvent>\s*<ram:OccurrenceDateTime>\s*<udt:DateTimeString format="102">(\d{8})</);
+  const bg14 = f.xml ? (/<ram:ApplicableHeaderTradeSettlement>[\s\S]*?<ram:BillingSpecifiedPeriod>\s*<ram:StartDateTime>\s*<udt:DateTimeString format="102">(\d{8})<[\s\S]*?<ram:EndDateTime>\s*<udt:DateTimeString format="102">(\d{8})</.exec(f.xml) ?? []).slice(1).map((m) => `${m.slice(6, 8)}.${m.slice(4, 6)}.${m.slice(0, 4)}`).join('–') || '—' : '—';
   const ok = vera && kosit && mustang && kositMeld.length === 0;
   if (!ok) fehler++;
-  ergebnis.push({ datei: f.pfad, belegnummer: nr, typ, kb: f.kb, verapdf: vera, kosit, kositMeldungen: kositMeld, mustang, mustangMeldungen: mMeld });
-  console.log(`${ok ? 'ok  ' : 'FAIL'}  ${basename(f.pfad).padEnd(28)} ${nr} (Typ ${typ}) · ${f.kb} KB · veraPDF ${vera ? 'bestanden' : `FEHLER ${veraZeile}`} · `
+  ergebnis.push({ datei: f.pfad, belegnummer: nr, typ, bg14, bt72, kb: f.kb, verapdf: vera, kosit, kositMeldungen: kositMeld, mustang, mustangMeldungen: mMeld, mustangInfo: mNotiz });
+  console.log(`${ok ? 'ok  ' : 'FAIL'}  ${basename(f.pfad).padEnd(28)} ${nr} (Typ ${typ}) · BG-14 ${bg14} · BT-72 ${bt72} · ${f.kb} KB · veraPDF ${vera ? 'bestanden' : `FEHLER ${veraZeile}`} · `
     + `KoSIT ${f.xml == null ? 'KEIN XML IM PDF' : kosit ? 'bestanden' : 'FEHLER'}${kositMeld.length ? ` (${kositMeld.join(', ')})` : ''} · `
-    + `Mustang ${mustang ? 'gültig' : 'UNGÜLTIG'}${mMeld.length ? ` (${mMeld.join(', ')})` : ''}`);
+    + `Mustang ${mustang ? 'gültig' : 'UNGÜLTIG'}${mMeld.length ? ` (${mMeld.join(', ')})` : ' (0 Warnungen)'}${mNotiz.length ? ` [Hinweise: ${mNotiz.join(', ')}]` : ''}`);
 }
 writeFileSync(join(AUS, 'ergebnis.json'), JSON.stringify(ergebnis, null, 2), 'utf8');
 console.log(`\n${faelle.length - fehler}/${faelle.length} bestanden — Einzelberichte: tools/erechnung/.ausgabe-pruefung/`);
