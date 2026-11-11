@@ -23,6 +23,7 @@ const BASIS = `http://localhost:${PORT}`;
 const LAEUFE = [
   ['leerfahrt', 'Leerfahrt (Admin)', ['light', 'admin']],
   ['keine-auslagen', 'Zusatz „Keine Auslagen"', ['light']],
+  ['excel-roundtrip', 'Excel-Export/-Import (Roundtrip)', ['light']],
   ['rechnung-neu-laden', 'Touren neu laden + Prüfdialog', ['light']],
   ['erechnung-stammdaten', 'E-Rechnung: Stammdaten + Test-Export (mit Migration)', ['light', 'mit']],
   ['erechnung-stammdaten', 'E-Rechnung: Stammdaten (ohne Migration 115)', ['light', 'ohne']],
