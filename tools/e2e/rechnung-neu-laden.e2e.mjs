@@ -1,9 +1,16 @@
-import { pw, START, BASIS } from './basis.mjs';
+import { pw, START, BASIS, standortWaehlen } from './basis.mjs';
 const OUT = process.argv[2]; const THEME = process.argv[3] ?? 'light'; const TEIL = process.argv[4] ?? 'alle'; const MOBIL = process.argv[5] === 'mobil';
 const UID = '00000000-0000-0000-0000-0000000000a1';
 let f = 0; const pr = (n, c, i) => { if (c) console.log('  ok  ', n); else { f++; console.log('  FAIL', n, i === undefined ? '' : JSON.stringify(i)); } };
 const AG = 'ag1';
-const agListe = [{ id: AG, name: 'Arval', kontakt: null, rechnungsformat: null, rechnungsadressen: [], kundennummer: null, sachbearbeiter: null, aba_aufschlag_prozent: 0, kunden_uid: null, zahlungsziel_tage: 14 }, { id: 'ag2', name: 'Sixt', rechnungsformat: null, rechnungsadressen: [] }];
+const agListe = [{ id: AG, name: 'Arval', ort: 'Stuhr', strasse: 'Heiligenroder Str. 1', plz: '28816', kontakt: null, rechnungsformat: null, rechnungsadressen: [], kundennummer: null, sachbearbeiter: null, aba_aufschlag_prozent: 0, kunden_uid: null, zahlungsziel_tage: 14 }, { id: 'ag2', name: 'Sixt', rechnungsformat: null, rechnungsadressen: [] }];
+// Niederlassungen (Migration 118): nur im Teil „niederlassung" vorhanden —
+// in allen anderen Teilen hat Arval keine, die Anzeige bleibt unverändert.
+const NL = TEIL === 'niederlassung'
+  ? [{ id: 'nlB', auftraggeber_id: AG, bezeichnung: 'Bremen', strasse: 'Hafenstraße 5', plz: '28217', ort: 'Bremen', land_code: 'DE',
+      rechnungs_email: null, erechnung_email: null, kaeufer_referenz: 'REF-HB', kundennummer: 'K-HB', ansprechpartner: 'Frau Hafen', aktiv: true,
+      created_at: 'x', updated_at: 'x' }]
+  : [];
 let zn = 0;
 const Z = (tour, kategorie, kennzeichen, betrag = 25) => ({ id: `z${++zn}`, tour_id: tour, kategorie, anzahl: 1, betrag, notiz: null, kennzeichen, created_at: '2026-10-01T10:00:00Z' });
 const T = (id, nr, ag, end, extra = {}) => ({
@@ -22,6 +29,9 @@ const touren = [
   T('pa', 'T-2026-4419', AG, '2026-10-28', { kennzeichen: ['HH-AB 1234'] }),
   T('pb', 'T-2026-4431', AG, '2026-10-29', { tourenart: 'ABA', start_stadt: 'Stuhr', ziel_stadt: 'Berlin', rueckfuehrung_stadt: 'Stuhr', kennzeichen: ['HB-XY 55', 'B-CD 789'] }),
   T('pc', 'T-2026-4440', AG, '2026-10-30', { start_stadt: 'Oldenburg', ziel_stadt: 'Kiel', kennzeichen: ['OL-ZZ 12'] }),
+  // Niederlassungen: eine Tour des Hauptsitzes, eine der Niederlassung Bremen, gleicher Tag
+  T('h1', 'T-2026-0701', AG, '2026-11-20', { start_stadt: 'Stuhr', ziel_stadt: 'Hannover', niederlassung_id: null }),
+  T('b1', 'T-2026-0702', AG, '2026-11-20', { start_stadt: 'Bremen', ziel_stadt: 'Lübeck', niederlassung_id: 'nlB' }),
   ...Array.from({ length: 22 }, (_, i) => T(`v${i}`, `T-2026-5${String(i).padStart(3, '0')}`, AG, `2026-10-${String(1 + i).padStart(2, '0')}`, { kennzeichen: [`HB-V ${i}`] })),
 ];
 let zusaetze = [Z('pb', 'Tankauslagen', 'HB-XY 55', 40), Z('pc', 'Tankauslagen', 'OL-ZZ 12', 54.2), Z('pc', 'Wäsche', 'OL-ZZ 12', 15)];
@@ -34,11 +44,13 @@ const rechnungen = {
   rVers: re('rVers', 'Re_1053', { status: 'offen' }),
   rPruef: re('rPruef', 'Re_1054', { datum: '2026-10-31' }),
   rViel: re('rViel', 'Re_1055', { datum: '2026-10-31' }),
+  rHS: re('rHS', 'Re_1060', { datum: '2026-11-20', leistungszeitraum_von: '2026-11-20', leistungszeitraum_bis: '2026-11-20', niederlassung_id: null }),
+  rHB: re('rHB', 'Re_1061', { datum: '2026-11-20', leistungszeitraum_von: '2026-11-20', leistungszeitraum_bis: '2026-11-20', niederlassung_id: 'nlB' }),
 };
 const P = (rid, tour, zusatz = null, preis = 100) => ({ id: `p${Math.random().toString(36).slice(2, 8)}`, rechnung_id: rid, position_nr: 1, bezeichnung: `Bremen nach Hamburg ${tour}`, unterzeilen: [], menge: 1, einzelpreis: preis, gesamtpreis: preis, tour_id: tour, zusatz_id: zusatz, ist_manuell: false, ust_satz: null });
 let pos = [P('rVoll', 't1', null, 100), P('rX', 't4'), P('rVers', 't6'), P('rPruef', 'pa'), P('rPruef', 'pb'), P('rPruef', 'pb', tankPb, 40), P('rPruef', 'pc'),
   ...Array.from({ length: 22 }, (_, i) => P('rViel', `v${i}`))];
-const log = { posPosts: [], rePatches: [], zusatzPosts: [], inserts: [] };
+const log = { posPosts: [], rePatches: [], zusatzPosts: [], inserts: [], tourAbfragen: [] };
 const evalOr = (t, or) => [...or.matchAll(/and\(([^)]*)\)/g)].map((m) => m[1].split(',')).some((g) => g.every((c) => {
   const [col, op, ...rest] = c.split('.'); const v = rest.join('.'); const tv = t[col];
   if (op === 'eq') return String(tv) === v; if (op === 'is') return tv === null || tv === undefined;
@@ -87,6 +99,7 @@ await ctx.route('**/*', async (r) => {
     return json(obj ? null : []);
   }
   if (p === '/rest/v1/rpc/next_rechnungsnummer') return json('Re_1099');
+  if (p === '/rest/v1/auftraggeber_niederlassungen') return json(obj ? NL[0] ?? null : NL);
   if (p === '/rest/v1/touren') {
     const sel = sp.get('select') ?? '';
     if (sel.startsWith('kontakt') || sel === 'id') return json([]);
@@ -94,6 +107,10 @@ await ctx.route('**/*', async (r) => {
     const ids = inL('id'); if (ids) l = l.filter((t) => ids.includes(t.id));
     const eq = eqW('id'); if (eq) l = l.filter((t) => t.id === eq);
     const ag = eqW('auftraggeber_id'); if (ag) l = l.filter((t) => t.auftraggeber_id === ag);
+    const nl = sp.get('niederlassung_id');
+    if (nl) log.tourAbfragen.push(nl);
+    if (nl === 'is.null') l = l.filter((t) => !t.niederlassung_id);
+    else if (nl && nl.startsWith('eq.')) l = l.filter((t) => t.niederlassung_id === nl.slice(3));
     const or = sp.get('or'); if (or) l = l.filter((t) => evalOr(t, or));
     return obj ? json(l[0] ?? null) : json(page(l));
   }
@@ -207,7 +224,7 @@ if (TEIL === 'alle' || TEIL === 'pruefen') {
 if (TEIL === 'alle' || TEIL === 'neu') {
   log.inserts = [];
   await pg.goto(`${B}/rechnungen/neu`);
-  await pg.locator('#ag').selectOption(AG);
+  await standortWaehlen(pg, '#ag', 'Arval');
   await pg.locator('#rdat').fill('2026-10-01');
   await pg.getByRole('button', { name: 'Touren laden' }).click();
   await pg.getByText('T-2026-0302').first().waitFor({ timeout: 10000 }).catch(() => {});
@@ -216,7 +233,7 @@ if (TEIL === 'alle' || TEIL === 'neu') {
   pr('Neue Rechnung: Entwurf speichern → kein Dialog, gespeichert', (await pg.getByRole('dialog', { name: 'Auslagen prüfen' }).count()) === 0 && log.inserts.length === 1 && log.inserts[0].status === 'entwurf', log.inserts.map((x) => x.status));
   log.inserts = [];
   await pg.goto(`${B}/rechnungen/neu`);
-  await pg.locator('#ag').selectOption(AG);
+  await standortWaehlen(pg, '#ag', 'Arval');
   await pg.locator('#rdat').fill('2026-10-01');
   await pg.getByRole('button', { name: 'Touren laden' }).click();
   await pg.getByText('T-2026-0302').first().waitFor({ timeout: 10000 }).catch(() => {});
@@ -226,6 +243,66 @@ if (TEIL === 'alle' || TEIL === 'neu') {
   await pg.getByRole('button', { name: 'Trotzdem erstellen' }).click();
   await pg.waitForTimeout(1200);
   pr('Trotzdem erstellen → Rechnung offen angelegt', log.inserts.length === 1 && log.inserts[0].status === 'offen');
+}
+/** Seitentext inkl. Inhalt aller Eingabefelder (Positionen stehen in Inputs). */
+const seiteText = () => pg.evaluate(() => document.body.innerText + ' ' + [...document.querySelectorAll('input, textarea')].map((e) => e.value).join(' '));
+if (TEIL === 'niederlassung') {
+  // ---- „Touren erneut laden" je Standort (der wichtigste Punkt)
+  await neuLaden('rHS');
+  await pg.getByRole('button', { name: 'Neu laden' }).click();
+  await pg.getByRole('status').filter({ hasText: /hinzugefügt|Keine/ }).waitFor({ timeout: 10000 });
+  let text = await seiteText();
+  pr('Hauptsitz-Rechnung neu laden: nur die Tour des Hauptsitzes (Hannover), nicht die Bremer (Lübeck)',
+    text.includes('Hannover') && !text.includes('Lübeck') && log.tourAbfragen.includes('is.null'), { abfragen: log.tourAbfragen });
+  pr('Kopf der Rechnung: „Arval · Stuhr"', text.includes('Arval · Stuhr'));
+  await pg.getByRole('button', { name: 'Abbrechen', exact: true }).first().click();
+  log.tourAbfragen = [];
+  await neuLaden('rHB');
+  await pg.getByRole('button', { name: 'Neu laden' }).click();
+  await pg.getByRole('status').filter({ hasText: /hinzugefügt|Keine/ }).waitFor({ timeout: 10000 });
+  text = await seiteText();
+  pr('Bremer Rechnung neu laden: nur die Bremer Tour (Lübeck), nicht die des Hauptsitzes',
+    text.includes('Lübeck') && !text.includes('Hannover') && log.tourAbfragen.includes('eq.nlB'), { abfragen: log.tourAbfragen });
+  pr('Kopf der Rechnung: „Arval · Bremen"', text.includes('Arval · Bremen'));
+  await pg.screenshot({ path: `${OUT}/nl_neuladen_bremen_${THEME}.png` });
+  await pg.getByRole('button', { name: 'Abbrechen', exact: true }).first().click();
+
+  // ---- Neue Rechnung für die Niederlassung Bremen
+  log.inserts = []; log.tourAbfragen = [];
+  await pg.goto(`${B}/rechnungen/neu`);
+  await pg.locator('#ag').click();
+  await pg.locator('#ag').fill('bremen');
+  const opts = await pg.locator(`#${await pg.locator('#ag').getAttribute('aria-controls')} [role=option]`).allInnerTexts();
+  pr('Auswahl: Suche „bremen" findet „Arval · Bremen"', opts.includes('Arval · Bremen'), opts);
+  await pg.keyboard.press('Escape');
+  await standortWaehlen(pg, '#ag', 'Arval · Stuhr');
+  const alleOpts = await pg.locator('#ag').evaluate(() => null);
+  void alleOpts;
+  await standortWaehlen(pg, '#ag', 'Arval · Bremen');
+  await pg.getByTestId('rechnung-standort-hinweis').waitFor({ timeout: 5000 });
+  await pg.locator('#rdat').fill('2026-11-20');
+  await pg.getByRole('button', { name: 'Touren laden' }).click();
+  await pg.waitForFunction(() => [...document.querySelectorAll('input, textarea')].some((e) => /Lübeck|Hannover/.test(e.value)), null, { timeout: 10000 });
+  text = await seiteText();
+  pr('Neue Rechnung Bremen: nur Bremer Touren geladen', text.includes('Lübeck') && !text.includes('Hannover') && log.tourAbfragen.includes('eq.nlB'), log.tourAbfragen);
+  await pg.getByRole('button', { name: 'Als Entwurf speichern' }).click();
+  for (let i = 0; i < 40 && log.inserts.length === 0; i++) await pg.waitForTimeout(150);
+  const ins = log.inserts[0] ?? {};
+  pr('Entwurf: Niederlassung, Adresse, Kundennummer, Ansprechpartner und Käuferreferenz der Niederlassung',
+    ins.niederlassung_id === 'nlB' && ins.rechnungsadresse_firma === 'Arval' && ins.rechnungsadresse_strasse === 'Hafenstraße 5'
+    && ins.rechnungsadresse_plz_ort === '28217 Bremen' && ins.kundennummer === 'K-HB' && ins.ansprechpartner === 'Frau Hafen', ins);
+  // Hauptsitz: nur Touren ohne Niederlassung
+  log.inserts = []; log.tourAbfragen = [];
+  await pg.goto(`${B}/rechnungen/neu`);
+  await standortWaehlen(pg, '#ag', 'Arval · Stuhr');
+  await pg.locator('#rdat').fill('2026-11-20');
+  await pg.getByRole('button', { name: 'Touren laden' }).click();
+  await pg.waitForFunction(() => [...document.querySelectorAll('input, textarea')].some((e) => /Lübeck|Hannover/.test(e.value)), null, { timeout: 10000 });
+  text = await seiteText();
+  pr('Neue Rechnung Hauptsitz: nur Touren des Hauptsitzes', text.includes('Hannover') && !text.includes('Lübeck') && log.tourAbfragen.includes('is.null'), log.tourAbfragen);
+  await pg.getByRole('button', { name: 'Als Entwurf speichern' }).click();
+  for (let i = 0; i < 40 && log.inserts.length === 0; i++) await pg.waitForTimeout(150);
+  pr('Entwurf Hauptsitz: ohne Niederlassung, Adresse des Auftraggebers', (log.inserts[0] ?? {}).niederlassung_id === null && log.inserts[0]?.rechnungsadresse_plz_ort === '28816 Stuhr', log.inserts[0]);
 }
 await b.close();
 console.log(f ? `${f} FEHLER` : 'alle ok'); process.exit(f ? 1 : 0);

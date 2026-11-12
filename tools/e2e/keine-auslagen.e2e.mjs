@@ -1,4 +1,4 @@
-import { pw, START, BASIS } from './basis.mjs';
+import { pw, START, BASIS, standortWaehlen } from './basis.mjs';
 const OUT = process.argv[2]; const THEME = process.argv[3] ?? 'light'; const TEIL = process.argv[4] ?? 'alle'; const MOBIL = process.argv[5] === 'mobil';
 // Tourdaten relativ zu heute: Hinweise in der Tourenliste gelten nur für
 // Touren der letzten 7 Tage — feste Kalenderdaten würden den Test veralten lassen.
@@ -163,7 +163,7 @@ if (TEIL === 'alle' || TEIL === 'rechnung') {
   zusaetze = zusaetze.filter((z) => !(z.tour_id === 'k2' && z.kategorie === 'Keine Auslagen'));
   log.zusatzPosts = []; log.positionen = [];
   await pg.goto(`${B}/rechnungen/neu`);
-  await pg.locator('#ag').selectOption(AG);
+  await standortWaehlen(pg, '#ag', 'Arval');
   await pg.locator('#rdat').fill(TAG);
   await pg.getByRole('button', { name: 'Touren laden' }).click();
   await pg.getByText('T-2026-0202').first().waitFor({ timeout: 10000 }).catch(() => {});

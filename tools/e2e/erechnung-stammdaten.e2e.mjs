@@ -1,4 +1,4 @@
-import { pw, START, BASIS } from './basis.mjs';
+import { pw, START, BASIS, standortWaehlen } from './basis.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 const OUT = process.argv[2]; const THEME = process.argv[3] ?? 'light'; const SCHEMA = process.argv[4] ?? 'mit'; const MOBIL = process.argv[5] === 'mobil';
 const MIT = SCHEMA === 'mit';
@@ -183,8 +183,7 @@ else pr('ohne Migration: Empfänger ohne neue Spalten', me.firma === 'Sub GmbH' 
 
 // ------------------------------------------------------------ D) Manuelle Rechnung
 await pg.goto(`${B}/rechnungen/neu`);
-await pg.locator('#ag').waitFor({ timeout: 10000 });
-await pg.locator('#ag').selectOption('__manuell');
+await standortWaehlen(pg, '#ag', 'Manuell');
 await pg.locator('#re-man-firma').fill('Privat Test & Sohn');
 await pg.locator('#re-man-plz').fill('26122');
 await pg.locator('#re-man-ort').fill('Oldenburg');

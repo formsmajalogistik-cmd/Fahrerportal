@@ -30,3 +30,20 @@ export const START = chromium ? { executablePath: chromium } : {};
 
 /** Adresse der laufenden App (lauf.mjs startet sie und setzt E2E_BASIS). */
 export const BASIS = process.env.E2E_BASIS ?? 'http://localhost:5196';
+
+/**
+ * Standort-Auswahl (Komponente StandortAuswahl) bedienen: Feld öffnen,
+ * Suchtext eingeben und die passende Option wählen.
+ *   await standortWaehlen(pg, '#ag', 'Arval')            → erste Option, die „Arval" enthält
+ *   await standortWaehlen(pg, '#ag', 'Arval · Bremen')   → genau dieser Standort
+ */
+export async function standortWaehlen(pg, selector, text) {
+  const feld = pg.locator(selector);
+  await feld.waitFor({ timeout: 15000 });
+  await feld.click();
+  await feld.fill(text);
+  const liste = pg.locator(`#${(await feld.getAttribute('aria-controls'))}`);
+  const option = liste.getByRole('option').filter({ hasText: text }).first();
+  await option.waitFor({ timeout: 10000 });
+  await option.dispatchEvent('mousedown');
+}
