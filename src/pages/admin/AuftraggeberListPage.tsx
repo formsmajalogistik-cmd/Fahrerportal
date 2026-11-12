@@ -57,12 +57,12 @@ export function AuftraggeberListPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-maja-navy">Auftraggeber</h1>
           <p className="text-sm text-maja-muted">Kunden verwalten.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-maja-muted">
             Nächste freie Kundennummer: <strong className="text-maja-navy">{naechsteNummer}</strong>
           </span>
@@ -72,7 +72,7 @@ export function AuftraggeberListPage() {
         </div>
       </div>
 
-      <div className="card overflow-hidden">
+      <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-maja-light text-left text-maja-navy">
             <tr>
