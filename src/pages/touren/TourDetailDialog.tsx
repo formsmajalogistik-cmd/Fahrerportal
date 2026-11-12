@@ -47,6 +47,9 @@ import {
 import { AuslagenHinweis } from '../../components/AuslagenHinweis';
 import { AuslagenTourStatus } from '../../components/auslagen/AuslagenTourStatus';
 import { LeerfahrtLeiste } from '../../components/auslagen/LeerfahrtLeiste';
+import { StandortAuswahl } from '../../components/StandortAuswahl';
+import { auftraggeberAnzeige, standortAusWert, standortWert } from '../../lib/niederlassungen';
+import { useNiederlassungGesperrt, useStandorte } from '../../lib/useStandorte';
 import {
   loadTourProtokollZuweisungen, ProtokollSection,
   type TourProtokollZuweisung,
@@ -238,6 +241,8 @@ interface EditDraft {
   status: TourStatus;
   fahrerId: string;
   auftraggeberId: string;
+  /** Niederlassung (Migration 118); null = Hauptsitz */
+  niederlassungId: string | null;
   tourenart: TourenArt | '';
   startStadt: string;
   zielStadt: string;
@@ -306,6 +311,7 @@ function draftFromTour(t: FullTour): EditDraft {
     status: t.status,
     fahrerId: t.fahrer_id ?? '',
     auftraggeberId: t.auftraggeber_id ?? '',
+    niederlassungId: t.niederlassung_id ?? null,
     tourenart: t.tourenart ?? '',
     // Bestandstouren werden NICHT nachträglich umgestellt.
     tourenartManuell: true,
@@ -364,6 +370,7 @@ export function TourDetailDialog({
   const fahrerCtx = useFahrerContext();
   const isAdmin = profile?.role === 'admin';
   const guard = useTestGuard();
+  const { standorte } = useStandorte();
 
   const [tour, setTour] = useState<FullTour | null>(null);
   const [zusaetze, setZusaetze] = useState<TourZusatz[]>([]);
@@ -895,6 +902,7 @@ export function TourDetailDialog({
         // ihrem Default-Wert bestehen).
         fahrer_id: draft.fahrerId || null,
         auftraggeber_id: draft.auftraggeberId || null,
+        ...(standorte?.aktiv ? { niederlassung_id: draft.auftraggeberId ? draft.niederlassungId : null } : {}),
         kontakt_id: draft.kontaktId || null,
         tourenart: draft.tourenart || null,
         start_stadt: start,
@@ -974,7 +982,7 @@ export function TourDetailDialog({
           : null,
       })
       .eq('id', tour.id);
-    if (err) { setSaving(false); setStatusMsg({ kind: 'err', text: err.message }); return; }
+    if (err) { setSaving(false); setStatusMsg({ kind: 'err', text: err.message.replace(/^NIEDERLASSUNG_[A-Z]+:\s*/, '') }); return; }
     // Ansprechpartner separat schreiben (eigene Tabelle seit 080).
     try {
       await speichereAlleAnsprechpartner(tour.id, kontakte);
@@ -1310,7 +1318,7 @@ export function TourDetailDialog({
           <h2 className="text-lg font-semibold text-maja-navy break-words">{titel}</h2>
           <p className="text-xs text-maja-muted">
             {tour.tour_id ?? '—'}
-            {tour.auftraggeber ? ` · ${tour.auftraggeber.name}` : ''}
+            {tour.auftraggeber ? ` · ${auftraggeberAnzeige(standorte, tour.auftraggeber_id, tour.niederlassung_id, tour.auftraggeber.name)}` : ''}
           </p>
         </div>
         <button
@@ -2138,6 +2146,7 @@ interface ViewModeProps {
 }
 
 function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewBreakdown, protokollStand }: ViewModeProps) {
+  const { standorte } = useStandorte();
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
 
@@ -2158,7 +2167,7 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewB
         <DetailItem label="Auftraggeber">
           {tour.auftraggeber ? (
             <>
-              <span className="block">{tour.auftraggeber.name}</span>
+              <span className="block">{auftraggeberAnzeige(standorte, tour.auftraggeber_id, tour.niederlassung_id, tour.auftraggeber.name)}</span>
               {tour.auftraggeber.kontakt && (
                 <span className="block text-xs text-maja-muted">{tour.auftraggeber.kontakt}</span>
               )}
@@ -2360,9 +2369,13 @@ function RouteIcon({ className }: { className?: string }) {
 }
 
 function EditMode(p: EditModeProps) {
+  const { standorte } = useStandorte();
+  // Steht die Tour auf einer erstellten Rechnung, lehnt der Server einen
+  // Wechsel der Niederlassung ab (Migration 118) — hier nur der Hinweis.
+  const niederlassungGesperrt = useNiederlassungGesperrt(p.draft?.auftraggeberId ? p.tourId : null);
   const {
     draft, patchDraft, toggleRueckfuehrung, liveKmGesamt, livePreisKm, adressen,
-    auftraggeber, fahrer, draftSelectedAg, templates, zugaenge, kontakte,
+    fahrer, draftSelectedAg, templates, zugaenge, kontakte,
     stationsKontakte, onStationsKontakte, routeConfirm, onOpenRouteDialog,
     breakdown, pricing,
   } = p;
@@ -2386,13 +2399,19 @@ function EditMode(p: EditModeProps) {
         <div className="tf-grid">
           <div className="sm:col-span-3 lg:col-span-4">
             <label className="tf-label">Auftraggeber</label>
-            <select className="tf-input" value={draft.auftraggeberId}
-                    onChange={(e) => patchDraft({ auftraggeberId: e.target.value, kontaktId: '' })}>
-              <option value="">— kein Auftraggeber —</option>
-              {(auftraggeber ?? []).map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            <StandortAuswahl id="td-ag" inputClassName="tf-input" standorte={standorte} leerText="— kein Auftraggeber —"
+                             wert={draft.auftraggeberId ? standortWert(draft.auftraggeberId, draft.niederlassungId) : ''}
+                             onChange={(w) => {
+                               const st = standortAusWert(w);
+                               // Auftraggeber gewechselt → Kontakt zurücksetzen; die Niederlassung kommt aus der Auswahl.
+                               patchDraft({
+                                 auftraggeberId: st.auftraggeberId ?? '', niederlassungId: st.niederlassungId,
+                                 ...(st.auftraggeberId !== draft.auftraggeberId ? { kontaktId: '' } : {}),
+                               });
+                             }} />
+            {niederlassungGesperrt && (
+              <p className="mt-1 text-xs text-maja-muted">Die Tour steht auf einer erstellten Rechnung — Standort/Niederlassung ist nicht mehr änderbar.</p>
+            )}
           </div>
           <div className="sm:col-span-3 lg:col-span-4">
             <label className="tf-label">Fahrer</label>

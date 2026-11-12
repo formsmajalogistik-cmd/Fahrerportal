@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { ladeInBloecken } from '../../lib/ladeInBloecken';
 import { XIcon } from '../../components/icons';
 import { displayName } from '../../lib/names';
+import { useStandorte } from '../../lib/useStandorte';
 import type {
   AppUser, Auftraggeber, Fahrer, TourenArt,
 } from '../../types/db';
@@ -32,6 +33,8 @@ interface ParsedRow {
   rueckfuehrung_stadt: string | null;
   fahrer_name: string | null;
   auftraggeber_name: string | null;
+  /** Spalte „Niederlassung" (undefined = Spalte fehlt; leer = Hauptsitz). */
+  niederlassung_name?: string | null;
   tourenart: TourenArt | null;
   ist_sondervereinbarung: boolean;
   sondervereinbarung: string | null;
@@ -140,6 +143,7 @@ const HEADER_KEYS = {
   plz_rueckfuehrung: ['plz rückführung', 'plz rueckfuehrung'],
   auf_eis:         ['auf eis'],
   auf_eis_notiz:   ['auf-eis-notiz', 'auf eis notiz'],
+  niederlassung:   ['niederlassung', 'standort'],
   bestaetigt:      ['bestätigt', 'bestaetigt'],
   created_at:      ['created_at', 'erstellt am'],
 };
@@ -289,6 +293,7 @@ function fuzzyMatchName<T extends { id: string; haystack: string }>(
 }
 
 export function TourImportDialog({ onClose, onImported }: Props) {
+  const { standorte } = useStandorte();
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
 
@@ -437,6 +442,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       plz_rueckfuehrung: findColumnExact(cols, HEADER_KEYS.plz_rueckfuehrung),
       auf_eis:         findColumnExact(cols, HEADER_KEYS.auf_eis),
       auf_eis_notiz:   findColumnExact(cols, HEADER_KEYS.auf_eis_notiz),
+      niederlassung:   findColumnExact(cols, HEADER_KEYS.niederlassung),
     };
     const at = (r: unknown[], idx: number): unknown => (idx >= 0 ? r[idx] : null);
 
@@ -459,6 +465,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
 
       const fahrer_name = cIdx.fahrer >= 0 ? (r[cIdx.fahrer] == null ? null : String(r[cIdx.fahrer]).trim()) : null;
       const auftraggeber_name = cIdx.auftraggeber >= 0 ? (r[cIdx.auftraggeber] == null ? null : String(r[cIdx.auftraggeber]).trim()) : null;
+      const niederlassung_name = oIdx.niederlassung >= 0 ? (cellStr(at(r, oIdx.niederlassung)) ?? null) : undefined;
       const tourenart = cIdx.tourenart >= 0 ? parseTourenart(r[cIdx.tourenart]) : null;
 
       const sv_raw = cIdx.sondervereinbarung >= 0 ? r[cIdx.sondervereinbarung] : null;
@@ -536,6 +543,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         rueckfuehrung_stadt,
         fahrer_name,
         auftraggeber_name,
+        niederlassung_name,
         tourenart,
         ist_sondervereinbarung,
         sondervereinbarung: ist_sondervereinbarung ? sv_text : null,
@@ -609,11 +617,29 @@ export function TourImportDialog({ onClose, onImported }: Props) {
     return parsedRows.map((r) => {
       const fahrerId = r.fahrer_name ? (fahrerMap[r.fahrer_name] ?? null) : null;
       const auftraggeberId = r.auftraggeber_name ? (agMap[r.auftraggeber_name] ?? null) : null;
+      // Niederlassung (Migration 118): über Bezeichnung oder Ort innerhalb
+      // des Auftraggebers; leer = Hauptsitz. Unbekannt → Zeile ungültig.
+      let niederlassungId: string | null | undefined;
+      let errors = r.errors;
+      if (r.niederlassung_name !== undefined) {
+        const name = (r.niederlassung_name ?? '').trim().toLowerCase();
+        if (!name || !auftraggeberId) niederlassungId = null;
+        else {
+          const nls = standorte?.jeAuftraggeber.get(auftraggeberId) ?? [];
+          const treffer = nls.find((n) => n.bezeichnung.trim().toLowerCase() === name)
+            ?? nls.find((n) => (n.ort ?? '').trim().toLowerCase() === name);
+          if (treffer) niederlassungId = treffer.id;
+          else {
+            niederlassungId = null;
+            errors = [...errors, `Niederlassung „${r.niederlassung_name}" ist bei diesem Auftraggeber nicht angelegt`];
+          }
+        }
+      }
       const dupKey = `${(r.startdatum ?? '').slice(0, 10)}|${r.start_stadt.toLowerCase()}|${r.ziel_stadt.toLowerCase()}|${auftraggeberId ?? ''}`;
       const is_duplicate = existingHashes.has(dupKey);
-      return { ...r, fahrer_id: fahrerId, auftraggeber_id: auftraggeberId, is_duplicate };
+      return { ...r, errors, fahrer_id: fahrerId, auftraggeber_id: auftraggeberId, niederlassung_id: niederlassungId, is_duplicate };
     });
-  }, [parsedRows, fahrerMap, agMap, existingHashes]);
+  }, [parsedRows, fahrerMap, agMap, existingHashes, standorte]);
 
   const valideCount = resolvedRows.filter((r) => r.errors.length === 0).length;
   const problemCount = resolvedRows.length - valideCount;
@@ -687,6 +713,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.plz_rueckfuehrung !== undefined) base.plz_rueckfuehrung = r.plz_rueckfuehrung;
         if (r.auf_eis != null) base.auf_eis = r.auf_eis;
         if (r.auf_eis_notiz !== undefined) base.auf_eis_notiz = r.auf_eis_notiz;
+        if (r.niederlassung_id !== undefined && standorte?.aktiv) base.niederlassung_id = r.niederlassung_id;
         return base;
       });
       const { error: err } = await supabase.from('touren').insert(payload);
@@ -1053,6 +1080,7 @@ function PreviewStep({ rows, valideCount, problemCount, dupCount, onBack, onImpo
                   </td>
                   <td className="px-2 py-1.5">
                     {r.auftraggeber_name}
+                    {r.niederlassung_name ? <span className="text-maja-muted"> · {r.niederlassung_name}</span> : null}
                     {!r.auftraggeber_id && r.auftraggeber_name && <span className="ml-1 text-red-600">·übersprungen</span>}
                   </td>
                   <td className="px-2 py-1.5">{r.verguetung ?? '—'}</td>

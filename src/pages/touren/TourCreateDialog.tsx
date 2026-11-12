@@ -23,6 +23,9 @@ import {
 import {
   leereKontaktMap, speichereAlleAnsprechpartner, type KontaktMap,
 } from '../../lib/tourAnsprechpartner';
+import { StandortAuswahl } from '../../components/StandortAuswahl';
+import { standortAusWert, standortWert } from '../../lib/niederlassungen';
+import { useStandorte } from '../../lib/useStandorte';
 import type {
   AppUser, Auftraggeber, AuftraggeberKontakt, Fahrer, FormularTemplate, GreimelZugang, ProtokollArt, TourenArt,
 } from '../../types/db';
@@ -95,6 +98,9 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
   const [auftraggeber, setAuftraggeber] = useState<Auftraggeber[]>([]);
   const [fahrer, setFahrer] = useState<FahrerWithUser[]>([]);
   const [auftraggeberId, setAuftraggeberId] = useState('');
+  // Niederlassung (Migration 118): leer = Hauptsitz
+  const [niederlassungId, setNiederlassungId] = useState<string | null>(null);
+  const { standorte } = useStandorte();
   const [fahrerId, setFahrerId] = useState('');
 
   // Tourenart + Daten
@@ -383,6 +389,7 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
       // Wechsel der Tourenart keinen Altwert mitschleppt.
       aba_gesamt_km_berechnen: isAba ? abaGesamtKm : false,
       auftraggeber_id: auftraggeberId || null,
+      ...(standorte?.aktiv ? { niederlassung_id: auftraggeberId ? niederlassungId : null } : {}),
       fahrer_id: fahrerId || null,
       kontakt_id: kontaktId || null,
       tourenart: tourenart || null,
@@ -509,14 +516,9 @@ export function TourCreateDialog({ onClose, onCreated, variant = 'modal', initia
             <div className="tf-grid">
               <div className="sm:col-span-3 lg:col-span-4">
                 <label htmlFor="t-ag" className="tf-label">Auftraggeber</label>
-                <select id="t-ag" className="tf-input"
-                        value={auftraggeberId}
-                        onChange={(e) => setAuftraggeberId(e.target.value)}>
-                  <option value="">— kein Auftraggeber —</option>
-                  {(auftraggeber ?? []).map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <StandortAuswahl id="t-ag" inputClassName="tf-input" standorte={standorte} leerText="— kein Auftraggeber —"
+                                 wert={auftraggeberId ? standortWert(auftraggeberId, niederlassungId) : ''}
+                                 onChange={(w) => { const st = standortAusWert(w); setAuftraggeberId(st.auftraggeberId ?? ''); setNiederlassungId(st.niederlassungId); }} />
               </div>
               <div className="sm:col-span-3 lg:col-span-4">
                 <label htmlFor="t-fa" className="tf-label">Fahrer</label>

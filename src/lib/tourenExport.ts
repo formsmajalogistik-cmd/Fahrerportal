@@ -3,6 +3,7 @@ import { istKeineAuslagen } from './zusatzArten';
 import { supabase } from './supabase';
 import { ladeInBloecken } from './ladeInBloecken';
 import { fahrerName } from './names';
+import { ladeStandorte } from './niederlassungen';
 import type { AppUser } from '../types/db';
 
 // ============================================================
@@ -28,6 +29,8 @@ interface ExportArgs {
   dateTo: string;
   /** Optionaler Auftraggeber-Filter (id) — wenn gesetzt. */
   auftraggeberId?: string | null;
+  /** Filterwert der Tourenliste („agId", „agId:hs", „agId:nlId") — schränkt ggf. auf einen Standort ein. */
+  standortFilter?: string | null;
 }
 
 interface KontaktJson { name?: string; telefon?: string; email?: string }
@@ -58,6 +61,7 @@ interface ExportRow {
   kontakt_rueckfuehrung: KontaktJson | null;
   kennzeichen: string[] | null;
   fin: string | null;
+  niederlassung_id?: string | null;
   fin_rueck: string | null;
   kundenname: string | null;
   fahrzeugmodell: string | null;
@@ -116,7 +120,9 @@ function routeString(r: ExportRow): string {
  * Lädt alle Touren des Zeitraums (+ optional Auftraggeber-Filter) inkl.
  * Joins und erzeugt eine .xlsx-Datei, die direkt re-importierbar ist.
  */
-export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: ExportArgs): Promise<number> {
+export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId, standortFilter }: ExportArgs): Promise<number> {
+  const standorte = await ladeStandorte();
+  const standortTeil = standortFilter?.split(':')[1] ?? null;
   // In Blöcken laden: eine einzelne Abfrage endet bei 1000 Zeilen — ein
   // Jahres-Export war sonst still unvollständig.
   const baue = () => {
@@ -135,6 +141,8 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       .order('created_at', { ascending: true })
       .order('id', { ascending: true });
     if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
+    if (standorte.aktiv && standortTeil === 'hs') query = query.is('niederlassung_id', null);
+    else if (standorte.aktiv && standortTeil) query = query.eq('niederlassung_id', standortTeil);
     return query;
   };
 
@@ -167,6 +175,9 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
     'Straße Ziel', 'PLZ Ziel',
     'Straße Rückführung', 'PLZ Rückführung',
     'Auf Eis', 'Auf-Eis-Notiz',
+    // Migration 118 — leer = Hauptsitz. Der Importer ordnet über die
+    // Bezeichnung (oder den Ort) der Niederlassung dieses Auftraggebers zu.
+    'Niederlassung',
   ];
 
   const dataRows = rows.map((t) => {
@@ -220,6 +231,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId }: Ex
       t.plz_rueckfuehrung ?? '',
       t.auf_eis ? 'ja' : 'nein',
       t.auf_eis_notiz ?? '',
+      (t.niederlassung_id && standorte.nachId.get(t.niederlassung_id)?.bezeichnung) || '',
     ];
   });
 

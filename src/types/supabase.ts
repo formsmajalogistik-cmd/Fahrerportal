@@ -91,6 +91,7 @@ export type Database = {
           erechnung_format: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email: string | null;
           kaeufer_referenz: string | null;
+          hauptsitz_bezeichnung: string | null;
         };
         Insert: {
           id?: string;
@@ -114,6 +115,7 @@ export type Database = {
           erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
+          hauptsitz_bezeichnung?: string | null;
         };
         Update: {
           id?: string;
@@ -137,8 +139,70 @@ export type Database = {
           erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd';
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
+          hauptsitz_bezeichnung?: string | null;
         };
         Relationships: [];
+      };
+      auftraggeber_niederlassungen: {
+        Row: {
+          id: string;
+          auftraggeber_id: string;
+          bezeichnung: string;
+          strasse: string | null;
+          plz: string | null;
+          ort: string | null;
+          land_code: string | null;
+          rechnungs_email: string | null;
+          erechnung_email: string | null;
+          kaeufer_referenz: string | null;
+          kundennummer: string | null;
+          ansprechpartner: string | null;
+          aktiv: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          auftraggeber_id: string;
+          bezeichnung: string;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          land_code?: string | null;
+          rechnungs_email?: string | null;
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
+          kundennummer?: string | null;
+          ansprechpartner?: string | null;
+          aktiv?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          auftraggeber_id?: string;
+          bezeichnung?: string;
+          strasse?: string | null;
+          plz?: string | null;
+          ort?: string | null;
+          land_code?: string | null;
+          rechnungs_email?: string | null;
+          erechnung_email?: string | null;
+          kaeufer_referenz?: string | null;
+          kundennummer?: string | null;
+          ansprechpartner?: string | null;
+          aktiv?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'auftraggeber_niederlassungen_auftraggeber_id_fkey';
+            columns: ['auftraggeber_id'];
+            referencedRelation: 'auftraggeber';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       rechnungsadressen: {
         Row: {
@@ -346,6 +410,7 @@ export type Database = {
           zeit_start: string | null;
           zeit_ziel: string | null;
           zeit_rueckfuehrung: string | null;
+          niederlassung_id: string | null;
         };
         Insert: {
           id?: string;
@@ -420,6 +485,7 @@ export type Database = {
           zeit_start?: string | null;
           zeit_ziel?: string | null;
           zeit_rueckfuehrung?: string | null;
+          niederlassung_id?: string | null;
         };
         Update: {
           id?: string;
@@ -494,6 +560,7 @@ export type Database = {
           zeit_start?: string | null;
           zeit_ziel?: string | null;
           zeit_rueckfuehrung?: string | null;
+          niederlassung_id?: string | null;
         };
         Relationships: [
           {
@@ -1463,6 +1530,7 @@ export type Database = {
           kaeufer_referenz: string | null;
           storniert_am: string | null;
           absender_snapshot: Json | null;
+          niederlassung_id: string | null;
         };
         Insert: {
           mit_unterschrift?: boolean;
@@ -1509,6 +1577,7 @@ export type Database = {
           kaeufer_referenz?: string | null;
           storniert_am?: string | null;
           absender_snapshot?: Json | null;
+          niederlassung_id?: string | null;
         };
         Update: {
           mit_unterschrift?: boolean;
@@ -1555,6 +1624,7 @@ export type Database = {
           kaeufer_referenz?: string | null;
           storniert_am?: string | null;
           absender_snapshot?: Json | null;
+          niederlassung_id?: string | null;
         };
         Relationships: [
           {
@@ -1955,6 +2025,7 @@ export type Database = {
           erechnung_format: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
           erechnung_email: string | null;
           kaeufer_referenz: string | null;
+          niederlassung_id: string | null;
         };
         Insert: {
           mit_unterschrift?: boolean;
@@ -1993,6 +2064,7 @@ export type Database = {
           erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
+          niederlassung_id?: string | null;
         };
         Update: {
           mit_unterschrift?: boolean;
@@ -2031,6 +2103,7 @@ export type Database = {
           erechnung_format?: 'pdf' | 'en16931_cii' | 'xrechnung_cii' | 'zugferd' | null;
           erechnung_email?: string | null;
           kaeufer_referenz?: string | null;
+          niederlassung_id?: string | null;
         };
         Relationships: [
           {
@@ -2372,6 +2445,7 @@ export type Database = {
           /** Tour steht auf einer Rechnung/Gutschrift → nicht mehr
            *  vom Auftraggeber bearbeitbar (Migration 079). */
           abgerechnet: boolean;
+          niederlassung_id: string | null;
         };
         Relationships: [];
       };

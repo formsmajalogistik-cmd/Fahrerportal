@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   POS_SELECT, auslagenStatus, keineAuslagenFuerUngeklaerte, ladeAgFormate, ladeLetzteAuslagenRechnungen,
@@ -9,6 +9,11 @@ import { AuslagenBadge } from '../components/auslagen/AuslagenBadge';
 import { LEERFAHRT_ENTFERNEN_FRAGE, ladeLeerfahrten, leerfahrtEntfernen, leerfahrtSetzen } from '../lib/leerfahrt';
 import { istKeineAuslagen, ladeZusatzArten, standardZusatzArten, type ZusatzArten } from '../lib/zusatzArten';
 import { supabase } from '../lib/supabase';
+import {
+  auftraggeberAnzeige, auftraggeberAnzeigeKurz, filterAuftraggeber, filterOptionen, filterPasst,
+  niederlassungenVorhanden, niederlassungenZurSuche, standortPasstZuSuche, type Standorte,
+} from '../lib/niederlassungen';
+import { useStandorte } from '../lib/useStandorte';
 import { useAuth } from '../auth/AuthContext';
 import { useFahrerContext } from '../auth/FahrerContext';
 import { Spinner } from '../components/Spinner';
@@ -108,8 +113,8 @@ const STATUS_BADGE: Record<TourStatus, string> = {
 
 // Spalten der Tour-Karten (schlanke Liste). Gilt für die Liste UND die
 // Suche — Details lädt erst das Tour-Detail-Panel.
-function listenSpalten(isAdmin: boolean): string {
-  const baseCols = `
+function listenSpalten(isAdmin: boolean, mitNiederlassung = false): string {
+  const baseCols = `${mitNiederlassung ? 'niederlassung_id,' : ''}
     id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
     kundenname, auftraggeber_id, fahrer_id, status, startdatum, enddatum,
     tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
@@ -183,6 +188,9 @@ function normalisiereTour(r: unknown): TourRow {
       : [],
   } as TourRow;
 }
+
+/** Standorte (Niederlassungen) für die Karten — einmal je Seite geladen. */
+const StandorteKontext = createContext<Standorte | null>(null);
 
 export function TourenlistePage() {
   const { profile, session } = useAuth();
@@ -297,6 +305,10 @@ export function TourenlistePage() {
   const [dateTo, setDateTo]     = useState<string>(ymd(monthEnd));
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('alle');
   const [auftraggeberFilter, setAuftraggeberFilter] = useState<string>('');
+  // Niederlassungen (Migration 118): Anzeige „Auftraggeber · Ort", Filter je Standort
+  const { standorte } = useStandorte();
+  const standorteRef = useRef<Standorte | null>(null);
+  useEffect(() => { standorteRef.current = standorte; }, [standorte]);
   const [fahrerFilter, setFahrerFilter]             = useState<string>('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -341,7 +353,7 @@ export function TourenlistePage() {
     // (adresse_*, km_hin/rueck, app_notiz, info, sondervereinbarung,
     // protokoll_daten_felder*) werden NICHT mit geladen — sie kommen
     // erst beim Öffnen des Tour-Detail-Panels (das lädt explizit *).
-    const cols = listenSpalten(isAdmin);
+    const cols = listenSpalten(isAdmin, await niederlassungenVorhanden());
     // Früher: EINE Abfrage über alle Touren, gefiltert erst im Browser —
     // PostgREST liefert aber höchstens 1000 Zeilen. Bei absteigender
     // Sortierung kamen nur die jüngsten 1000 an (inkl. Zukunftstouren);
@@ -427,9 +439,22 @@ export function TourenlistePage() {
     const liste = ((treffer ?? []) as Array<{ id: string; gesamt: number }>);
     let neu: TourRow[] = [];
     let fehler: string | null = rpcErr?.message ?? null;
-    if (!fehler && liste.length > 0) {
-      const ids = liste.map((t) => t.id);
-      const { data, error: e2 } = await supabase.from('touren').select(listenSpalten(isAdmin)).in('id', ids);
+    const nl = await niederlassungenVorhanden();
+    // Niederlassungen (Migration 118): Touren auch über Bezeichnung/Ort des
+    // Standorts finden (die Datenbanksuche kennt die Niederlassung nicht).
+    let zusatzIds: string[] = [];
+    if (!fehler && nl && offset === 0) {
+      const passend = niederlassungenZurSuche(standorteRef.current, begriff).map((n) => n.id);
+      if (passend.length > 0) {
+        let q = supabase.from('touren').select('id').in('niederlassung_id', passend);
+        if (!isAdmin && scopedFahrerIds.length > 0) q = q.in('fahrer_id', scopedFahrerIds);
+        const { data: nlTreffer } = await q.order('startdatum', { ascending: false }).limit(SUCH_SEITE);
+        zusatzIds = ((nlTreffer ?? []) as Array<{ id: string }>).map((t) => t.id).filter((id) => !liste.some((t) => t.id === id));
+      }
+    }
+    if (!fehler && liste.length + zusatzIds.length > 0) {
+      const ids = [...liste.map((t) => t.id), ...zusatzIds];
+      const { data, error: e2 } = await supabase.from('touren').select(listenSpalten(isAdmin, nl)).in('id', ids);
       if (e2) fehler = e2.message;
       const byId = new Map((Array.isArray(data) ? data : []).map(normalisiereTour).map((r) => [r.id, r]));
       neu = ids.map((id) => byId.get(id)).filter((r): r is TourRow => !!r);
@@ -438,7 +463,7 @@ export function TourenlistePage() {
     setSuche((prev) => (prev?.begriff !== begriff ? prev : {
       begriff,
       rows: offset > 0 ? [...prev.rows, ...neu] : neu,
-      gesamt: liste.length > 0 ? Number(liste[0].gesamt) : (offset > 0 ? prev.gesamt : 0),
+      gesamt: (liste.length > 0 ? Number(liste[0].gesamt) : (offset > 0 ? prev.gesamt : 0)) + zusatzIds.length,
       laedt: false,
       fehler,
     }));
@@ -800,9 +825,10 @@ export function TourenlistePage() {
     const quelle = suchModus ? (suche?.rows ?? []) : (rangeRows ?? []);
     return quelle.filter((t) => {
       if (statusFilter !== 'alle' && computeTourStatus(t.startdatum, t.enddatum) !== statusFilter) return false;
-      if (auftraggeberFilter && t.auftraggeber_id !== auftraggeberFilter) return false;
+      if (!filterPasst(auftraggeberFilter, t.auftraggeber_id, t.niederlassung_id)) return false;
       if (fahrerFilter && t.fahrer_id !== fahrerFilter) return false;
       if (!q) return true;
+      if (standortPasstZuSuche(standorte, t.auftraggeber_id, t.niederlassung_id, q)) return true;
       const fahrerName = resolveFahrerName(t.fahrer ?? null, t.fahrer?.user ?? null).toLowerCase();
       const haystack = [
         t.tour_id ?? '',
@@ -816,7 +842,7 @@ export function TourenlistePage() {
       ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise, leerfahrten, suchModus, suche]);
+  }, [rangeRows, rows, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter, hinweise, leerfahrten, suchModus, suche, standorte]);
 
   // ---- KPI-Daten ----
   // Alle KPIs respektieren Auftraggeber- und Fahrer-Filter (siehe Spec:
@@ -826,7 +852,7 @@ export function TourenlistePage() {
   // stabil bleiben.
   const kpiRangeRows = useMemo(() => {
     return (rangeRows ?? []).filter((t) => {
-      if (auftraggeberFilter && t.auftraggeber_id !== auftraggeberFilter) return false;
+      if (!filterPasst(auftraggeberFilter, t.auftraggeber_id, t.niederlassung_id)) return false;
       if (fahrerFilter && t.fahrer_id !== fahrerFilter) return false;
       return true;
     });
@@ -960,7 +986,8 @@ export function TourenlistePage() {
       const { exportTourenExcel } = await mitVersionsschutz(() => import('../lib/tourenExport'));
       const n = await exportTourenExcel({
         dateFrom, dateTo,
-        auftraggeberId: auftraggeberFilter || null,
+        auftraggeberId: filterAuftraggeber(auftraggeberFilter),
+        standortFilter: auftraggeberFilter || null,
       });
       if (n === 0) setError('Keine Touren im gewählten Zeitraum — nichts zu exportieren.');
     } catch (e) {
@@ -979,6 +1006,7 @@ export function TourenlistePage() {
   if (error)   return <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
 
   return (
+    <StandorteKontext.Provider value={standorte}>
     <div className="space-y-5">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1479,8 +1507,8 @@ export function TourenlistePage() {
             onChange={(e) => setAuftraggeberFilter(e.target.value)}
           >
             <option value="">Alle Auftraggeber</option>
-            {auftraggeberOptions.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+            {filterOptionen(standorte, auftraggeberOptions).map((o) => (
+              <option key={o.wert} value={o.wert}>{o.eingerueckt ? `\u2003${o.label}` : o.label}</option>
             ))}
           </select>
         </div>
@@ -1627,6 +1655,7 @@ export function TourenlistePage() {
         </div>
       )}
     </div>
+    </StandorteKontext.Provider>
   );
 }
 
@@ -1650,6 +1679,7 @@ function EinreichungCard({
   selected?: boolean;
   onToggleSelected?: () => void;
 }) {
+  const standorteKtx = useContext(StandorteKontext);
   return (
     <li className="card flex flex-wrap items-center justify-between gap-3 p-4 ring-1 ring-amber-300 dark:!ring-amber-400/40">
       {selectable && (
@@ -1680,7 +1710,7 @@ function EinreichungCard({
         </div>
         <div className="mt-1 text-xs text-maja-muted">
           {formatDate(tour.startdatum)} – {formatDate(tour.enddatum)}
-          {tour.auftraggeber?.name && <> · {tour.auftraggeber.name}</>}
+          {tour.auftraggeber?.name && <> · {auftraggeberAnzeige(standorteKtx, tour.auftraggeber_id, tour.niederlassung_id, tour.auftraggeber.name)}</>}
           {(tour.kennzeichen ?? []).length > 0 && <> · {(tour.kennzeichen ?? []).join(', ')}</>}
           {tour.kundenname && <> · {tour.kundenname}</>}
         </div>
@@ -1825,6 +1855,7 @@ function TourCard({
   rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung, geaendert,
   auslagen, auslagenUngeklaertMelden, onKeineAuslagen, leerfahrt, onLeerfahrt,
 }: CardProps) {
+  const standorteKtx = useContext(StandorteKontext);
   const [leerfahrtBusy, setLeerfahrtBusy] = useState(false);
   const [auslagenBusy, setAuslagenBusy] = useState(false);
   // Mehrere Protokoll-Zuweisungen via tour_protokoll_zuweisungen — pro
@@ -1920,7 +1951,9 @@ function TourCard({
               )}
               {tour.auftraggeber && (
                 <Meta icon={<IconBuilding />}>
-                  <span className="block">{tour.auftraggeber.name}</span>
+                  <span className="block" title={auftraggeberAnzeige(standorteKtx, tour.auftraggeber_id, tour.niederlassung_id, tour.auftraggeber.name)}>
+                    {auftraggeberAnzeigeKurz(standorteKtx, tour.auftraggeber_id, tour.niederlassung_id, tour.auftraggeber.name)}
+                  </span>
                   {tour.auftraggeber.kontakt && (
                     <span className="block text-xs text-maja-muted">
                       {tour.auftraggeber.kontakt}

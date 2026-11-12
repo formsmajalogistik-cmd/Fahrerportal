@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase';
 import { XIcon } from '../../components/icons';
 import type { Auftraggeber, AuftraggeberKontakt } from '../../types/db';
 import { RechnungsadressenEditor } from './RechnungsadressenEditor';
+import { NiederlassungenEditor } from './NiederlassungenEditor';
+import { niederlassungenVorhanden, standorteNeuLaden } from '../../lib/niederlassungen';
 import { RechnungsformatEditor } from './RechnungsformatEditor';
 import type { Rechnungsformat } from '../../lib/rechnungsformat';
 import type { Json } from '../../types/supabase';
@@ -58,6 +60,10 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
   const [strasse, setStrasse] = useState(initial?.strasse ?? '');
   const [plz, setPlz]         = useState(initial?.plz ?? '');
   const [ort, setOrt]         = useState(initial?.ort ?? '');
+  // Niederlassungen (Migration 118): Bezeichnung des Hauptsitzes (leer = Ort)
+  const [hauptsitzBez, setHauptsitzBez] = useState(initial?.hauptsitz_bezeichnung ?? '');
+  const [nlSchema, setNlSchema] = useState(false);
+  useEffect(() => { void niederlassungenVorhanden().then(setNlSchema); }, []);
   const [email1, setEmail1]   = useState(initial?.email1 ?? '');
   const [email2, setEmail2]   = useState(initial?.email2 ?? '');
   const [externeAppName, setExterneAppName] = useState(initial?.externe_app_name ?? '');
@@ -173,6 +179,7 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
         kunden_uid:     kundenUid.trim()      || null,
         zahlungsziel_tage: zahlungszielN != null && Number.isFinite(zahlungszielN) ? zahlungszielN : null,
         rechnungsformat: (rechnungsformat as unknown as Json | null) ?? null,
+        ...(nlSchema ? { hauptsitz_bezeichnung: hauptsitzBez.trim() || null } : {}),
         ...(schemaOk ? {
           land_code: normLandCode(eRechnung.landCode),
           erechnung_format: eRechnung.format,
@@ -229,6 +236,7 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
         if (err) throw err;
       }
 
+      standorteNeuLaden();
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen');
@@ -346,6 +354,11 @@ export function AuftraggeberEditDialog({ initial, onClose, onSaved, kundennummer
           {schemaOk && (
             <ERechnungFelder idPrefix="ag" wert={eRechnung} onChange={setERechnung} />
           )}
+
+          {/* Niederlassungen (weitere Standorte) */}
+          <NiederlassungenEditor auftraggeberId={auftraggeberIdLive}
+                                 hauptsitzBezeichnung={hauptsitzBez} onHauptsitzBezeichnung={setHauptsitzBez}
+                                 hauptsitzAdresse={{ strasse, plz, ort }} />
 
           {/* Rechnungsadressen */}
           <RechnungsadressenEditor auftraggeberId={auftraggeberIdLive} />
