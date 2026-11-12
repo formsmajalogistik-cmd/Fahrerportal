@@ -19,8 +19,9 @@ Projekts): `npm i -g playwright && npx playwright install chromium`, oder
 |---|---|
 | `leerfahrt` | Leerfahrt markieren/entfernen, Wasserzeichen, Filter |
 | `keine-auslagen` | Zusatz „Keine Auslagen" in Tourenliste, Tour-Detail, Posteingang, Prüfdialog |
-| `excel-roundtrip` | Excel-Export der Tourenliste → Import derselben Datei → identische Daten; Duplikat-Warnung; Auftraggeber-Filter |
-| `rechnung-neu-laden` | „Touren neu laden", Prüfdialog beim Erstellen |
+| `excel-roundtrip` | Excel-Export der Tourenliste → Import derselben Datei → identische Daten; Duplikat-Warnung; Auftraggeber-Filter. Variante `niederlassung`: Anzeige „Name · Standort", Filter/Suche je Standort, Spalte „Niederlassung" (leer = Hauptsitz) |
+| `rechnung-neu-laden` | „Touren neu laden", Prüfdialog beim Erstellen. Teil `niederlassung`: Touren neu laden und neue Rechnung je Standort (Hauptsitz ↔ Niederlassung getrennt) |
+| `niederlassungen` | Verwaltung der Niederlassungen im Auftraggeber-Dialog (Admin); Auftraggeber-Konto sieht alle Standorte, keine Preise, legt Tour mit Standort an — auch mobil/dunkel |
 | `erechnung-stammdaten` | Empfänger-Stammdaten, Test-Export (XML und ZUGFeRD), mit/ohne Migration 115 |
 | `erechnung-ablauf` | Erstellen, Sperre, Versand, Storno (381), Teilgutschrift, PDF-Versionierung |
 | `erechnung-fehlerpfad` | Ablage scheitert → Meldung, erneuter Versuch, nichts doppelt/überschrieben |
