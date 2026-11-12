@@ -4,6 +4,8 @@ import { DIALOG_HINTERGRUND, ERGEBNIS_ZEILE, LEER_HINWEIS, TOUR_ID_CHIP } from '
 import { displayName } from '../../lib/names';
 import { XIcon } from '../../components/icons';
 import { computeTourStatus, formatDate, tourTitel } from '../../lib/touren';
+import { auftraggeberAnzeige, niederlassungenVorhanden } from '../../lib/niederlassungen';
+import { useStandorte } from '../../lib/useStandorte';
 import {
   naechstliegendZuerst, zeitfensterGrenzen, zeitfensterOrFilter, type Zeitfenster,
 } from '../../lib/tourZeitfenster';
@@ -34,6 +36,8 @@ interface PickRow {
   auf_eis: boolean | null;
   kennzeichen: string[];
   auftraggeber: { name: string } | null;
+  auftraggeber_id?: string | null;
+  niederlassung_id?: string | null;
   fahrer: {
     id: string;
     vorname: string | null;
@@ -42,7 +46,7 @@ interface PickRow {
   } | null;
 }
 
-const SELECT = `
+const SELECT_BASIS = `
   id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
   startdatum, enddatum, auf_eis, kennzeichen,
   auftraggeber:auftraggeber_id (name),
@@ -80,6 +84,7 @@ function passtZurSuche(r: PickRow, q: string): boolean {
  * Touren.
  */
 export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschreibung }: Props) {
+  const { standorte } = useStandorte();
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<PickRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,13 +110,15 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
       void (async () => {
         setLoading(true);
         setError(null);
+        // Niederlassung (Migration 118) nur abfragen, wenn die Spalte existiert.
+        const sel: string = (await niederlassungenVorhanden()) ? `auftraggeber_id, niederlassung_id, ${SELECT_BASIS}` : SELECT_BASIS;
         let ergebnis: PickRow[] = [];
         let fehler: string | null = null;
         let rueckfall = false;
 
         if (!fensterAktiv && !serverSuche) {
           const { data, error: err } = await supabase
-            .from('touren').select(SELECT)
+            .from('touren').select(sel)
             .order('startdatum', { ascending: false, nullsFirst: false })
             .limit(150);
           if (err) fehler = err.message;
@@ -119,7 +126,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
         } else if (!serverSuche) {
           const { von, bis } = zeitfensterGrenzen(new Date(), { tageZurueck, tageVoraus });
           const { data, error: err } = await supabase
-            .from('touren').select(SELECT)
+            .from('touren').select(sel)
             .or(zeitfensterOrFilter(von, bis))
             .order('enddatum', { ascending: false, nullsFirst: false })
             .order('id')
@@ -142,7 +149,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
           if (!rpcErr) {
             if (liste.length > 0) {
               const { data, error: err } = await supabase
-                .from('touren').select(SELECT).in('id', liste);
+                .from('touren').select(sel).in('id', liste);
               if (err) fehler = err.message;
               else ergebnis = (data as unknown as PickRow[]) ?? [];
             }
@@ -152,7 +159,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
             console.warn('[TourPickerDialog] Suche über RPC nicht verfügbar — Rückfall', rpcErr);
             rueckfall = true;
             const { data, error: err } = await supabase
-              .from('touren').select(SELECT)
+              .from('touren').select(sel)
               .order('enddatum', { ascending: false, nullsFirst: false })
               .limit(500);
             if (err) fehler = err.message;
@@ -241,7 +248,7 @@ export function TourPickerDialog({ onClose, onPick, zeitfenster, titel, beschrei
                         {t.enddatum && t.startdatum && t.enddatum.slice(0, 10) !== t.startdatum.slice(0, 10)
                           && <> – {formatDate(t.enddatum)}</>}
                         {(t.kennzeichen ?? []).length > 0 && <> · {(t.kennzeichen ?? []).join(', ')}</>}
-                        {t.auftraggeber?.name && <> · {t.auftraggeber.name}</>}
+                        {t.auftraggeber?.name && <> · {auftraggeberAnzeige(standorte, t.auftraggeber_id, t.niederlassung_id, t.auftraggeber.name)}</>}
                       </div>
                     </div>
                     {t.auf_eis ? (

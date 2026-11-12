@@ -12,6 +12,7 @@ import type {
   Auftraggeber, AusgefuelltesFormular, Fahrer, FormularTemplate, Tour,
 } from '../types/db';
 import type { Json } from '../types/supabase';
+import { auftraggeberAnzeige, ladeStandorte, niederlassungenVorhanden } from '../lib/niederlassungen';
 
 type AssignedTemplate = FormularTemplate;
 
@@ -26,6 +27,8 @@ interface TourProtokoll {
     | 'schriftliches_protokoll_id' | 'protokoll_art'>;
   template: Pick<FormularTemplate, 'id' | 'name'>;
   auftraggeber: Pick<Auftraggeber, 'name'> | null;
+  /** „Name · Ort", wenn der Auftraggeber Niederlassungen hat (Migration 118). */
+  auftraggeberLabel?: string | null;
   /** Falls bereits ein offener Entwurf für diese Tour+Template existiert:
    *  dessen Id — die Karte öffnet dann genau diesen Entwurf (Konsistenz
    *  mit der Tourenliste), statt einen neuen anzulegen. */
@@ -116,6 +119,9 @@ export function FahrerDashboard() {
           .is('uebertragen_auf_id', null)
       : Promise.resolve({ data: [], error: null } as { data: unknown[]; error: null });
 
+    // Niederlassung (Migration 118): nur abfragen, wenn die Spalte existiert.
+    const nlSpalten = (await niederlassungenVorhanden()) ? 'auftraggeber_id, niederlassung_id,' : '';
+    const standorte = nlSpalten ? await ladeStandorte().catch(() => null) : null;
     // Tour-Protokolle: alle Templates, die einer der Touren dieses Fahrers
     // zugewiesen sind (über tour_protokoll_zuweisungen) und deren Tour
     // den Status geplant/aktiv hat.
@@ -133,7 +139,7 @@ export function FahrerDashboard() {
             template:template_id (id, name),
             tour:tour_id!inner (
               id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
-              startdatum, enddatum, fahrer_id, protokoll_art,
+              startdatum, enddatum, fahrer_id, protokoll_art, ${nlSpalten}
               auftraggeber:auftraggeber_id (name)
             )
           `)
@@ -202,6 +208,8 @@ export function FahrerDashboard() {
         startdatum: string | null; enddatum: string | null;
         fahrer_id: string | null;
         protokoll_art: string | null;
+        auftraggeber_id?: string | null;
+        niederlassung_id?: string | null;
         auftraggeber: Pick<Auftraggeber, 'name'> | null;
       } | null;
     };
@@ -235,6 +243,7 @@ export function FahrerDashboard() {
         } as unknown as TourProtokoll['tour'],
         template: a.template,
         auftraggeber: a.tour.auftraggeber,
+        auftraggeberLabel: a.tour.auftraggeber ? auftraggeberAnzeige(standorte, a.tour.auftraggeber_id, a.tour.niederlassung_id, a.tour.auftraggeber.name) : null,
         draftId: openDraft?.id ?? null,
       });
     }
@@ -523,7 +532,7 @@ function TourProtokollCard({
           </div>
         )}
         {!route && zusatz && <div className="text-maja-muted">{zusatz}</div>}
-        {item.auftraggeber && <div className="text-maja-muted">{item.auftraggeber.name}</div>}
+        {item.auftraggeber && <div className="text-maja-muted">{item.auftraggeberLabel ?? item.auftraggeber.name}</div>}
       </div>
       <div className="mt-4">
         <button onClick={onOpen} disabled={opening} className="btn-primary w-full">

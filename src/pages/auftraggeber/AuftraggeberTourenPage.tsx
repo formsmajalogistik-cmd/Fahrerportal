@@ -14,6 +14,8 @@ import { useTestMode } from '../../auth/TestModeContext';
 import { useAuth } from '../../auth/AuthContext';
 import { TourDokumenteSection } from '../../components/TourDokumenteSection';
 import type { KontaktVorOrt, TourKundensicht, TourStatus } from '../../types/db';
+import { standortTeil } from '../../lib/niederlassungen';
+import { useStandorte } from '../../lib/useStandorte';
 
 /**
  * Tourenliste für Auftraggeber-Profile.
@@ -383,6 +385,7 @@ function KundenTourCard({
   onAblehnungVerstanden?: () => void;
   onBearbeiten?: () => void;
 }) {
+  const { standorte } = useStandorte();
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
   const abgelehnt = !!tour.abgelehnt;
   const inPruefung = !tour.bestaetigt && !abgelehnt;
@@ -416,6 +419,12 @@ function KundenTourCard({
               <h3 className="text-base font-semibold text-maja-navy break-words">
                 {tourTitel(tour)}
               </h3>
+              {standortTeil(standorte, tour.auftraggeber_id, tour.niederlassung_id) && (
+                <span className="inline-block rounded-full bg-maja-navy/10 px-2 py-0.5 text-xs font-medium text-maja-navy dark:!bg-white/10 dark:!text-slate-100"
+                      title="Niederlassung" data-testid="ag-tour-standort">
+                  {standortTeil(standorte, tour.auftraggeber_id, tour.niederlassung_id)}
+                </span>
+              )}
               {tour.auf_eis && (
                 <span
                   className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-800 dark:!bg-cyan-900 dark:!text-cyan-100"

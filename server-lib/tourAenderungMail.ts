@@ -39,6 +39,7 @@ const FELD_LABEL: Record<string, string> = {
   tourenart: 'Tourenart',
   ist_e_fahrzeug: 'E-Fahrzeug',
   info: 'Hinweise',
+  niederlassung_id: 'Niederlassung',
 };
 
 function escapeHtml(s: string): string {
@@ -84,7 +85,7 @@ export async function buildTourAenderungMail(args: {
   // 2. Tour laden und Eigentum prüfen.
   const { data: tour } = await supa
     .from('touren')
-    .select('id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt, startdatum, enddatum, bestaetigt, auftraggeber_id')
+    .select('*')
     .eq('id', args.tourId)
     .maybeSingle();
   if (!tour) throw new HttpError(404, 'Tour nicht gefunden');
@@ -109,12 +110,31 @@ export async function buildTourAenderungMail(args: {
   }>;
   if (liste.length === 0) return null;
 
-  // 4. Name des Auftraggebers für den Betreff.
+  // 4. Name des Auftraggebers für den Betreff — mit Niederlassung
+  //    („Name · Ort", Migration 118), sonst nur der Name.
   let agName = '';
   if (tour.auftraggeber_id) {
-    const { data: ag } = await supa
-      .from('auftraggeber').select('name').eq('id', tour.auftraggeber_id).maybeSingle();
-    agName = (ag?.name as string | null) ?? '';
+    const { data: anzeige, error: anzErr } = await supa.rpc('auftraggeber_anzeige', {
+      p_auftraggeber_id: tour.auftraggeber_id,
+      p_niederlassung_id: (tour as { niederlassung_id?: string | null }).niederlassung_id ?? null,
+    });
+    if (!anzErr && typeof anzeige === 'string') agName = anzeige;
+    else {
+      const { data: ag } = await supa
+        .from('auftraggeber').select('name').eq('id', tour.auftraggeber_id).maybeSingle();
+      agName = (ag?.name as string | null) ?? '';
+    }
+  }
+  // Niederlassungs-Wechsel: IDs in Bezeichnungen übersetzen.
+  const nlIds = liste.filter((a) => a.feld === 'niederlassung_id').flatMap((a) => [a.wert_alt, a.wert_neu]).filter((x): x is string => !!x);
+  if (nlIds.length > 0) {
+    const { data: nls } = await supa.from('auftraggeber_niederlassungen').select('id, bezeichnung').in('id', nlIds);
+    const namen = new Map(((nls ?? []) as Array<{ id: string; bezeichnung: string }>).map((n) => [n.id, n.bezeichnung]));
+    for (const a of liste) {
+      if (a.feld !== 'niederlassung_id') continue;
+      a.wert_alt = a.wert_alt ? (namen.get(a.wert_alt) ?? a.wert_alt) : 'Hauptsitz';
+      a.wert_neu = a.wert_neu ? (namen.get(a.wert_neu) ?? a.wert_neu) : 'Hauptsitz';
+    }
   }
 
   // 5. Absender/Empfänger aus app_settings (mail_inbox_1 = info@).

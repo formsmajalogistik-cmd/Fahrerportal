@@ -103,8 +103,17 @@ export function ladeStandorte(): Promise<Standorte> {
       l.push(n);
       jeAuftraggeber.set(n.auftraggeber_id, l);
     }
-    return { aktiv, auftraggeber: (agRes.data ?? []) as unknown as AuftraggeberStamm[], jeAuftraggeber, nachId };
+    const ergebnis = { aktiv, auftraggeber: (agRes.data ?? []) as unknown as AuftraggeberStamm[], jeAuftraggeber, nachId };
+    zuletzt = ergebnis;
+    return ergebnis;
   });
+}
+
+let zuletzt: Standorte | null = null;
+
+/** Bezeichnung einer Niederlassung aus dem zuletzt geladenen Stand (für Protokoll-Texte). */
+export function niederlassungBezeichnung(id: string | null | undefined): string | null {
+  return (id && zuletzt?.nachId.get(id)?.bezeichnung) || null;
 }
 
 /** Nach dem Bearbeiten von Auftraggebern/Niederlassungen aufrufen. */

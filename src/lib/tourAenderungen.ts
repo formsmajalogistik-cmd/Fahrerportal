@@ -6,6 +6,7 @@
 // die Übersetzung der Spaltennamen in verständliche Bezeichnungen.
 
 import { supabase } from './supabase';
+import { niederlassungBezeichnung } from './niederlassungen';
 import type { Database } from '../types/supabase';
 
 export type TourAenderung = Database['public']['Tables']['tour_aenderungen']['Row'];
@@ -53,6 +54,8 @@ const FELD_LABEL: Record<string, string> = {
   // Migration 089 — Weitergabe an ein eigenes Unterkonto.
   fahrer_id: 'Fahrer',
   auf_eis_notiz: 'Notiz zur Terminierung',
+  // Migration 118
+  niederlassung_id: 'Niederlassung',
   ansprechpartner_start: 'Ansprechpartner Start',
   ansprechpartner_ziel: 'Ansprechpartner Ziel',
   ansprechpartner_rueckfuehrung: 'Ansprechpartner Rückführung',
@@ -99,6 +102,7 @@ export function aenderungSatz(
 
 /** Datumsfelder im Protokoll als deutsches Datum ausgeben. */
 export function wertLabel(feld: string, wert: string | null): string {
+  if (feld === 'niederlassung_id') return wert ? (niederlassungBezeichnung(wert) ?? 'andere Niederlassung') : 'Hauptsitz';
   if (wert == null || wert === '') return '—';
   // "ja/nein" bei der Terminierung ist für sich genommen nichtssagend.
   if (feld === 'auf_eis') return wert === 'ja' ? 'auf Eis' : 'terminiert';

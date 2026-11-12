@@ -17,6 +17,8 @@ import {
   type KontaktMap,
 } from '../../lib/tourAnsprechpartner';
 import type { TourKundensicht, TourenArt } from '../../types/db';
+import { NiederlassungAuswahl } from '../../components/NiederlassungAuswahl';
+import { useStandorte } from '../../lib/useStandorte';
 
 interface Props {
   tour: TourKundensicht;
@@ -101,6 +103,9 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
   const kzRueckInit = tour.kennzeichen?.[1] ?? '';
 
   const [tourenart, setTourenart] = useState<TourenArt | ''>((tour.tourenart as TourenArt) ?? '');
+  // Niederlassung (Migration 118): null = Hauptsitz
+  const { standorte } = useStandorte();
+  const [niederlassungId, setNiederlassungId] = useState<string | null>(tour.niederlassung_id ?? null);
   const [startStadt, setStartStadt] = useState(tour.start_stadt ?? '');
   const [zielStadt, setZielStadt] = useState(tour.ziel_stadt ?? '');
   const [rueckStadt, setRueckStadt] = useState(tour.rueckfuehrung_stadt ?? '');
@@ -226,6 +231,7 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
 
     setSaving(true);
     const ergebnis = await speichereAgTour(tour.id, {
+      ...(standorte?.aktiv ? { niederlassung_id: niederlassungId } : {}),
       tourenart: tourenart || null,
       start_stadt: startStadt.trim(),
       ziel_stadt: zielStadt.trim(),
@@ -329,6 +335,13 @@ export function AuftraggeberTourEditDialog({ tour, onClose, onSaved }: Props) {
                   <option value="ABC">ABC (Dreieck)</option>
                 </select>
               </div>
+              {(standorte?.jeAuftraggeber.get(tour.auftraggeber_id ?? '')?.length ?? 0) > 0 && (
+                <div className="sm:col-span-6 lg:col-span-5">
+                  <NiederlassungAuswahl id="et-niederlassung" standorte={standorte} auftraggeberId={tour.auftraggeber_id}
+                                        wert={niederlassungId} onChange={setNiederlassungId}
+                                        labelClassName="tf-label" selectClassName="tf-input" />
+                </div>
+              )}
               <div className="sm:col-span-4 lg:col-span-4">
                 <label htmlFor="et-kunde" className="tf-label">Kundenname</label>
                 <input id="et-kunde" className="tf-input"

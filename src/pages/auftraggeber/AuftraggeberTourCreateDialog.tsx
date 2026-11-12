@@ -16,6 +16,8 @@ import {
   leereKontaktMap, toPayload, type KontaktMap,
 } from '../../lib/tourAnsprechpartner';
 import type { TourenArt } from '../../types/db';
+import { NiederlassungAuswahl } from '../../components/NiederlassungAuswahl';
+import { useStandorte } from '../../lib/useStandorte';
 
 interface Props {
   onClose: () => void;
@@ -79,6 +81,9 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
   useScrollLock();
 
   const [tourenart, setTourenart] = useState<TourenArt | ''>('');
+  // Niederlassung (Migration 118): null = Hauptsitz
+  const { standorte } = useStandorte();
+  const [niederlassungId, setNiederlassungId] = useState<string | null>(null);
   const [startStadt, setStartStadt] = useState('');
   const [zielStadt, setZielStadt] = useState('');
   const [rueckStadt, setRueckStadt] = useState('');
@@ -243,6 +248,7 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
       km_rueck: hatRueckfuehrung ? parseKm(kmRueck) : null,
       km_gesamt: kmGesamt,
       info: info.trim() || null,
+      ...(standorte?.aktiv ? { niederlassung_id: niederlassungId } : {}),
     };
     console.log('[AG Tour Insert]', payload);
 
@@ -321,6 +327,13 @@ export function AuftraggeberTourCreateDialog({ onClose, onCreated }: Props) {
                 <input id="at-kunde" className={inputCls('kundenname')}
                        value={kundenname} onChange={(e) => setKundenname(e.target.value)} />
               </div>
+              {(standorte?.jeAuftraggeber.get(profile?.auftraggeber_id ?? '')?.length ?? 0) > 0 && (
+                <div className="sm:col-span-6 lg:col-span-5">
+                  <NiederlassungAuswahl id="at-niederlassung" standorte={standorte} auftraggeberId={profile?.auftraggeber_id ?? null}
+                                        wert={niederlassungId} onChange={setNiederlassungId}
+                                        labelClassName="tf-label" selectClassName="tf-input" />
+                </div>
+              )}
               <div className="sm:col-span-6 lg:col-span-12">
                 <label htmlFor="at-info" className="tf-label">Hinweise (optional)</label>
                 <textarea id="at-info" className="tf-input min-h-[3.5rem]" rows={2}
