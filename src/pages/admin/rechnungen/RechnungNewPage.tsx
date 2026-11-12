@@ -23,6 +23,9 @@ import {
   snapshotAusEmpfaenger, type ManuellerEmpfaengerEntwurf,
 } from '../../../lib/manuelleEmpfaenger';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
+import { StandortAuswahl } from '../../../components/StandortAuswahl';
+import { rechnungsVorgaben, standortAusWert, standortTeil, standortWert } from '../../../lib/niederlassungen';
+import { useStandorte } from '../../../lib/useStandorte';
 import { AuslagenPruefDialog } from '../../../components/auslagen/AuslagenPruefDialog';
 import { ladeZusatzArten } from '../../../lib/zusatzArten';
 import {
@@ -104,6 +107,16 @@ export function RechnungNewPage() {
 
   // Kopfdaten
   const [auftraggeberId, setAuftraggeberId] = useState<string>('');
+  // Niederlassung (Migration 118): null = Hauptsitz. Touren, Adresse,
+  // Kundennummer und E-Rechnungs-Angaben richten sich danach.
+  const [niederlassungId, setNiederlassungId] = useState<string | null>(null);
+  const { standorte } = useStandorte();
+  const niederlassung = niederlassungId ? standorte?.nachId.get(niederlassungId) ?? null : null;
+  /** Filter für Tour-Abfragen: nur Touren dieses Standorts (ohne Migration 118: kein Filter). */
+  const nlFilter = useCallback(<Q extends { eq: (k: string, v: string) => Q; is: (k: string, v: null) => Q }>(q: Q): Q => {
+    if (!standorte?.aktiv) return q;
+    return niederlassungId ? q.eq('niederlassung_id', niederlassungId) : q.is('niederlassung_id', null);
+  }, [standorte?.aktiv, niederlassungId]);
   /** true, sobald im Dropdown "Manuell (kein Auftraggeber)" gewählt ist. */
   const istManuell = auftraggeberId === MANUELL_OPTION;
   const [manuell, setManuell] = useState<ManuellerEmpfaengerEntwurf>(leererEmpfaenger());
@@ -282,10 +295,19 @@ export function RechnungNewPage() {
       return;
     }
     const std = (auftraggeber.rechnungsadressen ?? []).find((a) => a.ist_standard);
-    setSnapshot(std ? snapshotFromRechnungsadresse(std) : snapshotFromAuftraggeber(auftraggeber));
+    if (niederlassung) {
+      // Rechnung an eine Niederlassung: deren Adresse, Kundennummer und
+      // Ansprechpartner (leer = Auftraggeber).
+      const v = rechnungsVorgaben(auftraggeber, niederlassung);
+      setSnapshot({ firma: auftraggeber.name ?? '', ansprechpartner: v.ansprechpartner ?? '', strasse: v.strasse ?? '',
+        plz_ort: [v.plz, v.ort].filter(Boolean).join(' '), land: '' });
+      setKundennummer(v.kundennummer ?? '');
+    } else {
+      setSnapshot(std ? snapshotFromRechnungsadresse(std) : snapshotFromAuftraggeber(auftraggeber));
+      setKundennummer(auftraggeber.kundennummer ?? '');
+    }
     setAnrede(format.anrede ?? '');
     setUstSatz(Number(format.ust_satz) || 19);
-    setKundennummer(auftraggeber.kundennummer ?? '');
     setSachbearbeiter(auftraggeber.sachbearbeiter ?? '');
     // Bei Wechsel des Auftraggebers Positionen verwerfen — sonst wären
     // sie mit dem falschen Format gerendert.
@@ -299,7 +321,7 @@ export function RechnungNewPage() {
     // Auch der Rechnungsempfänger-Filter wird zurückgesetzt, sonst
     // greift er gegen den falschen Auftraggeber.
     setRechnungsempfaengerId('');
-  }, [istManuell, auftraggeber, format.anrede, format.ust_satz]);
+  }, [istManuell, auftraggeber, niederlassung, format.anrede, format.ust_satz]);
 
   /**
    * Manueller Modus: Snapshot und Kundennummer werden aus den Eingaben
@@ -380,6 +402,16 @@ export function RechnungNewPage() {
       if (cancelled) return;
       const adressen = auftraggeber.rechnungsadressen ?? [];
       const std = adressen.find((a) => a.ist_standard);
+      if (niederlassung) {
+        // Niederlassung: Adresse bleibt die der Niederlassung; ein gewählter
+        // Rechnungsempfänger setzt nur Ansprechpartner + Anrede.
+        const v = rechnungsVorgaben(auftraggeber, niederlassung);
+        const empfN = rechnungsempfaengerId ? empfaengerOptions.find((k) => k.id === rechnungsempfaengerId) : null;
+        setSnapshot({ firma: auftraggeber.name ?? '', ansprechpartner: empfN?.name ?? v.ansprechpartner ?? '', strasse: v.strasse ?? '',
+          plz_ort: [v.plz, v.ort].filter(Boolean).join(' '), land: '' });
+        setAnrede(empfN ? buildAnrede(empfN.name) : (format.anrede ?? ''));
+        return;
+      }
       if (!rechnungsempfaengerId) {
         setSnapshot(std ? snapshotFromRechnungsadresse(std) : snapshotFromAuftraggeber(auftraggeber));
         setAnrede(format.anrede ?? '');
@@ -402,7 +434,7 @@ export function RechnungNewPage() {
       setAnrede(buildAnrede(empf.name));
     });
     return () => { cancelled = true; };
-  }, [rechnungsempfaengerId, empfaengerOptions, auftraggeber, format.anrede]);
+  }, [rechnungsempfaengerId, empfaengerOptions, auftraggeber, niederlassung, format.anrede]);
 
   const loadTouren = useCallback(async () => {
     if (!auftraggeber) return;
@@ -440,6 +472,8 @@ export function RechnungNewPage() {
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
         .eq('auftraggeber_id', auftraggeber.id);
+      // Niederlassung: nur Touren dieses Standorts (Hauptsitz = ohne Niederlassung).
+      query = nlFilter(query);
       // Optionaler Filter auf einen konkreten Rechnungsempfänger — bei
       // "Alle" bleibt das Verhalten wie bisher (kein zusätzlicher Filter).
       if (rechnungsempfaengerId) {
@@ -507,7 +541,7 @@ export function RechnungNewPage() {
       setHaupt(alle.map((p) => ({ ...p, key: newKey('p') })));
       setAuslagen([]);
     }
-  }, [auftraggeber, rechnungsdatum, format, getrennt, rechnungsempfaengerId]);
+  }, [auftraggeber, rechnungsdatum, format, getrennt, rechnungsempfaengerId, nlFilter]);
 
   /**
    * "Touren erneut laden" (Aufgabe 5): überschreibt die generierten
@@ -575,7 +609,7 @@ export function RechnungNewPage() {
         `and(rechnungsdatum_abweichend.eq.true,rechnungsdatum.eq.${referenzDatum}),`
         + `and(rechnungsdatum_abweichend.eq.false,enddatum.eq.${referenzDatum}),`
         + `and(rechnungsdatum_abweichend.is.null,enddatum.eq.${referenzDatum})`;
-      const { data, error: errText } = await ladeInBloecken((v, b) => supabase
+      const { data, error: errText } = await ladeInBloecken((v, b) => nlFilter(supabase
         .from('touren')
         .select(`
           id, tour_id, start_stadt, ziel_stadt, rueckfuehrung_stadt,
@@ -584,7 +618,7 @@ export function RechnungNewPage() {
           rechnungsdatum, rechnungsdatum_abweichend,
           zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
         `)
-        .eq('auftraggeber_id', auftraggeber.id)
+        .eq('auftraggeber_id', auftraggeber.id))
         .or(orFilter)
         .order('enddatum', { ascending: true })
         .order('id', { ascending: true })
@@ -775,6 +809,18 @@ export function RechnungNewPage() {
       };
     }
     if (!auftraggeber) return {};
+    if (niederlassung) {
+      const v = rechnungsVorgaben(auftraggeber, niederlassung);
+      const passt = !!v.plz && !!v.ort && gleicheAdresszeile(plzOrtZusammen(v.plz, v.ort), effSnapshot.plz_ort);
+      return {
+        rechnungsadresse_plz: passt ? v.plz : null,
+        rechnungsadresse_ort: passt ? v.ort : null,
+        rechnungsadresse_land_code: passt ? normLandCode(v.landCode) : null,
+        erechnung_format: auftraggeber.erechnung_format ?? 'pdf',
+        erechnung_email: v.erechnungEmail,
+        kaeufer_referenz: v.kaeuferReferenz,
+      };
+    }
     const quellen = [
       ...(auftraggeber.rechnungsadressen ?? []).map((a) => ({ plz: a.plz, ort: a.ort, land_code: a.land_code })),
       { plz: auftraggeber.plz, ort: auftraggeber.ort, land_code: auftraggeber.land_code },
@@ -836,6 +882,7 @@ export function RechnungNewPage() {
         // kein Eintrag in `auftraggeber` angelegt — der Empfänger
         // taucht damit in keiner Auftraggeber-Ansicht auf.
         auftraggeber_id: istManuell ? null : auftraggeber!.id,
+        ...(standorte?.aktiv ? { niederlassung_id: istManuell ? null : niederlassungId } : {}),
         empfaenger_typ: istManuell ? 'manuell' : 'auftraggeber',
         empfaenger_email:  istManuell ? (manuell.email.trim() || null) : null,
         empfaenger_ust_id: istManuell ? (manuell.ustId.trim() || null) : null,
@@ -992,21 +1039,24 @@ export function RechnungNewPage() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="ag" className="label">Auftraggeber *</label>
-            <select
-              id="ag"
-              className="input"
-              value={auftraggeberId}
-              onChange={(e) => setAuftraggeberId(e.target.value)}
-            >
-              <option value="">— wählen —</option>
-              {auftraggeberList.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-              {/* Empfänger ohne Auftraggeber-Bezug. Legt bewusst KEINEN
-                  Auftraggeber an — der Empfänger erscheint in keiner
-                  Auftraggeber-Liste und in keinem Tour-Filter. */}
-              <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
-            </select>
+            {/* Auftraggeber und ggf. Niederlassung in einer Auswahl („X · Bremen"),
+                suchbar auch nach Ort. „Manuell": Empfänger ohne Auftraggeber-Bezug —
+                legt bewusst KEINEN Auftraggeber an. */}
+            <StandortAuswahl
+              id="ag" standorte={standorte} leerText="— wählen —"
+              extraOptionen={[{ wert: MANUELL_OPTION, label: 'Manuell (kein Auftraggeber)' }]}
+              wert={istManuell ? MANUELL_OPTION : (auftraggeberId ? standortWert(auftraggeberId, niederlassungId) : '')}
+              onChange={(w) => {
+                if (w === MANUELL_OPTION) { setAuftraggeberId(MANUELL_OPTION); setNiederlassungId(null); return; }
+                const st = standortAusWert(w);
+                setAuftraggeberId(st.auftraggeberId ?? ''); setNiederlassungId(st.niederlassungId);
+              }}
+            />
+            {auftraggeber && standortTeil(standorte, auftraggeber.id, niederlassungId) && (
+              <p className="mt-1 text-xs text-maja-muted" data-testid="rechnung-standort-hinweis">
+                Nur Touren von „{standortTeil(standorte, auftraggeber.id, niederlassungId)}“ — Adresse und Rechnungsangaben dieses Standorts.
+              </p>
+            )}
           </div>
           {istManuell && (
             <div>
@@ -1436,6 +1486,7 @@ export function RechnungNewPage() {
       {tourPicker && (auftraggeber || istManuell) && (
         <AddTourPositionDialog
           auftraggeberId={auftraggeber?.id ?? null}
+          niederlassungId={standorte?.aktiv && auftraggeber ? niederlassungId : undefined}
           leistungszeitraumVon={leistungszeitraum.von}
           leistungszeitraumBis={leistungszeitraum.bis}
           modus={getrennt ? (tourPicker === 'auslagen' ? 'auslagen' : 'touren') : 'beides'}

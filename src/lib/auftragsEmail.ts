@@ -69,6 +69,7 @@ export const DEFAULT_AUFTRAGS_EMAIL: AuftragsEmailVorlage = {
 export const AUFTRAGS_PLATZHALTER: Array<{ token: string; label: string }> = [
   { token: '{tour_id}', label: 'Tour-Nummer' },
   { token: '{auftraggeber}', label: 'Auftraggeber' },
+  { token: '{niederlassung}', label: 'Niederlassung' },
   { token: '{kundenname}', label: 'Kundenname' },
   { token: '{tourenart}', label: 'Tourenart' },
   { token: '{fahrer_name}', label: 'Fahrer' },
@@ -186,7 +187,7 @@ function euro(n: number | null | undefined): string {
  */
 export async function buildPlatzhalter(
   tour: AuftragsTour,
-  extras: { fahrerName?: string | null; auftraggeberName?: string | null },
+  extras: { fahrerName?: string | null; auftraggeberName?: string | null; niederlassung?: string | null },
 ): Promise<Record<string, string>> {
   const kontakte = await ladeAnsprechpartner(tour.id);
   const kText: Record<Station, string> = {
@@ -230,6 +231,9 @@ export async function buildPlatzhalter(
   return {
     tour_id: tour.tour_id ?? '',
     auftraggeber: extras.auftraggeberName ?? '',
+    // Standort (Migration 118): Bezeichnung der Niederlassung bzw. des
+    // Hauptsitzes; leer, wenn der Auftraggeber keine Niederlassungen hat.
+    niederlassung: extras.niederlassung ?? '',
     kundenname: tour.kundenname ?? '',
     tourenart: tour.tourenart ?? '',
     fahrer_name: extras.fahrerName ?? '',

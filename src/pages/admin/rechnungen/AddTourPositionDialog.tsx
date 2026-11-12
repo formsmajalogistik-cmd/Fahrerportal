@@ -22,6 +22,12 @@ interface Props {
    * Positionsgenerierung verwendet.
    */
   auftraggeberId: string | null;
+  /**
+   * Niederlassung der Rechnung (Migration 118): null = Hauptsitz → nur
+   * Touren ohne Niederlassung; undefined = kein Filter (alte Datenbank
+   * bzw. manuelle Rechnung).
+   */
+  niederlassungId?: string | null;
   /** ISO date "YYYY-MM-DD". Default-Datumsfilter. */
   leistungszeitraumVon: string | null;
   leistungszeitraumBis: string | null;
@@ -77,6 +83,7 @@ const ALL_TIME_TO   = '2999-12-31';
 
 export function AddTourPositionDialog({
   auftraggeberId,
+  niederlassungId,
   leistungszeitraumVon,
   leistungszeitraumBis,
   excludeRechnungId,
@@ -141,6 +148,9 @@ export function AddTourPositionDialog({
             zusaetze:tour_zusaetze (id, kategorie, anzahl, betrag, notiz, kennzeichen)
           `);
         if (auftraggeberId) query = query.eq('auftraggeber_id', auftraggeberId);
+        if (auftraggeberId && niederlassungId !== undefined) {
+          query = niederlassungId ? query.eq('niederlassung_id', niederlassungId) : query.is('niederlassung_id', null);
+        }
         return query
           .gte('enddatum', dateFrom)
           .lte('enddatum', dateTo)
@@ -193,7 +203,7 @@ export function AddTourPositionDialog({
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [auftraggeberId, dateFrom, dateTo, excludeRechnungId]);
+  }, [auftraggeberId, niederlassungId, dateFrom, dateTo, excludeRechnungId]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

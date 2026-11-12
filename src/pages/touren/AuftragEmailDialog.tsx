@@ -28,6 +28,8 @@ interface Props {
   fahrerEmail: string | null;
   fahrerName: string | null;
   auftraggeberName: string | null;
+  /** Standort-Bezeichnung für {niederlassung} (leer ohne Niederlassungen). */
+  niederlassung?: string | null;
   auftraggeberId: string | null;
   onClose: () => void;
   onSent: () => void;
@@ -78,7 +80,7 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export function AuftragEmailDialog({
-  tour, fahrerEmail, fahrerName, auftraggeberName, auftraggeberId, onClose, onSent,
+  tour, fahrerEmail, fahrerName, auftraggeberName, niederlassung, auftraggeberId, onClose, onSent,
 }: Props) {
   const { profile } = useAuth();
   const sig = useMemo(() => signatureFromProfile(profile), [profile]);
@@ -110,7 +112,7 @@ export function AuftragEmailDialog({
       const [vorlage, mbs, werte] = await Promise.all([
         loadAuftragsEmail(),
         loadMailboxes(),
-        buildPlatzhalter(tour, { fahrerName, auftraggeberName }),
+        buildPlatzhalter(tour, { fahrerName, auftraggeberName, niederlassung }),
       ]);
       if (abgebrochen) return;
       const usable = mbs.filter((m) => m.address.trim() !== '');
@@ -122,7 +124,7 @@ export function AuftragEmailDialog({
       setVorlageGeladen(true);
     })();
     return () => { abgebrochen = true; };
-  }, [tour, fahrerName, auftraggeberName]);
+  }, [tour, fahrerName, auftraggeberName, niederlassung]);
 
   const loadOptions = useCallback(async () => {
     setOptionsLoading(true);

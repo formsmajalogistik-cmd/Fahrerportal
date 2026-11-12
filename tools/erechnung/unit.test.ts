@@ -18,7 +18,7 @@ import { fusszeilen } from '../../src/pages/admin/rechnungen/rechnungPdf';
 import { baueCsv, baueZip, dateienVon, monatsGrenzen, sha256Hex, type ExportEintrag } from '../../src/lib/erechnung/export';
 import { srgbIccProfil, xmpPaket } from '../../src/lib/erechnung/zugferd';
 import { LIEFERDATUM_IM_KOPF } from '../../src/lib/erechnung/typen';
-import { erzeugeZugferdDateien } from './zugferd';
+import { ZUGFERD_FAELLE, erzeugeZugferdDateien } from './zugferd';
 
 type Fall = { name: string; fn: () => void | Promise<void> };
 const faelle: Fall[] = [];
@@ -351,7 +351,7 @@ test('XMP: PDF/A-3b-Kennung, Factur-X-Erweiterung (EN 16931), Zeiten wie im Info
 test('ZUGFeRD-PDF: eingebettetes XML = erzeugtes XML, nur eingebettete Schrift, PDF/A-Bausteine vorhanden', async () => {
   const { resolve } = await import('node:path');
   const dateien = await erzeugeZugferdDateien(resolve(process.cwd()));
-  assert.equal(dateien.length, 9);
+  assert.equal(dateien.length, ZUGFERD_FAELLE.length);
   for (const d of dateien) {
     assert.equal(d.eingebettet, d.xml, `${d.name}: XML unverändert eingebettet`);
     const roh = new TextDecoder('latin1').decode(d.pdf);

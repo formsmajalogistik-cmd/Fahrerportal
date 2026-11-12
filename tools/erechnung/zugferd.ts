@@ -14,6 +14,7 @@ import { TEST_FIRMA, testrechnungen } from './testrechnungen';
 export const ZUGFERD_FAELLE = [
   '01_ab_tour', '02_aba_tour', '03_zwei_steuersaetze', '04_manuell_zahlungsziel', '05_sonderzeichen',
   '12_mehrtaegige_tour', '16_lange_rechnung', '14_storno_381', '15_teilgutschrift_381',
+  '18_niederlassung_en16931',
 ];
 
 export interface ZugferdDatei {

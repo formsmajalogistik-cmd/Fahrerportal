@@ -38,6 +38,9 @@ import {
 } from '../../../lib/gutschriftSettings';
 import type { Json } from '../../../types/supabase';
 import type { Auftraggeber, Rechnungsposition } from '../../../types/db';
+import { StandortAuswahl } from '../../../components/StandortAuswahl';
+import { rechnungsVorgaben, standortAusWert, standortWert } from '../../../lib/niederlassungen';
+import { useStandorte } from '../../../lib/useStandorte';
 
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 
@@ -61,7 +64,8 @@ export function GutschriftNewPage() {
   const vorgabeRechnung = params.get('rechnung');
 
   const [settings, setSettings] = useState<GutschriftSettings>(DEFAULT_GUTSCHRIFT_SETTINGS);
-  const [auftraggeber, setAuftraggeber] = useState<Pick<Auftraggeber, 'id' | 'name'>[]>([]);
+  // Auswahl kommt aus useStandorte(); die Liste wird hier nur noch geladen.
+  const [, setAuftraggeber] = useState<Pick<Auftraggeber, 'id' | 'name'>[]>([]);
   const [rechnungen, setRechnungen] = useState<RechnungOption[]>([]);
   const [kontakte, setKontakte] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -126,8 +130,12 @@ export function GutschriftNewPage() {
     return () => window.clearTimeout(t);
   }, [init]);
 
+  // Niederlassung (Migration 118): null = Hauptsitz
+  const [niederlassungId, setNiederlassungId] = useState<string | null>(null);
+  const { standorte } = useStandorte();
+
   /** Auftraggeber-Stammdaten in die Kopfdaten übernehmen. */
-  const uebernehmeAuftraggeber = useCallback(async (agId: string) => {
+  const uebernehmeAuftraggeber = useCallback(async (agId: string, nlId: string | null = null) => {
     if (!agId) return;
     const { data } = await supabase
       .from('auftraggeber')
@@ -140,8 +148,17 @@ export function GutschriftNewPage() {
     setAnrede((cur) => cur || format.anrede || 'Sehr geehrte Damen und Herren,');
     setKundennummer((cur) => cur || (data.kundennummer ?? ''));
     setSachbearbeiter((cur) => cur || (data.sachbearbeiter ?? ''));
+    // Niederlassung: deren Adresse/Kundennummer (leer = Auftraggeber).
+    const nl = nlId ? standorte?.nachId.get(nlId) ?? null : null;
+    const agStamm = nl ? standorte?.auftraggeber.find((a) => a.id === agId) ?? null : null;
+    if (nl && agStamm) {
+      const v = rechnungsVorgaben(agStamm, nl);
+      setKundennummer(v.kundennummer ?? '');
+      setSnapshot({ firma: data.name ?? null, ansprechpartner: v.ansprechpartner, strasse: v.strasse,
+        plz_ort: [v.plz, v.ort].filter(Boolean).join(' ') || null, land: null });
+    }
     // Standard-Rechnungsadresse als Snapshot vorbelegen.
-    const { data: adr } = await supabase
+    const { data: adr } = nl ? { data: [] as Array<{ firma: string | null; ansprechpartner: string | null; strasse: string | null; plz_ort: string | null; land: string | null }> } : await supabase
       .from('rechnungsadressen')
       .select('firma, ansprechpartner, strasse, plz_ort, land, ist_standard')
       .eq('auftraggeber_id', agId)
@@ -166,7 +183,7 @@ export function GutschriftNewPage() {
       .eq('auftraggeber_id', agId)
       .order('name');
     setKontakte((k as Array<{ id: string; name: string }>) ?? []);
-  }, []);
+  }, [standorte]);
 
   /**
    * Weg A: Rechnung als Bezug laden — Kopfdaten übernehmen und die
@@ -278,6 +295,7 @@ export function GutschriftNewPage() {
       const effSnapshot = istManuell ? snapshotAusEmpfaenger(manuell) : snapshot;
       const insertPayload: Record<string, unknown> = {
         auftraggeber_id: istManuell ? null : auftraggeberId,
+        ...(standorte?.aktiv ? { niederlassung_id: istManuell ? null : niederlassungId } : {}),
         empfaenger_typ: istManuell ? 'manuell' : 'auftraggeber',
         empfaenger_email:  istManuell ? (manuell.email.trim() || null) : null,
         empfaenger_ust_id: istManuell ? (manuell.ustId.trim() || null) : null,
@@ -376,24 +394,27 @@ export function GutschriftNewPage() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="gs-ag" className="label">Auftraggeber *</label>
-            <select
-              id="gs-ag"
-              className="input"
-              value={auftraggeberId}
-              onChange={(e) => {
-                const v = e.target.value;
+            <StandortAuswahl
+              id="gs-ag" standorte={standorte} leerText="— wählen —"
+              extraOptionen={[{ wert: MANUELL_OPTION, label: 'Manuell (kein Auftraggeber)' }]}
+              wert={auftraggeberId === MANUELL_OPTION ? MANUELL_OPTION : (auftraggeberId ? standortWert(auftraggeberId, niederlassungId) : '')}
+              onChange={(w) => {
+                const st = w === MANUELL_OPTION ? { auftraggeberId: MANUELL_OPTION, niederlassungId: null } : standortAusWert(w);
+                const v = st.auftraggeberId ?? '';
+                const agWechsel = v !== auftraggeberId;
                 setAuftraggeberId(v);
-                setEmpfaengerId('');
-                // Bezug zurücksetzen, wenn er nicht zum neuen AG gehört.
-                const re = rechnungen.find((r) => r.id === rechnungId);
-                if (re && re.auftraggeber_id !== v) setRechnungId('');
-                void uebernehmeAuftraggeber(v);
+                setNiederlassungId(st.niederlassungId);
+                if (agWechsel) {
+                  setEmpfaengerId('');
+                  // Bezug zurücksetzen, wenn er nicht zum neuen AG gehört.
+                  const re = rechnungen.find((r) => r.id === rechnungId);
+                  if (re && re.auftraggeber_id !== v) setRechnungId('');
+                }
+                // Wechsel von/zu einer Niederlassung: Adresse neu vorbelegen (sonst wie bisher).
+                if (st.niederlassungId || niederlassungId) setSnapshot({ ...LEERER_SNAPSHOT });
+                if (v !== MANUELL_OPTION) void uebernehmeAuftraggeber(v, st.niederlassungId);
               }}
-            >
-              <option value="">— wählen —</option>
-              {auftraggeber.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
-            </select>
+            />
           </div>
           <div>
             <label htmlFor="gs-empf" className="label">Rechnungsempfänger (optional)</label>

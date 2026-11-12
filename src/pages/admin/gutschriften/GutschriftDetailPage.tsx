@@ -49,6 +49,8 @@ import {
 } from '../../../lib/gutschriftSettings';
 import type { Json } from '../../../types/supabase';
 import type { Auftraggeber } from '../../../types/db';
+import { auftraggeberAnzeige } from '../../../lib/niederlassungen';
+import { useStandorte } from '../../../lib/useStandorte';
 
 interface GutschriftFull extends Gutschrift {
   auftraggeber: Pick<Auftraggeber, 'id' | 'name' | 'kunden_uid' | 'zahlungsziel_tage'> | null;
@@ -90,6 +92,7 @@ export function GutschriftDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { standorte } = useStandorte();
   const [hinweis, setHinweis] = useState<string | null>(() => (location.state as { hinweis?: string } | null)?.hinweis ?? null);
   // E-Rechnung (Storno/Teilgutschrift, Migration 116)
   const [dokumente, setDokumente] = useState<ERechnungDokument[]>([]);
@@ -420,7 +423,7 @@ export function GutschriftDetailPage() {
             </span>
           </div>
           <p className="text-sm text-maja-muted">
-            {gutschrift.auftraggeber?.name ?? '—'} · Datum {formatDate(gutschrift.datum)}
+            {gutschrift.auftraggeber ? auftraggeberAnzeige(standorte, gutschrift.auftraggeber_id, gutschrift.niederlassung_id, gutschrift.auftraggeber.name) : '—'} · Datum {formatDate(gutschrift.datum)}
           </p>
           {gutschrift.rechnung && (
             <p className="mt-1 text-sm">

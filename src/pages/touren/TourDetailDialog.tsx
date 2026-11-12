@@ -48,7 +48,7 @@ import { AuslagenHinweis } from '../../components/AuslagenHinweis';
 import { AuslagenTourStatus } from '../../components/auslagen/AuslagenTourStatus';
 import { LeerfahrtLeiste } from '../../components/auslagen/LeerfahrtLeiste';
 import { StandortAuswahl } from '../../components/StandortAuswahl';
-import { auftraggeberAnzeige, standortAusWert, standortWert } from '../../lib/niederlassungen';
+import { auftraggeberAnzeige, standortAusWert, standortTeil, standortWert } from '../../lib/niederlassungen';
 import { useNiederlassungGesperrt, useStandorte } from '../../lib/useStandorte';
 import {
   loadTourProtokollZuweisungen, ProtokollSection,
@@ -1933,6 +1933,7 @@ export function TourDetailDialog({
           fahrerEmail={tour.fahrer?.user?.email ?? null}
           fahrerName={tour.fahrer ? fahrerNameOf(tour.fahrer) : null}
           auftraggeberName={tour.auftraggeber?.name ?? null}
+          niederlassung={standortTeil(standorte, tour.auftraggeber_id, tour.niederlassung_id)}
           auftraggeberId={tour.auftraggeber_id}
           onClose={() => setAuftragMailOpen(false)}
           onSent={() => {

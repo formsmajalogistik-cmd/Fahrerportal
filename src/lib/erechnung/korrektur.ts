@@ -119,6 +119,8 @@ export async function alsNeueRechnungUebernehmen(rechnungId: string): Promise<st
   if (r.status !== 'storniert') throw new Error('Nur stornierte Rechnungen lassen sich als neue Rechnung übernehmen.');
   const { data: neu, error } = await supabase.from('rechnungen').insert({
     auftraggeber_id: r.auftraggeber_id, empfaenger_typ: r.empfaenger_typ, empfaenger_email: r.empfaenger_email,
+    // Niederlassung (Migration 118) übernehmen; ohne Migration ist das Feld undefined und entfällt.
+    niederlassung_id: r.niederlassung_id,
     empfaenger_ust_id: r.empfaenger_ust_id, rechnungsadresse_id: null,
     datum: new Date().toISOString().slice(0, 10),
     leistungszeitraum_von: r.leistungszeitraum_von, leistungszeitraum_bis: r.leistungszeitraum_bis,

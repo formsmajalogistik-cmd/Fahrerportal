@@ -20,6 +20,8 @@ import { SummenBlock } from './SummenBlock';
 import { PositionsTable } from './PositionsTable';
 import { AddTourPositionDialog } from './AddTourPositionDialog';
 import { RechnungEmailDialog } from './RechnungEmailDialog';
+import { auftraggeberAnzeige, standortTeil } from '../../../lib/niederlassungen';
+import { useStandorte } from '../../../lib/useStandorte';
 import { generateRechnungPdf, rechnungPdfFilename } from './rechnungPdf';
 import { AbsenderSignaturSchalter } from '../../../components/AbsenderSignaturSchalter';
 import {
@@ -115,6 +117,7 @@ export function RechnungDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { standorte } = useStandorte();
   /** Zurück auf genau den Stand der Übersicht (Seite, Filter, Suche). */
   const zurueck = useZurueckZurListe('rechnungen', '/rechnungen');
   /** Hinweis aus dem Anlegen (z.B. „Vorschlag war inzwischen vergeben"). */
@@ -632,6 +635,9 @@ export function RechnungDetailPage() {
         auftraggeberId: rechnung.auftraggeber_id,
         auftraggeberName: rechnung.auftraggeber?.name ?? 'Auftraggeber',
         rechnungsempfaengerId: rechnung.rechnungsempfaenger_id ?? null,
+        // Niederlassung: Touren anderer Standorte nie auf diese Rechnung.
+        niederlassungId: standorte?.aktiv ? (rechnung.niederlassung_id ?? null) : undefined,
+        standort: standortTeil(standorte, rechnung.auftraggeber_id, rechnung.niederlassung_id),
         istAuslagen: rechnung.ist_auslagen_rechnung,
         zeitraum: suchZeitraum(rechnung, tourIds.length > 0),
         vorhandeneTourIds: tourIds,
@@ -763,7 +769,7 @@ export function RechnungDetailPage() {
       }));
 
       const jahr = (fresh.datum ?? '').slice(0, 4) || String(new Date().getFullYear());
-      const filename = rechnungPdfFilename(fresh.rechnungsnummer);
+      const filename = rechnungPdfFilename(fresh.rechnungsnummer, standortTeil(standorte, fresh.auftraggeber_id, fresh.niederlassung_id ?? null));
       const path = `Maja-Logistik/Rechnungen/${jahr}/${filename}`;
       // Nie überschreiben: eine vorhandene PDF bleibt als …_vN.pdf liegen,
       // damit nachvollziehbar bleibt, was verschickt wurde.
@@ -840,7 +846,7 @@ export function RechnungDetailPage() {
                   firma: rechnung.rechnungsadresse_firma,
                   ansprechpartner: rechnung.ansprechpartner,
                 })} (manuell)`
-              : (rechnung.auftraggeber?.name ?? '—')} · Zeitraum {formatDate(rechnung.leistungszeitraum_von)} – {formatDate(rechnung.leistungszeitraum_bis)}
+              : (rechnung.auftraggeber ? auftraggeberAnzeige(standorte, rechnung.auftraggeber_id, rechnung.niederlassung_id, rechnung.auftraggeber.name) : '—')} · Zeitraum {formatDate(rechnung.leistungszeitraum_von)} – {formatDate(rechnung.leistungszeitraum_bis)}
             {' · '}Rechnungsdatum {formatDate(rechnung.datum)}
           </p>
         </div>
@@ -1121,7 +1127,7 @@ export function RechnungDetailPage() {
           <div className="space-y-2">
             <RechnungPdfButtons
               pdfUrl={rechnung.pdf_url}
-              filename={rechnungPdfFilename(rechnung.rechnungsnummer)}
+              filename={rechnungPdfFilename(rechnung.rechnungsnummer, standortTeil(standorte, rechnung.auftraggeber_id, rechnung.niederlassung_id))}
               onRegenerate={() => void generierePdf()}
               regenerating={generatingPdf}
               gesperrt={nurLesen ? sperrText : null}
@@ -1353,6 +1359,7 @@ export function RechnungDetailPage() {
       {tourPickerOpen && (
         <AddTourPositionDialog
           auftraggeberId={rechnung.auftraggeber_id}
+          niederlassungId={standorte?.aktiv && rechnung.auftraggeber_id ? (rechnung.niederlassung_id ?? null) : undefined}
           leistungszeitraumVon={rechnung.leistungszeitraum_von}
           leistungszeitraumBis={rechnung.leistungszeitraum_bis}
           excludeRechnungId={rechnung.id}
@@ -1383,6 +1390,7 @@ export function RechnungDetailPage() {
             datum: rechnung.datum,
             brutto_summe: Number(rechnung.brutto_summe),
             auftraggeber_id: rechnung.auftraggeber_id,
+            niederlassung_id: rechnung.niederlassung_id ?? null,
             empfaenger_email: rechnung.empfaenger_email,
             pdf_url: rechnung.pdf_url,
             belege_pdf_url: rechnung.belege_pdf_url,

@@ -104,6 +104,7 @@ function rechnung(id: string, p: Partial<RechnungRow>): RechnungRow {
     kaeufer_referenz: 'BESTELLUNG-4711',
     storniert_am: null,
     absender_snapshot: null,
+    niederlassung_id: null,
     ...p,
   };
 }
@@ -290,6 +291,34 @@ export function testrechnungen(): Testrechnung[] {
     });
   }
 
+  // 17/18) Rechnung an eine NIEDERLASSUNG (Migration 118): gleicher
+  // Auftraggeber-Name, Käuferanschrift (BG-8) = Adresse der Niederlassung,
+  // eigene Käuferreferenz, E-Rechnungs-Adresse und Kundennummer — so, wie
+  // die App den Snapshot beim Erstellen setzt.
+  for (const [name, profil] of [['17_niederlassung_xrechnung', 'xrechnung'], ['18_niederlassung_en16931', 'en16931']] as const) {
+    const id = profil === 'xrechnung' ? 'r17' : 'r18';
+    const r = rechnung(id, {
+      rechnungsnummer: profil === 'xrechnung' ? 'Re_26/9017' : 'Re_26/9018',
+      niederlassung_id: 'nl-bremen',
+      rechnungsadresse_firma: 'Beispiel Autovermietung GmbH',
+      rechnungsadresse_strasse: 'Hafenstraße 12a',
+      rechnungsadresse_plz_ort: '28217 Bremen',
+      rechnungsadresse_plz: '28217', rechnungsadresse_ort: 'Bremen', rechnungsadresse_land_code: 'DE',
+      ansprechpartner: 'Herr Niederlassungsleiter',
+      kundennummer: 'K-TEST-1-HB',
+      kaeufer_referenz: 'NL-BREMEN-77',
+      erechnung_email: 'eingang-bremen@example.com',
+      erechnung_format: profil === 'xrechnung' ? 'xrechnung_cii' : 'en16931_cii',
+    });
+    liste.push({
+      name, profil, erwartung: 'gueltig',
+      beschreibung: `Rechnung an Niederlassung Bremen (Adresse/Referenz der Niederlassung), ${profil === 'xrechnung' ? 'XRechnung' : 'EN 16931'}`,
+      quelle: { rechnung: r, auftraggeber: AG, positionen: [
+        pos(id, 1, { bezeichnung: 'Überführung Bremen-Hemelingen nach Hamburg 05.11.26', menge: 1, einzelpreis: 165, gesamtpreis: 165, tour_id: 't17', leistungsdatum: '2026-11-05' }),
+        pos(id, 2, { bezeichnung: 'Wartezeit', menge: 1, einzelpreis: 25, gesamtpreis: 25 }),
+      ] },
+    });
+  }
   return liste;
 }
 
@@ -313,7 +342,7 @@ function gutschriftQuelle(id: string, art: 'storno' | 'teilgutschrift', format: 
     kundennummer: 'K-TEST-1', sachbearbeiter: 'Herr Kunde (Sachbearbeiter)', ust_satz: 19, netto_summe: 0, ust_summe: 0, brutto_summe: 0,
     status: 'final', pdf_url: null, email_versendet_am: null, created_at: 'x', updated_at: 'x',
     empfaenger_typ: 'auftraggeber', empfaenger_email: null, empfaenger_ust_id: null, mit_unterschrift: true, mit_stempel: true,
-    absender_snapshot: null, art, bezug_rechnungsnummer: 'Re_26/9002', bezug_rechnungsdatum: '2026-11-03',
+    absender_snapshot: null, niederlassung_id: null, art, bezug_rechnungsnummer: 'Re_26/9002', bezug_rechnungsdatum: '2026-11-03',
     erechnung_format: format, erechnung_email: 'rechnungseingang@example.com', kaeufer_referenz: 'BESTELLUNG-4711',
     ...p,
   };

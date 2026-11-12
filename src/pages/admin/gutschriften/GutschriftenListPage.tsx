@@ -33,6 +33,8 @@ import {
 import { MANUELL_OPTION, empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
 import { parseAdressSnapshot } from '../../../lib/gutschriften';
 import type { Auftraggeber, AuftraggeberKontakt } from '../../../types/db';
+import { auftraggeberAnzeige, filterOptionen, filterPasst } from '../../../lib/niederlassungen';
+import { useStandorte } from '../../../lib/useStandorte';
 
 /** Empfängername einer manuellen Gutschrift aus ihrem Adress-Snapshot. */
 function gutschriftEmpfaenger(g: { adress_snapshot: unknown }): string {
@@ -60,6 +62,7 @@ export function GutschriftenListPage() {
   const jahrParam = liste.wert('jahr', String(new Date().getFullYear()));
   const yearFilter: number | 'alle' = jahrParam === 'alle' ? 'alle' : Number(jahrParam) || new Date().getFullYear();
   const agFilter = liste.wert('ag');
+  const { standorte } = useStandorte();
   const search = liste.wert('suche');
   const versandFilter = liste.wert('versand');
 
@@ -141,16 +144,16 @@ export function GutschriftenListPage() {
       if (yearFilter !== 'alle' && Number((r.datum ?? '').slice(0, 4)) !== yearFilter) return false;
       if (agFilter === MANUELL_OPTION) {
         if (r.empfaenger_typ !== 'manuell') return false;
-      } else if (agFilter && r.auftraggeber_id !== agFilter) return false;
+      } else if (agFilter && !filterPasst(agFilter, r.auftraggeber_id, r.niederlassung_id)) return false;
       if (versandFilter === 'nicht_versendet' && !istNichtVersendet(r.id)) return false;
       if (!q) return true;
       return r.gutschrift_nr.toLowerCase().includes(q)
-        || (r.auftraggeber?.name ?? '').toLowerCase().includes(q)
+        || (r.auftraggeber ? auftraggeberAnzeige(standorte, r.auftraggeber_id, r.niederlassung_id, r.auftraggeber.name) : '').toLowerCase().includes(q)
         || (r.empfaenger_typ === 'manuell'
           ? gutschriftEmpfaenger(r).toLowerCase().includes(q) : false)
         || (r.rechnung?.rechnungsnummer ?? '').toLowerCase().includes(q);
     });
-  }, [rows, yearFilter, agFilter, search, versandFilter, istNichtVersendet]);
+  }, [rows, yearFilter, agFilter, search, versandFilter, istNichtVersendet, standorte]);
 
   async function loeschen(row: Row) {
     const { error: err } = await supabase.from('gutschriften').delete().eq('id', row.id);
@@ -219,7 +222,7 @@ export function GutschriftenListPage() {
                   onChange={(e) => setFilter({ ag: e.target.value })}>
             <option value="">Alle</option>
             <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
-            {auftraggeber.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {filterOptionen(standorte, auftraggeber).map((o) => <option key={o.wert} value={o.wert}>{o.eingerueckt ? `\u2003${o.label}` : o.label}</option>)}
           </select>
         </div>
         <div>
@@ -313,7 +316,7 @@ export function GutschriftenListPage() {
                         {gutschriftEmpfaenger(r)}
                         <span className="ml-1 text-xs text-maja-muted">(manuell)</span>
                       </>
-                    ) : (r.auftraggeber?.name ?? '—')}
+                    ) : (r.auftraggeber ? auftraggeberAnzeige(standorte, r.auftraggeber_id, r.niederlassung_id, r.auftraggeber.name) : '—')}
                     {r.rechnungsempfaenger?.name && (
                       <span className="block text-xs text-maja-muted">
                         {r.rechnungsempfaenger.name}

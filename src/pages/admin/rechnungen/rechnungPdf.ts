@@ -834,8 +834,13 @@ export async function generateRechnungPdf(input: RechnungPdfInput): Promise<Blob
   return new Blob([bytes as unknown as ArrayBuffer], { type: 'application/pdf' });
 }
 
-/** Erzeugt einen sauberen Dateinamen aus der Rechnungsnummer ("Re-2026/349" → "Re-2026_349.pdf"). */
-export function rechnungPdfFilename(rechnungsnummer: string): string {
+/**
+ * Erzeugt einen sauberen Dateinamen aus der Rechnungsnummer ("Re-2026/349" → "Re-2026_349.pdf").
+ * Mit Standort (Niederlassung, Migration 118): "Re-2026_349_Bremen.pdf" — beide Teile über die
+ * zentrale Bereinigung. Ohne Niederlassungen unverändert.
+ */
+export function rechnungPdfFilename(rechnungsnummer: string, standort?: string | null): string {
   const safe = sicheresPfadSegment(rechnungsnummer, 'Rechnung');
-  return `${safe}.pdf`;
+  const teil = standort?.trim() ? `_${sicheresPfadSegment(standort.trim(), '')}` : '';
+  return `${safe}${teil === '_' ? '' : teil}.pdf`;
 }

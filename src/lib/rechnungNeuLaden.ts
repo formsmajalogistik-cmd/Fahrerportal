@@ -83,6 +83,15 @@ export async function sucheNeueTouren(args: {
   auftraggeberId: string;
   auftraggeberName: string;
   rechnungsempfaengerId: string | null;
+  /**
+   * Niederlassung der Rechnung (Migration 118): null = Hauptsitz → nur
+   * Touren OHNE Niederlassung; undefined = kein Filter (alte Datenbank,
+   * manuelle Rechnung). Touren eines anderen Standorts landen so nie auf
+   * dieser Rechnung.
+   */
+  niederlassungId?: string | null;
+  /** Anzeige des Standorts für die Meldung („Bremen"). */
+  standort?: string | null;
   istAuslagen: boolean;
   zeitraum: { von: string; bis: string };
   vorhandeneTourIds: string[];
@@ -95,6 +104,9 @@ export async function sucheNeueTouren(args: {
   for (let seite = 0; ; seite += 1) {
     let q = supabase.from('touren').select(TOUR_SELECT).eq('auftraggeber_id', args.auftraggeberId);
     if (args.rechnungsempfaengerId) q = q.eq('kontakt_id', args.rechnungsempfaengerId);
+    if (args.niederlassungId !== undefined) {
+      q = args.niederlassungId ? q.eq('niederlassung_id', args.niederlassungId) : q.is('niederlassung_id', null);
+    }
     const { data, error } = await q.or(or).order('enddatum', { ascending: true }).order('id').range(seite * 1000, seite * 1000 + 999);
     if (error) throw new Error(error.message);
     kandidaten.push(...((data as unknown as RawTour[]) ?? []));
@@ -118,7 +130,7 @@ export async function sucheNeueTouren(args: {
   const frei = neu.filter((t) => !belegt.has(t.id)).map((t) => ({ ...t, kennzeichen: t.kennzeichen ?? [], zusaetze: t.zusaetze ?? [] }));
   return {
     touren: frei,
-    beschreibung: `${args.auftraggeberName}, ${von === bis ? `Rechnungstag ${dm(von)}` : `Zeitraum ${dm(von)} – ${dm(bis)}`}`,
+    beschreibung: `${args.auftraggeberName}${args.standort ? ` · ${args.standort}` : ''}, ${von === bis ? `Rechnungstag ${dm(von)}` : `Zeitraum ${dm(von)} – ${dm(bis)}`}`,
     aufAndererRechnung: neu.filter((t) => belegt.has(t.id)).length,
   };
 }

@@ -30,6 +30,8 @@ interface Props {
     datum: string;
     brutto_summe: number;
     auftraggeber_id: string | null;
+    /** Niederlassung (Migration 118): deren Rechnungs-E-Mail hat Vorrang. */
+    niederlassung_id?: string | null;
     /** Bei manuellen Rechnungen: hinterlegte Empfänger-Adresse (088). */
     empfaenger_email?: string | null;
     pdf_url: string | null;
@@ -128,22 +130,36 @@ export function RechnungEmailDialog({ rechnung, erechnung = null, onClose, onSen
       type AgRow = { name: string; email1: string | null; email2: string | null };
       const ag = (agRes.data as AgRow | null) ?? null;
       if (ag) {
-        const add = (email: string | null) => {
+        // Niederlassung (Migration 118): eigene Rechnungs-E-Mail zuerst
+        // (leer = die des Auftraggebers).
+        type NlRow = { bezeichnung: string; rechnungs_email: string | null };
+        let nl = null as NlRow | null;
+        if (rechnung.niederlassung_id) {
+          const nlRes = await supabase.from('auftraggeber_niederlassungen').select('bezeichnung, rechnungs_email')
+            .eq('id', rechnung.niederlassung_id).maybeSingle();
+          nl = (nlRes.data as NlRow | null) ?? null;
+        }
+        const add = (email: string | null, name = ag.name) => {
           if (!email || !EMAIL_RE.test(email.trim())) return;
           const key = norm(email);
           if (byEmail.has(key)) return;
           byEmail.set(key, {
-            email: email.trim(), name: ag.name,
+            email: email.trim(), name,
             source: 'auftraggeber', ist_favorit: false,
           });
         };
+        if (nl?.rechnungs_email) add(nl.rechnungs_email, `${ag.name} · ${nl.bezeichnung}`);
         add(ag.email1);
         add(ag.email2);
-        // E-Rechnung ohne eigene E-Rechnungs-Adresse: an die bisherige
-        // Rechnungs-E-Mail des Auftraggebers.
-        if (erechnung && !erechnung.empfaenger && ag.email1 && EMAIL_RE.test(ag.email1.trim())) {
-          const e1 = ag.email1.trim();
-          setTo((t) => (t.length ? t : [e1]));
+        const rechnungsEmail = (nl?.rechnungs_email?.trim() || ag.email1?.trim()) ?? '';
+        // E-Rechnung ohne eigene E-Rechnungs-Adresse: an die Rechnungs-
+        // E-Mail (der Niederlassung, sonst des Auftraggebers).
+        if (erechnung && !erechnung.empfaenger && rechnungsEmail && EMAIL_RE.test(rechnungsEmail)) {
+          setTo((t) => (t.length ? t : [rechnungsEmail]));
+        } else if (!erechnung && nl?.rechnungs_email && EMAIL_RE.test(nl.rechnungs_email.trim())) {
+          // Rechnung an eine Niederlassung mit eigener Rechnungs-E-Mail: vorbelegen.
+          const e = nl.rechnungs_email.trim();
+          setTo((t) => (t.length ? t : [e]));
         }
       }
       const kRes = await supabase

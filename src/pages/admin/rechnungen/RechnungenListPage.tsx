@@ -17,6 +17,8 @@ import { RechnungStatusBadge } from './RechnungStatusBadge';
 import { RechnungenTabs } from './RechnungenTabs';
 import { RECHNUNG_STATUS_LABEL } from './rechnungLabels';
 import { MANUELL_OPTION, empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
+import { auftraggeberAnzeige, filterAuftraggeber, filterOptionen, filterPasst, mitNiederlassungSpalte, standortPasstZuSuche } from '../../../lib/niederlassungen';
+import { useStandorte } from '../../../lib/useStandorte';
 import type {
   Auftraggeber, AuftraggeberKontakt, Rechnung, RechnungStatus,
 } from '../../../types/db';
@@ -50,6 +52,8 @@ export function RechnungenListPage() {
   const jahrParam = liste.wert('jahr', String(new Date().getFullYear()));
   const yearFilter: number | 'alle' = jahrParam === 'alle' ? 'alle' : Number(jahrParam) || new Date().getFullYear();
   const agFilter = liste.wert('ag');
+  // Niederlassungen (Migration 118): „Name · Ort" + Filter je Standort
+  const { standorte } = useStandorte();
   /** Optionaler Rechnungsempfänger-Filter, abhängig vom Auftraggeber-Filter:
    *  Auswahlmöglichkeiten kommen aus den Empfängern der Rechnungen des
    *  aktuell gefilterten Auftraggebers. Bei agFilter="" ist das Feld
@@ -84,6 +88,7 @@ export function RechnungenListPage() {
     // Beide Seiten parallel laden — Rechnungen + Auftraggeber-Optionen.
     // Alle Rechnungen in Blöcken — vorher `.limit(500)`: ältere Rechnungen
     // tauchten in Liste und Filtern nicht mehr auf.
+    const nlSpalte = (await mitNiederlassungSpalte('')).replace(/^,\s*/, '').replace(/^(.+)$/, '$1,');
     const [rBloecke, aRes, vRes] = await Promise.all([
       ladeInBloecken((v, bis) => supabase
         .from('rechnungen')
@@ -93,7 +98,7 @@ export function RechnungenListPage() {
         // ust_betrag, bezahlt_am, ust_satz, pdf_url, belege_pdf_url,
         // email_versendet_am sind nur im Detail relevant — Detail-
         // Page lädt sich ihre Zeile separat mit *.
-        .select(`
+        .select(`${nlSpalte}
           id, rechnungsnummer, auftraggeber_id, datum, created_at,
           empfaenger_typ, rechnungsadresse_firma, ansprechpartner,
           leistungszeitraum_von, leistungszeitraum_bis,
@@ -191,25 +196,25 @@ export function RechnungenListPage() {
       // "__manuell" filtert auf Rechnungen ohne Auftraggeber-Bezug.
       if (agFilter === MANUELL_OPTION) {
         if (r.empfaenger_typ !== 'manuell') return false;
-      } else if (agFilter && r.auftraggeber_id !== agFilter) return false;
+      } else if (agFilter && !filterPasst(agFilter, r.auftraggeber_id, r.niederlassung_id)) return false;
       if (agFilter && empfaengerFilter && r.rechnungsempfaenger?.id !== empfaengerFilter) return false;
       if (statusFilter !== 'alle' && r.status !== statusFilter) return false;
       if (versandFilter === 'nicht_versendet' && !nichtVersendet(r.id)) return false;
       if (q) {
         const hay = [
           r.rechnungsnummer,
-          r.auftraggeber?.name ?? '',
+          r.auftraggeber ? auftraggeberAnzeige(standorte, r.auftraggeber_id, r.niederlassung_id, r.auftraggeber.name) : '',
           r.empfaenger_typ === 'manuell' ? empfaengerAusSnapshot({
             firma: r.rechnungsadresse_firma, ansprechpartner: r.ansprechpartner,
           }) : '',
           r.rechnungsempfaenger?.name ?? '',
         ].join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
+        if (!hay.includes(q) && !standortPasstZuSuche(standorte, r.auftraggeber_id, r.niederlassung_id, q)) return false;
       }
       return true;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, yearFilter, agFilter, empfaengerFilter, statusFilter, versandFilter, versandById, search]);
+  }, [rows, yearFilter, agFilter, empfaengerFilter, statusFilter, versandFilter, versandById, search, standorte]);
 
   // Empfänger-Optionen aus den geladenen Rechnungen, sobald ein
   // Auftraggeber gefiltert wird — eine Map nach Id mit Name.
@@ -218,7 +223,7 @@ export function RechnungenListPage() {
     const map = new Map<string, string>();
     for (const r of rows) {
       if (agFilter === MANUELL_OPTION) continue;
-      if (r.auftraggeber_id !== agFilter) continue;
+      if (r.auftraggeber_id !== filterAuftraggeber(agFilter)) continue;
       const e = r.rechnungsempfaenger;
       if (e?.id && e.name) map.set(e.id, e.name);
     }
@@ -397,8 +402,8 @@ export function RechnungenListPage() {
           >
             <option value="">Alle</option>
             <option value={MANUELL_OPTION}>Manuell (kein Auftraggeber)</option>
-            {auftraggeber.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+            {filterOptionen(standorte, auftraggeber).map((o) => (
+              <option key={o.wert} value={o.wert}>{o.eingerueckt ? `\u2003${o.label}` : o.label}</option>
             ))}
           </select>
         </div>
@@ -597,7 +602,7 @@ export function RechnungenListPage() {
                         })}
                         <span className="ml-1 text-xs text-maja-muted">(manuell)</span>
                       </>
-                    ) : (r.auftraggeber?.name ?? '—')}
+                    ) : (r.auftraggeber ? auftraggeberAnzeige(standorte, r.auftraggeber_id, r.niederlassung_id, r.auftraggeber.name) : '—')}
                     {r.rechnungsempfaenger?.name && (
                       <div className="text-xs text-maja-muted">
                         z. Hd. {r.rechnungsempfaenger.name}
