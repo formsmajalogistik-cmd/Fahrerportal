@@ -21,7 +21,7 @@ const BASIS = `http://localhost:${PORT}`;
 
 // [Datei, Bezeichnung, weitere Argumente (nach Ausgabeordner und Farbschema)]
 const LAEUFE = [
-  ['leerfahrt', 'Leerfahrt (Admin)', ['light', 'admin']],
+  ['leerfahrt', 'Leerfahrt (Admin, ohne Migration 120)', ['light', 'admin']],
   ['keine-auslagen', 'Zusatz „Keine Auslagen"', ['light']],
   ['excel-roundtrip', 'Excel-Export/-Import (Roundtrip)', ['light']],
   ['excel-roundtrip', 'Niederlassungen: Tourenliste (Anzeige, Filter, Suche) + Excel-Roundtrip', ['light', 'niederlassung']],
@@ -29,6 +29,8 @@ const LAEUFE = [
   ['rechnung-neu-laden', 'Niederlassungen: Touren neu laden + neue Rechnung je Standort', ['light', 'niederlassung']],
   ['aenderungen-bestaetigen', 'Änderungen nur bei bestätigten Aufträgen + Bestätigen mit Versionsprüfung', ['light', 'mit']],
   ['aenderungen-bestaetigen', 'Änderungen/Bestätigen ohne Migration 119 (wie bisher)', ['dark', 'ohne']],
+  ['interne-info', 'Interne Info (nur Admin) + Leerfahrt mit Grund', ['light']],
+  ['interne-info', 'Interne Info + Leerfahrt-Dialog mobil/dunkel', ['dark', 'mobil']],
   ['niederlassungen', 'Niederlassungen: Verwaltung (Admin) + Auftraggeber-Konto', ['light']],
   ['niederlassungen', 'Niederlassungen: Verwaltung + Auftraggeber-Konto mobil/dunkel', ['dark', 'mobil']],
   ['erechnung-stammdaten', 'E-Rechnung: Stammdaten + Test-Export (mit Migration)', ['light', 'mit']],

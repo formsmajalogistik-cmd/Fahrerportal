@@ -59,7 +59,9 @@ const mitJoins = (t) => ({ ...t, auftraggeber: AGS.find((a) => a.id === t.auftra
   fahrer: FAHRER.find((x) => x.id === t.fahrer_id) ?? null, zusaetze: t.id === 't1' ? [{ kategorie: 'Tankauslagen', anzahl: 1, betrag: 54.2, kennzeichen: 'HB-AB 123', notiz: null }] : [],
   ansprechpartner: [], verguetung: t.verguetung });
 
-const log = { inserts: [], exportAbfragen: [], schreib: [], nlSuche: [] };
+const log = { inserts: [], exportAbfragen: [], schreib: [], nlSuche: [], adminInfo: [] };
+// Interne Info (nur Admin, Migration 120) — eigene Tabelle, Spalte „Interne Info" nur im Admin-Export.
+const INTERN = { t1: 'Kunde zahlt schlecht\nLeerfahrt – Fahrzeug defekt (Bremse blockiert)', t2: 'Rückruf „Montag"' };
 let bestand = []; // Touren, die der Dubletten-Abgleich „schon kennt"
 
 async function lauf(rolle, sicht) {
@@ -85,6 +87,13 @@ async function lauf(rolle, sicht) {
     if (p === '/rest/v1/fahrer') { const l = eqW('user_id') ? FAHRER.filter((x) => x.user_id === eqW('user_id')) : FAHRER; return json(obj ? (l[0] ?? null) : l); }
     if (p === '/rest/v1/auftraggeber') return json(obj ? AGS[0] : AGS);
     if (p === '/rest/v1/auftraggeber_niederlassungen') return json(NLS);
+    if (p === '/rest/v1/touren_admin_info') {
+      if (m === 'POST') { const x = JSON.parse(req.postData()); log.adminInfo.push(...(Array.isArray(x) ? x : [x])); return json([], 201); }
+      if (rolle !== 'admin') return json([]);
+      const ids = (sp.get('tour_id') ?? '').replace(/^in\.\(|\)$/g, '').split(',').filter(Boolean);
+      return json(Object.entries(INTERN).filter(([id]) => !ids.length || ids.includes(id))
+        .map(([id, t]) => ({ tour_id: id, interne_info: t, leerfahrt_grund: null, leerfahrt_text: null })));
+    }
     if (p === '/rest/v1/rpc/touren_suche') {
       // Datenbanksuche: kennt nur Tour-Felder (Städte), nicht die Niederlassung.
       const q = String(JSON.parse(req.postData() || '{}').p_suche ?? '').toLowerCase();
@@ -92,7 +101,12 @@ async function lauf(rolle, sicht) {
       return json(l.map((t) => ({ id: t.id, gesamt: l.length })));
     }
     if (p === '/rest/v1/touren') {
-      if (m === 'POST') { const x = JSON.parse(req.postData()); log.inserts.push(...(Array.isArray(x) ? x : [x])); return json([], 201); }
+      if (m === 'POST') {
+        const x = JSON.parse(req.postData()); const neu = Array.isArray(x) ? x : [x];
+        const start = log.inserts.length; log.inserts.push(...neu);
+        // Mit select=id (interne Info) die neuen IDs in Einfügereihenfolge zurück.
+        return json(sel === 'id' ? neu.map((_, k) => ({ id: `neu${start + k}` })) : [], 201);
+      }
       if (sel.replace(/\s/g, '').includes('auftraggeber:auftraggeber_id(name)') && sel.includes('zusaetze:tour_zusaetze')) {
         const nlW = sp.get('niederlassung_id');
         log.exportAbfragen.push({ ag: eqW('auftraggeber_id') || null, nl: nlW });
@@ -168,6 +182,12 @@ pr('Export: Sonderzeichen, Route, Fahrer, Auftraggeber korrekt', zeile('T-2026-0
     nlSpalte > 0 && zeile('T-2026-0903')[nlSpalte] === (NL_MODUS ? 'Bremen' : '') && zeile('T-2026-0901')[nlSpalte] === '' && zeile('T-2026-0902')[nlSpalte] === '',
     { nlSpalte, werte: ['T-2026-0901', 'T-2026-0902', 'T-2026-0903'].map((x) => zeile(x)[nlSpalte]) });
 }
+{
+  const sp2 = aoa[1].indexOf('Interne Info');
+  pr('Export (Admin): Spalte „Interne Info" mit mehrzeiligem Text, leer ohne Eintrag',
+    sp2 > 0 && zeile('T-2026-0901')[sp2] === INTERN.t1 && zeile('T-2026-0902')[sp2] === INTERN.t2 && zeile('T-2026-0903')[sp2] === '',
+    { sp2, werte: ['T-2026-0901', 'T-2026-0902', 'T-2026-0903'].map((x) => zeile(x)[sp2]) });
+}
 const zus = XLSX.utils.sheet_to_json(wb.Sheets['Zusätze'], { header: 1, defval: '' });
 pr('Export: Zusatz (Tankauslagen 54,20) im Blatt „Zusätze"', JSON.stringify(zus).includes('Tankauslagen') && JSON.stringify(zus).includes('54.2'), zus.slice(0, 4));
 
@@ -225,6 +245,14 @@ for (const t of TOUREN) {
   }
 }
 pr(`Roundtrip: ${VERGLEICH.length} Felder je Tour identisch (Export → Import)`, abweichungen.length === 0, abweichungen);
+{
+  // Interne Info landet NICHT in touren, sondern je neuer Tour in touren_admin_info.
+  const idVon = (stadt) => `neu${log.inserts.findIndex((x) => x.start_stadt === stadt)}`;
+  const intern = (stadt) => log.adminInfo.find((x) => x.tour_id === idVon(stadt))?.interne_info;
+  pr('Import: „Interne Info" je Tour in die Admin-Tabelle (nicht in touren), leere Zellen ohne Eintrag',
+    intern('Bremen') === INTERN.t1 && intern('Stuhr') === INTERN.t2 && intern('Oldenburg') === undefined
+      && log.inserts.every((x) => !('interne_info' in x)), log.adminInfo);
+}
 if (NL_MODUS) {
   const nlVon = (stadt) => log.inserts.find((x) => x.start_stadt === stadt)?.niederlassung_id;
   pr('Import: „Bremen" → Niederlassung Bremen, leere Spalte → Hauptsitz (null)',

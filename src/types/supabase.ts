@@ -911,6 +911,21 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // Migration 120 — nur Admin (RLS).
+      touren_admin_info: {
+        Row: {
+          tour_id: string;
+          interne_info: string | null;
+          leerfahrt_grund: string | null;
+          leerfahrt_text: string | null;
+          leerfahrt_zeile: string | null;
+          geaendert_am: string;
+          geaendert_von: string | null;
+        };
+        Insert: { tour_id: string; interne_info?: string | null };
+        Update: { interne_info?: string | null };
+        Relationships: [];
+      };
       tour_keine_auslagen: {
         Row: {
           tour_id: string;
@@ -2591,6 +2606,11 @@ export type Database = {
       };
       tour_leerfahrt_setzen: {
         Args: { p_tour_id: string; p_an: boolean };
+        Returns: Json;
+      };
+      // Migration 120
+      tour_leerfahrt_mit_grund: {
+        Args: { p_tour_id: string; p_an: boolean; p_grund?: string | null; p_text?: string | null; p_zeile?: string | null };
         Returns: Json;
       };
       // Migration 119

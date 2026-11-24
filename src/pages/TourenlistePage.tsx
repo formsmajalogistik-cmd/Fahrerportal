@@ -47,6 +47,9 @@ import type {
 } from '../types/db';
 import { mitVersionsschutz } from '../lib/neueVersion';
 import { BestaetigenGeaendertHinweis } from '../components/BestaetigenGeaendertHinweis';
+import { LeerfahrtDialog } from '../components/auslagen/LeerfahrtDialog';
+import { interneInfoVorhanden, ladeAdminInfos, type AdminInfo } from '../lib/interneInfo';
+import { leerfahrtGrundText } from '../lib/leerfahrtGruende';
 
 // Excel-Import/-Export (Bibliothek xlsx) nur für Admins — erst bei Bedarf laden.
 const TourImportDialog = lazy(() => mitVersionsschutz(() => import('./touren/TourImportDialog'))
@@ -496,6 +499,11 @@ export function TourenlistePage() {
   const [leerfahrten, setLeerfahrten] = useState<Set<string>>(new Set());
   const [leerfahrtFehlt, setLeerfahrtFehlt] = useState(false);
   const [leerfahrtFrage, setLeerfahrtFrage] = useState<TourRow | null>(null);
+  // Migration 120: Leerfahrt mit Grund (Dialog) + Grund als Tooltip.
+  const [leerfahrtMitGrundAktiv, setLeerfahrtMitGrundAktiv] = useState(false);
+  const [adminInfos, setAdminInfos] = useState<Map<string, AdminInfo>>(new Map());
+  const [leerfahrtDialog, setLeerfahrtDialog] = useState<TourRow | null>(null);
+  const [leerfahrtMeldung, setLeerfahrtMeldung] = useState<{ ok: boolean; text: string } | null>(null);
   const [auslagenStand, setAuslagenStand] = useState(0);
   useEffect(() => {
     if (!isAdmin || rows.length === 0) {
@@ -534,13 +542,18 @@ export function TourenlistePage() {
       setRechnungByTour(map);
       const stand = leererStand();
       standAusPositionen(stand, data as never);
-      const [arten, formate, , lf] = await Promise.all([
+      const [arten, formate, , lf, mitGrund] = await Promise.all([
         ladeZusatzArten(),
         ladeAgFormate(rows.map((r) => r.auftraggeber_id).filter((x): x is string => !!x)),
         ladeLetzteAuslagenRechnungen(stand),
         ladeLeerfahrten(ids),
+        interneInfoVorhanden(),
       ]);
+      // Gründe nur für die markierten Leerfahrten (Tooltip am Badge).
+      const infos = mitGrund ? await ladeAdminInfos([...lf.map.keys()]) : new Map<string, AdminInfo>();
       if (cancelled) return;
+      setLeerfahrtMitGrundAktiv(mitGrund);
+      setAdminInfos(infos);
       setZusatzArten(arten);
       setLeerfahrten(new Set(lf.map.keys()));
       setLeerfahrtFehlt(lf.fehlt);
@@ -577,6 +590,8 @@ export function TourenlistePage() {
 
   /** Leerfahrt setzen (Schnellaktion); Entfernen fragt vorher nach. */
   const leerfahrtUmschalten = useCallback(async (t: TourRow, an: boolean) => {
+    // Mit Migration 120: immer der Dialog (Grund wählen/ändern oder entfernen).
+    if (leerfahrtMitGrundAktiv) { setLeerfahrtMeldung(null); setLeerfahrtDialog(t); return; }
     if (!an) { setLeerfahrtFrage(t); return; }
     try {
       await leerfahrtSetzen(t.id);
@@ -585,7 +600,7 @@ export function TourenlistePage() {
     }
     setAuslagenStand((n) => n + 1);
     void load(true);
-  }, [load]);
+  }, [load, leerfahrtMitGrundAktiv]);
 
   // Reset Pagination wenn Filter sich ändern
   useEffect(() => { setPage(1); }, [dateFrom, dateTo, statusFilter, search, auftraggeberFilter, fahrerFilter, hinweisFilter]);
@@ -1578,6 +1593,7 @@ export function TourenlistePage() {
               auslagenUngeklaertMelden={hinweise.auslagenUngeklaert.has(t.id)}
               onKeineAuslagen={() => keineAuslagenMarkieren(t.id)}
               leerfahrt={isAdmin && !leerfahrtFehlt ? leerfahrten.has(t.id) : undefined}
+              leerfahrtGrund={leerfahrtGrundText(adminInfos.get(t.id)?.leerfahrt_grund, adminInfos.get(t.id)?.leerfahrt_text)}
               onLeerfahrt={(an) => leerfahrtUmschalten(t, an)}
               geaendert={geaenderteTourIds.has(t.id)}
             />
@@ -1628,6 +1644,27 @@ export function TourenlistePage() {
         </Suspense>
       )}
 
+      {leerfahrtDialog && (
+        <LeerfahrtDialog
+          tourId={leerfahrtDialog.id} tourNr={leerfahrtDialog.tour_id} istLeerfahrt={leerfahrten.has(leerfahrtDialog.id)}
+          grund={adminInfos.get(leerfahrtDialog.id)?.leerfahrt_grund} text={adminInfos.get(leerfahrtDialog.id)?.leerfahrt_text}
+          onAbbrechen={() => setLeerfahrtDialog(null)}
+          onFertig={(m) => {
+            setLeerfahrtDialog(null);
+            setLeerfahrtMeldung({ ok: m.ok, text: `${leerfahrtDialog.tour_id ?? 'Tour'}: ${m.text}` });
+            setAuslagenStand((n) => n + 1);
+            void load(true);
+          }}
+        />
+      )}
+      {leerfahrtMeldung && (
+        <div role={leerfahrtMeldung.ok ? 'status' : 'alert'} data-testid="leerfahrt-meldung"
+             className={`fixed bottom-6 left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-start gap-3 rounded-2xl px-4 py-2 text-sm font-medium shadow-lg ${
+               leerfahrtMeldung.ok ? 'bg-maja-navy text-white' : 'bg-amber-100 text-amber-900 dark:!bg-amber-900 dark:!text-amber-50'}`}>
+          <span>{leerfahrtMeldung.text}</span>
+          <button type="button" className="shrink-0 text-xs underline" onClick={() => setLeerfahrtMeldung(null)}>OK</button>
+        </div>
+      )}
       {leerfahrtFrage && (
         <ConfirmDialog
           title="Leerfahrt entfernen?"
@@ -1857,6 +1894,8 @@ interface CardProps {
   /** „Ungeklärt" wird gemeldet (abgeschlossen, 7-Tage-Fenster, …). */
   auslagenUngeklaertMelden?: boolean;
   onKeineAuslagen?: () => Promise<void>;
+  /** Grund der Leerfahrt (Migration 120) — Tooltip am Badge. */
+  leerfahrtGrund?: string | null;
   /** Leerfahrt (nur Admin; undefined = nicht anzeigen). */
   leerfahrt?: boolean;
   onLeerfahrt?: (an: boolean) => Promise<void>;
@@ -1866,7 +1905,7 @@ interface CardProps {
 function TourCard({
   tour, onOpen, onOpenProtokoll, opening, isAdmin, todayYmd, onToggleBearbeitet,
   rechnungsnummern, hinweisKeinPreis, hinweisOhneRechnung, geaendert,
-  auslagen, auslagenUngeklaertMelden, onKeineAuslagen, leerfahrt, onLeerfahrt,
+  auslagen, auslagenUngeklaertMelden, onKeineAuslagen, leerfahrt, onLeerfahrt, leerfahrtGrund,
 }: CardProps) {
   const standorteKtx = useContext(StandorteKontext);
   const [leerfahrtBusy, setLeerfahrtBusy] = useState(false);
@@ -2155,7 +2194,7 @@ function TourCard({
                 role="button"
                 tabIndex={0}
                 aria-pressed={leerfahrt}
-                aria-label={leerfahrt ? 'Leerfahrt — klicken zum Entfernen' : 'Als Leerfahrt markieren'}
+                aria-label={leerfahrt ? `Leerfahrt${leerfahrtGrund ? ` – ${leerfahrtGrund}` : ''} — klicken zum Ändern oder Entfernen` : 'Als Leerfahrt markieren'}
                 data-leerfahrt={leerfahrt ? 'ja' : 'nein'}
                 className={`inline-flex cursor-pointer items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                   leerfahrt
@@ -2175,7 +2214,10 @@ function TourCard({
                   setLeerfahrtBusy(true);
                   void onLeerfahrt(!leerfahrt).finally(() => setLeerfahrtBusy(false));
                 }}
-                title={leerfahrt ? 'Leerfahrt — klicken zum Entfernen' : 'Als Leerfahrt markieren (setzt „Keine Auslagen")'}
+                data-grund={leerfahrtGrund ?? undefined}
+                title={leerfahrt
+                  ? `Leerfahrt${leerfahrtGrund ? ` – ${leerfahrtGrund}` : ''} — klicken zum Ändern/Entfernen`
+                  : 'Als Leerfahrt markieren (setzt „Keine Auslagen")'}
               >
                 {leerfahrtBusy ? '…' : 'Leerfahrt'}
               </span>

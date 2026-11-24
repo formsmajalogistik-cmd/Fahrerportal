@@ -4,6 +4,7 @@ import { supabase } from './supabase';
 import { ladeInBloecken } from './ladeInBloecken';
 import { fahrerName } from './names';
 import { ladeStandorte } from './niederlassungen';
+import { ladeAdminInfos } from './interneInfo';
 import type { AppUser } from '../types/db';
 
 // ============================================================
@@ -149,6 +150,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId, stan
   const { data, error } = await ladeInBloecken((v, b) => baue().range(v, b));
   if (error) throw new Error(error);
   const rows = (data as unknown as ExportRow[]) ?? [];
+  const interneInfos = await ladeAdminInfos(rows.map((r) => r.id));
 
   // ---- Blatt „Touren" --------------------------------------------------
   // Die ersten neun Header sind import-kompatibel; der Rest ist Backup.
@@ -178,6 +180,9 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId, stan
     // Migration 118 — leer = Hauptsitz. Der Importer ordnet über die
     // Bezeichnung (oder den Ort) der Niederlassung dieses Auftraggebers zu.
     'Niederlassung',
+    // Migration 120 — nur Admin (der Export ist Admin-only; die Datenbank
+    // liefert die interne Info ohnehin nur an Admins).
+    'Interne Info',
   ];
 
   const dataRows = rows.map((t) => {
@@ -232,6 +237,7 @@ export async function exportTourenExcel({ dateFrom, dateTo, auftraggeberId, stan
       t.auf_eis ? 'ja' : 'nein',
       t.auf_eis_notiz ?? '',
       (t.niederlassung_id && standorte.nachId.get(t.niederlassung_id)?.bezeichnung) || '',
+      interneInfos.get(t.id)?.interne_info ?? '',
     ];
   });
 

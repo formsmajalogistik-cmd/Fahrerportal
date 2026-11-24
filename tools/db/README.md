@@ -4,7 +4,7 @@
 npm run test:db
 ```
 
-Prüft Trigger, Sperren, RLS und RPCs der Migrationen 115–119 sowie die
+Prüft Trigger, Sperren, RLS und RPCs der Migrationen 115–120 sowie die
 Daten-Skripte aus `supabase/scripts/` gegen einen
 **lokalen** PostgreSQL (≥ 15) — nie gegen die echte Datenbank:
 
@@ -20,6 +20,7 @@ Daten-Skripte aus `supabase/scripts/` gegen einen
 | `116.test.sh` | Firmendaten-Snapshot, Archiv nur per Server, Sperren, Storno-RPC |
 | `118.test.sh` | Niederlassungen: Zuordnung nur zum eigenen Auftraggeber, inaktiv/abgerechnet gesperrt, Löschen nur ohne Bezüge, E-Rechnungs-Angaben beim Erstellen, Storno, Tour aufteilen, Auftraggeber-Konto + Kundensicht ohne Preise |
 | `119.test.sh` | Änderungsanzeige nur bei bestätigten Aufträgen (Einträge vor der Bestätigung nur im Protokoll, Alt-Einträge ausgeblendet statt gelöscht), Stand bei jeder Auftraggeber-Änderung, Bestätigen mit Versionsprüfung, nur Admin |
+| `120.test.sh` | Interne Info nur für Admins (Fahrer/Auftraggeber/Test lesen und schreiben nichts, keine View enthält die Felder), Protokoll, Leerfahrt mit Grund: Zeile anhängen/ersetzen/entfernen, von Hand geänderte Zeile bleibt (Hinweis), „Keine Auslagen" wie bisher, Tour-Split übernimmt |
 | `adressen.test.sh` | PLZ/Ort-Schreibskript: Probelauf ändert nichts, echter Lauf schreibt nur „eindeutig" und nichts Gefülltes, zweiter Lauf ohne Wirkung |
 | `117.test.sh` | ZUGFeRD-Eintrag ohne XML-Pfad, Export-Protokoll, Rechnungsnummer bei gescheitertem Erstellen (keine Lücke, keine Doppelvergabe) |
 

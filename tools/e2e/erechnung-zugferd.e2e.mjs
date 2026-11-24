@@ -6,7 +6,7 @@
 // Aufruf: … <Ausgabeordner> [light|dark] [mobil]
 //   mobil = Handy-Bildschirm + 4-fach gedrosselte CPU (grobe Laufzeitmessung)
 import { writeFileSync } from 'node:fs';
-import { erechnungUmgebung, pruefer } from './erechnung-umgebung.mjs';
+import { erechnungUmgebung, interneInfoNirgends, pruefer } from './erechnung-umgebung.mjs';
 
 const OUT = process.argv[2]; const THEME = process.argv[3] ?? 'light'; const MOBIL = process.argv[4] === 'mobil';
 const { pr, ende } = pruefer();
@@ -101,4 +101,10 @@ if (!MOBIL) {
   await s('zugferd_storno');
 }
 
+// Interne Info (nur Admin, Migration 120): steht an jeder Tour im Stub,
+// darf aber in keinem PDF, keiner E-Rechnung (XML/ZUGFeRD) und keiner Mail auftauchen.
+{
+  const r = await interneInfoNirgends(OUT, log);
+  pr(`Interne Info nicht in PDF/E-Rechnung/E-Mail (${r.dateien} Dateien, ${r.mails} Mails geprüft)`, r.funde.length === 0 && r.dateien > 0 && r.mitText === r.dateien, r);
+}
 await ende(b);

@@ -39,6 +39,7 @@ import {
 } from './positionUtils';
 import type { Auftraggeber, AuftraggeberKontakt, Rechnungsadresse } from '../../../types/db';
 import type { Database } from '../../../types/supabase';
+import { useInterneInfoTexte } from '../../../lib/useInterneInfo';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -211,6 +212,8 @@ export function RechnungNewPage() {
     }
     return m;
   }, [touren, addedTourInfos]);
+  /** Interne Info (nur Admin) der Touren auf den Positionen — gleiche Stelle wie die Tour-Info. */
+  const interneInfoById = useInterneInfoTexte([...haupt, ...auslagen].map((x) => x.tour_id));
 
   useEffect(() => {
     let cancelled = false;
@@ -1369,6 +1372,7 @@ export function RechnungNewPage() {
             positionen={haupt}
             defaultUstSatz={ustSatz}
             tourInfoById={tourInfoById}
+            tourInterneInfoById={interneInfoById}
             onChange={setHaupt}
           />
           <SummenBlock positionen={haupt} defaultSatz={ustSatz} prominent />
@@ -1403,6 +1407,7 @@ export function RechnungNewPage() {
             positionen={auslagen}
             defaultUstSatz={ustSatz}
             tourInfoById={tourInfoById}
+            tourInterneInfoById={interneInfoById}
             onChange={setAuslagen}
           />
           <SummenBlock positionen={auslagen} defaultSatz={ustSatz} prominent />

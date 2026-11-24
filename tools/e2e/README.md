@@ -17,12 +17,13 @@ Projekts): `npm i -g playwright && npx playwright install chromium`, oder
 
 | Datei | Inhalt |
 |---|---|
-| `leerfahrt` | Leerfahrt markieren/entfernen, Wasserzeichen, Filter |
+| `leerfahrt` | Leerfahrt markieren/entfernen, Wasserzeichen, Filter — Stand ohne Migration 120 (ohne Grund) |
 | `keine-auslagen` | Zusatz „Keine Auslagen" in Tourenliste, Tour-Detail, Posteingang, Prüfdialog |
 | `excel-roundtrip` | Excel-Export der Tourenliste → Import derselben Datei → identische Daten; Duplikat-Warnung; Auftraggeber-Filter. Variante `niederlassung`: Anzeige „Name · Standort", Filter/Suche je Standort, Spalte „Niederlassung" (leer = Hauptsitz) |
 | `rechnung-neu-laden` | „Touren neu laden", Prüfdialog beim Erstellen. Teil `niederlassung`: Touren neu laden und neue Rechnung je Standort (Hauptsitz ↔ Niederlassung getrennt) |
 | `niederlassungen` | Verwaltung der Niederlassungen im Auftraggeber-Dialog (Admin); Auftraggeber-Konto sieht alle Standorte, keine Preise, legt Tour mit Standort an — auch mobil/dunkel |
 | `aenderungen-bestaetigen` | „Änderungen durch Auftraggeber" nur bei bestätigten Aufträgen; Bestätigen in Liste und Tour-Detail hält an, wenn der Auftraggeber zwischendurch geändert hat (Hinweis mit Feldern, Neuladen). Variante `ohne`: Verhalten ohne Migration 119 |
+| `interne-info` | Interne Info (nur Admin) + Leerfahrt mit Grund: Dialog (Pflichtgrund, Sonstiges mit Text), Grund ändern/entfernen, Hinweis bei von Hand geänderter Zeile, Tooltip, Tour-Detail, Rechnungspositionen; Fahrer/Test-Konto fragen nichts ab. Außerdem prüfen `erechnung-ablauf`/`erechnung-zugferd`, dass die interne Info in keinem PDF, keiner E-Rechnung und keiner Mail landet |
 | `erechnung-stammdaten` | Empfänger-Stammdaten, Test-Export (XML und ZUGFeRD), mit/ohne Migration 115 |
 | `erechnung-ablauf` | Erstellen, Sperre, Versand, Storno (381), Teilgutschrift, PDF-Versionierung |
 | `erechnung-fehlerpfad` | Ablage scheitert → Meldung, erneuter Versuch, nichts doppelt/überschrieben |

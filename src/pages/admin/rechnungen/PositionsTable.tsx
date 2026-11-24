@@ -11,6 +11,7 @@ import { CSS } from '@dnd-kit/utilities';
 
 import { GripIcon, XIcon } from '../../../components/icons';
 import { formatEuro } from '../../../lib/touren';
+import { InterneInfoZeile } from '../../../components/InterneInfo';
 import {
   formatDecimal, parseDecimal, recomputeGesamt,
   type EditorPosition,
@@ -25,6 +26,9 @@ interface Props {
   /** Tour-Info pro tour_id — wird im Edit-Modus als dezenter Hinweis
    *  unter der Bezeichnung gerendert (NICHT für Read-only oder PDF). */
   tourInfoById?: Map<string, string>;
+  /** Interne Info (nur Admin, Migration 120) pro tour_id — an derselben
+   *  Stelle wie die Tour-Info, deutlich gekennzeichnet, nie gedruckt. */
+  tourInterneInfoById?: Map<string, string>;
   onChange: (next: EditorPosition[]) => void;
 }
 
@@ -48,7 +52,7 @@ function formatUst(v: number | null | undefined): string {
  * weiterhin ohne Drag-Auslöser editierbar sind. Die Position-Nummern
  * werden bei jedem onChange aus dem neuen Index neu vergeben.
  */
-export function PositionsTable({ positionen, readOnly, defaultUstSatz, tourInfoById, onChange }: Props) {
+export function PositionsTable({ positionen, readOnly, defaultUstSatz, tourInfoById, tourInterneInfoById, onChange }: Props) {
   // dnd-kit-Sensoren: PointerSensor (Maus + Stift), TouchSensor mit
   // 150 ms Long-Press / 5 px Tolerance (verhindert versehentliches
   // Drag beim Scrollen) und Keyboard für Tastaturbedienung.
@@ -114,6 +118,7 @@ export function PositionsTable({ positionen, readOnly, defaultUstSatz, tourInfoB
     readOnly: !!readOnly,
     defaultUstSatz,
     tourInfoById,
+    tourInterneInfoById,
     patch,
     remove,
     updateUnterzeile,
@@ -174,6 +179,7 @@ interface RowCtx {
   readOnly: boolean;
   defaultUstSatz?: number;
   tourInfoById?: Map<string, string>;
+  tourInterneInfoById?: Map<string, string>;
   patch: (key: string, p: Partial<EditorPosition>) => void;
   remove: (key: string) => void;
   updateUnterzeile: (key: string, idx: number, text: string) => void;
@@ -295,6 +301,9 @@ function SortableRow({
               <p className="text-xs italic text-maja-muted" title="Aus dem Info-Feld der Tour — wird NICHT auf die Rechnung gedruckt">
                 Info: {ctx.tourInfoById.get(p.tour_id)}
               </p>
+            )}
+            {p.tour_id && ctx.tourInterneInfoById?.get(p.tour_id)?.trim() && (
+              <InterneInfoZeile text={ctx.tourInterneInfoById.get(p.tour_id)!} />
             )}
             {p.unterzeilen.map((u, i) => (
               <div key={i} className="flex items-center gap-1">

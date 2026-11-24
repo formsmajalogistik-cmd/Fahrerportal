@@ -3,10 +3,41 @@
 // Datenbank-Trigger (Snapshot, Fälligkeit, Sperre) so weit nach, wie die
 // Oberfläche sie braucht; die echten Trigger prüfen die PostgreSQL-Tests.
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { pw, START, BASIS } from './basis.mjs';
 
 export const UID = '00000000-0000-0000-0000-0000000000a1';
+/** Marker in der „Internen Info (nur Admin)" (Migration 120) aller Touren —
+ *  darf in keinem PDF, keiner E-Rechnung und keiner Mail auftauchen. */
+export const GEHEIM = 'GEHEIM-INTERN-4711';
+
+/**
+ * Durchsucht alle archivierten XML/PDF-Dateien (Text per pdf.js) und die
+ * abgefangenen Mails nach dem Marker der internen Info.
+ */
+export async function interneInfoNirgends(OUT, log) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { createRequire } = await import('node:module');
+  const { dirname } = await import('node:path');
+  const schriften = `${dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))}/standard_fonts/`;
+  const funde = []; let dateien = 0; let mitText = 0;
+  for (const f of readdirSync(`${OUT}/xml`)) {
+    const roh = readFileSync(`${OUT}/xml/${f}`);
+    dateien++;
+    let text = roh.toString('latin1');
+    if (f.endsWith('.pdf')) {
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(roh), useSystemFonts: false, standardFontDataUrl: schriften, verbosity: 0 }).promise;
+      for (let i = 1; i <= doc.numPages; i++) text += ' ' + (await (await doc.getPage(i)).getTextContent()).items.map((it) => it.str ?? '').join(' ');
+      // Eingebettete Dateien (ZUGFeRD-XML)
+      const anh = await doc.getAttachments();
+      for (const a of Object.values(anh ?? {})) text += ' ' + Buffer.from(a.content).toString('utf8');
+    }
+    if (text.includes(GEHEIM)) funde.push(f);
+    if (/Re_26\/\d+|GS-2026/.test(text)) mitText++;   // Gegenprobe: Text wurde wirklich gelesen
+  }
+  if (JSON.stringify(log.mails).includes(GEHEIM)) funde.push('E-Mail');
+  return { funde, dateien, mitText, mails: log.mails.length, abgefragt: log.adminInfo };
+}
 
 /** Zähler + Ausgabe für Prüfungen („  ok  " / „  FAIL"). */
 export function pruefer() {
@@ -75,7 +106,7 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
   const gutschriften = {};
   const gpositionen = [];
   const dokumente = [];
-  const log = { patchR: [], archiv: [], upload: [], mails: [], settingsUp: [], rpc: [], gsInsert: [], patchG: [] };
+  const log = { patchR: [], archiv: [], upload: [], mails: [], settingsUp: [], rpc: [], gsInsert: [], patchG: [], adminInfo: 0 };
 
   // Stub der Datenbank-Trigger (Migration 115/116)
   function trigger(r, alt) {
@@ -157,6 +188,12 @@ export async function erechnungUmgebung({ OUT, THEME = 'light', MOBIL = false })
       if (m === 'POST') { const x = body(); const nid = `r${Object.keys(rechnungen).length + 1}`; rechnungen[nid] = { ...basisR(nid, 'Re_26/2099', x.auftraggeber_id ?? 'ag3', 'entwurf', ['1', 'x']), ...x, id: nid }; return obj ? json({ id: nid, rechnungsnummer: 'Re_26/2099' }, 201) : json([{ id: nid }], 201); }
       if (id) { const re = rechnungen[id]; return one(re ? { ...re, auftraggeber: AG[re.auftraggeber_id], rechnungsadresse: null } : null); }
       return json(Object.values(rechnungen).map((re) => ({ ...re, auftraggeber: AG[re.auftraggeber_id], rechnungsempfaenger: null, positionen_count: 1 })));
+    }
+    if (p === '/rest/v1/touren_admin_info') {
+      // Interne Info (nur Admin) mit Marker für jede abgefragte Tour.
+      log.adminInfo++;
+      const ids = (sp.get('tour_id') ?? '').replace(/^in\.\(|\)$/g, '').split(',').filter(Boolean);
+      return json(ids.map((tid) => ({ tour_id: tid, interne_info: `${GEHEIM} Kunde zahlt schlecht`, leerfahrt_grund: null, leerfahrt_text: null })));
     }
     if (p === '/rest/v1/rechnungspositionen') {
       if (m === 'POST') { const x = body(); (Array.isArray(x) ? x : [x]).forEach((y, i) => positionen.push({ ...P(`pn${positionen.length + i}`, y.rechnung_id, y.position_nr, y.bezeichnung, y.einzelpreis, y.tour_id, null), ...y })); return json([], 201); }

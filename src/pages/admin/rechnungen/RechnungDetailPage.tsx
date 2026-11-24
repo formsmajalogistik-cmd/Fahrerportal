@@ -47,6 +47,7 @@ import { eintragZeit, type VersandStatus } from '../../../lib/belegVersand';
 import { empfaengerAusSnapshot } from '../../../lib/manuelleEmpfaenger';
 import type { EditorPosition } from './positionUtils';
 import { emptyManuellePosition, newKey } from './positionUtils';
+import { useInterneInfoTexte } from '../../../lib/useInterneInfo';
 import {
   bilanzText, ladeTourenPerId, modusFuerRechnung, neuLadenBilanz, positionenNeuAufbauen, sucheNeueTouren, suchZeitraum,
 } from '../../../lib/rechnungNeuLaden';
@@ -128,6 +129,8 @@ export function RechnungDetailPage() {
   const [positionen, setPositionen] = useState<EditorPosition[]>([]);
   /** tour_id → info-Freitext. Für die Anzeige im Edit-Modus. */
   const [tourInfoById, setTourInfoById] = useState<Map<string, string>>(new Map());
+  /** Interne Info (nur Admin) der Touren auf den Positionen — gleiche Stelle wie die Tour-Info. */
+  const interneInfoById = useInterneInfoTexte(positionen.map((x) => x.tour_id));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1074,6 +1077,7 @@ export function RechnungDetailPage() {
           readOnly={!editingPos}
           defaultUstSatz={Number(rechnung.ust_satz) || 0}
           tourInfoById={tourInfoById}
+          tourInterneInfoById={interneInfoById}
           onChange={setPositionen}
         />
         <SummenBlock

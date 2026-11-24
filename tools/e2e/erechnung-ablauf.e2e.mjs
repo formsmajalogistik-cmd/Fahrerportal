@@ -1,4 +1,4 @@
-import { erechnungUmgebung, pruefer } from './erechnung-umgebung.mjs';
+import { erechnungUmgebung, interneInfoNirgends, pruefer } from './erechnung-umgebung.mjs';
 const OUT = process.argv[2]; const THEME = process.argv[3] ?? 'light'; const MOBIL = process.argv[4] === 'mobil';
 const { pr, ende } = pruefer();
 const { b, pg, B, s, AG, rechnungen, positionen, gpositionen, log } = await erechnungUmgebung({ OUT, THEME, MOBIL });
@@ -120,4 +120,10 @@ await pg.waitForURL(/\/gutschriften\/g2/, { timeout: 10000 });
 const gi = log.gsInsert[0];
 pr('Teilgutschrift-Entwurf: Art, Bezug, Betrag positiv', gi.art === 'teilgutschrift' && gi.bezug_rechnungsnummer === 'Re_26/2003' && gi.status === 'entwurf' && gi.netto_summe === 15 && gpositionen.some((x) => x.gutschrift_id === 'g2' && x.einzelpreis === 15), gi);
 
+// Interne Info (nur Admin, Migration 120): steht an jeder Tour im Stub,
+// darf aber in keinem PDF, keiner E-Rechnung (XML/ZUGFeRD) und keiner Mail auftauchen.
+{
+  const r = await interneInfoNirgends(OUT, log);
+  pr(`Interne Info nicht in PDF/E-Rechnung/E-Mail (${r.dateien} Dateien, ${r.mails} Mails geprüft)`, r.funde.length === 0 && r.dateien > 0 && r.mitText === r.dateien, r);
+}
 await ende(b);

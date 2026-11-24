@@ -56,6 +56,8 @@ const FELD_LABEL: Record<string, string> = {
   auf_eis_notiz: 'Notiz zur Terminierung',
   // Migration 118
   niederlassung_id: 'Niederlassung',
+  // Migration 120 — nur Admin (das Protokoll ist ohnehin nur für Admins lesbar).
+  interne_info: 'Interne Info (nur Admin)',
   ansprechpartner_start: 'Ansprechpartner Start',
   ansprechpartner_ziel: 'Ansprechpartner Ziel',
   ansprechpartner_rueckfuehrung: 'Ansprechpartner Rückführung',
@@ -76,6 +78,8 @@ export function aenderungSatz(
   // fertigen Satz, z.B. „Aufgeteilt aus T-2026-4419 am 08.10.2026".
   // „Keine Auslagen" gesetzt/entfernt (Migration 112): fertiger Satz.
   if (quelle === 'auslagen') return wertNeu ?? '„Keine Auslagen" geändert';
+  // Leerfahrt (Migration 114/120): fertiger Satz, z.B. „Grund: Leerfahrt – Fahrzeug defekt".
+  if (quelle === 'leerfahrt') return wertNeu ?? 'Leerfahrt geändert';
   if (quelle === 'aufteilung') {
     return wertAlt ? `${wertNeu ?? ''} (vorher ${wertAlt})` : (wertNeu ?? 'Aufteilung');
   }

@@ -9,6 +9,7 @@ import type {
   AppUser, Auftraggeber, Fahrer, TourenArt,
 } from '../../types/db';
 import type { Database } from '../../types/supabase';
+import { interneInfoVorhanden } from '../../lib/interneInfo';
 
 type TourInsert = Database['public']['Tables']['touren']['Insert'];
 
@@ -35,6 +36,8 @@ interface ParsedRow {
   auftraggeber_name: string | null;
   /** Spalte „Niederlassung" (undefined = Spalte fehlt; leer = Hauptsitz). */
   niederlassung_name?: string | null;
+  /** Spalte „Interne Info" (nur Admin, Migration 120; undefined = Spalte fehlt). */
+  interne_info?: string | null;
   tourenart: TourenArt | null;
   ist_sondervereinbarung: boolean;
   sondervereinbarung: string | null;
@@ -144,6 +147,7 @@ const HEADER_KEYS = {
   auf_eis:         ['auf eis'],
   auf_eis_notiz:   ['auf-eis-notiz', 'auf eis notiz'],
   niederlassung:   ['niederlassung', 'standort'],
+  interne_info:    ['interne info', 'interne info (nur admin)'],
   bestaetigt:      ['bestätigt', 'bestaetigt'],
   created_at:      ['created_at', 'erstellt am'],
 };
@@ -443,6 +447,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       auf_eis:         findColumnExact(cols, HEADER_KEYS.auf_eis),
       auf_eis_notiz:   findColumnExact(cols, HEADER_KEYS.auf_eis_notiz),
       niederlassung:   findColumnExact(cols, HEADER_KEYS.niederlassung),
+      interne_info:    findColumnExact(cols, HEADER_KEYS.interne_info),
     };
     const at = (r: unknown[], idx: number): unknown => (idx >= 0 ? r[idx] : null);
 
@@ -466,6 +471,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
       const fahrer_name = cIdx.fahrer >= 0 ? (r[cIdx.fahrer] == null ? null : String(r[cIdx.fahrer]).trim()) : null;
       const auftraggeber_name = cIdx.auftraggeber >= 0 ? (r[cIdx.auftraggeber] == null ? null : String(r[cIdx.auftraggeber]).trim()) : null;
       const niederlassung_name = oIdx.niederlassung >= 0 ? (cellStr(at(r, oIdx.niederlassung)) ?? null) : undefined;
+      const interne_info = oIdx.interne_info >= 0 ? (cellStr(at(r, oIdx.interne_info)) ?? null) : undefined;
       const tourenart = cIdx.tourenart >= 0 ? parseTourenart(r[cIdx.tourenart]) : null;
 
       const sv_raw = cIdx.sondervereinbarung >= 0 ? r[cIdx.sondervereinbarung] : null;
@@ -544,6 +550,7 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         fahrer_name,
         auftraggeber_name,
         niederlassung_name,
+        interne_info,
         tourenart,
         ist_sondervereinbarung,
         sondervereinbarung: ist_sondervereinbarung ? sv_text : null,
@@ -716,11 +723,24 @@ export function TourImportDialog({ onClose, onImported }: Props) {
         if (r.niederlassung_id !== undefined && standorte?.aktiv) base.niederlassung_id = r.niederlassung_id;
         return base;
       });
-      const { error: err } = await supabase.from('touren').insert(payload);
+      // Interne Info (nur Admin, Migration 120) liegt in einer eigenen
+      // Tabelle — dafür die IDs der neuen Touren zurückholen (Reihenfolge
+      // wie eingefügt).
+      const mitInterneInfo = slice.some((r) => (r.interne_info ?? '').trim()) && await interneInfoVorhanden();
+      const { data: neu, error: err } = mitInterneInfo
+        ? await supabase.from('touren').insert(payload).select('id')
+        : await supabase.from('touren').insert(payload);
       if (err) {
         errors += slice.length;
       } else {
         imported += slice.length;
+        const ids = ((neu ?? []) as Array<{ id: string }>).map((x) => x.id);
+        if (mitInterneInfo && ids.length === slice.length) {
+          const zeilen = slice.map((r, k) => ({ tour_id: ids[k], interne_info: (r.interne_info ?? '').trim() || null }))
+            .filter((z) => z.interne_info);
+          const { error: infoErr } = await supabase.from('touren_admin_info').upsert(zeilen, { onConflict: 'tour_id' });
+          if (infoErr) setError(`Touren importiert, interne Info konnte nicht gespeichert werden: ${infoErr.message}`);
+        }
       }
       setProgress({ done: Math.min(i + CHUNK, toImport.length), total: toImport.length });
     }

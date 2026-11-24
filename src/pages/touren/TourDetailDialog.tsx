@@ -119,6 +119,8 @@ import { TourAufteilenDialog, type AufteilungsErgebnis } from './TourAufteilenDi
 import { istAufteilbar, istTour1GeaendertFehler, ohneFehlercode } from '../../lib/tourAufteilung';
 import { merkeTourAdressen } from '../../lib/feldVorschlaege';
 import { BestaetigenGeaendertHinweis } from '../../components/BestaetigenGeaendertHinweis';
+import { InterneInfoTitel } from '../../components/InterneInfo';
+import { interneInfoVorhanden, ladeAdminInfos, speichereInterneInfo } from '../../lib/interneInfo';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
 } from '../../lib/tourenartAutomatik';
@@ -398,6 +400,11 @@ export function TourDetailDialog({
   const [statusMsg, setStatusMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   /** Bestätigen angehalten: Auftraggeber hat zwischenzeitlich geändert (Migration 119). */
   const [bestaetigenGeaendert, setBestaetigenGeaendert] = useState<Array<{ feld: string; alt: string | null; neu: string | null }> | null>(null);
+  /** Interne Info (nur Admin, Migration 120) — eigene Tabelle, nur für Admins geladen. */
+  const [interneInfo, setInterneInfo] = useState<string | null>(null);
+  const [interneInfoAktiv, setInterneInfoAktiv] = useState(false);
+  const [interneInfoStand, setInterneInfoStand] = useState(0);
+  const [interneInfoEntwurf, setInterneInfoEntwurf] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditDraft | null>(null);
@@ -611,8 +618,22 @@ export function TourDetailDialog({
 
   // ----- Edit-Modus -----
 
+  useEffect(() => {
+    if (profile?.role !== 'admin') return;
+    let abgebrochen = false;
+    void (async () => {
+      if (!(await interneInfoVorhanden())) return;
+      const m = await ladeAdminInfos([tourId]);
+      if (abgebrochen) return;
+      setInterneInfoAktiv(true);
+      setInterneInfo(m.get(tourId)?.interne_info ?? null);
+    })();
+    return () => { abgebrochen = true; };
+  }, [profile?.role, tourId, interneInfoStand]);
+
   function startEdit() {
     if (!tour) return;
+    setInterneInfoEntwurf(interneInfo ?? '');
     setDraft(draftFromTour(tour));
     setEditing(true);
     setStatusMsg(null);
@@ -1052,6 +1073,17 @@ export function TourDetailDialog({
       }
     }
 
+    // Interne Info (nur Admin) — eigene Tabelle, nur bei Änderung.
+    if (isAdmin && interneInfoAktiv && interneInfoEntwurf !== null
+        && interneInfoEntwurf.trim() !== (interneInfo ?? '').trim()) {
+      try {
+        await speichereInterneInfo(tour.id, interneInfoEntwurf);
+        setInterneInfoStand((n) => n + 1);
+      } catch (e) {
+        agHinweis += ` Interne Info konnte nicht gespeichert werden: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
     setSaving(false);
     setEditing(false);
     setDraft(null);
@@ -1415,12 +1447,13 @@ export function TourDetailDialog({
 
       {/* Leerfahrt (Migration 114, nur Admin): Hinweisbalken bzw. Umschalter */}
       {isAdmin && !editing && (
-        <LeerfahrtLeiste tourId={tour.id} onChanged={() => { onChanged(); void zusaetzeNeuLaden(); }} />
+        <LeerfahrtLeiste tourId={tour.id} tourNr={tour.tour_id} onChanged={() => { onChanged(); void zusaetzeNeuLaden(); setInterneInfoStand((n) => n + 1); }} />
       )}
 
       {/* Detail-Felder */}
       {!editing || !draft ? (
-        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} protokollStand={aenderungenStand} />
+        <ViewMode tour={tour} fahrerName={fahrerLabel} hatRueckfuehrung={hatRueckfuehrung} zugaenge={zugaenge} isAdmin={isAdmin} viewBreakdown={viewBreakdown} protokollStand={aenderungenStand}
+                  interneInfo={isAdmin && interneInfoAktiv ? interneInfo : null} />
       ) : (
         <EditMode
           draft={draft}
@@ -1440,6 +1473,8 @@ export function TourDetailDialog({
           zugaenge={zugaenge}
           kontakte={editKontakte}
           stationsKontakte={kontakte}
+          interneInfo={isAdmin && interneInfoAktiv ? (interneInfoEntwurf ?? '') : null}
+          onInterneInfo={setInterneInfoEntwurf}
           onStationsKontakte={(station, next) =>
             setKontakte((m) => ({ ...m, [station]: next }))}
           onOpenRouteDialog={setRouteDialog}
@@ -2157,9 +2192,11 @@ interface ViewModeProps {
   viewBreakdown: TourPriceBreakdown | null;
   /** Änderungsprotokoll neu laden, wenn sich der Zähler ändert. */
   protokollStand?: number;
+  /** Interne Info (nur Admin, Migration 120); null = keine/ausblenden. */
+  interneInfo: string | null;
 }
 
-function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewBreakdown, protokollStand }: ViewModeProps) {
+function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewBreakdown, protokollStand, interneInfo }: ViewModeProps) {
   const { standorte } = useStandorte();
   const linkedZugang = zugaenge.find((z) => z.id === tour.greimel_zugang_id) ?? null;
   const computedStatus = computeTourStatus(tour.startdatum, tour.enddatum);
@@ -2267,6 +2304,12 @@ function ViewMode({ tour, fahrerName, hatRueckfuehrung, zugaenge, isAdmin, viewB
             <span className="whitespace-pre-wrap">{tour.info}</span>
           </DetailItem>
         )}
+        {isAdmin && interneInfo?.trim() && (
+          <div className="sm:col-span-2 rounded-md border border-violet-200 bg-violet-50/60 px-3 py-2 dark:!border-violet-500/40 dark:!bg-violet-950/30">
+            <InterneInfoTitel />
+            <div className="mt-1 whitespace-pre-wrap text-sm text-maja-ink" data-testid="interne-info">{interneInfo}</div>
+          </div>
+        )}
         {isAdmin && <ViewModeRechnungsRef tourId={tour.id} />}
         {/* Extern hochgeladene Protokolle (076) — Upload/Löschen nur Admin,
             Fahrer sehen ihre eigenen Tour-Dokumente read-only. */}
@@ -2368,6 +2411,9 @@ interface EditModeProps {
   /** Aktuelle Tour-ID — Pflicht für die ProtokollSection (Protokoll-
    *  Zuweisungen werden direkt in tour_protokoll_zuweisungen persistiert). */
   tourId: string | null;
+  /** Interne Info (nur Admin, Migration 120); null = nicht anzeigen. */
+  interneInfo: string | null;
+  onInterneInfo: (v: string) => void;
 }
 
 function RouteIcon({ className }: { className?: string }) {
@@ -2577,6 +2623,14 @@ function EditMode(p: EditModeProps) {
             <textarea className="tf-input min-h-[3.5rem]" rows={2} value={draft.info}
                       onChange={(e) => patchDraft({ info: e.target.value })} />
           </div>
+          {p.interneInfo !== null && (
+            <div className="sm:col-span-6 lg:col-span-12 rounded-md border border-violet-200 bg-violet-50/60 p-2 dark:!border-violet-500/40 dark:!bg-violet-950/30">
+              <InterneInfoTitel htmlFor="td-interne-info" />
+              <textarea id="td-interne-info" className="tf-input mt-1 min-h-[3.5rem]" rows={2} value={p.interneInfo}
+                        placeholder="Nur für Admins sichtbar — nie auf Rechnung, E-Mail, Fahrer- oder Auftraggeber-Ansicht"
+                        onChange={(e) => p.onInterneInfo(e.target.value)} />
+            </div>
+          )}
         </div>
       </TfBlock>
 

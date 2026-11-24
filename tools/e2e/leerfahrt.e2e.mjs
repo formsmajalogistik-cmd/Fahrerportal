@@ -1,3 +1,6 @@
+// Leerfahrt (Migration 114) — Stand OHNE Migration 120: Setzen ohne Grund,
+// Entfernen mit Rückfrage. Leerfahrt mit Grund + interne Info prüft
+// interne-info.e2e.mjs.
 import { pw, START, BASIS } from './basis.mjs';
 const OUT = process.argv[2]; const THEME = process.argv[3] ?? 'light'; const ROLLE = process.argv[4] ?? 'admin'; const MOBIL = process.argv[5] === 'mobil';
 const UID = '00000000-0000-0000-0000-0000000000a1';
@@ -45,6 +48,8 @@ await ctx.route('**/*', async (r) => {
     const ids = inL('tour_id'); const l = [...leer.entries()].filter(([id]) => !ids || ids.includes(id)).map(([id, v]) => ({ tour_id: id, ...v }));
     return json(l);
   }
+  // Migration 120 nicht eingespielt → Rückfall auf die Leerfahrt ohne Grund.
+  if (p === '/rest/v1/touren_admin_info') return r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ code: 'PGRST205', message: 'Could not find the table public.touren_admin_info in the schema cache' }) });
   if (p === '/rest/v1/rpc/tour_leerfahrt_setzen') {
     const body = JSON.parse(req.postData()); log.rpc.push(body);
     if (body.p_an) { leer.set(body.p_tour_id, { gesetzt_am: '2026-11-05T09:00:00Z', gesetzt_von_name: 'Ad Min' }); return json({ geaendert: true }); }
