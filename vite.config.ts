@@ -27,7 +27,9 @@ export default defineConfig({
         navigateFallback: '/index.html',
         // Supabase-/API-Aufrufe NICHT cachen — sonst veraltete Daten.
         navigateFallbackDenylist: [/^\/api\//, /supabase/i],
-        globPatterns: ['**/*.{js,css,html,png,svg,webp,woff,woff2}'],
+        // .mjs: Worker-Datei von pdf.js — sonst bricht die PDF-Vorschau
+        // offline ab („Setting up fake worker failed").
+        globPatterns: ['**/*.{js,mjs,css,html,png,svg,webp,woff,woff2}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },
       devOptions: { enabled: false },

@@ -316,6 +316,51 @@ console.log('\n4) Fahrer-Formular offline');
   await ctx.close();
 }
 
+// ---- 5) PDF-Vorschau offline: pdf.js samt Worker-Datei (.mjs) aus dem Service-Worker-Cache
+console.log('\n5) PDF-Vorschau offline');
+{
+  aktiv = 'a';
+  const { PDFDocument, StandardFonts } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const seite = doc.addPage([300, 200]);
+  seite.drawText('Offline-Vorschau', { x: 20, y: 100, size: 18, font: await doc.embedFont(StandardFonts.Helvetica) });
+  const pdfBytes = Array.from(await doc.save());
+  const assets = readdirSync(join(AUS, 'a', 'assets'));
+  const lib = assets.find((f) => /^pdf-.*\.js$/.test(f));
+  const workerUrlModul = assets.find((f) => /^pdf\.worker\.min-.*\.js$/.test(f));
+  const workerDatei = assets.find((f) => /^pdf\.worker\.min-.*\.mjs$/.test(f));
+  const { ctx } = await kontext({ rolle: 'fahrer', sw: 'allow' });
+  const pg = await ctx.newPage();
+  await pg.goto(`${BASIS}/meine-formulare`);
+  await pg.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await pg.reload(); await pg.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 15000 }).catch(() => {});
+  const imCache = await pg.evaluate(async () => {
+    const urls = [];
+    for (const n of await caches.keys()) for (const r of await (await caches.open(n)).keys()) urls.push(new URL(r.url).pathname);
+    return urls;
+  });
+  pr('Service Worker hält die pdf.js-Worker-Datei (.mjs) vor', !!workerDatei && imCache.some((u) => u.endsWith(workerDatei)), { workerDatei, anzahlImCache: imCache.length });
+  await ctx.setOffline(true);
+  // Gleicher Weg wie ladePdfjs(): Bibliothek + Worker-URL nachladen, Worker setzen, PDF öffnen und zeichnen.
+  const ergebnis = await pg.evaluate(async ([libUrl, wUrl, bytes]) => {
+    try {
+      const pdfjs = await import(libUrl);
+      pdfjs.GlobalWorkerOptions.workerSrc = (await import(wUrl)).default;
+      const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+      const page = await pdf.getPage(1);
+      const vp = page.getViewport({ scale: 1 });
+      const canvas = document.createElement('canvas'); canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      const px = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      let dunkel = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] < 128) dunkel++;
+      return { seiten: pdf.numPages, dunkel };
+    } catch (e) { return { fehler: String(e?.message ?? e) }; }
+  }, [`/assets/${lib}`, `/assets/${workerUrlModul}`, pdfBytes]);
+  pr('Offline: PDF wird mit pdf.js geöffnet und gezeichnet (Worker aus dem Cache)', ergebnis.seiten === 1 && ergebnis.dunkel > 50, ergebnis);
+  await ctx.setOffline(false);
+  await ctx.close();
+}
+
 await b.close();
 server.close();
 console.log(fehler ? `\n${fehler} FEHLER` : '\nProduktions-Build: alle Prüfungen bestanden');
