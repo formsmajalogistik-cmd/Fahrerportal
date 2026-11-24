@@ -36,7 +36,7 @@ import {
   asPdfPathList, downloadFormPdf, previewFormPdf,
 } from '../lib/pdfGenerate';
 import {
-  aenderungSatz, feldLabel, ladeOffeneAenderungen, quittiereAenderungen, wertLabel,
+  aenderungSatz, feldLabel, ladeOffeneAenderungen, quittiereAenderungen, tourBestaetigen, wertLabel,
   type AenderungsGruppe,
 } from '../lib/tourAenderungen';
 import {
@@ -46,6 +46,7 @@ import type {
   AppUser, Auftraggeber, Fahrer, Tour, TourStatus,
 } from '../types/db';
 import { mitVersionsschutz } from '../lib/neueVersion';
+import { BestaetigenGeaendertHinweis } from '../components/BestaetigenGeaendertHinweis';
 
 // Excel-Import/-Export (Bibliothek xlsx) nur für Admins — erst bei Bedarf laden.
 const TourImportDialog = lazy(() => mitVersionsschutz(() => import('./touren/TourImportDialog'))
@@ -120,7 +121,7 @@ function listenSpalten(isAdmin: boolean, mitNiederlassung = false): string {
     tourenart, kennzeichen, protokoll_art, schriftliches_protokoll_id,
     greimel_zugang_id, ist_e_fahrzeug, fin,
     eingang_id, eingang_id_bc, km_gesamt,
-    bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at,
+    bearbeitet_markiert_am, bestaetigt, erstellt_von_rolle, created_at, updated_at,
     abgelehnt, zurueckgestellt,
     zeit_start, zeit_ziel,
     auf_eis, auf_eis_notiz
@@ -331,6 +332,8 @@ export function TourenlistePage() {
     window.setTimeout(() => setAblehnToastRaw((cur) => (cur === t ? null : cur)), 6000);
   }
   const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
+  /** Bestätigen angehalten, weil der Auftraggeber zwischenzeitlich geändert hat (Migration 119). */
+  const [bestaetigenHinweis, setBestaetigenHinweis] = useState<null | { tourNr: string | null; geaendert: Array<{ feld: string; alt: string | null; neu: string | null }> }>(null);
   /** Aktiver Abrechnungs-Warnungs-Filter (Banner-Klick): zeigt exklusiv
    *  die betroffenen Touren; zweiter Klick hebt ihn wieder auf. */
   const [hinweisFilter, setHinweisFilter] = useState<null | 'kein_preis' | 'ohne_rechnung' | 'auslagen_offen' | 'auslagen_ungeklaert' | 'leerfahrt'>(null);
@@ -881,12 +884,18 @@ export function TourenlistePage() {
   async function handleBestaetigen(t: TourRow) {
     if (guard()) return;
     setConfirmBusyId(t.id);
-    const { error: err } = await supabase
-      .from('touren')
-      .update({ bestaetigt: true })
-      .eq('id', t.id);
+    setBestaetigenHinweis(null);
+    // Versionsprüfung (Migration 119): bestätigt wird nur der Stand, der
+    // hier angezeigt wurde. Hat der Auftraggeber inzwischen geändert →
+    // nicht bestätigen, Hinweis mit den Feldern, Liste neu laden.
+    const r = await tourBestaetigen(t.id, t.updated_at);
     setConfirmBusyId(null);
-    if (err) { setError(err.message); return; }
+    if (!r.ok && r.geaendert) {
+      setBestaetigenHinweis({ tourNr: t.tour_id, geaendert: r.geaendert });
+      void load(true);
+      return;
+    }
+    if (!r.ok) { setError(r.fehler); return; }
     void load(true);
     window.dispatchEvent(new CustomEvent('maja:einreichungen-changed'));
   }
@@ -1055,6 +1064,10 @@ export function TourenlistePage() {
           <h2 className="text-sm font-semibold text-amber-900">
             Zur Bestätigung ({unbestaetigteRows.length})
           </h2>
+          {bestaetigenHinweis && (
+            <BestaetigenGeaendertHinweis tourNr={bestaetigenHinweis.tourNr} geaendert={bestaetigenHinweis.geaendert}
+                                         onSchliessen={() => setBestaetigenHinweis(null)} />
+          )}
           <p className="text-xs text-amber-800">
             Alle von Auftraggebern eingereichten Touren, nächster Start
             zuerst. Öffnen, fehlende Daten (Fahrer, km, Preis) ergänzen und

@@ -1906,6 +1906,7 @@ export type Database = {
           gesehen_am: string | null;
           gesehen_von: string | null;
           quelle: string;
+          vor_bestaetigung: boolean | null;
         };
         Insert: {
           id?: string;
@@ -1918,6 +1919,7 @@ export type Database = {
           gesehen_am?: string | null;
           gesehen_von?: string | null;
           quelle?: string;
+          vor_bestaetigung?: boolean | null;
         };
         Update: {
           id?: string;
@@ -1930,6 +1932,7 @@ export type Database = {
           gesehen_am?: string | null;
           gesehen_von?: string | null;
           quelle?: string;
+          vor_bestaetigung?: boolean | null;
         };
         Relationships: [
           {
@@ -2391,6 +2394,11 @@ export type Database = {
       };
     };
     Views: {
+      // Migration 119: anzuzeigende offene Änderungen (nur bestätigte Touren).
+      tour_aenderungen_offen: {
+        Row: Database['public']['Tables']['tour_aenderungen']['Row'];
+        Relationships: [];
+      };
       touren_kundensicht: {
         Row: {
           id: string;
@@ -2583,6 +2591,11 @@ export type Database = {
       };
       tour_leerfahrt_setzen: {
         Args: { p_tour_id: string; p_an: boolean };
+        Returns: Json;
+      };
+      // Migration 119
+      tour_bestaetigen: {
+        Args: { p_tour_id: string; p_stand: string | null };
         Returns: Json;
       };
       tour_keine_auslagen_setzen: {

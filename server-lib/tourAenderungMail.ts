@@ -98,13 +98,20 @@ export async function buildTourAenderungMail(args: {
 
   // 3. Offene Änderungen der letzten Minuten — das ist der Vorgang, der
   //    gerade gespeichert wurde.
-  const { data: aenderungen } = await supa
-    .from('tour_aenderungen')
-    .select('feld, wert_alt, wert_neu, geaendert_am')
-    .eq('tour_id', args.tourId)
-    .is('gesehen_am', null)
-    .order('geaendert_am', { ascending: false })
-    .limit(50);
+  //    Seit Migration 119 ohne Einträge aus der Zeit vor der Bestätigung
+  //    (vor_bestaetigung) — die stehen nur im Protokoll der Tour.
+  const abfrage = (mitFilter: boolean) => {
+    let q = supa
+      .from('tour_aenderungen')
+      .select('feld, wert_alt, wert_neu, geaendert_am')
+      .eq('tour_id', args.tourId)
+      .is('gesehen_am', null);
+    if (mitFilter) q = q.not('vor_bestaetigung', 'is', true);
+    return q.order('geaendert_am', { ascending: false }).limit(50);
+  };
+  const erster = await abfrage(true);
+  // Migration 119 noch nicht eingespielt → wie bisher.
+  const aenderungen = erster.error ? (await abfrage(false)).data : erster.data;
   const liste = (aenderungen ?? []) as Array<{
     feld: string; wert_alt: string | null; wert_neu: string | null;
   }>;

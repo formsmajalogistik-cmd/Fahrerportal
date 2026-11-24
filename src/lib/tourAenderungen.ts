@@ -142,12 +142,40 @@ interface TourLite {
  * inklusive Route und Bestätigungs-Status für die Anzeige. Admin-only
  * (RLS); für alle anderen Rollen kommt eine leere Liste zurück.
  */
+/**
+ * Offene (unquittierte) Änderungen, die ANGEZEIGT werden: seit Migration 119
+ * nur noch an bestätigten Touren (View tour_aenderungen_offen). Änderungen an
+ * noch nicht bestätigten Aufträgen stehen nur im Protokoll der Tour — beim
+ * Bestätigen sieht der Admin ohnehin den aktuellen Stand.
+ * Ohne Migration 119 (View fehlt): Verhalten wie bisher.
+ */
+let viewVorhanden: boolean | null = null;
+async function offeneAbfrage<T>(baue: (quelle: 'tour_aenderungen') => PromiseLike<{ data: T | null; error: { message: string } | null; count?: number | null }>) {
+  if (viewVorhanden !== false) {
+    // Die View hat dieselben Spalten wie die Tabelle.
+    const r = await baue('tour_aenderungen_offen' as 'tour_aenderungen');
+    if (!r.error) { viewVorhanden = true; return r; }
+    if (viewVorhanden === true) return r;
+    console.warn('[tourAenderungen] Migration 119 nicht erkannt — Anzeige wie bisher:', r.error.message);
+    viewVorhanden = false;
+  }
+  return baue('tour_aenderungen');
+}
+
+/** Zahl der anzuzeigenden offenen Änderungen (Zähler am Menüpunkt). */
+export async function zaehleOffeneAenderungen(): Promise<number> {
+  const r = await offeneAbfrage((quelle) => supabase.from(quelle)
+    .select('id', { count: 'exact', head: true })
+    .is('gesehen_am', null));
+  return r.error ? 0 : (r.count ?? 0);
+}
+
 export async function ladeOffeneAenderungen(): Promise<AenderungsGruppe[]> {
-  const { data, error } = await supabase
-    .from('tour_aenderungen')
+  const { data, error } = await offeneAbfrage((quelle) => supabase
+    .from(quelle)
     .select('*')
     .is('gesehen_am', null)
-    .order('geaendert_am', { ascending: false });
+    .order('geaendert_am', { ascending: false }));
   if (error) {
     console.warn('[tourAenderungen] Laden fehlgeschlagen', error.message);
     return [];
@@ -197,10 +225,10 @@ export async function ladeOffeneAenderungen(): Promise<AenderungsGruppe[]> {
 
 /** Nur die Tour-IDs mit offenen Änderungen — für das Karten-Badge. */
 export async function ladeGeaenderteTourIds(): Promise<Set<string>> {
-  const { data, error } = await supabase
-    .from('tour_aenderungen')
+  const { data, error } = await offeneAbfrage((quelle) => supabase
+    .from(quelle)
     .select('tour_id')
-    .is('gesehen_am', null);
+    .is('gesehen_am', null));
   if (error) return new Set();
   return new Set(((data as Array<{ tour_id: string }>) ?? []).map((r) => r.tour_id));
 }
@@ -286,3 +314,42 @@ export async function speichereAgTour(
   if (error) return { ok: false, fehler: error.message };
   return (data as unknown as AgUpdateErgebnis) ?? { ok: false, fehler: 'Keine Antwort vom Server.' };
 }
+
+/** Ergebnis von {@link tourBestaetigen}. */
+export type BestaetigenErgebnis =
+  | { ok: true }
+  | { ok: false; geaendert: Array<{ feld: string; alt: string | null; neu: string | null }>; fehler?: undefined }
+  | { ok: false; fehler: string; geaendert?: undefined };
+
+/**
+ * Auftrag (Auftraggeber-Einreichung) bestätigen — mit Versionsprüfung
+ * (Migration 119): `stand` ist touren.updated_at, wie es beim Laden
+ * angezeigt wurde. Hat der Auftraggeber seither etwas geändert, bestätigt
+ * der Server NICHT und liefert die geänderten Felder zurück.
+ * Ohne Migration 119: einfaches Setzen wie bisher.
+ */
+export async function tourBestaetigen(tourId: string, stand: string | null | undefined): Promise<BestaetigenErgebnis> {
+  const { data, error } = await supabase.rpc('tour_bestaetigen', { p_tour_id: tourId, p_stand: stand ?? null });
+  if (error) {
+    const fehlt = /tour_bestaetigen|PGRST202|Could not find the function/i.test(`${error.code ?? ''} ${error.message}`);
+    if (!fehlt) return { ok: false, fehler: error.message };
+    console.warn('[tourBestaetigen] Migration 119 nicht erkannt — ohne Versionsprüfung bestätigt.');
+    const { error: e2 } = await supabase.from('touren').update({ bestaetigt: true }).eq('id', tourId);
+    return e2 ? { ok: false, fehler: e2.message } : { ok: true };
+  }
+  const r = (data ?? {}) as { ok?: boolean; grund?: string; fehler?: string; aenderungen?: Array<{ feld: string; alt: string | null; neu: string | null }> };
+  if (r.ok) return { ok: true };
+  if (r.grund === 'geaendert') {
+    // Pro Feld nur die letzte Änderung (alt = Stand beim Laden, neu = jetzt).
+    const jeFeld = new Map<string, { feld: string; alt: string | null; neu: string | null }>();
+    for (const a of r.aenderungen ?? []) {
+      const v = jeFeld.get(a.feld);
+      jeFeld.set(a.feld, { feld: a.feld, alt: v ? v.alt : a.alt, neu: a.neu });
+    }
+    return { ok: false, geaendert: [...jeFeld.values()] };
+  }
+  return { ok: false, fehler: r.fehler ?? 'Bestätigen fehlgeschlagen.' };
+}
+
+/** Hinweistext, wenn der Auftraggeber zwischen Laden und Bestätigen geändert hat. */
+export const BESTAETIGEN_GEAENDERT_TEXT = 'Der Auftraggeber hat den Auftrag soeben geändert — nicht bestätigt. Bitte den neuen Stand prüfen und erneut bestätigen.';

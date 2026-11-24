@@ -27,6 +27,8 @@ const LAEUFE = [
   ['excel-roundtrip', 'Niederlassungen: Tourenliste (Anzeige, Filter, Suche) + Excel-Roundtrip', ['light', 'niederlassung']],
   ['rechnung-neu-laden', 'Touren neu laden + Prüfdialog', ['light']],
   ['rechnung-neu-laden', 'Niederlassungen: Touren neu laden + neue Rechnung je Standort', ['light', 'niederlassung']],
+  ['aenderungen-bestaetigen', 'Änderungen nur bei bestätigten Aufträgen + Bestätigen mit Versionsprüfung', ['light', 'mit']],
+  ['aenderungen-bestaetigen', 'Änderungen/Bestätigen ohne Migration 119 (wie bisher)', ['dark', 'ohne']],
   ['niederlassungen', 'Niederlassungen: Verwaltung (Admin) + Auftraggeber-Konto', ['light']],
   ['niederlassungen', 'Niederlassungen: Verwaltung + Auftraggeber-Konto mobil/dunkel', ['dark', 'mobil']],
   ['erechnung-stammdaten', 'E-Rechnung: Stammdaten + Test-Export (mit Migration)', ['light', 'mit']],

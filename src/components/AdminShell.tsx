@@ -7,6 +7,7 @@ import { PdfPreviewProvider } from './PdfPreviewProvider';
 import { useEingaengeNotifications } from '../sync/EingaengeContext';
 import { FuehrerscheinNavWidget } from './FuehrerscheinNavWidget';
 import { supabase } from '../lib/supabase';
+import { zaehleOffeneAenderungen } from '../lib/tourAenderungen';
 
 interface NavItem {
   to: string;
@@ -62,16 +63,15 @@ function useAdminPendingCounts(): {
           supabase.from('formular_wuensche')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'offen'),
-          // Unquittierte Auftraggeber-Änderungen (Migration 079).
-          supabase.from('tour_aenderungen')
-            .select('id', { count: 'exact', head: true })
-            .is('gesehen_am', null),
+          // Unquittierte Auftraggeber-Änderungen (Migration 079) — seit 119
+          // nur an bestätigten Touren.
+          zaehleOffeneAenderungen(),
         ]);
         if (cancelled) return;
         setCounts({
           unbestaetigt: t.error ? 0 : (t.count ?? 0),
           wuensche: w.error ? 0 : (w.count ?? 0),
-          aenderungen: a.error ? 0 : (a.count ?? 0),
+          aenderungen: a,
         });
       } catch { /* still — Badge bleibt einfach aus */ }
     }

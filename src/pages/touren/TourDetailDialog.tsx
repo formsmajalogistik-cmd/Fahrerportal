@@ -31,7 +31,7 @@ import {
 } from '../../lib/touren';
 import { berechneTourPreis, tourKm, type PreisEingabe } from '../../lib/tourPreis';
 import {
-  aenderungSatz, feldLabel, ladeTourAenderungen, wertLabel, type TourAenderung,
+  aenderungSatz, feldLabel, ladeTourAenderungen, tourBestaetigen, wertLabel, type TourAenderung,
 } from '../../lib/tourAenderungen';
 import {
   asPdfPathList, downloadFormPdf, previewFormPdf,
@@ -118,6 +118,7 @@ import { konfliktBeimHinzufuegen } from '../../lib/auslagenStatus';
 import { TourAufteilenDialog, type AufteilungsErgebnis } from './TourAufteilenDialog';
 import { istAufteilbar, istTour1GeaendertFehler, ohneFehlercode } from '../../lib/tourAufteilung';
 import { merkeTourAdressen } from '../../lib/feldVorschlaege';
+import { BestaetigenGeaendertHinweis } from '../../components/BestaetigenGeaendertHinweis';
 import {
   ABC_WARNUNG_TEXT, automatischeTourenart, brauchtAbcWarnung,
 } from '../../lib/tourenartAutomatik';
@@ -395,6 +396,8 @@ export function TourDetailDialog({
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  /** Bestätigen angehalten: Auftraggeber hat zwischenzeitlich geändert (Migration 119). */
+  const [bestaetigenGeaendert, setBestaetigenGeaendert] = useState<Array<{ feld: string; alt: string | null; neu: string | null }> | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditDraft | null>(null);
@@ -1214,11 +1217,16 @@ export function TourDetailDialog({
   async function handleBestaetigen() {
     if (!tour || !isAdmin) return;
     if (guard()) return;
-    const { error: err } = await supabase
-      .from('touren')
-      .update({ bestaetigt: true })
-      .eq('id', tour.id);
-    if (err) { setStatusMsg({ kind: 'err', text: err.message }); return; }
+    setBestaetigenGeaendert(null);
+    // Versionsprüfung (Migration 119): nur den angezeigten Stand bestätigen.
+    const r = await tourBestaetigen(tour.id, tour.updated_at);
+    if (!r.ok && r.geaendert) {
+      setStatusMsg(null);
+      setBestaetigenGeaendert(r.geaendert);
+      await load();
+      return;
+    }
+    if (!r.ok) { setStatusMsg({ kind: 'err', text: r.fehler }); return; }
     setTour({ ...tour, bestaetigt: true });
     setStatusMsg({ kind: 'ok', text: 'Tour bestätigt.' });
     onChanged();
@@ -1345,6 +1353,11 @@ export function TourDetailDialog({
         )}
       </div>
 
+      {bestaetigenGeaendert && (
+        <div className="mb-4">
+          <BestaetigenGeaendertHinweis geaendert={bestaetigenGeaendert} onSchliessen={() => setBestaetigenGeaendert(null)} />
+        </div>
+      )}
       {statusMsg && (
         <div
           role="status"
